@@ -1,0 +1,244 @@
+import { randomBytes } from "node:crypto";
+import { cp, mkdir, readFile, rename, rm } from "node:fs/promises";
+import path from "node:path";
+import { estimateCostUsd } from "@/lib/cost";
+import { maxQueuedJobs } from "@/lib/env";
+import {
+  UPLOAD_ID_RE,
+  type CreateJobBody,
+  type JobPublic,
+  type JobRecord,
+  type UploadSidecar,
+} from "@/lib/jobs/schema";
+import { ProviderHttpError } from "@/lib/providers/types";
+import { withAdmissionLock } from "@/lib/jobs/admission";
+import { lookupIdempotency, saveIdempotency } from "@/lib/jobs/idempotency";
+import { activeCount, enqueue } from "@/lib/jobs/runner";
+import { assertCreateJobFields } from "@/lib/jobs/request-validation";
+import { readJob, tmpDir, toPublic, writeJob } from "@/lib/jobs/store";
+import { isImageMode, modelForMode } from "@/lib/providers/grok/mode-matrix";
+import { assertModeConstraints } from "@/lib/providers/grok/rest-map";
+import { currentProviderId } from "@/lib/providers/router";
+import { mediaStore } from "@/lib/storage/local-fs";
+
+export async function createJob(body: CreateJobBody) {
+  return withAdmissionLock(() => createJobUnlocked(body));
+}
+
+async function createJobUnlocked(body: CreateJobBody) {
+  if (body.idempotencyKey) {
+    const existing = await lookupIdempotency(body.idempotencyKey);
+    if (existing) {
+      const rec = await readJob(existing);
+      if (rec) return { job: toPublic(rec), replay: true };
+    }
+  }
+
+  assertCreateJobFields(body);
+
+  const n = await activeCount();
+  if (n >= maxQueuedJobs()) {
+    throw new ProviderHttpError(429, "queue_full", "队列已满，请等待进行中的任务完成");
+  }
+
+  const mode = body.mode;
+  const image = isImageMode(mode);
+  const durationSec = image
+    ? 0
+    : mode === "edit_video"
+      ? undefined
+      : (body.durationSec ?? (mode === "extend_video" ? 6 : 8));
+  if (durationSec === 30 || durationSec === 45 || durationSec === 60) {
+    throw new ProviderHttpError(400, "harness_duration", "长视频将由一致性管线提供，尚未开放");
+  }
+
+  const start = body.startUploadId ? await loadSidecar(body.startUploadId, "start") : undefined;
+  const last = body.lastUploadId ? await loadSidecar(body.lastUploadId, "last") : undefined;
+  const refs = body.referenceUploadIds
+    ? await Promise.all(body.referenceUploadIds.map((id) => loadSidecar(id, "reference")))
+    : [];
+  const source = body.sourceVideoUploadId
+    ? await loadSidecar(body.sourceVideoUploadId, "source_video")
+    : undefined;
+
+  if (mode === "edit_video" && source && (source.durationSec ?? 0) > 8.7) {
+    throw new ProviderHttpError(400, "invalid_argument", "编辑源片最长 8.7 秒");
+  }
+  if (mode === "extend_video" && source) {
+    const d = source.durationSec ?? 0;
+    if (d < 2 || d > 15) {
+      throw new ProviderHttpError(400, "invalid_argument", "延长源片须为 2–15 秒");
+    }
+  }
+
+  const model = modelForMode(mode);
+  assertModeConstraints({
+    jobId: "preview",
+    mode,
+    prompt: body.prompt,
+    model,
+    durationSec:
+      mode === "edit_video" || image ? body.durationSec : (body.durationSec ?? durationSec),
+    aspectRatio: body.aspectRatio,
+    resolution: body.resolution,
+    imageResolution: image ? (body.imageResolution ?? "1k") : undefined,
+    generateAudio: image ? false : (body.generateAudio ?? true),
+    startImage: start ? { kind: "data_uri", dataUri: "data:image/jpeg;base64,aa" } : undefined,
+    referenceImages: refs.map(() => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,aa" })),
+    referenceAudios: body.voiceIds?.map((voiceId) => ({ voiceId })),
+    sourceVideo: source ? { kind: "file_id", fileId: "pending" } : undefined,
+  });
+
+  const id = `job_${randomBytes(6).toString("hex")}`;
+  const now = new Date().toISOString();
+  const dur = image ? 0 : mode === "edit_video" ? (source?.durationSec ?? 0) : (durationSec ?? 8);
+  const rec: JobRecord = {
+    schemaVersion: 1,
+    id,
+    status: "queued",
+    progress: 0,
+    mode,
+    model,
+    provider: currentProviderId(),
+    prompt: body.prompt,
+    durationSec: dur,
+    aspectRatio:
+      mode === "edit_video" || mode === "extend_video" ? null : (body.aspectRatio ?? "16:9"),
+    resolution:
+      mode === "edit_video" || mode === "extend_video" || image ? null : (body.resolution ?? "720p"),
+    imageResolution: image ? (body.imageResolution ?? "1k") : null,
+    generateAudio: image ? false : (body.generateAudio ?? true),
+    lastFrameStored: Boolean(last),
+    lastFrameLocksOutput: false,
+    harness: { enabled: false },
+    costUsdEstimate: estimateCostUsd(model, dur),
+    costUsdActual: null,
+    error: null,
+    output: null,
+    createdAt: now,
+    updatedAt: now,
+    bible: null,
+    shots: null,
+    assets: {},
+    voiceIds: body.voiceIds,
+  };
+
+  await mkdir(path.join(mediaStore.jobDir(id), "inputs"), { recursive: true });
+  if (start) rec.assets.start = await claim(id, start, "inputs/start.jpg");
+  if (last) rec.assets.last = await claim(id, last, "inputs/last.jpg");
+  if (refs.length) {
+    rec.assets.references = [];
+    for (let i = 0; i < refs.length; i++) {
+      rec.assets.references.push(await claim(id, refs[i], `inputs/ref-${i}.jpg`));
+    }
+  }
+  if (source) {
+    const a = await claim(id, source, "inputs/source.mp4");
+    rec.assets.source = {
+      ...a,
+      durationSec: source.durationSec ?? 0,
+      xaiFileId: null,
+    };
+  }
+
+  await writeJob(rec);
+  if (body.idempotencyKey) await saveIdempotency(body.idempotencyKey, id);
+  enqueue(id);
+  return { job: toPublic(rec), replay: false };
+}
+
+export async function retryJob(source: JobRecord): Promise<JobPublic> {
+  return withAdmissionLock(() => retryJobUnlocked(source));
+}
+
+async function retryJobUnlocked(source: JobRecord): Promise<JobPublic> {
+  if (source.status !== "failed" && source.status !== "expired") {
+    throw new ProviderHttpError(409, "conflict", "仅失败或过期任务可重试");
+  }
+  const n = await activeCount();
+  if (n >= maxQueuedJobs()) {
+    throw new ProviderHttpError(429, "queue_full", "队列已满，请等待进行中的任务完成");
+  }
+
+  const id = `job_${randomBytes(6).toString("hex")}`;
+  const now = new Date().toISOString();
+  const rec: JobRecord = {
+    schemaVersion: 1,
+    id,
+    status: "queued",
+    progress: 0,
+    mode: source.mode,
+    model: source.model,
+    provider: currentProviderId(),
+    prompt: source.prompt,
+    durationSec: source.durationSec,
+    aspectRatio: source.aspectRatio,
+    resolution: source.resolution,
+    imageResolution: source.imageResolution ?? null,
+    generateAudio: source.generateAudio,
+    lastFrameStored: source.lastFrameStored,
+    lastFrameLocksOutput: false,
+    harness: { enabled: false },
+    costUsdEstimate: source.costUsdEstimate,
+    costUsdActual: null,
+    error: null,
+    output: null,
+    createdAt: now,
+    updatedAt: now,
+    bible: null,
+    shots: null,
+    assets: {},
+    voiceIds: source.voiceIds,
+  };
+
+  const srcInputs = path.join(mediaStore.jobDir(source.id), "inputs");
+  const destInputs = path.join(mediaStore.jobDir(id), "inputs");
+  try {
+    await cp(srcInputs, destInputs, { recursive: true });
+  } catch {
+    await mkdir(destInputs, { recursive: true });
+  }
+
+  if (source.assets.start) rec.assets.start = { ...source.assets.start };
+  if (source.assets.last) rec.assets.last = { ...source.assets.last };
+  if (source.assets.references) rec.assets.references = source.assets.references.map((a) => ({ ...a }));
+  if (source.assets.source) {
+    rec.assets.source = { ...source.assets.source, xaiFileId: null };
+  }
+
+  await writeJob(rec);
+  enqueue(id);
+  return toPublic(rec);
+}
+
+async function loadSidecar(uploadId: string, expected: UploadSidecar["role"]): Promise<UploadSidecar> {
+  if (!UPLOAD_ID_RE.test(uploadId)) {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
+  }
+  const p = path.join(tmpDir(), `${uploadId}.json`);
+  let raw: UploadSidecar;
+  try {
+    raw = JSON.parse(await readFile(p, "utf8")) as UploadSidecar;
+  } catch {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
+  }
+  if (raw.uploadId !== uploadId || !UPLOAD_ID_RE.test(raw.uploadId)) {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
+  }
+  if (raw.role !== expected) {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件角色不匹配");
+  }
+  return raw;
+}
+
+async function claim(jobId: string, side: UploadSidecar, destRel: string) {
+  if (!UPLOAD_ID_RE.test(side.uploadId)) {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
+  }
+  const src = path.join(tmpDir(), side.uploadId);
+  const dest = path.join(mediaStore.jobDir(jobId), destRel);
+  await mkdir(path.dirname(dest), { recursive: true });
+  await rename(src, dest);
+  await rm(path.join(tmpDir(), `${side.uploadId}.json`), { force: true }).catch(() => undefined);
+  return { path: destRel, width: side.width, height: side.height };
+}

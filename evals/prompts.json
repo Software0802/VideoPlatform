@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "description": "Lumen Harness baseline: five native video modes, two languages, and two boundary cases per mode.",
+  "cases": [
+    {
+      "id": "t2v-zh-min",
+      "mode": "text_to_video",
+      "language": "zh",
+      "durationSec": 1,
+      "aspectRatio": "16:9",
+      "resolution": "480p",
+      "prompt": "一盏钨丝灯照亮空荡的老电影院，镜头极慢地向银幕推进，空气里有细小尘埃。"
+    },
+    {
+      "id": "t2v-zh-max",
+      "mode": "text_to_video",
+      "language": "zh",
+      "durationSec": 15,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "prompt": "深夜雨巷里，一位穿深青色风衣的女人从远处走来，霓虹倒映在积水中，镜头平稳跟拍，保持连续的暖冷对比。"
+    },
+    {
+      "id": "t2v-en-min",
+      "mode": "text_to_video",
+      "language": "en",
+      "durationSec": 1,
+      "aspectRatio": "16:9",
+      "resolution": "480p",
+      "prompt": "A tungsten lamp reveals an empty old cinema as the camera makes an almost imperceptible push toward the screen, dust floating in the beam."
+    },
+    {
+      "id": "t2v-en-max",
+      "mode": "text_to_video",
+      "language": "en",
+      "durationSec": 15,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "prompt": "On a rainy alley at night, a woman in a deep navy coat walks toward camera while neon reflections ripple in puddles; a steady tracking shot preserves the warm-cool contrast."
+    },
+    {
+      "id": "i2v-zh-min",
+      "mode": "image_to_video",
+      "language": "zh",
+      "durationSec": 1,
+      "aspectRatio": "16:9",
+      "resolution": "480p",
+      "startFixture": "assets/character-zh.jpg",
+      "prompt": "画面中的人物轻轻抬眼，窗外雨光在脸上移动，保持人物身份和服装不变。"
+    },
+    {
+      "id": "i2v-zh-max",
+      "mode": "image_to_video",
+      "language": "zh",
+      "durationSec": 15,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "startFixture": "assets/character-zh.jpg",
+      "prompt": "画面中的人物沿着昏暗走廊向前行走，镜头从正面缓慢绕到侧面，保持脸部、发型、深色风衣和钨丝灯光一致。"
+    },
+    {
+      "id": "i2v-en-min",
+      "mode": "image_to_video",
+      "language": "en",
+      "durationSec": 1,
+      "aspectRatio": "16:9",
+      "resolution": "480p",
+      "startFixture": "assets/character-en.jpg",
+      "prompt": "The person in the frame slowly lifts their eyes as rain light moves across the face; preserve identity and wardrobe."
+    },
+    {
+      "id": "i2v-en-max",
+      "mode": "image_to_video",
+      "language": "en",
+      "durationSec": 15,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "startFixture": "assets/character-en.jpg",
+      "prompt": "The person walks down a dim corridor while the camera slowly arcs from front to profile; keep the face, hairstyle, dark coat, and tungsten lighting consistent."
+    },
+    {
+      "id": "r2v-zh-min",
+      "mode": "reference_to_video",
+      "language": "zh",
+      "durationSec": 1,
+      "aspectRatio": "1:1",
+      "resolution": "480p",
+      "referenceFixtures": ["assets/character-zh.jpg", "assets/palette-amber.jpg"],
+      "prompt": "参考人物与色板，人物在暖琥珀色房间里转身看向镜头，保持服装质感与光线方向。"
+    },
+    {
+      "id": "r2v-zh-max",
+      "mode": "reference_to_video",
+      "language": "zh",
+      "durationSec": 15,
+      "aspectRatio": "1:1",
+      "resolution": "720p",
+      "referenceFixtures": ["assets/character-zh.jpg", "assets/palette-amber.jpg"],
+      "prompt": "依据参考人物和色板，人物穿过有雾的旧车站大厅，镜头横向移动并在末尾停住；保持脸部、服装、琥珀色调和阴影方向一致。"
+    },
+    {
+      "id": "r2v-en-min",
+      "mode": "reference_to_video",
+      "language": "en",
+      "durationSec": 1,
+      "aspectRatio": "1:1",
+      "resolution": "480p",
+      "referenceFixtures": ["assets/character-en.jpg", "assets/palette-amber.jpg"],
+      "prompt": "Using the character and palette references, the person turns toward camera in a warm amber room; preserve wardrobe texture and light direction."
+    },
+    {
+      "id": "r2v-en-max",
+      "mode": "reference_to_video",
+      "language": "en",
+      "durationSec": 15,
+      "aspectRatio": "1:1",
+      "resolution": "720p",
+      "referenceFixtures": ["assets/character-en.jpg", "assets/palette-amber.jpg"],
+      "prompt": "Following the character and palette references, the person crosses a foggy vintage station hall as the camera tracks sideways and settles at the end; preserve face, wardrobe, amber grade, and shadow direction."
+    },
+    {
+      "id": "edit-zh-short",
+      "mode": "edit_video",
+      "language": "zh",
+      "sourceFixture": "assets/source-1s.mp4",
+      "sourceDurationSec": 1,
+      "prompt": "保留原动作与构图，只把整体色调调整为克制的钨丝灯暖色，并加入轻微胶片颗粒。"
+    },
+    {
+      "id": "edit-zh-long",
+      "mode": "edit_video",
+      "language": "zh",
+      "sourceFixture": "assets/source-8.7s.mp4",
+      "sourceDurationSec": 8.7,
+      "prompt": "保留人物身份、服装和镜头运动，在不改变构图的前提下加入细雨、暖色边缘光和轻微胶片颗粒。"
+    },
+    {
+      "id": "edit-en-short",
+      "mode": "edit_video",
+      "language": "en",
+      "sourceFixture": "assets/source-1s.mp4",
+      "sourceDurationSec": 1,
+      "prompt": "Keep the action and composition, shift the grade to restrained tungsten warmth, and add subtle film grain."
+    },
+    {
+      "id": "edit-en-long",
+      "mode": "edit_video",
+      "language": "en",
+      "sourceFixture": "assets/source-8.7s.mp4",
+      "sourceDurationSec": 8.7,
+      "prompt": "Preserve the person's identity, wardrobe, and camera motion; add fine rain, a warm rim light, and subtle film grain without changing the composition."
+    },
+    {
+      "id": "extend-zh-min",
+      "mode": "extend_video",
+      "language": "zh",
+      "sourceFixture": "assets/source-2s.mp4",
+      "sourceDurationSec": 2,
+      "durationSec": 2,
+      "prompt": "从源片最后一刻自然延续，人物继续向前走两秒，保持末帧的光线、服装和运动方向。"
+    },
+    {
+      "id": "extend-zh-max",
+      "mode": "extend_video",
+      "language": "zh",
+      "sourceFixture": "assets/source-15s.mp4",
+      "sourceDurationSec": 15,
+      "durationSec": 10,
+      "prompt": "从源片最后一刻连续延长十秒，人物走出车站并进入雨夜，保持角色、服装、色调和镜头速度不变。"
+    },
+    {
+      "id": "extend-en-min",
+      "mode": "extend_video",
+      "language": "en",
+      "sourceFixture": "assets/source-2s.mp4",
+      "sourceDurationSec": 2,
+      "durationSec": 2,
+      "prompt": "Continue naturally from the final moment: the person keeps walking for two seconds, preserving the last frame's light, wardrobe, and motion direction."
+    },
+    {
+      "id": "extend-en-max",
+      "mode": "extend_video",
+      "language": "en",
+      "sourceFixture": "assets/source-15s.mp4",
+      "sourceDurationSec": 15,
+      "durationSec": 10,
+      "prompt": "Extend continuously for ten seconds from the final moment as the person leaves the station into the rain; keep character, wardrobe, grade, and camera speed unchanged."
+    }
+  ]
+}

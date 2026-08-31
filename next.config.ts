@@ -1,7 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  serverExternalPackages: ["ffmpeg-static", "sharp"],
+  outputFileTracingIncludes: {
+    "/*": ["./node_modules/ffmpeg-static/ffmpeg*", "./src/lib/media/fonts/**"],
+  },
+  outputFileTracingExcludes: {
+    "/*": ["./data/**/*"],
+  },
 };
 
 export default nextConfig;
