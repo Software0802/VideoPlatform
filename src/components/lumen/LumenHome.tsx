@@ -6,7 +6,7 @@ import type { NativeMode } from "@/lib/providers/types";
 import type { SceneProgress } from "@/types/scene";
 import { estimateCostUsd } from "@/lib/cost";
 import { MODEL_1_5, MODEL_IMAGE } from "@/lib/providers/grok/mode-matrix";
-import { createJob, newIdempotencyKey, uploadFile } from "@/lib/client/jobs";
+import { cancelJob, createJob, newIdempotencyKey, retryJob, uploadFile } from "@/lib/client/jobs";
 import { useJobLive } from "@/lib/client/useJobLive";
 import { formatElapsed, isActive, isFailed, isTerminal, stageIndex } from "@/lib/client/labels";
 import { AccessTokenPrompt } from "@/components/shell/AccessTokenPrompt";
@@ -286,6 +286,32 @@ export function LumenHome({ initialJobs, mock }: { initialJobs: JobPublic[]; moc
     }
   }
 
+  /* ── 取消 / 重试：取消改写当前任务；重试是服务端复制出的新任务 ── */
+  async function cancel() {
+    if (!job || busy || !isActive(job.status)) return;
+    setError(null);
+    setBusy(true);
+    try {
+      onLive(await cancelJob(job.id, onUnauthorized));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function retry() {
+    if (!job || busy || (job.status !== "failed" && job.status !== "expired")) return;
+    setError(null);
+    setBusy(true);
+    try {
+      onLive(await retryJob(job.id, onUnauthorized));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function reuse(p: Plate) {
     setPrompt(p.prompt);
     setMode(p.mode);
@@ -483,6 +509,19 @@ export function LumenHome({ initialJobs, mock }: { initialJobs: JobPublic[]; moc
                   <div className="readout__fill" style={{ width: failed ? "0%" : done ? "100%" : `${job.progress}%` }} />
                 </div>
                 {failed && job.error ? <span className="readout__err">{job.error.message}</span> : null}
+                {active || job.status === "failed" || job.status === "expired" ? (
+                  <div className="readout__actions">
+                    {active ? (
+                      <button type="button" className="link-accent" disabled={busy} onClick={() => void cancel()}>
+                        取消任务 / Cancel
+                      </button>
+                    ) : (
+                      <button type="button" className="link-accent" disabled={busy} onClick={() => void retry()}>
+                        重新生成 / Retry
+                      </button>
+                    )}
+                  </div>
+                ) : null}
               </div>
               <span className="readout__pct">{jobPct}</span>
             </div>

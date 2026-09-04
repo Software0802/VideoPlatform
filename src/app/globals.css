@@ -568,6 +568,14 @@ textarea::placeholder {
   font-size: 12px;
   color: var(--accent);
 }
+.readout__actions {
+  display: flex;
+  gap: 24px;
+}
+.readout__actions .link-accent:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .readout__pct {
   font-family: var(--font-display);
   font-size: 44px;

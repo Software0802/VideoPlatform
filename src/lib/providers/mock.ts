@@ -5,14 +5,18 @@ import { probeDurationSec, runFfmpeg, watermarkFontPath } from "@/lib/ffmpeg";
 import { hashHue } from "@/lib/media/preprocess";
 import { extractPoster } from "@/lib/media/poster";
 import { mediaStore } from "@/lib/storage/local-fs";
-import type {
-  ProviderGenerateRequest,
-  ProviderHandle,
-  ProviderPoll,
-  VideoProvider,
+import {
+  ProviderHttpError,
+  type ProviderGenerateRequest,
+  type ProviderHandle,
+  type ProviderPoll,
+  type VideoProvider,
 } from "@/lib/providers/types";
 
 const pending = new Map<string, { doneAt: number; duration: number }>();
+
+/** 开发用：提示词含此标记时 submit 直接抛上游错误，用来验证失败态 / 重试链路。 */
+export const MOCK_FAIL_MARKER = "[fail]";
 
 export const mockProvider: VideoProvider = {
   id: "mock",
@@ -37,6 +41,9 @@ export const mockProvider: VideoProvider = {
       ? fitDimensions(sourceInfo.width, sourceInfo.height)
       : stillSize(req.aspectRatio);
     const still = await makeStill(req, dimensions);
+    if (req.prompt.includes(MOCK_FAIL_MARKER)) {
+      throw new ProviderHttpError(502, "mock_failure", "模拟失败（提示词含 [fail]）");
+    }
     if (req.mode === "text_to_image") {
       const outRel = "tmp/image.jpg";
       await mediaStore.writeJobFile(req.jobId, outRel, still);
