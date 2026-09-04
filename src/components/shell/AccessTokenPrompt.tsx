@@ -39,35 +39,30 @@ export function AccessTokenPrompt({ onAuthorized }: { onAuthorized: () => void }
   }
 
   return (
-    <div className="auth-prompt" role="dialog" aria-modal="true" aria-labelledby="auth-prompt-title">
-      <div className="auth-prompt__backdrop" aria-hidden="true" />
-      <form className="auth-prompt__card" onSubmit={submit}>
-        <p className="readout text-accent/75">私密会话</p>
-        <h2 id="auth-prompt-title" className="mt-2 text-lg font-medium text-ink">
-          需要访问令牌
-        </h2>
-        <p className="mt-2 text-sm leading-relaxed text-muted">
-          当前实例启用了本地鉴权。令牌只会写入 HttpOnly Cookie，不会显示在页面或日志中。
-        </p>
-        <label className="mt-5 block space-y-2">
-          <span className="readout text-muted">访问令牌</span>
+    <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="auth-prompt-title">
+      <div className="dialog__backdrop" aria-hidden="true" />
+      <form className="dialog__card" onSubmit={submit}>
+        <h2 id="auth-prompt-title">需要访问令牌</h2>
+        <p>当前实例启用了本地鉴权。令牌只会写入 HttpOnly Cookie，不会显示在页面或日志中。</p>
+        <label className="field-label">
+          <span>访问令牌</span>
           <input
             autoFocus
             type="password"
             value={token}
             onChange={(event) => setToken(event.target.value)}
             autoComplete="current-password"
-            className="field px-3.5 py-3 text-sm"
+            className="field"
             aria-describedby={error ? "auth-prompt-error" : undefined}
           />
         </label>
         {error ? (
-          <p id="auth-prompt-error" role="alert" className="mt-3 text-sm text-danger">
+          <p id="auth-prompt-error" role="alert" style={{ color: "var(--color-danger)" }}>
             {error}
           </p>
         ) : null}
-        <button type="submit" disabled={busy} className="btn btn-primary mt-5 min-h-11 w-full px-5 py-2.5 text-sm">
-          {busy ? "验证中…" : "进入工作室"}
+        <button type="submit" disabled={busy} className="btn btn--primary">
+          {busy ? "验证中" : "进入工作室"}
         </button>
       </form>
     </div>

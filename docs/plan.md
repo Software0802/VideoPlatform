@@ -5,7 +5,7 @@
 | 日期 | 2026-08-30 |
 | 基线 | 仓库当前实现(Phase 1 已落地,M2.3 库层已齐,未 git 提交) |
 | 配套文档 | 设计书 `docs/design.md`;审查报告 `docs/review-2026-08-29.md`;历史 Phase 0 设计 `docs/architecture.md` |
-| 状态 | 执行中。下一刀: M2.4(QC + 接入 orchestrator + 放开 30/45/60) |
+| 状态 | 执行中。2026-09-05 完成 Blueprint 首页重建(见 `docs/handoff.md`)。下一刀: M1.1 git 提交 → M2.4(QC + 接入 orchestrator + 放开 30/45/60) |
 
 ---
 
@@ -29,8 +29,8 @@
 | Grok REST client / rest-map / router / mock provider | ✅ 有 golden 测试;源视频禁止 data URI |
 | Job 状态机 / 磁盘 store / in-process runner / 幂等 / sweep | ✅ 含 harness 阶段 `directing…stitching`;boot recover;并发 2 / 队列 20 |
 | HTTP API(uploads 流式 / jobs / cancel / retry / SSE / Range media / health) | ✅ Range suffix、SSE 心跳、uploadId 正则、ACCESS_TOKEN |
-| 工作室 UI(中文表单、每模式控件、mock/live banner、画廊) | ✅ 30/45/60 可见禁用;进度条已预留 harness 中文标签 |
-| 场景层(SceneHost 放映机 skin；warp-field 独立资源) | ✅ 单一 `three@0.185` |
+| 工作室 UI(2026-09-05 Blueprint 单页首页:三条路径、折叠面板、任务读数、成片、画廊、存档、详情) | ✅ 像素级按交接包还原;UI 只暴露 t2v / i2v / t2i,30/45/60 与 r2v / edit / extend 不在 UI 上 |
+| 场景层(纯 three.js `mountReel / mountWall / mountDotField` + `SceneHost`) | ✅ 单一 `three@0.185`,R3F / drei / 图标库已卸载 |
 | Harness 库层 | ✅ Director / keyframe / shot 并行与崩溃恢复 / stitch;orchestrator 恒 throw |
 | Harness 产品化(接 runner、QC、放开长视频) | ⏳ M2.4 |
 | git 提交 | ❌ 仅 `3038174 Initial commit from Create Next App` |
@@ -109,6 +109,7 @@ flowchart LR
 
 ## 6. 下一步(按优先级)
 
+0. **首页收尾(小):** 「video · fast」模型变体需要 API 契约支持才可接入;Playwright 冒烟(空态 / 提交 / 详情)未建;移动端只做了基本折行。详见 `docs/handoff.md`。
 1. **M2.4(产品主线):** QC(时长 ≤0.4s、blackdetect/freezedetect、视觉 rubric)→ 把已有 Director / Keyframe / shot plan / stitch 接入 `harnessOrchestrator.execute` → 读取 `HARNESS_ENABLED` → 放开 30/45/60。Grok-only:用户尾帧用 freeze settle,不调即梦。
 2. **M2.2 收口(随 M2.4):** 角色表 assetId 写入 JobRecord / Identity Bible;`sheetAssetIds` 进入 R2V 参考图。
 3. **M1.1:** 按模块分批 git 提交,避免工作区继续只活在未跟踪文件里。

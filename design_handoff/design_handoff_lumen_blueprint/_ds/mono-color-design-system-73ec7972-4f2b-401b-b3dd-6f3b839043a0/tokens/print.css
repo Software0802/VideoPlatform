@@ -1,0 +1,43 @@
+:root{
+/* ---- halftone plate (pattern from scripts/build_vibe_coding_poster.py) ---- */
+--halftone-cell:24px;
+--halftone-dot-1:4px;
+--halftone-dot-2:2.4px;
+--halftone-dot-3:1.2px;
+--halftone-opacity-1:0.42; /* @kind other */
+--halftone-opacity-2:0.24; /* @kind other */
+--halftone-opacity-3:0.18; /* @kind other */
+
+/* ---- paper noise ---- */
+--paper-noise-frequency:0.72; /* @kind other */
+--paper-noise-octaves:3; /* @kind other */
+--paper-noise-alpha:0.085; /* @kind other */
+
+/* ---- ink wobble (dry-edge / displacement) ---- */
+--ink-wobble-frequency:0.012; /* @kind other */
+--ink-wobble-scale:5; /* @kind other */
+
+/* ---- controlled imperfection ranges (design-system/imperfections.json) ---- */
+--imperfection-ink-density-min:6%;
+--imperfection-ink-density-max:12%;
+--imperfection-dry-edge-min:1%;
+--imperfection-dry-edge-max:4%;
+--imperfection-halftone-drift-min:5%;
+--imperfection-halftone-drift-max:10%;
+--imperfection-registration-min:1mm; /* @kind spacing */
+--imperfection-registration-max:3mm; /* @kind spacing */
+--imperfection-broken-gesture-min:4%;
+--imperfection-broken-gesture-max:12%;
+--imperfection-count-contemporary:2; /* @kind other */
+--imperfection-count-tactile:3; /* @kind other */
+
+/* ---- second-impression ghost used for registration drift ---- */
+--ghost-opacity:0.13; /* @kind other */
+--ghost-offset-x:7px;
+--ghost-offset-y:4px;
+
+/* ---- motion. Printed matter does not animate; UI affordances only. ---- */
+--ease-plate:cubic-bezier(.2,0,.2,1); /* @kind other */
+--dur-fast:90ms; /* @kind other */
+--dur-base:160ms; /* @kind other */
+}

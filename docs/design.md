@@ -118,13 +118,16 @@ data/
 
 `MediaStore` 接口(`storage/types.ts`)由 `LocalFsMediaStore` 实现,id 白名单 `[A-Za-z0-9_-]+`、rel 路径解析后必须落在 jobDir 内;后期 `S3MediaStore` 同接口替换。
 
-## 6. 前端与场景层
+## 6. 前端与场景层(2026-09-05 按 Blueprint 交接包重建为单页首页)
 
-- `StudioShell`(client)持有 job 状态,轮询 + SSE,映射 `SceneProgress { phase: idle|working|done|error, progress }` 给场景层;
-- 场景层 as-built:`scene/SceneHost`(dynamic ssr:false)挂载放映机卷轴、光束与尘埃的 Three.js skin；`src/shaders/warp-field` 保留为独立的可替换 shader 资源，不由工作室 Shell 直接依赖。**修订原 KD 8**:皮肤 registry 未建,当前约定为——场景实现只依赖 three 与自身目录,不 import `studio/`、`@/lib/jobs`;更换皮肤 = 替换 `SceneHost` 所挂载的渲染模块;
-- 单一 `three@0.185`;工作室场景与 warp-field 均不依赖 `three128` 别名;
-- WebGL 失败降级 CSS 暗底,表单/按钮永远在普通 HTML 层,`prefers-reduced-motion` 停动画;
-- 每模式控件矩阵、中文文案沿用 architecture.md §UI(已实现,以代码为准)。
+- 结构:`app/page.tsx`(server,读 `listJobRecords` 前 40 条)→ `components/lumen/LumenHome.tsx`(client,唯一状态所有者)。区块顺序:Hero(放映机线版 + 居中输入框 + 折叠面板 + 任务读数)→ 成片(仅任务完成后)→ 三条路径 → 环形画廊(sticky 240vh)→ 存档网格 → 任务详情(点击后出现)→ Footer。设计系统标记 `SectionRule / RegistrationMark / RuledDataStrip` 在 `components/lumen/marks.tsx`。
+- 设计来源:`design_handoff/design_handoff_lumen_blueprint/`(README 为像素级规格,`Lumen B Blueprint.dc.html` 为主交付);落地摘要见根目录 `DESIGN.md`。视觉语言 Mono-Color:纸 `#F5F1E8`、钴蓝 `#2148B8`、赭红 `#C65F38`,无圆角/阴影/渐变。
+- 路径收窄:UI 只暴露 `text_to_video / image_to_video / text_to_image`(内部 `t2v / i2v / t2i`)。请求体沿用 §4 契约:视频固定 `resolution: 720p`、`generateAudio: true`,时长 4/6/8/10,画幅 16:9 / 9:16 / 1:1;文生图固定 `imageResolution: 1k`;首帧 `startUploadId`、尾帧 `lastUploadId`。`reference_to_video / edit_video / extend_video` 仍保留在 API 与 provider 层。
+- API 边界不变:`lib/client/jobs.ts`(upload / create / cancel / retry / 幂等 key)、`lib/client/useJobLive.ts`(SSE + 2s 轮询)、`lib/client/labels.ts`(状态文案 / 阶段索引 / 计时)。401 由 `LumenHome` 弹 `components/shell/AccessTokenPrompt`。
+- 场景层:`lib/scene/lumen-three.ts` 是纯 three.js(无 R3F)的三个 mount 函数——`mountReel`(转速 = 进度、墨密度 = 状态)、`mountWall`(ring 布局的网点化静帧,滚动 + 拖拽驱动,raycast hover / click)、`mountDotField`(点阵,已移植未挂载)。`components/scene/SceneHost.tsx` 在 `useEffect` 中挂载并 dispose;mount 抛错时静默留白。画廊最多挂最近 12 张,半径 `max(7.2, n×0.9)`。
+- 成片来源:存档与画廊直接用 `JobPublic.output`(视频取 `posterUrl`,图片取 `imageUrl`);无成片时回落 `public/lumina/*.webp` 八张样片并标 `SAMPLE`。
+- 依赖:`three@0.185` 单一版本;`@react-three/fiber`、`@react-three/drei`、`@phosphor-icons/react` 已卸载;字体经 `next/font/google`(Libre Bodoni / Courier Prime / Jost / Noto Sans SC)。
+- `/gallery`、`/jobs/[id]`、`/studio/*` 保留为跳转到 `/`。2026-09-02 的 Agent 会话页(`components/agent/*`)已删除,其决策记录见 `docs/review-2026-09-02.md`。
 
 ## 7. Harness 一致性管线 **[Phase 2 详设 — 产品核心]**
 

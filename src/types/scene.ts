@@ -5,4 +5,3 @@ export type SceneProgress = {
   progress: number;
 };
 
-export type SceneSkinId = string;

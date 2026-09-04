@@ -12,9 +12,6 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // ThreeUI registered source: keep hashes, skip React Compiler ref rules
-    "src/shaders/animated-top-dock/**",
-    "src/shaders/warp-field/**",
     // 本地截图/验证临时目录
     ".tmp/**",
   ]),

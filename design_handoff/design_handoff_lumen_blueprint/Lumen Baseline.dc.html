@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/mono-color-design-system-73ec7972-4f2b-401b-b3dd-6f3b839043a0/tokens/fonts.css">
+  <script src="_ds/mono-color-design-system-73ec7972-4f2b-401b-b3dd-6f3b839043a0/_ds_bundle.js"></script>
+  <style>
+    @font-face{font-family:"ThreeUI Fragment Mono";src:url("assets/fragment-mono.woff2") format("woff2");font-display:swap}
+    html,body{margin:0;min-height:100%;background:oklch(0.16 0.005 80);color:oklch(0.92 0.012 90);font-family:"Geist","Noto Sans SC",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+    a{color:oklch(0.64 0.014 80);text-decoration:none}a:hover{color:oklch(0.79 0.105 78)}
+    input,textarea,select,button{font:inherit}
+    @keyframes pulse-dot{0%,100%{opacity:1;box-shadow:0 0 0 0 oklch(0.79 0.105 78/45%)}50%{opacity:.72;box-shadow:0 0 0 5px oklch(0.79 0.105 78/0%)}}
+    @keyframes monitor-sheen{from{transform:translateX(-120%)}to{transform:translateX(320%)}}
+  </style>
+</helmet>
+<div data-screen-label="Baseline · StudioShell (video)" style="display:flex;min-height:100vh;background:oklch(0.16 0.005 80);isolation:isolate;position:relative">
+  <!-- 场景栏 -->
+  <aside style="position:sticky;top:0;height:100vh;width:40%;min-width:400px;overflow:hidden;background:oklch(0.16 0.005 80);flex:none">
+    <canvas ref="{{ sceneRef }}" style="position:absolute;inset:0;width:100%;height:100%;display:block"></canvas>
+    <div style="pointer-events:none;position:absolute;inset:0;z-index:2;opacity:.25;mix-blend-mode:overlay;background-image:repeating-linear-gradient(0deg,transparent,transparent 2px,oklch(1 0 0/4%) 3px)"></div>
+    <div style="pointer-events:none;position:absolute;inset:0;z-index:2;background:radial-gradient(115% 90% at 50% 45%,transparent 55%,oklch(0.08 0.004 80/68%) 100%)"></div>
+    <div style="position:absolute;left:24px;top:24px;z-index:3;display:flex;align-items:center;gap:10px;color:oklch(0.79 0.105 78/85%)">
+      <span style="display:grid;width:28px;height:28px;place-items:center;border:1px solid oklch(0.79 0.105 78/44%);border-radius:8px;background:oklch(0.79 0.105 78/10%);color:oklch(0.85 0.115 82);box-shadow:0 0 18px oklch(0.79 0.105 78/12%)">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.1"><circle cx="8" cy="8" r="5.5"></circle><path d="M4.5 8h7M8 4.5c1.2 1 1.8 2.2 1.8 3.5S9.2 10.5 8 11.5"></path></svg>
+      </span>
+      <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase">流光 · Lumen</span>
+    </div>
+    <div style="pointer-events:none;position:absolute;right:24px;top:28px;z-index:3;text-align:right">
+      <p style="margin:0;font-family:'ThreeUI Fragment Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.52 0.012 80)">私人放映厅</p>
+      <p style="margin:4px 0 0;font-family:'ThreeUI Fragment Mono',monospace;font-size:10px;letter-spacing:.16em;color:oklch(0.64 0.014 80)">NODE / 01</p>
+    </div>
+    <div style="position:absolute;left:24px;right:24px;bottom:24px;z-index:3;display:flex;align-items:flex-end;justify-content:space-between;gap:16px">
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <p style="margin:0;font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.52 0.012 80)">状态</p>
+        <p style="margin:0;display:flex;align-items:center;gap:8px;font-family:'ThreeUI Fragment Mono',monospace;font-size:14px;letter-spacing:.12em;color:oklch(0.76 0.014 85)">
+          <span style="display:inline-block;width:6px;height:6px;border-radius:999px;background:{{ phaseDot }};animation:{{ phaseAnim }}"></span>{{ phaseLabel }}<span style="color:oklch(0.79 0.105 78)">{{ phasePct }}</span>
+        </p>
+      </div>
+      <p style="margin:0;font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.52 0.012 80)">视频工作室</p>
+    </div>
+  </aside>
+  <!-- 主区 -->
+  <main style="position:relative;z-index:10;min-width:0;flex:1;border-left:1px solid oklch(0.92 0.01 90/10%);overflow:hidden;background:radial-gradient(80% 40% at 80% 0%,oklch(0.79 0.105 78/5%),transparent 70%),linear-gradient(135deg,oklch(0.16 0.005 80),oklch(0.145 0.005 80))">
+    <div style="position:absolute;inset:0;z-index:-1;pointer-events:none;opacity:.2;background-image:linear-gradient(oklch(0.92 0.01 90/3%) 1px,transparent 1px),linear-gradient(90deg,oklch(0.92 0.01 90/3%) 1px,transparent 1px);background-size:48px 48px;mask-image:linear-gradient(to bottom,black,transparent 82%)"></div>
+    <header style="position:relative;min-height:72px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;padding:16px 32px;background:oklch(0.12 0.004 80/58%);backdrop-filter:blur(16px) saturate(90%);box-shadow:0 1px 0 oklch(0.79 0.105 78/13%)">
+      <div style="display:flex;min-width:0;align-items:center;gap:16px">
+        <nav style="display:flex;align-items:center;gap:4px;border-radius:999px;border:1px solid oklch(0.92 0.01 90/10%);background:oklch(0.195 0.006 80/80%);padding:4px;box-shadow:0 8px 24px -18px oklch(0 0 0/90%)">
+          <a href="#" style="display:flex;min-height:44px;align-items:center;border-radius:999px;padding:8px 14px;font-size:13px;color:oklch(0.64 0.014 80)">图像</a>
+          <a href="#" style="display:flex;min-height:44px;align-items:center;border-radius:999px;padding:8px 14px;font-size:13px;background:oklch(0.79 0.105 78);font-weight:500;color:oklch(0.24 0.03 80);box-shadow:0 4px 14px -8px oklch(0.79 0.105 78/80%)">视频</a>
+        </nav>
+        <p style="margin:0;font-size:12px;color:oklch(0.64 0.014 80)">Grok Imagine <span style="color:oklch(0.52 0.012 80)">/</span> 原生能力</p>
+      </div>
+      <div style="display:flex;min-width:0;align-items:center;gap:12px">
+        <a href="#" style="display:flex;min-height:44px;align-items:center;padding:0 8px;font-size:12px;color:oklch(0.64 0.014 80)">画廊</a>
+        <span style="display:inline-flex;min-height:44px;align-items:center;gap:7px;color:oklch(0.76 0.09 160);font-family:'ThreeUI Fragment Mono',monospace;font-size:10px;letter-spacing:.1em"><span style="width:7px;height:7px;border-radius:999px;background:oklch(0.76 0.09 160);box-shadow:0 0 10px oklch(0.76 0.09 160/45%)"></span>健康</span>
+        <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:10px;letter-spacing:.12em;color:oklch(0.52 0.012 80)">会话 / 01</span>
+        <p style="margin:0;display:flex;min-width:0;max-width:360px;align-items:center;gap:8px;border-radius:999px;border:1px solid oklch(0.79 0.105 78/35%);background:oklch(0.79 0.105 78/10%);padding:6px 12px;font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.08em;color:oklch(0.85 0.115 82)"><span style="display:inline-block;width:6px;height:6px;border-radius:999px;background:oklch(0.79 0.105 78)"></span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">模拟模式：未配置 XAI_API_KEY，生成带水印的占位视频</span></p>
+      </div>
+    </header>
+    <div style="padding:0 32px 48px">
+      <section style="position:relative;overflow:hidden;padding:30px 0 4px">
+        <div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:20px">
+          <div style="max-width:576px">
+            <p style="margin:0 0 12px;font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.79 0.105 78/75%)">视频工作室 / 控制台</p>
+            <h1 style="margin:0;font-size:2.35rem;font-weight:500;line-height:1.25;letter-spacing:-.025em;color:oklch(0.92 0.012 90);text-wrap:balance">让画面开始转动</h1>
+            <p style="margin:12px 0 0;max-width:54ch;font-size:14px;line-height:28px;color:oklch(0.64 0.014 80)">写下你想看到的镜头，选择一条生成路径。每一次提交都会留下可回看的片格。</p>
+          </div>
+          <p style="margin:0;max-width:24ch;text-align:right;font-size:12px;line-height:24px;color:oklch(0.52 0.012 80)">参数一屏可达，状态实时回传。<br>画面完成后自动进入画廊。</p>
+        </div>
+        <div style="position:absolute;right:0;bottom:0;width:min(42%,280px);height:1px;background:linear-gradient(90deg,transparent,oklch(0.92 0.01 90/18%))"></div>
+      </section>
+      <div style="display:grid;gap:40px;padding-top:32px;grid-template-columns:minmax(0,1.06fr) minmax(340px,0.94fr)">
+        <!-- GenerateForm -->
+        <form style="display:flex;flex-direction:column;gap:28px" onSubmit="{{ submit }}">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px">
+              <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.64 0.014 80)">生成路径</span>
+              <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:10px;letter-spacing:.12em;color:oklch(0.52 0.012 80)">06 MODES</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+              <sc-for list="{{ modes }}" as="m" hint-placeholder-count="6">
+                <button type="button" onClick="{{ m.pick }}" style="position:relative;overflow:hidden;min-height:74px;border:1px solid {{ m.border }};border-radius:12px;background:{{ m.bg }};text-align:left;padding:12px 14px;cursor:pointer;box-shadow:{{ m.shadow }}">
+                  <span style="display:block;font-size:13px;font-weight:500;color:{{ m.color }}">{{ m.label }}</span>
+                  <span style="display:block;margin-top:2px;font-size:11px;line-height:1.375;color:oklch(0.64 0.014 80)">{{ m.hint }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+          <label style="display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px">
+              <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.64 0.014 80)">提示词</span>
+              <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:10px;letter-spacing:.1em;color:oklch(0.52 0.012 80);font-variant-numeric:tabular-nums">{{ promptCount }} / 2000</span>
+            </div>
+            <div style="border:1px solid oklch(0.92 0.01 90/10%);border-radius:14px;background:oklch(0.12 0.004 80/62%);box-shadow:0 1px 0 oklch(1 0 0/3%) inset,0 18px 44px -22px oklch(0 0 0/80%)">
+              <textarea rows="6" placeholder="雨夜的外滩，一位穿深青色风衣的女人走向江边…" value="{{ prompt }}" onChange="{{ setPrompt }}" style="width:100%;box-sizing:border-box;resize:vertical;padding:16px;font-size:15px;line-height:28px;color:oklch(0.92 0.012 90);background:transparent;border:0;outline:none"></textarea>
+              <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid oklch(0.92 0.01 90/10%);padding:10px 16px">
+                <span style="font-size:12px;color:oklch(0.52 0.012 80)">描述主体、光线、镜头与节奏</span>
+                <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:10px;letter-spacing:.1em;color:oklch(0.64 0.014 80)">MAX 2000 CHARS</span>
+              </div>
+            </div>
+          </label>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.64 0.014 80)">成片时长（秒）</span>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(48px,1fr));gap:1px;overflow:hidden;border-radius:12px;border:1px solid oklch(0.92 0.01 90/10%);background:oklch(0.92 0.01 90/10%)">
+                <sc-for list="{{ durations }}" as="d" hint-placeholder-count="15">
+                  <button type="button" onClick="{{ d.pick }}" style="min-height:44px;padding:10px 12px;font-family:'ThreeUI Fragment Mono',monospace;font-size:13px;letter-spacing:.05em;border:0;cursor:pointer;background:{{ d.bg }};color:{{ d.color }};font-weight:{{ d.weight }}">{{ d.label }}</button>
+                </sc-for>
+                <button type="button" disabled style="min-height:44px;padding:10px 12px;font-family:'ThreeUI Fragment Mono',monospace;font-size:13px;letter-spacing:.05em;border:0;cursor:not-allowed;background:oklch(0.195 0.006 80);color:oklch(0.52 0.012 80);background-image:repeating-linear-gradient(-45deg,transparent 0 5px,oklch(0.92 0.01 90/4%) 5px 7px)">30s <span style="margin-left:6px;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:oklch(0.79 0.105 78/50%)">即将推出</span></button>
+                <button type="button" disabled style="min-height:44px;padding:10px 12px;font-family:'ThreeUI Fragment Mono',monospace;font-size:13px;letter-spacing:.05em;border:0;cursor:not-allowed;background:oklch(0.195 0.006 80);color:oklch(0.52 0.012 80);background-image:repeating-linear-gradient(-45deg,transparent 0 5px,oklch(0.92 0.01 90/4%) 5px 7px)">45s <span style="margin-left:6px;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:oklch(0.79 0.105 78/50%)">即将推出</span></button>
+                <button type="button" disabled style="min-height:44px;padding:10px 12px;font-family:'ThreeUI Fragment Mono',monospace;font-size:13px;letter-spacing:.05em;border:0;cursor:not-allowed;background:oklch(0.195 0.006 80);color:oklch(0.52 0.012 80);background-image:repeating-linear-gradient(-45deg,transparent 0 5px,oklch(0.92 0.01 90/4%) 5px 7px)">60s <span style="margin-left:6px;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:oklch(0.79 0.105 78/50%)">即将推出</span></button>
+              </div>
+              <p style="margin:0;font-size:12px;line-height:1.625;color:oklch(0.64 0.014 80)">30/45/60 秒即将推出 · 由一致性管线拼接</p>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <label style="display:flex;flex-direction:column;gap:10px">
+              <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.64 0.014 80)">画幅</span>
+              <select style="width:100%;border:1px solid oklch(0.92 0.01 90/10%);border-radius:10px;background:oklch(0.13 0.005 80/72%);color:oklch(0.92 0.012 90);padding:10px 34px 10px 14px;font-size:14px;appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23d3ac72' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6.2 8 10l4-3.8'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;background-size:13px"><option>16:9</option><option>9:16</option><option>1:1</option><option>4:3</option><option>3:4</option><option>3:2</option><option>2:3</option></select>
+            </label>
+            <label style="display:flex;flex-direction:column;gap:10px">
+              <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.64 0.014 80)">分辨率</span>
+              <select style="width:100%;border:1px solid oklch(0.92 0.01 90/10%);border-radius:10px;background:oklch(0.13 0.005 80/72%);color:oklch(0.92 0.012 90);padding:10px 34px 10px 14px;font-size:14px;appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23d3ac72' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6.2 8 10l4-3.8'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;background-size:13px"><option>480p</option><option selected>720p</option><option>1080p</option></select>
+            </label>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.64 0.014 80)">尾帧（仅保存，用于后续长视频一致性）</span>
+            <label style="display:flex;align-items:center;gap:12px;width:100%;box-sizing:border-box;min-height:44px;padding:12px 14px;border:1px dashed oklch(0.92 0.01 90/18%);border-radius:12px;background:oklch(0.13 0.005 80/45%);color:oklch(0.64 0.014 80);cursor:pointer">
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="color:oklch(0.52 0.012 80);flex:none"><path d="M8 10.5V3.5M5 6l3-3 3 3"></path><path d="M2.5 10.5v2a1.5 1.5 0 0 0 1.5 1.5h8a1.5 1.5 0 0 0 1.5-1.5v-2"></path></svg>
+              <span style="min-width:0;flex:1;font-size:13px">点击选择，或拖入文件</span>
+            </label>
+            <p style="margin:0;font-size:12px;line-height:1.625;color:oklch(0.64 0.014 80)">Grok 目前不能锁定结束帧。上传后不会让成片停在这张图上。</p>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;border-radius:12px;border:1px solid oklch(0.92 0.01 90/10%);background:oklch(0.195 0.006 80);padding:12px 16px">
+            <span style="font-size:14px;color:oklch(0.76 0.014 85)">生成音轨</span>
+            <button type="button" onClick="{{ toggleAudio }}" style="position:relative;display:inline-flex;flex:none;width:44px;height:28px;box-sizing:border-box;padding:3px;border:1px solid {{ audioBorder }};border-radius:999px;background:{{ audioBg }};cursor:pointer"><span style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:999px;background:{{ audioKnob }};transform:{{ audioKnobX }};transition:transform .2s cubic-bezier(.16,1,.3,1)"></span></button>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid oklch(0.92 0.01 90/10%);padding-top:20px">
+            <p style="margin:0;font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.08em;color:oklch(0.64 0.014 80)">约 <span style="color:oklch(0.79 0.105 78)">{{ estimate }}</span><span style="margin-left:4px;color:oklch(0.52 0.012 80)">（以 xAI 账单为准）</span><span style="margin:0 8px;color:oklch(0.52 0.012 80)">·</span>grok-imagine-video</p>
+            <button type="submit" style="display:inline-flex;min-height:44px;min-width:112px;align-items:center;justify-content:center;border-radius:999px;font-weight:500;padding:12px 28px;font-size:14px;border:1px solid oklch(0.85 0.115 82/40%);background:linear-gradient(180deg,oklch(0.85 0.115 82),oklch(0.79 0.105 78));color:oklch(0.24 0.03 80);box-shadow:0 10px 26px -14px oklch(0.79 0.105 78/65%),inset 0 1px oklch(1 0 0/28%);cursor:pointer">{{ submitLabel }}</button>
+          </div>
+        </form>
+        <!-- 右栏 -->
+        <div style="display:flex;flex-direction:column;gap:32px;position:sticky;top:24px;align-self:start">
+          <section style="position:relative;overflow:hidden;border:1px solid {{ monitorBorder }};border-radius:16px;background:oklch(0.195 0.006 80/80%);box-shadow:0 1px 0 oklch(1 0 0/3%) inset,0 18px 44px -22px oklch(0 0 0/80%);padding:20px;display:flex;flex-direction:column;gap:20px">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
+              <div>
+                <p style="margin:0;font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.79 0.105 78/65%)">当前任务</p>
+                <p style="margin:8px 0 0;display:flex;align-items:center;gap:10px;font-size:14px;font-weight:500"><span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:{{ phaseDot }};animation:{{ phaseAnim }}"></span>{{ jobStatus }}<span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:12px;letter-spacing:.05em;color:oklch(0.64 0.014 80)">{{ jobPct }}%</span></p>
+              </div>
+              <div style="text-align:right">
+                <p style="margin:0;font-family:'ThreeUI Fragment Mono',monospace;font-size:10px;letter-spacing:.12em;color:oklch(0.52 0.012 80)">{{ jobId }}</p>
+                <p style="margin:8px 0 0;font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.64 0.014 80)">{{ elapsed }}</p>
+              </div>
+            </div>
+            <ol style="display:flex;align-items:center;margin:0;padding:0;list-style:none">
+              <sc-for list="{{ stages }}" as="s" hint-placeholder-count="5">
+                <li style="display:flex;flex:{{ s.flex }};align-items:center">
+                  <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+                    <span style="display:block;width:8px;height:8px;box-sizing:border-box;border-radius:999px;border:1px solid {{ s.border }};background:{{ s.bg }}"></span>
+                    <span style="font-family:'ThreeUI Fragment Mono',monospace;font-size:9px;letter-spacing:.12em;color:{{ s.color }}">{{ s.label }}</span>
+                  </div>
+                  <sc-if value="{{ s.line }}" hint-placeholder-val="{{ true }}"><div style="margin:0 6px 16px;height:1px;flex:1;background:{{ s.lineBg }}"></div></sc-if>
+                </li>
+              </sc-for>
+            </ol>
+            <div style="position:relative;height:5px;overflow:hidden;border-radius:999px;background:oklch(0.13 0.005 80)">
+              <div style="position:relative;z-index:1;height:100%;border-radius:999px;background:{{ barBg }};width:{{ barW }};box-shadow:{{ barShadow }};transition:width .5s cubic-bezier(.16,1,.3,1)"></div>
+            </div>
+            <div style="position:relative;overflow:hidden;border:1px solid oklch(0.92 0.01 90/10%);border-radius:12px;background:oklch(0.06 0.004 80)">
+              <img src="assets/lumina/a72d8b509c55bcd0.webp" alt="" style="display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:black">
+              <span style="position:absolute;bottom:12px;left:12px;z-index:1;font-family:'ThreeUI Fragment Mono',monospace;font-size:10px;letter-spacing:.12em;color:oklch(0.76 0.014 85)">成片 / 8s</span>
+            </div>
+          </section>
+          <section>
+            <div style="margin-bottom:16px;display:flex;align-items:baseline;justify-content:space-between">
+              <div>
+                <p style="margin:0;font-family:'ThreeUI Fragment Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:oklch(0.79 0.105 78/65%)">输出画廊</p>
+                <h2 style="margin:4px 0 0;font-size:18px;font-weight:500;color:oklch(0.92 0.012 90)">最近成片</h2>
+              </div>
+              <a href="#" style="font-size:12px;color:oklch(0.64 0.014 80)">查看全部 →</a>
+            </div>
+            <div style="position:relative;padding:10px 0 12px">
+              <div style="position:absolute;left:0;right:0;top:0;height:6px;pointer-events:none;opacity:.7;background:radial-gradient(circle at 50% 50%,oklch(0.16 0.005 80) 0 2px,transparent 2.2px) 0 0/18px 6px repeat-x"></div>
+              <div style="display:flex;gap:12px;overflow-x:auto;padding:4px 2px 8px">
+                <sc-for list="{{ jobs }}" as="j" hint-placeholder-count="4">
+                  <a href="#" style="position:relative;display:block;flex:0 0 220px;overflow:hidden;border:1px solid oklch(0.92 0.01 90/10%);border-radius:10px;background:oklch(0.06 0.004 80)">
+                    <span role="img" aria-label="{{ j.prompt }}" style="display:block;width:100%;aspect-ratio:16/9;background-image:{{ j.bg }};background-size:cover;background-position:center"></span>
+                    <span style="position:absolute;left:10px;top:10px;border-radius:6px;background:rgba(0,0,0,.75);padding:2px 6px;font-family:'ThreeUI Fragment Mono',monospace;font-size:10px;letter-spacing:.1em;color:oklch(0.76 0.014 85)">{{ j.mode }}</span>
+                    <span style="position:absolute;right:10px;top:10px;display:flex;align-items:center;gap:4px;border-radius:6px;background:rgba(0,0,0,.75);padding:2px 6px;font-family:'ThreeUI Fragment Mono',monospace;font-size:10px;letter-spacing:.05em;color:oklch(0.76 0.014 85)"><svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor"><path d="M5 3.5v9l7-4.5z"></path></svg>{{ j.dur }}</span>
+                  </a>
+                </sc-for>
+              </div>
+              <div style="position:absolute;left:0;right:0;bottom:0;height:6px;pointer-events:none;opacity:.7;background:radial-gradient(circle at 50% 50%,oklch(0.16 0.005 80) 0 2px,transparent 2.2px) 0 0/18px 6px repeat-x"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const IMGS = ['a72d8b509c55bcd0','2e9cde0e2fb0803e','a1f3319d0d783e66','f3bfe52263d0656d','d99c0972e1f99b67','a9008119d34b8fc1'].map(n => 'assets/lumina/' + n + '.webp');
+const MODES = [
+  { id: 'text_to_image', label: '文生图', hint: '一张静帧，立刻出' },
+  { id: 'text_to_video', label: '文生视频', hint: '只写提示词' },
+  { id: 'image_to_video', label: '图生视频（首帧）', hint: '首帧图 = 起始画面' },
+  { id: 'reference_to_video', label: '参考生视频', hint: '最多 7 张参考，不锁第一帧' },
+  { id: 'edit_video', label: '编辑视频', hint: '改已有片子 · 源片 ≤ 8.7s' },
+  { id: 'extend_video', label: '延长视频', hint: '从末帧接着演 · 延长 2–10s' },
+];
+const STAGES = ['排队', '提交', '生成', '落盘', '完成'];
+const PROMPTS = ['像素风峡谷日出，河流蜿蜒穿过', '玉米田深处，一个穿银色防护服的人走来', '雨夜的外滩，深青色风衣', '清晨的山谷薄雾', '霓虹街道慢推镜头', '海岸线航拍'];
+class Component extends DCLogic {
+  state = { mode: 'text_to_video', prompt: '', duration: 8, audio: true, phase: 'done', progress: 100, started: Date.now() - 187000, now: Date.now() };
+  componentDidMount() {
+    this.tick = setInterval(() => this.setState({ now: Date.now() }), 1000);
+    import('./lumen-three.js').then((m) => { if (this.sceneRef) this.reel = m.mountReel(this.sceneRef, { style: 'amber' }); this.syncReel(); }).catch(() => {});
+  }
+  componentWillUnmount() { clearInterval(this.tick); clearInterval(this.sim); this.reel?.dispose(); }
+  syncReel() { this.reel?.setProgress({ phase: this.state.phase, progress: this.state.progress }); }
+  submit = (e) => {
+    e.preventDefault(); clearInterval(this.sim);
+    this.setState({ phase: 'working', progress: 0, started: Date.now() }, () => this.syncReel());
+    this.sim = setInterval(() => {
+      const p = Math.min(100, this.state.progress + 2 + Math.random() * 5);
+      this.setState({ progress: p, phase: p >= 100 ? 'done' : 'working' }, () => this.syncReel());
+      if (p >= 100) clearInterval(this.sim);
+    }, 400);
+  };
+  renderVals() {
+    const s = this.state, A = 'oklch(0.79 0.105 78)', L = 'oklch(0.92 0.01 90/10%)';
+    const working = s.phase === 'working', done = s.phase === 'done';
+    const idx = working ? (s.progress < 10 ? 0 : s.progress < 30 ? 1 : s.progress < 90 ? 2 : 3) : done ? 4 : -1;
+    const sec = Math.max(0, Math.floor((s.now - s.started) / 1000));
+    return {
+      sceneRef: (el) => { this.sceneRef = el; },
+      phaseDot: working ? A : done ? 'oklch(0.76 0.09 160)' : 'oklch(0.64 0.014 80)',
+      phaseAnim: working ? 'pulse-dot 1.6s ease-in-out infinite' : 'none',
+      phaseLabel: working ? '渲染中' : done ? '已完成' : '待机', phasePct: working ? ' ' + Math.round(s.progress) + '%' : '',
+      modes: MODES.map((m) => { const a = m.id === s.mode; return { ...m, pick: () => this.setState({ mode: m.id }), border: a ? 'oklch(0.79 0.105 78/62%)' : L, bg: a ? 'oklch(0.79 0.105 78/10%)' : 'oklch(0.195 0.006 80/68%)', color: a ? 'oklch(0.85 0.115 82)' : 'oklch(0.92 0.012 90)', shadow: a ? '0 0 0 3px oklch(0.79 0.105 78/8%)' : 'none' }; }),
+      prompt: s.prompt, setPrompt: (e) => this.setState({ prompt: e.target.value }), promptCount: String(s.prompt.length).padStart(3, '0'),
+      durations: Array.from({ length: 15 }, (_, i) => i + 1).map((n) => { const a = n === s.duration; return { label: n + 's', pick: () => this.setState({ duration: n }), bg: a ? A : 'oklch(0.195 0.006 80)', color: a ? 'oklch(0.24 0.03 80)' : 'oklch(0.64 0.014 80)', weight: a ? 600 : 400 }; }),
+      toggleAudio: () => this.setState({ audio: !s.audio }), audioBorder: s.audio ? 'oklch(0.79 0.105 78/65%)' : 'oklch(0.92 0.01 90/18%)', audioBg: s.audio ? 'oklch(0.79 0.105 78/22%)' : 'oklch(0.13 0.005 80)', audioKnob: s.audio ? 'oklch(0.85 0.115 82)' : 'oklch(0.64 0.014 80)', audioKnobX: s.audio ? 'translateX(16px)' : 'none',
+      estimate: '$' + (s.duration * 0.05).toFixed(2), submitLabel: working ? '提交中…' : '生成', submit: this.submit,
+      monitorBorder: working ? 'oklch(0.79 0.105 78/30%)' : L, jobStatus: working ? (idx === 0 ? '排队中' : idx === 1 ? '提交 Grok' : idx === 2 ? '生成中' : '落盘') : done ? '完成' : '待机', jobPct: Math.round(s.progress), jobId: 'JB7F2A9C', elapsed: String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0'),
+      stages: STAGES.map((label, i) => { const reached = idx >= i, cur = idx === i && working; return { label, flex: i === 4 ? 'none' : '1', border: reached ? A : 'oklch(0.92 0.01 90/18%)', bg: reached ? A : 'transparent', color: reached ? 'oklch(0.76 0.014 85)' : 'oklch(0.52 0.012 80)', line: i < 4, lineBg: idx > i ? 'oklch(0.79 0.105 78/60%)' : L, cur }; }),
+      barBg: done ? 'oklch(0.76 0.09 160)' : A, barW: s.progress + '%', barShadow: done ? 'none' : '0 0 12px oklch(0.79 0.105 78/55%)',
+      currentImg: IMGS[0],
+      jobs: IMGS.map((src, i) => ({ src, bg: 'url(' + src + ')', prompt: PROMPTS[i], mode: i % 3 === 2 ? '图生' : '文生视频', dur: (6 + (i % 3) * 2) + 's' })),
+    };
+  }
+}
+</script>
+</body>
+</html>

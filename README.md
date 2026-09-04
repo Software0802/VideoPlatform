@@ -1,6 +1,8 @@
-# 流光 / 视频工作室
+# 流光 / Lumen — 视频工作室
 
-Web 工作室。当前可演示：文生图、文生视频，以及 Grok 原生图生 / 参考生 / 编辑 / 延长。无上游密钥时走模拟模式。Harness Director 的严格规划模块已落地并可单独验证；完整长视频一致性管线仍未启用。
+单页工作室（Mono-Color 印刷风格首页）：写一句提示词，看放映机转起来。UI 只暴露三条路径——文生视频 / 图生视频 / 文生图；API 与 provider 层仍支持 Grok 原生参考生 / 编辑 / 延长。无上游密钥时走模拟模式。Harness Director 的严格规划模块已落地并可单独验证；完整长视频一致性管线仍未启用。
+
+新会话先读 [`docs/handoff.md`](docs/handoff.md)。
 
 ## 运行
 
@@ -72,7 +74,10 @@ pnpm run smoke:live
 
 ## 文档
 
+- 会话交接（当前状态 / 已完成 / 未完成）：[`docs/handoff.md`](docs/handoff.md)
+- 项目规则：[`AGENTS.md`](AGENTS.md)
 - 当前设计（as-built）：[`docs/design.md`](docs/design.md)
+- UI 设计系统（Blueprint 首页）：[`DESIGN.md`](DESIGN.md)；原始交接包 `design_handoff/design_handoff_lumen_blueprint/`
 - 阶段计划：[`docs/plan.md`](docs/plan.md)
-- 审查报告：[`docs/review-2026-08-29.md`](docs/review-2026-08-29.md)
+- 审查报告：[`docs/review-2026-09-02.md`](docs/review-2026-09-02.md)（架构与 UI 重构）、[`docs/review-2026-08-29.md`](docs/review-2026-08-29.md)
 - Phase 0 历史设计：[`docs/architecture.md`](docs/architecture.md)

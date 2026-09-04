@@ -1,75 +1,72 @@
-# Design
+---
+name: 流光 / Lumen
+description: 一张纸、两种墨的视频工作室首页（Mono-Color Blueprint）。
+colors:
+  paper: "#F5F1E8"
+  cobalt: "#2148B8"
+  terracotta: "#C65F38"
+rounded:
+  all: "0"
+spacing:
+  gutter: "64px"
+  prompt-width: "760px"
+  design-width: "1440px"
+rules:
+  masthead: "4px"
+  frame: "2px"
+  hairline: "1px"
+---
 
-流光（Lumen）视觉系统 —— 「私人放映厅 / 调色棚」。暗场吸光，钨丝灯暖金，chrome 退后，画面是主角。
+# Design System: 流光 / Lumen — Blueprint
 
-## Visual Theme
+来源：`design_handoff/design_handoff_lumen_blueprint/README.md`（主交付 `Lumen B Blueprint.dc.html`）。本文是它在仓库里的落地摘要；尺寸、文案与交互以交接包为准，实现在 `src/components/lumen/LumenHome.tsx` + `src/app/globals.css`。
 
-- **场景**：深夜的调色棚。环境光是屏幕本身；界面像黑色吸光绒布，媒体内容是唯一的光源。
-- **色彩策略**：Restrained —— 暖调中性色（向钨丝灯 hue 80 微倾）+ 单一琥珀强调色（≤10% 面积）。冷钢蓝仅作信息色点缀。
-- **物理隐喻**：放映机（卷轴、光束、尘埃）、胶片（齿孔、片格）、读数屏（mono 字体）。动效有机械重量，不用弹跳。
+## 方向
 
-## Color
+一张 Pale Beige 的纸，钴蓝为主墨（约 80%），赭红为辅墨（选中态、进度、强调）。页面是单页：首屏放映机线版 + 居中输入框，下面依次是三条路径、3D 环形画廊、存档网格、任务详情、Footer。只保留三条生成路径：文生视频 / 图生视频 / 文生图。
 
-全部使用 OKLCH。对比度目标：正文 ≥4.5:1，大字号/图标 ≥3:1。
+放弃的语言：圆角、阴影、渐变、模糊、玻璃、卡片、暗色主题、图标库。
 
-| Token | 值 | 用途 |
+## 颜色
+
+- **Paper** `#F5F1E8` 页面与所有面板底色。
+- **Cobalt** `#2148B8` 文字、规则线、未选中边框、提交按钮填充。
+- **Terracotta** `#C65F38` 选中态、进度条、元信息行、注册标记、hover 目标色。
+- 灰阶只允许通过透明度产生（`opacity: .7` 的键名、30% 的进度底线、45% 的 placeholder）。
+
+## 字体
+
+| 角色 | 真实字体 → 替身（`next/font/google`） | 用法 |
 | --- | --- | --- |
-| `bg` | `oklch(0.160 0.005 80)` | 页面暗场 |
-| `panel` | `oklch(0.195 0.006 80)` | 面板、卡片底 |
-| `raise` | `oklch(0.235 0.008 80)` | 浮起控件、输入框 |
-| `line` | `oklch(0.92 0.01 90 / 10%)` | 发丝分隔线 |
-| `line-strong` | `oklch(0.92 0.01 90 / 18%)` | hover / 强调边 |
-| `ink` | `oklch(0.920 0.012 90)` | 主文字 |
-| `dim` | `oklch(0.760 0.014 85)` | 次要文字 |
-| `muted` | `oklch(0.640 0.014 80)` | 元数据、占位（正文级对比度下限） |
-| `faint` | `oklch(0.520 0.012 80)` | 仅大标签 / 图标 / 装饰 |
-| `accent` | `oklch(0.790 0.105 78)` | 钨丝灯琥珀：主按钮、激活态、进度 |
-| `accent-strong` | `oklch(0.850 0.115 82)` | hover / 高光 |
-| `accent-ink` | `oklch(0.240 0.030 80)` | 琥珀底上的文字 |
-| `ok` | `oklch(0.760 0.090 160)` | 成功 / 已连接 |
-| `danger` | `oklch(0.700 0.150 45)` | 失败 / 错误（暖朱红，不用纯红） |
-| `info` | `oklch(0.720 0.060 230)` | 信息点缀（放映机冷光），慎用 |
+| Display | Bodoni 72 → Libre Bodoni | 72px 标题、40px 品牌与路径标题、44px 百分比、30px 提示词展示；全部 Italic |
+| Mono | Courier New → Courier Prime | 11–13px 大写标签、导航、读数、规则条；tracking 1.2–2px |
+| Sans | Avenir Next → Jost | SectionRule 标题 34px/600 |
+| CJK | PingFang SC → Noto Sans SC | 21px textarea、18/15/14px 正文 |
 
-规则：不用渐变文字；不用装饰性玻璃拟态；琥珀只给"动作"与"状态"，不给背景大面积铺色。
+## 规则线
 
-## Typography
+4px（masthead）、2px（框 / 选中）、1px（分隔）。选中 = 2px 钴蓝或赭红实线或填充；未选 = 1px 钴蓝实线；hover 只改颜色（钴蓝 → 赭红），过渡 160ms。
 
-- **Sans**：`Geist` → `Noto Sans SC` → system。UI 与中文正文。
-- **Mono**：`ThreeUI Fragment Mono`（已内置 woff2）→ `Geist Mono`。只用于读数、标签、元数据、状态码。
-- **尺度**：11 mono 标签 / 12.5 元数据 / 14 次要正文 / 15 正文 / 17 引言 / 20 h3 / 26 h2 / 34 h1；首页品牌字 clamp(40px, 8vw, 88px)。
-- 中文正文行高 1.7，标题 1.25；拉丁标题 letter-spacing ≥ -0.02em；h1–h3 用 `text-wrap: balance`。
-- Mono 标签大写 + tracking 0.12–0.2em，但**一个视图最多一处** eyebrow 式标签。
+## 区块
 
-## Layout
+1. **Hero** `100vh` min 800：全屏 `mountReel`（ink 风格，相机 x −1.3，鼠标微倾斜），header top 32，4px 规则 top 88，标题 left 64 / top 120。输入框 760px 居中（`top:56%`），外框 2px，内部 1px 分隔；折叠面板行 `150px 1fr`；任务读数在框下 16px。
+2. **成片** 任务完成后出现，两列 `1fr 1fr`，右侧 2px 框 + 8px 内衬。
+3. **三条路径** 三列，上边 1px，罗马数字 → Bodoni 标题 → 说明 → 赭红元信息；点击设路径、展开面板、滚回顶部。
+4. **画廊** 外层 `240vh` 内层 sticky `100vh`，`mountWall` ring 布局，58 cells 网点；滚动进度 ×0.5 + 拖拽 Δx/innerWidth×0.6 驱动旋转；hover 变实心，点击进详情。环上最多 12 张，半径 `max(7.2, n×0.9)`。
+5. **存档** 4 列 grid gap 40/24，图片 `grayscale(1) contrast(1.05) mix-blend-mode: screen` 叠在钴蓝底上。
+6. **任务详情** `1.25fr 1fr`，事实表 `140px 1fr`，五阶段圆点，`Reuse ↑` / `Close`。
+7. **Footer** RuledDataStrip：4px 规则 + 四条 mono 文字。
 
-- 工作室：左场景栏 `lg:w-[40%]`（min 400px），右主区单列流；表单与「当前任务 + 画廊」双栏在 `xl` 展开。
-- 内容最大宽：画廊 / 详情 `max-w-6xl` / `max-w-3xl`，居中。
-- 画廊网格：`repeat(auto-fill, minmax(240px, 1fr))`，不打断点。
-- 间距节奏：4 / 8 / 12 / 16 / 24 / 40 / 64；卡片内边距 16–20，区间隔 40+。
-- z-index 语义刻度：`scene 1 → overlay 10 → sticky 20 → dock 30 → modal 40 → toast 50`。
+## 场景与状态
 
-## Components
+- 卷盘转速：working `0.35 + p/100 × 1.9`，done 0.12，error 0.02，idle 0.07；墨线不透明度随 glow 0.22→0.85；穿孔点密度随进度。
+- 状态映射：无任务 idle；活动中 working（progress）；succeeded done；failed/expired/canceled error。
+- `prefers-reduced-motion`：停止旋转与浮动，页面滚动改为即时。
 
-- **按钮**：主按钮 = 琥珀实底 + accent-ink 文字，hover 微升 1px + 增亮；次按钮 = 发丝边 ghost。圆角 pill。禁用 50% 透明。
-- **输入**：raise 底 + line 边，focus 时边转琥珀 60% + 2px 琥珀光晕（不是蓝框）。占位文字用 `muted`。
-- **分段控件**（模式 / 时长）：一条 hairline 轨道，选中格琥珀底 + 深字；禁用格斜纹 + faint。
-- **下拉**：原生 select 样式重写（appearance-none + 琥珀 chevron），不用默认白底。
-- **文件投放区**：虚线 hairline + 上传图标，就绪态变实线 + 文件名 + ✓。
-- **开关**：轨道式 switch，琥珀滑块，不用原生 checkbox。
-- **媒体卡**：海报 16:9 + hairline 边；hover 放大 1.03 + 底部渐变浮出提示词；左上 mono 模式徽章。
-- **阶段时间线**：排队→提交→生成→落盘→完成 五节点，当前节点琥珀脉冲，完成节点实心。
-- **状态芯片**：小圆点 + mono 文字（mock=琥珀 / live=绿 / 错误=朱红）。
-- **胶片条**（首页最近成片）：上下齿孔边（repeating-gradient），横向滚动，hover 抬升。
+## 响应式
 
-## Motion
+桌面优先，设计宽 1440。≤1100px：路径单列、存档两列、成片与详情单列。≤720px：gutter 24px、标题 52px、面板行单列。
 
-- 缓动：`cubic-bezier(0.16, 1, 0.3, 1)`（ease-out-expo）。时长：微交互 140ms / UI 220ms / 场景 480ms。
-- 入场：opacity + translateY(10px)，列表 stagger 40ms；内容默认可见，动画只是增强。
-- Three.js 场景即状态：idle 慢转 + 呼吸光；working 转速随进度上升 + 钨丝光增强；done 一次柔光脉冲；error 光转朱红。
-- `prefers-reduced-motion`：全部动画降级为瞬态 / 交叉淡化；WebGL 场景静止。
+## 可访问性
 
-## Imagery
-
-- 媒体永远带 `bg-black` 底与 hairline 边框，海报未加载时不留白。
-- 颗粒感：页面级 2–4% 胶片噪点（soft-light overlay），场景栏可加扫描线。
-- 图标：1.2px 描边线性图标，圆角接头；不用填充式彩色图标。
+原生 `button / select / textarea / input`；路径 / 时长 / 画幅用 `role="radio"` + `aria-checked`；焦点环 2px 赭红；错误 `role="alert"`。
