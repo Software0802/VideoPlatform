@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import type { AspectRatio, ProviderGenerateRequest } from "@/lib/providers/types";
+import { afterEach, describe, expect, it } from "vitest";
+import type { AspectRatio, ImageResolution, ProviderGenerateRequest } from "@/lib/providers/types";
 import { buildImageRequest, mapAspectToSize, mapQuality, parseImageResponse } from "./rest-map";
 
 function req(over: Partial<ProviderGenerateRequest> = {}): ProviderGenerateRequest {
@@ -12,6 +12,11 @@ function req(over: Partial<ProviderGenerateRequest> = {}): ProviderGenerateReque
     ...over,
   };
 }
+
+afterEach(() => {
+  delete process.env.OPENAI_IMAGE_FLEXIBLE_SIZES;
+  delete process.env.OPENAI_IMAGE_QUALITY;
+});
 
 describe("mapAspectToSize", () => {
   const cases: Array<[AspectRatio | undefined, string, { w: number; h: number } | null]> = [
@@ -42,11 +47,95 @@ describe("mapAspectToSize", () => {
   });
 });
 
+describe("mapAspectToSize with OPENAI_IMAGE_FLEXIBLE_SIZES=1", () => {
+  const cases: Array<[AspectRatio | undefined, ImageResolution | undefined, string]> = [
+    ["1:1", "1k", "1024x1024"],
+    ["1:1", "2k", "2048x2048"],
+    ["16:9", "1k", "1024x576"],
+    ["16:9", "2k", "2048x1152"],
+    ["9:16", "1k", "576x1024"],
+    ["9:16", "2k", "1152x2048"],
+    ["4:3", "1k", "1024x768"],
+    ["4:3", "2k", "2048x1536"],
+    ["3:4", "1k", "768x1024"],
+    ["3:4", "2k", "1536x2048"],
+    ["3:2", "1k", "1008x672"],
+    ["3:2", "2k", "2016x1344"],
+    ["2:3", "1k", "672x1008"],
+    ["2:3", "2k", "1344x2016"],
+    [undefined, "1k", "1024x1024"],
+    [undefined, "2k", "2048x2048"],
+    [undefined, undefined, "1024x1024"],
+    ["16:9", undefined, "1024x576"],
+  ];
+
+  it.each(cases)("maps %s @ %s to %s natively, never cropping", (aspect, res, size) => {
+    process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = "1";
+    expect(mapAspectToSize(aspect, res)).toEqual({ size, crop: null });
+  });
+
+  it("keeps every side a multiple of 16 and the ratio exact", () => {
+    process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = "true";
+    const ratios: Record<AspectRatio, number> = {
+      "1:1": 1,
+      "16:9": 16 / 9,
+      "9:16": 9 / 16,
+      "4:3": 4 / 3,
+      "3:4": 3 / 4,
+      "3:2": 3 / 2,
+      "2:3": 2 / 3,
+    };
+    for (const [aspect, want] of Object.entries(ratios) as Array<[AspectRatio, number]>) {
+      for (const res of ["1k", "2k"] as const) {
+        const [w, h] = mapAspectToSize(aspect, res).size.split("x").map(Number);
+        expect(w % 16).toBe(0);
+        expect(h % 16).toBe(0);
+        expect(w / h).toBeCloseTo(want, 10);
+      }
+    }
+  });
+
+  it("stays on the official three sizes when the flag is absent or off", () => {
+    for (const value of [undefined, "0", "false", "yes"]) {
+      if (value === undefined) delete process.env.OPENAI_IMAGE_FLEXIBLE_SIZES;
+      else process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = value;
+      expect(mapAspectToSize("16:9", "2k")).toEqual({ size: "1536x1024", crop: { w: 1536, h: 864 } });
+    }
+  });
+});
+
 describe("mapQuality", () => {
-  it("treats the 2k chip as the high tier and everything else as low", () => {
+  it("treats the 2k chip as the high tier and everything else as low (official path)", () => {
     expect(mapQuality("2k")).toBe("high");
     expect(mapQuality("1k")).toBe("low");
     expect(mapQuality(undefined)).toBe("low");
+  });
+
+  it("defaults to high on the flexible path, independent of the 1k / 2k chip", () => {
+    process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = "1";
+    expect(mapQuality("1k")).toBe("high");
+    expect(mapQuality("2k")).toBe("high");
+    expect(mapQuality(undefined)).toBe("high");
+  });
+
+  it("honours OPENAI_IMAGE_QUALITY and falls back to high on a bad value", () => {
+    process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = "1";
+    for (const value of ["low", "medium", "high", "auto"]) {
+      process.env.OPENAI_IMAGE_QUALITY = value;
+      expect(mapQuality("1k")).toBe(value);
+    }
+    process.env.OPENAI_IMAGE_QUALITY = " HIGH ";
+    expect(mapQuality("1k")).toBe("high");
+    for (const value of ["ultra", "", "  ", "1"]) {
+      process.env.OPENAI_IMAGE_QUALITY = value;
+      expect(mapQuality("2k")).toBe("high");
+    }
+  });
+
+  it("leaves the official path alone when OPENAI_IMAGE_QUALITY is set", () => {
+    process.env.OPENAI_IMAGE_QUALITY = "medium";
+    expect(mapQuality("1k")).toBe("low");
+    expect(mapQuality("2k")).toBe("high");
   });
 });
 
@@ -98,6 +187,30 @@ describe("buildImageRequest", () => {
 
   it("uses the caller's model name", () => {
     expect(buildImageRequest(req({ model: "gpt-image-1-mini" })).model).toBe("gpt-image-1-mini");
+  });
+
+  it("asks a flexible upstream for the native size and the configured quality", () => {
+    process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = "1";
+    process.env.OPENAI_IMAGE_QUALITY = "medium";
+    expect(buildImageRequest(req({ model: "gpt-image-2", aspectRatio: "4:3", imageResolution: "2k" }))).toEqual({
+      model: "gpt-image-2",
+      prompt: "一只在雨里的橘猫",
+      size: "2048x1536",
+      quality: "medium",
+      n: 1,
+      output_format: "png",
+    });
+  });
+
+  it("always states quality explicitly — an omitted field is billed as medium", () => {
+    for (const flexible of ["1", "0"]) {
+      process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = flexible;
+      for (const res of [undefined, "1k", "2k"] as const) {
+        const body = buildImageRequest(req({ aspectRatio: "1:1", imageResolution: res }));
+        expect(typeof body.quality).toBe("string");
+        expect(body.quality).not.toBe("");
+      }
+    }
   });
 });
 

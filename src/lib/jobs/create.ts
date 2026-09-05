@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { access, cp, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { estimateCostUsd, estimateHarnessCostUsd } from "@/lib/cost";
+import { estimateCostUsd, estimateHarnessCostUsd, type ImagePricingHint } from "@/lib/cost";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { harnessEnabled, maxQueuedJobs, openaiImageModel } from "@/lib/env";
 import {
@@ -21,6 +21,10 @@ import { retryBlock } from "@/lib/jobs/retry-guard";
 import { readJob, tmpDir, toPublic, writeJob } from "@/lib/jobs/store";
 import { isHarnessDuration, isImageMode, modelForMode } from "@/lib/providers/grok/mode-matrix";
 import { assertModeConstraints } from "@/lib/providers/grok/rest-map";
+import {
+  mapAspectToSize as mapOpenaiImageSize,
+  mapQuality as mapOpenaiImageQuality,
+} from "@/lib/providers/openai-image/rest-map";
 import { currentProviderId } from "@/lib/providers/router";
 import { mediaStore } from "@/lib/storage/local-fs";
 
@@ -103,6 +107,15 @@ async function createJobUnlocked(body: CreateJobBody) {
   const id = `job_${randomBytes(6).toString("hex")}`;
   const now = new Date().toISOString();
   const dur = image ? 0 : mode === "edit_video" ? (source?.durationSec ?? 0) : (durationSec ?? 8);
+  // 图片单价看模型名是看不出来的（中转模型不在任何本地表里，会被估成 0）。这里预演一次
+  // provider 待会真正会发的 size / quality，把它交给计价器；grok / mock 图片仍按模型单价。
+  const imagePricing: ImagePricingHint | undefined =
+    image && provider === "openai"
+      ? {
+          size: mapOpenaiImageSize(body.aspectRatio, body.imageResolution ?? "1k").size,
+          quality: mapOpenaiImageQuality(body.imageResolution ?? "1k"),
+        }
+      : undefined;
   const rec: JobRecord = {
     schemaVersion: 1,
     id,
@@ -124,7 +137,7 @@ async function createJobUnlocked(body: CreateJobBody) {
     harness: { enabled: harness },
     costUsdEstimate: harness
       ? estimateHarnessCostUsd(packHarnessDuration(dur as 30 | 45 | 60))
-      : estimateCostUsd(model, dur),
+      : estimateCostUsd(model, dur, imagePricing),
     costUsdActual: null,
     error: null,
     output: null,

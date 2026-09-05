@@ -56,6 +56,41 @@ export function openaiImageModel(): string {
   return process.env.OPENAI_IMAGE_MODEL?.trim() || DEFAULT_OPENAI_IMAGE_MODEL;
 }
 
+export type OpenaiImageQuality = "low" | "medium" | "high" | "auto";
+const OPENAI_IMAGE_QUALITIES: readonly string[] = ["low", "medium", "high", "auto"];
+export const DEFAULT_OPENAI_IMAGE_QUALITY: OpenaiImageQuality = "high";
+
+/**
+ * 上游是否接受任意尺寸。官方 gpt-image-1 只有 1024x1024 / 1536x1024 / 1024x1536 三档，
+ * 兼容 OpenAI Images API 的中转（如 ccgoai）则接受任意 16 的倍数尺寸。
+ * 置 1 / true 时七个画幅全部按原生尺寸出图、不再本地裁切；未设置时保持官方三档 + 居中裁切。
+ */
+export function openaiImageFlexibleSizes(): boolean {
+  const v = process.env.OPENAI_IMAGE_FLEXIBLE_SIZES?.trim();
+  return v === "1" || v === "true";
+}
+
+/**
+ * 生图画质档。请求里不显式带 quality 时上游按 medium 计费，所以每次都必须显式传；
+ * 默认 high（额度在上游侧限制，本地只管出好图），非法值回落 high。
+ * 只在 `OPENAI_IMAGE_FLEXIBLE_SIZES` 打开时生效——官方路径仍按 1k→low / 2k→high 的既有语义。
+ */
+export function openaiImageQuality(): OpenaiImageQuality {
+  const raw = process.env.OPENAI_IMAGE_QUALITY?.trim().toLowerCase();
+  if (!raw) return DEFAULT_OPENAI_IMAGE_QUALITY;
+  return OPENAI_IMAGE_QUALITIES.includes(raw)
+    ? (raw as OpenaiImageQuality)
+    : DEFAULT_OPENAI_IMAGE_QUALITY;
+}
+
+/**
+ * 图片档位价目表的 JSON 原文（quality × 尺寸档）。价目是上游特定的，仓库不预设；
+ * 解析、校验与损坏时的回落都在 `@/lib/cost`，这里只负责把原文取出来。
+ */
+export function openaiImagePriceTableRaw(): string | undefined {
+  return process.env.OPENAI_IMAGE_PRICE_TABLE?.trim() || undefined;
+}
+
 /**
  * gpt-image-1 常要 30–120 秒才返回，远超通用的 `UPSTREAM_TIMEOUT_MS`（默认 30s）。
  * 用通用超时会在图片已经生成、正要返回时 abort，而这一次调用照样计费。

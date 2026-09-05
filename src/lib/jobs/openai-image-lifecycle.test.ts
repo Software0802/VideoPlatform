@@ -55,6 +55,9 @@ beforeAll(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  delete process.env.OPENAI_IMAGE_FLEXIBLE_SIZES;
+  delete process.env.OPENAI_IMAGE_QUALITY;
+  delete process.env.OPENAI_IMAGE_PRICE_TABLE;
 });
 
 afterAll(async () => {
@@ -103,6 +106,53 @@ describe("OpenAI image job lifecycle", () => {
     expect(rawJson).not.toMatch(/b64_json|data:image/);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks a flexible upstream for native pixels and books the tiered price end to end", async () => {
+    process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = "1";
+    process.env.OPENAI_IMAGE_PRICE_TABLE = JSON.stringify({
+      low: { "1K": 0.08, "2K": 0.08, "4K": 0.1 },
+      medium: { "1K": 0.13, "2K": 0.13, "4K": 0.15 },
+      high: { "1K": 0.2, "2K": 0.2, "4K": 0.23 },
+    });
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: [{ b64_json: await pngBody(2048, 1152) }],
+          size: "2048x1152",
+          quality: "high",
+          // A relay forwards an OpenAI-shaped usage block, but it bills per tier — the
+          // table must win over these tokens.
+          usage: { input_tokens: 19, output_tokens: 6208, total_tokens: 6227 },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { job } = await createJob({
+      mode: "text_to_image",
+      prompt: "宽幅海岸线",
+      aspectRatio: "16:9",
+      imageResolution: "2k",
+    } as Parameters<typeof createJob>[0]);
+
+    // Booked at submit from the same size/quality the request will carry — never 0.
+    expect(job.costUsdEstimate).toBe(0.2);
+
+    const settled = await waitForSettled(job.id);
+    expect(settled.status).toBe("succeeded");
+    expect(settled.costUsdActual).toBe(0.2);
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body));
+    expect(body.size).toBe("2048x1152");
+    expect(body.quality).toBe("high");
+
+    // Native size, so nothing is cropped away.
+    const meta = await sharp(
+      await readFile(path.join(dataRoot, "jobs", job.id, "outputs", "image.jpg")),
+    ).metadata();
+    expect({ width: meta.width, height: meta.height }).toEqual({ width: 2048, height: 1152 });
   });
 
   it("does not retry a billed POST when the upstream returns a retryable status", async () => {

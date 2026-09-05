@@ -29,7 +29,29 @@ export async function openaiPost(
     // let the user decide whether to resubmit.
     { timeoutMs: openaiImageTimeoutMs(), maxAttempts: 1 },
   );
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  // Read the body as text first: a base64 image is megabytes, and swallowing a decode
+  // failure into `{}` would surface later as the misleading "上游未返回图片".
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (cause) {
+    throw new ProviderHttpError(
+      502,
+      "upstream_body_read_failed",
+      `读取上游响应失败（HTTP ${res.status}）：${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    if (!res.ok) throw upstreamError(res.status, {});
+    throw new ProviderHttpError(
+      502,
+      "upstream_invalid_json",
+      `上游响应不是 JSON（HTTP ${res.status}，${text.length} 字节）`,
+    );
+  }
   if (!res.ok) {
     throw upstreamError(res.status, data);
   }

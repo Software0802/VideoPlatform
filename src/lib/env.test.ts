@@ -12,7 +12,10 @@ import {
   OFFICIAL_XAI_BASE,
   openaiApiKey,
   openaiBase,
+  openaiImageFlexibleSizes,
   openaiImageModel,
+  openaiImagePriceTableRaw,
+  openaiImageQuality,
   upstreamRetryBaseMs,
   upstreamTimeoutMs,
   xaiBase,
@@ -25,6 +28,9 @@ const KEYS = [
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
   "OPENAI_IMAGE_MODEL",
+  "OPENAI_IMAGE_FLEXIBLE_SIZES",
+  "OPENAI_IMAGE_QUALITY",
+  "OPENAI_IMAGE_PRICE_TABLE",
   "LUMEN_FORCE_MOCK",
   "UPSTREAM_TIMEOUT_MS",
   "UPSTREAM_RETRY_BASE_MS",
@@ -108,6 +114,40 @@ describe("OpenAI image upstream", () => {
 
   it("stays in mock mode when neither upstream has a key", () => {
     expect(isMockMode()).toBe(true);
+  });
+
+  it("keeps flexible sizes off unless explicitly enabled", () => {
+    expect(openaiImageFlexibleSizes()).toBe(false);
+    for (const value of ["0", "false", "yes", "", " "]) {
+      process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = value;
+      expect(openaiImageFlexibleSizes()).toBe(false);
+    }
+    for (const value of ["1", "true", " true "]) {
+      process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = value;
+      expect(openaiImageFlexibleSizes()).toBe(true);
+    }
+  });
+
+  it("defaults the image quality to high and rejects anything off-menu", () => {
+    expect(openaiImageQuality()).toBe("high");
+    for (const value of ["low", "medium", "high", "auto"]) {
+      process.env.OPENAI_IMAGE_QUALITY = value;
+      expect(openaiImageQuality()).toBe(value);
+    }
+    process.env.OPENAI_IMAGE_QUALITY = " Medium ";
+    expect(openaiImageQuality()).toBe("medium");
+    for (const value of ["ultra", "hd", "", "2", "null"]) {
+      process.env.OPENAI_IMAGE_QUALITY = value;
+      expect(openaiImageQuality()).toBe("high");
+    }
+  });
+
+  it("hands the price table through verbatim (parsing lives in cost.ts)", () => {
+    expect(openaiImagePriceTableRaw()).toBeUndefined();
+    process.env.OPENAI_IMAGE_PRICE_TABLE = "   ";
+    expect(openaiImagePriceTableRaw()).toBeUndefined();
+    process.env.OPENAI_IMAGE_PRICE_TABLE = ' {"low":{"1K":0.08}} ';
+    expect(openaiImagePriceTableRaw()).toBe('{"low":{"1K":0.08}}');
   });
 });
 

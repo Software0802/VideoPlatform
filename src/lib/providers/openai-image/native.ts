@@ -34,7 +34,8 @@ export const openaiImageProvider: VideoProvider = {
     if (req.mode !== "text_to_image") {
       throw new ProviderHttpError(400, "unsupported_mode", "OpenAI 生图 provider 只支持文生图");
     }
-    const { size, crop } = mapAspectToSize(req.aspectRatio);
+    // Same two calls `buildImageRequest` makes, so what is billed is what was asked for.
+    const { size, crop } = mapAspectToSize(req.aspectRatio, req.imageResolution);
     const quality = mapQuality(req.imageResolution);
 
     // No business-level retry around this call: gpt-image-1 bills on success, so a second

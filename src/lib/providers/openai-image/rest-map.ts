@@ -1,3 +1,8 @@
+import {
+  openaiImageFlexibleSizes,
+  openaiImageQuality,
+  type OpenaiImageQuality,
+} from "@/lib/env";
 import { ProviderHttpError } from "@/lib/providers/types";
 import type {
   AspectRatio,
@@ -5,22 +10,24 @@ import type {
   ProviderGenerateRequest,
 } from "@/lib/providers/types";
 
-/** The only sizes gpt-image-1 accepts. `auto` is never produced by our mapping. */
-export const OPENAI_SIZES = ["1024x1024", "1536x1024", "1024x1536", "auto"] as const;
-export type OpenAiSize = (typeof OPENAI_SIZES)[number];
+/** The only sizes official gpt-image-1 accepts. `auto` is never produced by our mapping. */
+export const OPENAI_OFFICIAL_SIZES = ["1024x1024", "1536x1024", "1024x1536", "auto"] as const;
+export type OpenAiOfficialSize = (typeof OPENAI_OFFICIAL_SIZES)[number];
+/** Flexible upstreams take any `WxH`; both paths flow through this type. */
+export type OpenAiSize = OpenAiOfficialSize | `${number}x${number}`;
 
-export type OpenAiQuality = "low" | "medium" | "high" | "auto";
+export type OpenAiQuality = OpenaiImageQuality;
 
 /** Pixel box to centre-crop the returned PNG into; `null` means ship it as-is. */
 export type CropTarget = { w: number; h: number } | null;
 
 /**
- * The platform offers seven aspect-ratio chips, OpenAI offers three sizes. Ratios that
- * exist upstream are requested directly; the rest are requested at the nearest wider /
- * taller size and centre-cropped locally (see `crop.ts`), so what the user picked is what
- * the archive stores.
+ * Official path. The platform offers seven aspect-ratio chips, gpt-image-1 offers three sizes.
+ * Ratios that exist upstream are requested directly; the rest are requested at the nearest
+ * wider / taller size and centre-cropped locally (see `crop.ts`), so what the user picked is
+ * what the archive stores.
  */
-const ASPECT_MAP: Record<AspectRatio, { size: OpenAiSize; crop: CropTarget }> = {
+const OFFICIAL_ASPECT_MAP: Record<AspectRatio, { size: OpenAiOfficialSize; crop: CropTarget }> = {
   "1:1": { size: "1024x1024", crop: null },
   "3:2": { size: "1536x1024", crop: null },
   "2:3": { size: "1024x1536", crop: null },
@@ -30,21 +37,54 @@ const ASPECT_MAP: Record<AspectRatio, { size: OpenAiSize; crop: CropTarget }> = 
   "3:4": { size: "1024x1536", crop: { w: 1024, h: 1365 } },
 };
 
-const DEFAULT_MAPPING = { size: "1024x1024", crop: null } as const;
+/**
+ * Flexible path (`OPENAI_IMAGE_FLEXIBLE_SIZES=1`). An upstream that honours an arbitrary `size`
+ * can render every chip natively, so nothing is cropped away and no pixels are paid for twice.
+ * Every side is a multiple of 16 (an upstream requirement) and every pair is the exact ratio.
+ * Here the 1k / 2k chip finally means what it says — a pixel tier, not a quality tier.
+ */
+const FLEXIBLE_ASPECT_MAP: Record<AspectRatio, Record<ImageResolution, OpenAiSize>> = {
+  "1:1": { "1k": "1024x1024", "2k": "2048x2048" },
+  "16:9": { "1k": "1024x576", "2k": "2048x1152" },
+  "9:16": { "1k": "576x1024", "2k": "1152x2048" },
+  "4:3": { "1k": "1024x768", "2k": "2048x1536" },
+  "3:4": { "1k": "768x1024", "2k": "1536x2048" },
+  "3:2": { "1k": "1008x672", "2k": "2016x1344" },
+  "2:3": { "1k": "672x1008", "2k": "1344x2016" },
+};
 
-export function mapAspectToSize(aspectRatio?: AspectRatio): { size: OpenAiSize; crop: CropTarget } {
+const DEFAULT_MAPPING = { size: "1024x1024", crop: null } as const;
+const DEFAULT_FLEXIBLE_ASPECT: AspectRatio = "1:1";
+
+/**
+ * Which pixels to ask for, and what to trim locally afterwards. `imageResolution` only
+ * participates on the flexible path; on the official path it still buys a quality tier
+ * (see `mapQuality`) because the three fixed sizes cannot grow.
+ */
+export function mapAspectToSize(
+  aspectRatio?: AspectRatio,
+  imageResolution?: ImageResolution,
+): { size: OpenAiSize; crop: CropTarget } {
+  if (openaiImageFlexibleSizes()) {
+    const row = (aspectRatio && FLEXIBLE_ASPECT_MAP[aspectRatio]) || FLEXIBLE_ASPECT_MAP[DEFAULT_FLEXIBLE_ASPECT];
+    return { size: row[imageResolution === "2k" ? "2k" : "1k"], crop: null };
+  }
   if (!aspectRatio) return { ...DEFAULT_MAPPING };
-  const hit = ASPECT_MAP[aspectRatio];
+  const hit = OFFICIAL_ASPECT_MAP[aspectRatio];
   if (!hit) return { ...DEFAULT_MAPPING };
   return { size: hit.size, crop: hit.crop ? { ...hit.crop } : null };
 }
 
 /**
- * The platform's `imageResolution` chip (1k / 2k) becomes a *quality tier* on OpenAI, not a
- * pixel size: gpt-image-1 only ships three fixed sizes, so 2k cannot buy more pixels — it buys
- * the `high` rendering tier (more output tokens, more detail) at the same 1024/1536 geometry.
+ * Official path: the platform's `imageResolution` chip (1k / 2k) becomes a *quality tier*, not a
+ * pixel size — gpt-image-1 only ships three fixed sizes, so 2k cannot buy more pixels; it buys
+ * the `high` rendering tier at the same 1024/1536 geometry.
+ *
+ * Flexible path: the chip already bought the pixels, so quality is a separate operator dial
+ * (`OPENAI_IMAGE_QUALITY`, default `high`).
  */
-export function mapQuality(imageResolution?: ImageResolution): "low" | "high" {
+export function mapQuality(imageResolution?: ImageResolution): OpenAiQuality {
+  if (openaiImageFlexibleSizes()) return openaiImageQuality();
   return imageResolution === "2k" ? "high" : "low";
 }
 
@@ -52,10 +92,10 @@ export function mapQuality(imageResolution?: ImageResolution): "low" | "high" {
  * Body for `POST /v1/images/generations`. The prompt is forwarded verbatim — no appended
  * style words, no rewriting, no translation: the operator's console text is the contract.
  * `output_format: png` keeps the upstream frame lossless; the JPEG conversion happens locally
- * after cropping.
+ * after cropping. `quality` is always sent explicitly: an omitted field is billed as `medium`.
  */
 export function buildImageRequest(req: ProviderGenerateRequest): Record<string, unknown> {
-  const { size } = mapAspectToSize(req.aspectRatio);
+  const { size } = mapAspectToSize(req.aspectRatio, req.imageResolution);
   return {
     model: req.model,
     prompt: req.prompt,

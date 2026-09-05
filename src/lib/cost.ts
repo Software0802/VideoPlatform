@@ -1,3 +1,6 @@
+import { openaiImagePriceTableRaw } from "@/lib/env";
+import { log } from "@/lib/log";
+
 export const RATE_USD_PER_SEC = {
   "grok-imagine-video-1.5": 0.08,
   "grok-imagine-video": 0.05,
@@ -6,10 +9,10 @@ export const RATE_USD_PER_SEC = {
 export const RATE_USD_PER_IMAGE = {
   "grok-imagine-image-2.0": 0.02,
   /**
-   * Submit-time estimate only. gpt-image-1's real charge depends on quality and size
-   * ($0.011 – $0.25, see OPENAI_IMAGE_LIST_PRICE_USD) and `estimateCostUsd(model, duration)`
-   * cannot see either, so the cheapest tier is booked as a lower bound and the provider
-   * overwrites it with the usage-based figure once the image comes back.
+   * Submit-time lower bound only. gpt-image-1's real charge depends on quality and size
+   * ($0.011 – $0.25, see OPENAI_IMAGE_LIST_PRICE_USD); the cheapest tier is booked here and
+   * the provider overwrites it with the usage-based figure once the image comes back.
+   * 只在既没有档表、`estimateCostUsd` 又拿不到更准的 size/quality 时才落到这一条。
    * 未经真实账单核实的列表价占位。
    */
   "gpt-image-1": 0.011,
@@ -31,24 +34,123 @@ export const OPENAI_IMAGE_LIST_PRICE_USD: Record<string, number> = {
   "high:1024x1536": 0.25,
 };
 
+export const IMAGE_SIZE_TIERS = ["1K", "2K", "4K"] as const;
+export type ImageSizeTier = (typeof IMAGE_SIZE_TIERS)[number];
+/** quality → 尺寸档 → 单价。价目是上游特定的，只来自 `OPENAI_IMAGE_PRICE_TABLE`。 */
+export type ImagePriceTable = Record<string, Partial<Record<ImageSizeTier, number>>>;
+
 /**
- * What one gpt-image-1 call cost. `outputTokens` from the response is authoritative; the table
- * is the fallback, and an unknown size falls back to the priciest tier of its quality so a call
- * is never booked cheaper than it can actually be.
+ * 提交时无法定价的图片模型的保守占位（既不是 0——那会让配额完全看不见这次调用——
+ * 也不当成真实账单）。真实金额在 provider 返回后由 `estimateOpenaiImageCostUsd` 覆盖。
+ * 未经真实账单核实的占位。
+ */
+export const UNKNOWN_IMAGE_ESTIMATE_USD = 0.02;
+
+/**
+ * 按最长边归档：≤1024 → 1K，≤2048 → 2K，更大 → 4K。中转站按「质量档 × 尺寸档 × 张数」
+ * 计费，不按 token。`auto` 由上游选尺寸，本地看不见，按 2K 记（1K 与 2K 常同价，且不低估）。
+ * 无法解析的尺寸同样按 2K 记，宁可高估也不把一次调用记成最便宜的一档。
+ */
+export function imageSizeTier(size: string): ImageSizeTier {
+  const m = /^(\d+)\s*x\s*(\d+)$/i.exec(String(size ?? "").trim());
+  if (!m) return "2K";
+  const longest = Math.max(Number(m[1]), Number(m[2]));
+  if (!Number.isFinite(longest) || longest <= 0) return "2K";
+  if (longest <= 1024) return "1K";
+  if (longest <= 2048) return "2K";
+  return "4K";
+}
+
+/**
+ * `OPENAI_IMAGE_PRICE_TABLE` 的解析结果，未设置或坏掉时为 null（调用方回落到 token 口径）。
+ *
+ * ⚠️ 单位随上游而定：中转站（如 ccgoai）扣的是**人民币额度**，不是美元。表一旦配置，
+ * `costUsdEstimate` / `costUsdActual` 里的数字就是「上游额度」而非 USD——做配额时别当美元读。
+ */
+export function openaiImagePriceTable(): ImagePriceTable | null {
+  const raw = openaiImagePriceTableRaw();
+  if (!raw) return null;
+  if (priceTableCache?.raw === raw) return priceTableCache.table;
+  const table = parsePriceTable(raw);
+  if (!table) {
+    // 一张坏 JSON 不能打挂生图：记一条并回落到 token 口径。
+    log("warn", "OPENAI_IMAGE_PRICE_TABLE 无法解析，图片计价回落到 token 口径", {
+      length: raw.length,
+    });
+  }
+  priceTableCache = { raw, table };
+  return table;
+}
+
+let priceTableCache: { raw: string; table: ImagePriceTable | null } | null = null;
+
+function parsePriceTable(raw: string): ImagePriceTable | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const out: ImagePriceTable = {};
+  let usable = false;
+  for (const [quality, tiers] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!tiers || typeof tiers !== "object" || Array.isArray(tiers)) continue;
+    const row: Partial<Record<ImageSizeTier, number>> = {};
+    for (const tier of IMAGE_SIZE_TIERS) {
+      const value = (tiers as Record<string, unknown>)[tier];
+      if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+        row[tier] = value;
+        usable = true;
+      }
+    }
+    if (Object.keys(row).length) out[quality.trim().toLowerCase()] = row;
+  }
+  return usable ? out : null;
+}
+
+/**
+ * 档表命中价。缺这一档（画质名对不上，或这一档没配）时取同尺寸档里最贵的一条，
+ * 免得把一次调用记得比它可能的花费更便宜；整张表都没有这一档才返回 null。
+ */
+function priceFromTable(table: ImagePriceTable, quality: string, tier: ImageSizeTier): number | null {
+  const direct = table[String(quality ?? "").trim().toLowerCase()]?.[tier];
+  if (direct != null) return direct;
+  const candidates = Object.values(table)
+    .map((row) => row[tier])
+    .filter((n): n is number => typeof n === "number");
+  return candidates.length ? Math.max(...candidates) : null;
+}
+
+/**
+ * What one image call cost.
+ *
+ * 配置了 `OPENAI_IMAGE_PRICE_TABLE`（中转站按档计费）时档表说了算，token 精算不参与——
+ * 中转站根本不按 token 计费，`usage` 只是它转发的形状。未配置时保持官方口径：
+ * `outputTokens` 优先，其次列表价表，未知尺寸落到该画质最贵的一档。
  */
 export function estimateOpenaiImageCostUsd(opts: {
   size: string;
   quality: string;
   outputTokens?: number;
 }): number {
+  const table = openaiImagePriceTable();
+  if (table) {
+    const tiered = priceFromTable(table, opts.quality, imageSizeTier(opts.size));
+    if (tiered != null) return roundMicro(tiered);
+  }
   const tokens = opts.outputTokens;
   if (tokens != null && Number.isFinite(tokens) && tokens > 0) {
     // Cent rounding would erase a $0.011 image; keep micro-dollars like the LLM ledger.
-    return Math.round(((tokens * OPENAI_IMAGE_RATE_USD_PER_MTOKEN_OUTPUT) / 1_000_000) * 1e6) / 1e6;
+    return roundMicro((tokens * OPENAI_IMAGE_RATE_USD_PER_MTOKEN_OUTPUT) / 1_000_000);
   }
   const listed = OPENAI_IMAGE_LIST_PRICE_USD[`${opts.quality}:${opts.size}`];
   if (listed != null) return listed;
   return opts.quality === "low" ? 0.016 : 0.25;
+}
+
+function roundMicro(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
 }
 
 /**
@@ -95,15 +197,52 @@ export function estimateLlmCostUsd(
 
 const TICKS_PER_USD = 10_000_000_000;
 
-export function estimateCostUsd(model: string, durationSec: number): number {
-  if (model in RATE_USD_PER_IMAGE) {
-    return RATE_USD_PER_IMAGE[model as keyof typeof RATE_USD_PER_IMAGE];
+/**
+ * 提交时已知的图片请求形状。模型名单独看不出单价（`gpt-image-2` 之类的中转模型根本不在
+ * 任何本地表里），把即将发出的 size / quality 一起带上，估算才不会退化成 0。
+ */
+export type ImagePricingHint = { size: string; quality: string };
+
+/**
+ * 没有 hint 时的兜底判据：一个不在 `RATE_USD_PER_IMAGE` 里的图片模型（`gpt-image-2` 之类的
+ * 中转模型）否则会掉进按秒的视频分支，被 durationSec=0 记成 0。
+ * 视频模型名不含 "image"（`grok-imagine-*` 是 imagine，不匹配）。
+ */
+const IMAGE_MODEL_RE = /image/i;
+
+export function estimateCostUsd(
+  model: string,
+  durationSec: number,
+  image?: ImagePricingHint,
+): number {
+  if (image || model in RATE_USD_PER_IMAGE || IMAGE_MODEL_RE.test(model)) {
+    return estimateImageSubmitCostUsd(model, image);
   }
   const rate =
     model in RATE_USD_PER_SEC
       ? RATE_USD_PER_SEC[model as keyof typeof RATE_USD_PER_SEC]
       : RATE_USD_PER_SEC["grok-imagine-video-1.5"];
   return roundUsd(rate * durationSec);
+}
+
+/**
+ * 提交时的图片成本下限，按可得信息逐级回落：
+ * 档表（若配置）→ 该模型的本地单价 → 官方列表价 → 明确标注的保守占位。
+ * 绝不返回 0：`costUsdEstimate === 0` 会让配额与账目完全看不见这次调用。
+ */
+function estimateImageSubmitCostUsd(model: string, image?: ImagePricingHint): number {
+  if (image) {
+    const table = openaiImagePriceTable();
+    const tiered = table ? priceFromTable(table, image.quality, imageSizeTier(image.size)) : null;
+    if (tiered != null) return roundMicro(tiered);
+  }
+  const known = RATE_USD_PER_IMAGE[model as keyof typeof RATE_USD_PER_IMAGE];
+  if (known != null) return known;
+  if (image) {
+    const listed = OPENAI_IMAGE_LIST_PRICE_USD[`${image.quality}:${image.size}`];
+    if (listed != null) return listed;
+  }
+  return UNKNOWN_IMAGE_ESTIMATE_USD;
 }
 
 export type HarnessClip = Readonly<{
