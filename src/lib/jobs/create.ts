@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { cp, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { estimateCostUsd } from "@/lib/cost";
-import { maxQueuedJobs } from "@/lib/env";
+import { estimateCostUsd, estimateHarnessCostUsd } from "@/lib/cost";
+import { packHarnessDuration } from "@/lib/harness/pack-duration";
+import { harnessEnabled, maxQueuedJobs } from "@/lib/env";
 import {
   UPLOAD_ID_RE,
   type CreateJobBody,
@@ -16,7 +17,7 @@ import { lookupIdempotency, saveIdempotency } from "@/lib/jobs/idempotency";
 import { activeCount, enqueue } from "@/lib/jobs/runner";
 import { assertCreateJobFields } from "@/lib/jobs/request-validation";
 import { readJob, tmpDir, toPublic, writeJob } from "@/lib/jobs/store";
-import { isImageMode, modelForMode } from "@/lib/providers/grok/mode-matrix";
+import { isHarnessDuration, isImageMode, modelForMode } from "@/lib/providers/grok/mode-matrix";
 import { assertModeConstraints } from "@/lib/providers/grok/rest-map";
 import { currentProviderId } from "@/lib/providers/router";
 import { mediaStore } from "@/lib/storage/local-fs";
@@ -48,8 +49,14 @@ async function createJobUnlocked(body: CreateJobBody) {
     : mode === "edit_video"
       ? undefined
       : (body.durationSec ?? (mode === "extend_video" ? 6 : 8));
-  if (durationSec === 30 || durationSec === 45 || durationSec === 60) {
-    throw new ProviderHttpError(400, "harness_duration", "长视频将由一致性管线提供，尚未开放");
+  const harness = !image && mode !== "edit_video" && isHarnessDuration(durationSec);
+  if (harness) {
+    if (!harnessEnabled()) {
+      throw new ProviderHttpError(400, "harness_duration", "长视频将由一致性管线提供，尚未开放");
+    }
+    if (mode !== "text_to_video" && mode !== "image_to_video") {
+      throw new ProviderHttpError(400, "invalid_argument", "30 / 45 / 60 秒长片仅支持文生视频与图生视频");
+    }
   }
 
   const start = body.startUploadId ? await loadSidecar(body.startUploadId, "start") : undefined;
@@ -77,8 +84,9 @@ async function createJobUnlocked(body: CreateJobBody) {
     mode,
     prompt: body.prompt,
     model,
+    // Harness jobs never send 30/45/60 upstream; validate the other fields with a legal clip length.
     durationSec:
-      mode === "edit_video" || image ? body.durationSec : (body.durationSec ?? durationSec),
+      mode === "edit_video" || image ? body.durationSec : harness ? 15 : (body.durationSec ?? durationSec),
     aspectRatio: body.aspectRatio,
     resolution: body.resolution,
     imageResolution: image ? (body.imageResolution ?? "1k") : undefined,
@@ -110,8 +118,10 @@ async function createJobUnlocked(body: CreateJobBody) {
     generateAudio: image ? false : (body.generateAudio ?? true),
     lastFrameStored: Boolean(last),
     lastFrameLocksOutput: false,
-    harness: { enabled: false },
-    costUsdEstimate: estimateCostUsd(model, dur),
+    harness: { enabled: harness },
+    costUsdEstimate: harness
+      ? estimateHarnessCostUsd(packHarnessDuration(dur as 30 | 45 | 60))
+      : estimateCostUsd(model, dur),
     costUsdActual: null,
     error: null,
     output: null,
@@ -178,7 +188,7 @@ async function retryJobUnlocked(source: JobRecord): Promise<JobPublic> {
     generateAudio: source.generateAudio,
     lastFrameStored: source.lastFrameStored,
     lastFrameLocksOutput: false,
-    harness: { enabled: false },
+    harness: { enabled: Boolean(source.harness?.enabled) },
     costUsdEstimate: source.costUsdEstimate,
     costUsdActual: null,
     error: null,

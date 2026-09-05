@@ -15,7 +15,7 @@ let updateHarnessShot: (
   to: HarnessShotStatus,
   patch?: ShotPatch,
 ) => Promise<JobRecord>;
-let toPublic: (record: JobRecord) => { shots: unknown };
+let toPublic: (record: JobRecord) => { shots: unknown; bible: unknown };
 let dataRoot = "";
 let writeJob: (record: JobRecord) => Promise<JobRecord>;
 let readJob: (id: string) => Promise<JobRecord | null>;
@@ -112,7 +112,7 @@ afterAll(async () => {
 });
 
 describe("harness state persistence", () => {
-  it("persists a plan and shot records without changing the phase-1 public DTO", async () => {
+  it("persists a plan and shot records and exposes only a shot summary publicly", async () => {
     const id = "job_harness_state_plan";
     await writeJob(baseRecord(id));
     await saveHarnessPlan(id, plan);
@@ -123,7 +123,12 @@ describe("harness state persistence", () => {
       expect.objectContaining({ id: "shot_0", status: "queued", retries: 0, costUsd: 0 }),
       expect.objectContaining({ id: "shot_1", status: "queued", retries: 0, costUsd: 0 }),
     ]);
-    expect(toPublic(disk!).shots).toBeNull();
+    const pub = toPublic(disk!);
+    expect(pub.bible).toBeNull();
+    expect(pub.shots).toEqual([
+      { id: "shot_0", index: 0, durationSec: 15, status: "queued", retries: 0, error: null },
+      { id: "shot_1", index: 1, durationSec: 15, status: "queued", retries: 0, error: null },
+    ]);
     const raw = await readFile(path.join(dataRoot, "jobs", id, "job.json"), "utf8");
     expect(JSON.parse(raw).harnessPlan.targetDurationSec).toBe(30);
   });

@@ -34,6 +34,23 @@ export async function runFfmpeg(args: string[]): Promise<void> {
   });
 }
 
+/** Run ffmpeg and return its stderr (filters like blackdetect report there). */
+export async function runFfmpegCapture(args: string[]): Promise<string> {
+  const bin = await assertFfmpeg();
+  return new Promise<string>((resolve, reject) => {
+    const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let err = "";
+    child.stderr.on("data", (c) => {
+      err += String(c);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve(err);
+      else reject(new Error(`ffmpeg exited ${code}: ${err.slice(-800)}`));
+    });
+  });
+}
+
 export async function probeDurationSec(file: string): Promise<{
   durationSec: number;
   width: number;

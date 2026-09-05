@@ -7,7 +7,7 @@
 | 配套 | 计划书 `docs/plan.md`;审查报告 `docs/review-2026-08-29.md` |
 | 环境 | Windows / PowerShell,`D:\dev\repos\VideoPlatFrom`,Next.js 16.3.3,pnpm 10.33 |
 
-约定:审查报告 C1–C10 / M1.6 已按本文目标行为落地。标注 **[Phase 2]** 的是 harness 详设；当前已落地 Director、成本、Keyframe 基础能力、shot 并行/恢复与 stitch 库，但完整 orchestrator 仍保持恒 throw 桩。
+约定:审查报告 C1–C10 / M1.6 已按本文目标行为落地。标注 **[Phase 2]** 的是 harness 详设；2026-09-05（M2.4）起 orchestrator 已接入 JobRunner，由 `HARNESS_ENABLED` 开关。
 
 ---
 
@@ -28,7 +28,7 @@ flowchart TB
     Router["ProviderRouter(mock ↔ grok)"]
     Grok["GrokNativeProvider"]
     Mock["MockProvider(ffmpeg 水印片)"]
-    Harness["HarnessOrchestrator(恒 throw,Phase 2 实现)"]
+    Harness["HarnessOrchestrator(HARNESS_ENABLED 开关)"]
     FS["LocalFsMediaStore data/"]
   end
   subgraph upstream [上游]
@@ -67,7 +67,7 @@ flowchart TB
 | `edit_video` | `grok-imagine-video`(1.0) | `POST /videos/edits` | 源视频必填,≤8.7s(create 时按 sidecar 校验);禁 duration/aspect/resolution |
 | `extend_video` | 1.0 | `POST /videos/extensions` | 源视频 2–15s;`duration`=延长段 2–10(默认 6);禁 aspect/resolution |
 
-- 30/45/60 一律 400「长视频将由一致性管线提供,尚未开放」;UI 可见禁用。
+- 30/45/60:`HARNESS_ENABLED` 未开启时 400「长视频将由一致性管线提供,尚未开放」;开启后仅 t2v / i2v 可提交,任务走 §7 管线,**这三个时长永不进入 Grok 请求体**(rest-map 仍拒绝,golden 保障)。
 - 尾帧(`last`)只存 `inputs/last.jpg`,**永不进入任何 Grok body**(golden test 保障);`lastFrameLocksOutput: false` 字面量。
 - 所有 live 请求附 `storage_options: { filename: "{jobId}.{jpg|mp4}" }` 作 Files 备份;poll/响应解析 `file_output.file_id`。
 - 图片/参考图经 sharp 压缩(≤256KB、最长边 1280)后以 data URI 发送;源视频 submit 时 `POST /v1/files` 得 `file_id`。Files 失败即 fail job,禁止源视频 data URI 兜底。
@@ -76,13 +76,13 @@ flowchart TB
 
 ## 3. Job 生命周期
 
-状态:`queued → submitting → pending → persisting → succeeded`,终态另有 `failed | expired | canceled`。t2i 同步返回,submit 后直接 `persisting`。
+状态:`queued → submitting → pending → persisting → succeeded`,终态另有 `failed | expired | canceled`。t2i 同步返回,submit 后直接 `persisting`。长片(30/45/60)走 `queued → directing → keyframing → generating_shots → qc → stitching → persisting → succeeded`,由 orchestrator 推进,runner 只接手最后的 persisting。
 
 - 每次状态转换先写 `data/jobs/{id}/job.json` 再发 SSE 事件;**轮询 `GET /api/jobs/:id` 是真相,SSE 尽力而为**。
 - 轮询间隔 2s;单 job 15min 超时;`service_unavailable/internal_error` 指数退避重试 ≤2 次,`invalid_argument` 不重试。
 - cancel:queued 直接终态;submitting/pending/persisting 标记后停 poll;取消后即使上游 done 也不得写 `outputs/`(下载进 tmp,确认状态后 rename);已有 `xaiFileId` 则尽力 DELETE。
 - retry:仅 `failed|expired`,**新建 job** 复制 inputs 与参数,原 job 不变。
-- boot recover(`instrumentation.register` → `startJobRunner`,幂等):`submitting` 无 remoteId → 回 queued;`submitting` 有 remoteId → 改 pending 续跑;`pending/persisting` 续跑;超 15min 的 **submitting/pending/persisting** 标 expired;`queued` 一律重新入队,不因排队久而失败。
+- boot recover(`instrumentation.register` → `startJobRunner`,幂等):`submitting` 无 remoteId → 回 queued;`submitting` 有 remoteId → 改 pending 续跑;`pending/persisting` 续跑;超 15min 的 **submitting/pending/persisting/harness 各阶段** 标 expired;`queued` 一律重新入队,不因排队久而失败。harness 阶段的任务由 pump 重新交给 `orchestrator.execute`,它按 job.json 里的 plan / shot 记录续跑(shot 级 recover 见 §7.2)。
 - 并发 `JOB_CONCURRENCY=2`;活跃(queued+submitting+pending+persisting)≥ `MAX_QUEUED_JOBS=20` 时 `POST /api/jobs` 429。
 - `sweepTmp`:boot + 每小时(timer `.unref()`),删 24h 前的 tmp 字节与 sidecar。
 
@@ -111,6 +111,8 @@ data/
     job.json            # JobRecord(JobPublic + schemaVersion/remoteId/assets/...)
     inputs/  start.jpg last.jpg source.mp4 ref-0..6.jpg
     outputs/ video.mp4 poster.jpg | image.jpg
+    inputs/sheets/character-N.jpg          # harness 角色表(仅 R2V shot 需要)
+    shots/{index}/video.mp4 tail.jpg        # harness 每镜成片与 tail-chain 抽取帧
     logs.jsonl
   tmp/{uploadId} + {uploadId}.json     # 24h TTL
   idempotency/{sha256}.json
@@ -131,9 +133,9 @@ data/
 
 ## 7. Harness 一致性管线 **[Phase 2 详设 — 产品核心]**
 
-- `Harness Director`：`src/lib/harness/director.ts` 使用 `grok-4.6` Chat Completions + 严格 JSON Schema，解析 `IdentityBible`、shots、packing 和 stitch；格式校验失败最多重试 2 次。默认走 `XAI_BASE_URL`，因此可用本地 Sub2API；当前不会被 JobRunner 调用。
-- Harness 当前仍保持关闭：`orchestrator.execute` 恒抛，30/45/60 仍由 API 拒绝，避免半成品管线消耗上游额度。
-- `cost.ts` 提供 Harness clip 成本与 QC 重试预算（1.5×）计算，未改变原生单 clip 计价。
+- `Harness Director`：`src/lib/harness/director.ts` 使用 `grok-4.6` Chat Completions + 严格 JSON Schema，解析 `IdentityBible`、shots、packing 和 stitch；格式校验失败最多重试 2 次。默认走 `XAI_BASE_URL`，因此可用本地 Sub2API。mock 模式用 `mock-director.ts`：15s generate 片 + tail-chain I2V 的确定性计划（无 extend，因为 extend 需要 xAI Files）。
+- **开关（M2.4 as-built）**：`HARNESS_ENABLED` 未开启时 `orchestrator.execute` 抛 `HARNESS_NOT_ENABLED`、API 对 30/45/60 返回 400；开启后 `createJob` 接受 30/45/60（仅 t2v / i2v），`costUsdEstimate` 先按 `packHarnessDuration` 预估，Director 出计划后按真实 packing 重算。`/api/health.harnessRunnable` 反映开关。
+- `cost.ts` 提供 Harness clip 成本与 QC 重试预算（1.5×）计算，未改变原生单 clip 计价。成本护栏：job `costUsdActual`（shot + 角色表实际成本之和）超过预估 ×2 时停止重试并以 `budget_exceeded` 失败。
 
 ### 7.1 管线
 
@@ -153,10 +155,11 @@ data/
 - **Director(M2.1):** `chat.completions`(OpenAI SDK 指 `xaiBase()`),`response_format` JSON schema,Zod 校验失败重试 ≤2;输出必须满足 packing 合法性(单段连续动作 ≤25s = 15 gen + 10 ext)。
 - **Keyframe(M2.2):** `src/lib/harness/keyframe.ts` 已实现尾段候选帧抽取与 Laplacian 方差选帧（默认最后 0.5 秒、12 帧），候选临时目录始终清理；`keyframe-plan.ts` 已实现用户首尾帧优先级和 tail-chain 抽取帧依赖校验；`identity-sheet.ts` 已实现从 Identity Bible 构造角色表 prompt、调用 `grok-imagine-image-2.0` 以及 moderation 拒绝门禁；`identity-sheet-store.ts` 已实现图片校验、JPEG 归一化、原子落盘到 `inputs/sheets/character-N.jpg` 和取消清理；当前尚未写入 JobRecord 或接入 JobRunner。
 - **shot 级状态(M2.3):** `src/lib/harness/shot-state.ts` 已实现严格 schema、状态迁移、失败最多 2 次重排和 runnable 过滤；`state.ts` 已将 `HarnessPlan` 与 shot records 原子保存到内部 `JobRecord.harnessPlan/harnessShots`，重复初始化不会重置已成功 shot，Phase 1 public DTO 仍隐藏这些内部字段；`shot-router.ts` 已完成 T2V/I2V/R2V/Extend 到 Grok request 的严格映射和 Jimeng 拒绝；`shot-executor.ts` 与 `run-persisted-shot.ts` 已跑通单 shot submit/poll/persist/succeeded、有限重试、取消清理、pending/persisting 续跑；`shot-coordinator.ts` 与 `run-persisted-plan.ts` 已跑通无依赖并行、依赖等待、崩溃恢复（无 remoteId 回 queued，有 remoteId 续 poll/persist）；`stitch.ts` 已实现硬切 concat、20ms 音频 fade、loudnorm、可选 0.5–1s freeze settle。JobStatus 已并入 `directing|keyframing|generating_shots|qc|stitching`。orchestrator 仍恒 throw。
-- **QC(M2.4):** ① `ffprobe` 时长误差 ≤0.4s;② `blackdetect/freezedetect`;③ grok-4.6 视觉 rubric(面部/发型/服装/光线/色调各 0–1 加权),**阈值由 `evals/` 对照集校准后固定**(H2),低于阈值同一 startFrame 收紧 prompt 重试;每 shot ≤2 次自动重试,之后 `needs_review`(M3 人审)。
-- **成本护栏(H4):** 提交前展示 packing 预估(30s hybrid ≈ $2.10);job 累计实际成本超预估 ×2 → 停止重试并 `needs_review`。
-- **尾帧策略:** M2.4(Grok-only)用户尾帧只作最后一镜 endFrame 参考 + 0.5–1s freeze settle;真正硬锁依赖即梦首尾帧(M4),API 可用性由 M2.0 spike 先行验证(H5)。
-- 状态机扩展 `directing|keyframing|generating_shots|qc|stitching` 已并入 JobStatus（可取消、计入队列深度、15min 超时）；`HARNESS_ENABLED` 仅在 M2.4 被读取。
+- **QC(M2.4,as-built):** `qc.ts` 在每镜落盘前跑 ① 时长误差 ≤0.4s(extend 镜以「前一镜实测 + 延长段」为期望)、② `blackdetect`(≥0.5s 黑段)/`freezedetect`(≥2s、-60dB);`visual-qc.ts` 是 ③ grok-4.6 视觉 rubric(五维 0–1,均值为总分),只在设置 `HARNESS_QC_VISUAL_THRESHOLD` 且非 mock 时启用——**阈值仍需 `evals/runs` 对照集校准**(H2),仓库不预设。任一项不过 → shot `failed` → executor 用收紧后的 prompt(`tightenShotPrompt`,追加 Bible 锁定项)重试,≤2 次后 `needs_review`,job 以 `needs_review` 失败并在 error 里带最后一次 QC 原因。job 级 `qc` 阶段做聚合校验(每镜文件存在、qc 记录通过、成本未超 ×2)。
+- **成本护栏(H4,as-built):** UI 面板摘要显示 packing 预估(30s ≈ $2.10 / 45s ≈ $3.15 / 60s ≈ $4.20);job 累计实际成本超预估 ×2 → 重试前 `budget_exceeded` 失败。
+- **尾帧策略:** M2.4(Grok-only)用户尾帧只记录为最后一镜 endFrame,不进任何请求体;有尾帧时 stitch 加 0.75s freeze settle;真正硬锁依赖即梦首尾帧(M4),API 可用性由 M2.0 spike 先行验证(H5)。
+- **编排(`orchestrator.ts`,as-built):** `lockPlan` 把 Director 计划归一化——只保留能物化的帧引用(用户首帧 → shot 0、tail-chain 抽帧 → `shots/{i-1}/tail.jpg`),有 startFrame 的镜强制 I2V;`beforeShot` 在依赖镜成功后用 `extractSharpestTailFrame` 抽尾帧;extend 镜把前一镜成片经 Files 上传为 `file_id`,用完即删;`stitchOrder` 让 extend 成片替换它延长的那一镜(extend 输出已含源片);拼接尺寸由画幅 + 分辨率推得(`stitchDimensions`)。每镜请求的 `jobId` 为 `{jobId}-shot-{i}`,mock 的暂存目录用完即删。
+- 状态机 `directing|keyframing|generating_shots|qc|stitching` 已并入 JobStatus(可取消、计入队列深度、15min 超时);public DTO 新增 `harness.enabled` 与 `shots[]`(id / index / durationSec / status / retries / error),Bible 仍不公开。
 
 ### 7.3 时长装箱(已实现纯函数)
 

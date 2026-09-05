@@ -17,7 +17,7 @@ import type {
 export type ShotOutputPersister = (
   shot: Shot,
   handle: ProviderHandle,
-) => Promise<string>;
+) => Promise<string | { outputPath: string; qc?: HarnessShotRecord["qc"] }>;
 
 export type ShotExecutorOptions = {
   jobId: string;
@@ -37,6 +37,8 @@ export type ShotExecutorOptions = {
   pollIntervalMs?: number;
   timeoutMs?: number;
   maxRetries?: number;
+  /** Rewrite the shot per attempt (e.g. tighten the prompt after a QC rejection). */
+  shotOverride?: (shot: Shot, record: HarnessShotRecord) => Shot;
 };
 
 export async function executeShotWithRetries(
@@ -54,7 +56,8 @@ export async function executeShotWithRetries(
       await notify(options, record);
       if (record.status === "needs_review") return record;
     }
-    record = await executeShotOnce({ ...options, record });
+    const shot = options.shotOverride ? options.shotOverride(options.shot, record) : options.shot;
+    record = await executeShotOnce({ ...options, shot, record });
     if (record.status !== "failed") return record;
   }
 }
@@ -157,7 +160,8 @@ async function executeShotOnce(options: ShotExecutorOptions): Promise<HarnessSho
       };
     }
 
-    const outputPath = await options.persistOutput(options.shot, finalHandle);
+    const persisted = await options.persistOutput(options.shot, finalHandle);
+    const outputPath = typeof persisted === "string" ? persisted : persisted.outputPath;
     if (await canceled(options)) {
       await cleanupOutput(options, outputPath);
       return cancelWithHandle(options, current, finalHandle);
@@ -165,6 +169,7 @@ async function executeShotOnce(options: ShotExecutorOptions): Promise<HarnessSho
     current = transitionShot(current, "succeeded", {
       outputPath,
       costUsd: finalHandle.costUsdActual ?? current.costUsd,
+      ...(typeof persisted === "string" || !persisted.qc ? {} : { qc: persisted.qc }),
     });
     await notify(options, current);
     return current;
@@ -242,7 +247,7 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-class ShotFailure extends Error {
+export class ShotFailure extends Error {
   constructor(
     readonly code: string,
     message: string,

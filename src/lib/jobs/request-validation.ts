@@ -1,5 +1,6 @@
 import { ProviderHttpError } from "@/lib/providers/types";
 import type { CreateJobBody } from "@/lib/jobs/schema";
+import { isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
 
 const GENERATED_VIDEO_MODES: ReadonlySet<CreateJobBody["mode"]> = new Set([
   "text_to_video",
@@ -51,9 +52,10 @@ export function assertCreateJobFields(body: CreateJobBody): void {
   if (GENERATED_VIDEO_MODES.has(mode)) {
     if (
       body.durationSec !== undefined &&
+      !isHarnessDuration(body.durationSec) &&
       (!Number.isInteger(body.durationSec) || body.durationSec < 1 || body.durationSec > 15)
     ) {
-      reject("视频时长须为 1–15 秒的整数");
+      reject("视频时长须为 1–15 秒的整数，或 30 / 45 / 60 秒长片");
     }
   } else if (mode === "extend_video") {
     if (

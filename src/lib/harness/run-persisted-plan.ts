@@ -22,6 +22,8 @@ export type PersistedPlanOptions = Omit<PersistedShotOptions, "sourceVideo" | "o
   ) => MediaRef | undefined | Promise<MediaRef | undefined>;
   dependencies?: ShotDependencyResolver;
   onState?: (record: HarnessShotRecord) => Promise<void> | void;
+  /** Runs once a shot's dependencies succeeded, before it is (re)submitted, e.g. tail-frame extraction. */
+  beforeShot?: (shot: Shot, record: HarnessShotRecord) => Promise<void> | void;
 };
 
 export async function runPersistedPlan(
@@ -40,6 +42,7 @@ export async function runPersistedPlan(
     sourceVideoFor,
     dependencies,
     onState,
+    beforeShot,
     ...shotOptions
   } = options;
   await executeShotPlan({
@@ -52,11 +55,13 @@ export async function runPersistedPlan(
       await onState?.(next);
     },
     execute: async (shot, record) => {
+      await beforeShot?.(shot, record);
       const sourceVideo = await sourceVideoFor?.(shot, record);
       await runPersistedShot(jobId, shot.id, {
         ...shotOptions,
         sourceVideo,
         recover: false,
+        onState,
       });
       const current = await readJob(jobId);
       if (!current) throw new Error("job not found");

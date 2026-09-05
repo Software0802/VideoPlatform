@@ -9,6 +9,11 @@ export const RESOLUTIONS = ["480p", "720p", "1080p"] as const;
 export const IMAGE_RESOLUTIONS = ["1k", "2k"] as const;
 
 export const HARNESS_DURATIONS = [30, 45, 60] as const;
+export type HarnessDuration = (typeof HARNESS_DURATIONS)[number];
+
+export function isHarnessDuration(d: number | undefined): d is HarnessDuration {
+  return d === 30 || d === 45 || d === 60;
+}
 
 export function isImageMode(mode: NativeMode): boolean {
   return mode === "text_to_image";

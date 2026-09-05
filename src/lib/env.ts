@@ -67,6 +67,29 @@ export function upstreamTimeoutMs(): number {
   return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 5 * 60_000) : 30_000;
 }
 
+/** M2.4：一致性管线总开关。未开启时 30/45/60 仍由 API 拒绝，orchestrator 恒抛。 */
+export function harnessEnabled(): boolean {
+  const v = process.env.HARNESS_ENABLED?.trim();
+  return v === "1" || v === "true";
+}
+
+/** 同一 harness job 内并行生成的 shot 数（默认 2）。 */
+export function harnessShotConcurrency(): number {
+  const n = Number(process.env.HARNESS_SHOT_CONCURRENCY ?? 2);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 4) : 2;
+}
+
+/**
+ * grok-4.6 视觉一致性 QC 阈值（0–1）。未设置即跳过视觉打分——阈值需由
+ * evals/runs 对照集校准后固定（design.md §7.2 H2），仓库不预设。
+ */
+export function harnessQcVisualThreshold(): number | null {
+  const raw = process.env.HARNESS_QC_VISUAL_THRESHOLD?.trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
+}
+
 export function upstreamRetryBaseMs(): number {
   const n = Number(process.env.UPSTREAM_RETRY_BASE_MS ?? 250);
   return Number.isFinite(n) && n >= 0 ? Math.min(Math.floor(n), 10_000) : 250;

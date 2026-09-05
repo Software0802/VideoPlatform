@@ -5,7 +5,7 @@
 | 日期 | 2026-08-30 |
 | 基线 | 仓库当前实现(Phase 1 已落地,M2.3 库层已齐,未 git 提交) |
 | 配套文档 | 设计书 `docs/design.md`;审查报告 `docs/review-2026-08-29.md`;历史 Phase 0 设计 `docs/architecture.md` |
-| 状态 | 执行中。2026-09-05 完成 Blueprint 首页重建(见 `docs/handoff.md`)。下一刀: M1.1 git 提交 → M2.4(QC + 接入 orchestrator + 放开 30/45/60) |
+| 状态 | 执行中。2026-09-05 完成 Blueprint 首页重建与 **M2.4 接入**(QC + orchestrator + `HARNESS_ENABLED` 放开 30/45/60,mock 端到端已验证;见 `docs/handoff.md`)。下一刀: 真实 key 冒烟 + `evals/runs` 校准视觉 QC 阈值 |
 
 ---
 
@@ -73,9 +73,9 @@ flowchart LR
 | M2.1 Director | `grok-4.6` chat.completions 产出 Zod 严格校验的 IdentityBible + shot list + packing;失败重试 2 次 | ✅ 规划器、严格 schema、重试和本地 fake 协议测试已完成；尚未接入 orchestrator |
 | M2.2 Keyframe | `grok-imagine-image-2.0` 角色表/关键帧;用户首帧注入 shot[0];tail-chain 抽帧用清晰度选帧(H1) | 🟡 抽帧、选帧、角色表生成/审核/落盘已完成；写入 JobRecord 与 JobRunner 待 M2.4 一并接入 |
 | M2.3 链接与生成 | per-shot 路由(i2v/r2v/extend);shot 级状态与断点续跑(H3);无依赖 shot 并行 | ✅ 并行、依赖等待、崩溃恢复、硬切 stitch 库已完成;orchestrator 仍恒 throw |
-| M2.4 QC + Stitch + 放开 30/45/60 | 时长校验、黑帧/冻帧检测、grok-4.6 视觉一致性打分;把 Director→Keyframe→Shots→Stitch 接入 orchestrator;读取 `HARNESS_ENABLED`;UI 启用 30/45/60 | ❌ 无 `qc.ts`;stitch 未写入 `outputs/`;30/45/60 仍 400。验收:评测集 30s 成片一致性人审 ≥4/5 的比例 ≥70%;单片成本 ≤ 预估 ×1.5 |
+| M2.4 QC + Stitch + 放开 30/45/60 | 时长校验、黑帧/冻帧检测、grok-4.6 视觉一致性打分;把 Director→Keyframe→Shots→Stitch 接入 orchestrator;读取 `HARNESS_ENABLED`;UI 启用 30/45/60 | 🟡 2026-09-05 代码接入完成:`qc.ts` / `visual-qc.ts` / `orchestrator.ts`,runner 派发,UI 放开 30/45/60,mock 端到端 30s / 45s 成片已验证。**未完成验收**:真实 key 未跑;视觉 QC 阈值待 `evals/runs` 校准(默认关闭);评测集人审 ≥70% 与成本 ≤ ×1.5 未测 |
 
-状态机已并入 `directing|keyframing|generating_shots|qc|stitching`；`HARNESS_ENABLED` 仍仅在 M2.4 被读取。orchestrator 保持恒 throw(与现设计一致)。
+状态机已并入 `directing|keyframing|generating_shots|qc|stitching`；`HARNESS_ENABLED` 已被 `createJob` / runner / orchestrator / health / 首页读取。
 
 ### M3 — Workflows & Skills + 人审
 
@@ -110,7 +110,7 @@ flowchart LR
 ## 6. 下一步(按优先级)
 
 0. **首页收尾(小):** 「video · fast」模型变体需要 API 契约支持才可接入;Playwright 冒烟(空态 / 提交 / 详情)未建;移动端只做了基本折行。详见 `docs/handoff.md`。
-1. **M2.4(产品主线):** QC(时长 ≤0.4s、blackdetect/freezedetect、视觉 rubric)→ 把已有 Director / Keyframe / shot plan / stitch 接入 `harnessOrchestrator.execute` → 读取 `HARNESS_ENABLED` → 放开 30/45/60。Grok-only:用户尾帧用 freeze settle,不调即梦。
+1. **M2.4 收口(产品主线):** 代码已接入(见 `docs/handoff.md`)。剩余:用真实 key 跑一条 30s,核对 Director 真实输出经 `lockPlan` 归一化后是否可执行、extend 镜的 Files 上传与 QC 期望时长;把结果记入 `evals/runs/`,据此定 `HARNESS_QC_VISUAL_THRESHOLD`。
 2. **M2.2 收口(随 M2.4):** 角色表 assetId 写入 JobRecord / Identity Bible;`sheetAssetIds` 进入 R2V 参考图。
 3. **M1.1:** 按模块分批 git 提交,避免工作区继续只活在未跟踪文件里。
 4. **M1.9 补记录:** 用真实 key 跑 3s 480p T2V → I2V → extend → edit,把 ticks 与 `evals/runs/{date}.json` 留下。

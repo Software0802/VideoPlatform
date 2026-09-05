@@ -18,7 +18,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 样式写在 `src/app/globals.css`（BEM 风格类名 + `@theme` 令牌），不引入组件库，不用 `@react-three/fiber`、`drei` 或图标库。
 - three.js 只走 `src/lib/scene/lumen-three.ts` 的纯函数场景（`mountReel / mountWall / mountDotField`），通过 `src/components/scene/SceneHost.tsx` 挂载；需要重建场景时换 `key`，不要在 render 中碰 ref。
 - 浏览器只经 `src/lib/client/jobs.ts` 和 `useJobLive.ts` 访问 `/api/*`；组件不直接 `fetch`。401 上抛后由页面弹 `AccessTokenPrompt`。
-- UI 只暴露三条路径：文生视频 / 图生视频 / 文生图。`reference_to_video / edit_video / extend_video` 仍在 API 与 provider 层，不要从后端删除。
+- UI 只暴露三条路径：文生视频 / 图生视频 / 文生图。`harnessEnabled()` 为真时时长面板多出 30 / 45 / 60（仅 t2v / i2v），读数按 `job.shots` 显示分镜进度。`reference_to_video / edit_video / extend_video` 仍在 API 与 provider 层，不要从后端删除。
 - `POST /api/jobs` 的请求体以 `src/lib/jobs/schema.ts` 的 `createJobBodySchema`（strict）为准，没有 `model` 字段，模型由服务端按 mode 决定。
 
 ## 后端约定
@@ -26,7 +26,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 视频与图片走同一套 xAI REST（`/videos/generations|edits|extensions`、`/images/generations`），禁止 `openai.videos.*`。
 - 尾帧只落盘，永不进入 Grok 请求体（golden test 保障）。源视频禁止 data URI 兜底。
 - 状态先写 `data/jobs/{id}/job.json` 再发 SSE；轮询是真相。
-- Harness（30/45/60 长视频）保持关闭：`orchestrator.execute` 恒抛，API 对 30/45/60 返回 400。
+- Harness（30/45/60 长视频）由 `HARNESS_ENABLED` 开关：未开启时 `orchestrator.execute` 抛 `HARNESS_NOT_ENABLED`、API 对 30/45/60 返回 400；开启后 `src/lib/harness/orchestrator.ts` 走 directing → keyframing → generating_shots → qc → stitching → persisting，30/45/60 永不直接发给 Grok（rest-map golden 保障）。mock 模式用 `mock-director.ts` 的确定性计划；视觉 QC 只在设置 `HARNESS_QC_VISUAL_THRESHOLD` 时启用。
 - ffmpeg 一律经 `src/lib/ffmpeg.ts`（ffmpeg-static），不 spawn PATH 里的 ffmpeg。
 
 ## 验证门禁

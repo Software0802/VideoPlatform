@@ -174,29 +174,35 @@ async function kenBurns(
   height: number,
 ) {
   // ffmpeg-static is built without libfreetype/drawtext. Watermark is burned into the still via sharp.
-  const vf = [
+  // The push-in spans the whole clip and a drifting two-ink light leak is screened on top, so
+  // consecutive frames always differ: a flat still would otherwise trip the harness freezedetect QC.
+  const zoomStep = (0.12 / Math.max(1, duration * 24)).toFixed(6);
+  const base = [
     `scale=${width}:${height}:force_original_aspect_ratio=increase`,
     `crop=${width}:${height}`,
-    `zoompan=z='min(zoom+0.0008,1.12)':d=1:s=${width}x${height}:fps=24`,
+    `zoompan=z='min(zoom+${zoomStep},1.12)':d=1:s=${width}x${height}:fps=24`,
   ].join(",");
+  const leak = `gradients=s=${width}x${height}:r=24:speed=0.08:nb_colors=3:c0=0x2148B8:c1=0x000000:c2=0xC65F38`;
 
-  const args = ["-y", "-loop", "1", "-i", still];
+  const args = ["-y", "-loop", "1", "-i", still, "-f", "lavfi", "-i", leak];
   if (audio) {
     args.push("-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=" + duration);
   }
   args.push(
     "-t",
     String(duration),
+    "-filter_complex",
+    `[0:v]${base}[b];[b][1:v]blend=all_mode=screen:all_opacity=0.18[v]`,
+    "-map",
+    "[v]",
     "-r",
     "24",
-    "-vf",
-    vf,
     "-c:v",
     "libx264",
     "-pix_fmt",
     "yuv420p",
   );
-  if (audio) args.push("-c:a", "aac", "-shortest");
+  if (audio) args.push("-map", "2:a", "-c:a", "aac", "-shortest");
   else args.push("-an");
   args.push(out);
   await runFfmpeg(args);

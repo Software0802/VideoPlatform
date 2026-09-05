@@ -48,7 +48,7 @@ export function toPublic(rec: JobRecord): JobPublic {
     generateAudio: rec.generateAudio,
     lastFrameStored: rec.lastFrameStored,
     lastFrameLocksOutput: false as const,
-    harness: { enabled: false as const },
+    harness: { enabled: Boolean(rec.harness?.enabled) },
     costUsdEstimate: rec.costUsdEstimate,
     costUsdActual: rec.costUsdActual,
     imageResolution: rec.imageResolution ?? null,
@@ -57,9 +57,24 @@ export function toPublic(rec: JobRecord): JobPublic {
     createdAt: rec.createdAt,
     updatedAt: rec.updatedAt,
     bible: null,
-    shots: null,
+    shots: publicShots(rec),
   };
   return jobPublicSchema.parse(pub);
+}
+
+function publicShots(rec: JobRecord): JobPublic["shots"] {
+  if (!rec.harnessPlan || !rec.harnessShots) return null;
+  const durations = new Map(rec.harnessPlan.shots.map((s) => [s.id, s.durationSec]));
+  return rec.harnessShots
+    .map((s) => ({
+      id: s.id,
+      index: s.index,
+      durationSec: durations.get(s.id) ?? 0,
+      status: s.status,
+      retries: s.retries,
+      error: s.error ?? null,
+    }))
+    .sort((a, b) => a.index - b.index);
 }
 
 function coerceOutput(raw: JobRecord["output"] | { videoUrl?: string; posterUrl?: string; durationSec?: number; imageUrl?: string; kind?: string } | null): JobPublic["output"] {

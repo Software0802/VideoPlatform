@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JobPublic } from "@/lib/jobs/schema";
 import type { NativeMode } from "@/lib/providers/types";
 import type { SceneProgress } from "@/types/scene";
-import { estimateCostUsd } from "@/lib/cost";
-import { MODEL_1_5, MODEL_IMAGE } from "@/lib/providers/grok/mode-matrix";
+import { estimateCostUsd, estimateHarnessCostUsd } from "@/lib/cost";
+import { packHarnessDuration } from "@/lib/harness/pack-duration";
+import { HARNESS_DURATIONS, MODEL_1_5, MODEL_IMAGE, isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
 import { cancelJob, createJob, newIdempotencyKey, retryJob, uploadFile } from "@/lib/client/jobs";
 import { useJobLive } from "@/lib/client/useJobLive";
 import { formatElapsed, isActive, isFailed, isTerminal, stageIndex } from "@/lib/client/labels";
@@ -26,6 +27,14 @@ const UI_MODE_OF: Partial<Record<NativeMode, UiMode>> = { text_to_video: "t2v", 
 const RATIOS = ["16:9", "9:16", "1:1"] as const;
 const DURS = [4, 6, 8, 10] as const;
 const STAGE_LABELS = ["排队 / Queued", "提交 / Submit", "生成 / Render", "落盘 / Write", "完成 / Done"];
+/** 一致性管线的阶段读数；长片不再是"提交 → 生成"，而是分镜 → 锁帧 → 生成分镜 → 质检 → 拼接 */
+const HARNESS_LABELS: Partial<Record<JobPublic["status"], string>> = {
+  directing: "分镜 / Direct",
+  keyframing: "锁帧 / Keyframe",
+  generating_shots: "生成分镜 / Shots",
+  qc: "质检 / QC",
+  stitching: "拼接 / Stitch",
+};
 const STAGES = ["排队", "提交", "生成", "落盘", "完成"];
 
 const PATHS: { id: UiMode; index: string; title: string; desc: string; meta: string }[] = [
@@ -103,12 +112,12 @@ const shortId = (id: string) => id.replace(/^job_/, "").slice(-4).toUpperCase();
 // useJobLive 需要一个 job；没有任务时给它一个终态哑对象，effect 直接跳过
 const NO_JOB = { id: "", status: "succeeded" } as const;
 
-export function LumenHome({ initialJobs, mock }: { initialJobs: JobPublic[]; mock: boolean }) {
+export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs: JobPublic[]; mock: boolean; harness?: boolean }) {
   const [jobs, setJobs] = useState<JobPublic[]>(initialJobs);
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<UiMode>("t2v");
   const [ratio, setRatio] = useState<(typeof RATIOS)[number]>("16:9");
-  const [dur, setDur] = useState<(typeof DURS)[number]>(8);
+  const [dur, setDur] = useState<number>(8);
   const [first, setFirst] = useState<Frame | null>(null);
   const [last, setLast] = useState<Frame | null>(null);
   const [tray, setTray] = useState(false);
@@ -324,10 +333,12 @@ export function LumenHome({ initialJobs, mock }: { initialJobs: JobPublic[]; moc
   const done = !!job && job.status === "succeeded" && !!job.output;
   const failed = !!job && isFailed(job.status);
   const statusLine = !job ? "Idle · 待机" : active ? "Rendering · 渲染中" : failed ? "Failed · 失败" : "Done · 已完成";
+  const longForm = isVideo && isHarnessDuration(dur);
+  const longCost = longForm ? estimateHarnessCostUsd(packHarnessDuration(dur)) : 0;
   const summary = [
-    isVideo ? "Grok · video" : "Grok · image",
+    isVideo ? (longForm ? "Grok · harness" : "Grok · video") : "Grok · image",
     modeLabel(mode),
-    isVideo ? `${dur}s` : null,
+    isVideo ? (longForm ? `长片 ${dur}s · ≈ $${longCost.toFixed(2)}` : `${dur}s`) : null,
     ratio,
     first ? "首帧" : null,
     isVideo && last ? "尾帧" : null,
@@ -335,7 +346,14 @@ export function LumenHome({ initialJobs, mock }: { initialJobs: JobPublic[]; moc
     .filter(Boolean)
     .join(" · ");
   const stageIdx = job ? stageIndex(job.status) : -1;
-  const jobStage = !job ? "" : failed ? `失败 / ${job.status === "canceled" ? "Canceled" : job.status === "expired" ? "Expired" : "Failed"}` : STAGE_LABELS[Math.max(0, stageIdx)];
+  const shotsDone = job?.shots ? job.shots.filter((s) => s.status === "succeeded").length : 0;
+  const jobStage = !job
+    ? ""
+    : failed
+      ? `失败 / ${job.status === "canceled" ? "Canceled" : job.status === "expired" ? "Expired" : "Failed"}`
+      : job.status === "generating_shots" && job.shots
+        ? `${HARNESS_LABELS.generating_shots} ${shotsDone}/${job.shots.length}`
+        : (HARNESS_LABELS[job.status] ?? STAGE_LABELS[Math.max(0, stageIdx)]);
   const jobClock = job ? formatElapsed(job.createdAt, isTerminal(job.status) ? new Date(job.updatedAt).getTime() : now) : "00:00";
   const jobPct = job ? `${Math.round(isTerminal(job.status) && !failed ? 100 : job.progress)}%` : "";
   const resultMeta = job
@@ -463,6 +481,16 @@ export function LumenHome({ initialJobs, mock }: { initialJobs: JobPublic[]; moc
                           {d}s
                         </button>
                       ))}
+                      {harness ? (
+                        <>
+                          <span className="seg__gap" aria-hidden="true" />
+                          {HARNESS_DURATIONS.map((d) => (
+                            <button key={d} type="button" role="radio" aria-checked={dur === d} aria-label={`${d}s 长片`} data-on={dur === d} title="一致性管线：分镜 → 锁帧 → 生成 → 质检 → 拼接" onClick={() => setDur(d)}>
+                              {d}s
+                            </button>
+                          ))}
+                        </>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
@@ -534,6 +562,7 @@ export function LumenHome({ initialJobs, mock }: { initialJobs: JobPublic[]; moc
         <div className="hero__legend">
           <span>Reel speed = progress</span>
           <span>Ink density = status</span>
+          {harness ? <span>Harness · 30 / 45 / 60s</span> : null}
           {mock ? <span className="ink-accent">Mock · 模拟输出</span> : null}
         </div>
         <div className="hero__mark">

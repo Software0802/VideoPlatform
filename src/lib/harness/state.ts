@@ -38,6 +38,23 @@ export async function saveHarnessPlan(
   });
 }
 
+/** Patch the Identity Bible in place (e.g. sheet asset ids after keyframing); shots are untouched. */
+export async function updateHarnessBible(
+  jobId: string,
+  fn: (bible: HarnessPlan["bible"]) => HarnessPlan["bible"],
+): Promise<JobRecord> {
+  return updateJob(jobId, (record) => {
+    if (!record.harnessPlan || !record.harnessShots) {
+      throw new Error("Harness 状态不存在");
+    }
+    const nextPlan = directorPlanSchema.parse({
+      ...record.harnessPlan,
+      bible: fn(record.harnessPlan.bible),
+    }) as HarnessPlan;
+    return { ...record, harnessPlan: nextPlan };
+  });
+}
+
 export async function updateHarnessShot(
   jobId: string,
   shotId: string,

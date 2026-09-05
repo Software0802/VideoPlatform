@@ -46,7 +46,7 @@ export const jobPublicSchema = z.object({
   generateAudio: z.boolean(),
   lastFrameStored: z.boolean(),
   lastFrameLocksOutput: z.literal(false),
-  harness: z.object({ enabled: z.literal(false) }),
+  harness: z.object({ enabled: z.boolean() }),
   costUsdEstimate: z.number(),
   costUsdActual: z.number().nullable(),
   imageResolution: imageResolutionSchema.nullable(),
@@ -68,7 +68,19 @@ export const jobPublicSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   bible: z.null(),
-  shots: z.null(),
+  /** Harness jobs expose per-shot progress; native clips keep null. */
+  shots: z
+    .array(
+      z.object({
+        id: z.string(),
+        index: z.number().int().min(0),
+        durationSec: z.number(),
+        status: z.string(),
+        retries: z.number().int().min(0),
+        error: z.object({ code: z.string(), message: z.string() }).nullable(),
+      }),
+    )
+    .nullable(),
 });
 
 export type JobPublic = z.infer<typeof jobPublicSchema>;

@@ -472,6 +472,13 @@ textarea::placeholder {
   letter-spacing: 1px;
   transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
+.seg__gap {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 6px;
+  background: var(--ink);
+  opacity: 0.3;
+}
 .seg button:hover {
   color: var(--accent);
   border-color: var(--accent);

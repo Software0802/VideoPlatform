@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { access, mkdir } from "node:fs/promises";
-import { dataDir, grokUpstreamKind, hasXaiKey, isMockMode, xaiBase } from "@/lib/env";
+import { dataDir, grokUpstreamKind, harnessEnabled, hasXaiKey, isMockMode, xaiBase } from "@/lib/env";
 import { assertFfmpeg, ffmpegBinary } from "@/lib/ffmpeg";
 import { activeCount } from "@/lib/jobs/runner";
 import { mockHasFont } from "@/lib/providers/mock";
@@ -32,7 +32,7 @@ export async function GET() {
     {
       ok,
       mockMode: mock,
-      harnessRunnable: false,
+      harnessRunnable: harnessEnabled(),
       ffmpeg: { present: Boolean(ffmpegPath), path: ffmpegPath },
       mockFont: { present: fontOk },
       dataDirWritable,

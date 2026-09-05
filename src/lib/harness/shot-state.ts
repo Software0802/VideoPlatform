@@ -17,6 +17,17 @@ const shotErrorSchema = z
   .object({ code: z.string().min(1), message: z.string().min(1) })
   .strict();
 
+export const shotQcSchema = z
+  .object({
+    durationSec: z.number().finite().min(0),
+    durationOk: z.boolean(),
+    blackFrameFree: z.boolean(),
+    freezeFree: z.boolean(),
+    visualScore: z.number().min(0).max(1).optional(),
+  })
+  .strict();
+export type ShotQc = z.infer<typeof shotQcSchema>;
+
 export const harnessShotRecordSchema = z
   .object({
     id: z.string().trim().min(1).max(80),
@@ -27,6 +38,7 @@ export const harnessShotRecordSchema = z
     retries: z.number().int().min(0).max(2),
     costUsd: z.number().finite().min(0),
     error: shotErrorSchema.nullable().optional(),
+    qc: shotQcSchema.optional(),
   })
   .strict();
 
@@ -37,6 +49,7 @@ export type ShotPatch = {
   outputPath?: string;
   costUsd?: number;
   error?: HarnessShotRecord["error"];
+  qc?: ShotQc;
 };
 
 const allowed: Record<HarnessShotStatus, HarnessShotStatus[]> = {
@@ -95,13 +108,19 @@ export function prepareShotRetry(
     return harnessShotRecordSchema.parse({
       ...record,
       status: "needs_review",
-      error: { code: "retry_exhausted", message: "shot 自动重试次数已用尽" },
+      error: {
+        code: "retry_exhausted",
+        message: record.error
+          ? `shot 自动重试次数已用尽（最后错误 ${record.error.code}: ${record.error.message}）`
+          : "shot 自动重试次数已用尽",
+      },
     });
   }
   const next = { ...record, status: "queued" as const, retries: record.retries + 1 };
   delete next.remoteId;
   delete next.outputPath;
   delete next.error;
+  delete next.qc;
   return harnessShotRecordSchema.parse(next);
 }
 

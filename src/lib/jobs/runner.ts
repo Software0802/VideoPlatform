@@ -1,7 +1,7 @@
 import { access, copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { jobConcurrency, upstreamRetryBaseMs } from "@/lib/env";
-import { harnessOrchestrator } from "@/lib/harness/orchestrator";
+import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
 import { emitJob } from "@/lib/jobs/events";
 import { recoverDecision } from "@/lib/jobs/recover";
 import { sweepTmp } from "@/lib/jobs/sweep";
@@ -10,7 +10,7 @@ import { extractPoster } from "@/lib/media/poster";
 import { probeDurationSec } from "@/lib/ffmpeg";
 import { persistRemote } from "@/lib/media/persist";
 import { deleteXaiFile, uploadXaiFile } from "@/lib/providers/grok/client";
-import { isImageMode } from "@/lib/providers/grok/mode-matrix";
+import { isHarnessDuration, isImageMode } from "@/lib/providers/grok/mode-matrix";
 import { needsSourceFileUpload, providerForId } from "@/lib/providers/router";
 import {
   ProviderHttpError,
@@ -87,7 +87,9 @@ async function pump() {
   const jobs = await listJobRecords();
   const queued = jobs.filter((j) => j.status === "queued" && !s.inflight.has(j.id));
   const pending = jobs.filter(
-    (j) => (j.status === "pending" || j.status === "persisting") && !s.inflight.has(j.id),
+    (j) =>
+      (j.status === "pending" || j.status === "persisting" || HARNESS_ACTIVE.has(j.status)) &&
+      !s.inflight.has(j.id),
   );
   const next = [...pending, ...queued];
   for (const job of next) {
@@ -105,6 +107,15 @@ async function runOne(id: string) {
   if (!job) return;
   if (job.canceled || job.status === "canceled") return;
   try {
+    if (isHarnessDuration(job.durationSec) && job.status !== "persisting") {
+      // Long clips never touch a provider directly: the orchestrator owns
+      // queued → … → stitching and hands the stitched file back as persisting.
+      await harnessOrchestrator.execute(id);
+      job = await readJob(id);
+      if (!job || job.status === "canceled" || job.canceled) return;
+      if (job.status === "persisting") await persist(job);
+      return;
+    }
     if (job.status === "queued") {
       job = await transition(id, "submitting");
       await submit(job);
@@ -126,14 +137,15 @@ async function runOne(id: string) {
       await fail(id, "harness", "一致性管线尚未开放");
       return;
     }
+    if (e instanceof HarnessFailure) {
+      await fail(id, e.code, e.message);
+      return;
+    }
     await fail(id, e instanceof ProviderHttpError ? e.code : "internal", msg);
   }
 }
 
 async function submit(job: JobRecord) {
-  if (job.durationSec === 30 || job.durationSec === 45 || job.durationSec === 60) {
-    await harnessOrchestrator.execute(job.id);
-  }
   const provider = providerForId(job.provider);
 
   if (needsSourceFileUpload(provider.id, job.mode) && job.assets.source) {
@@ -531,19 +543,19 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+const HARNESS_ACTIVE: ReadonlySet<JobRecord["status"]> = new Set([
+  "directing",
+  "keyframing",
+  "generating_shots",
+  "qc",
+  "stitching",
+]);
+
 export async function activeCount(): Promise<number> {
   const jobs = await listJobRecords();
-  return jobs.filter((j) =>
-    [
-      "queued",
-      "submitting",
-      "pending",
-      "persisting",
-      "directing",
-      "keyframing",
-      "generating_shots",
-      "qc",
-      "stitching",
-    ].includes(j.status),
+  return jobs.filter(
+    (j) =>
+      ["queued", "submitting", "pending", "persisting"].includes(j.status) ||
+      HARNESS_ACTIVE.has(j.status),
   ).length;
 }

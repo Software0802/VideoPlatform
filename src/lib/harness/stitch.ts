@@ -125,6 +125,8 @@ export async function stitchClips(options: StitchOptions): Promise<StitchResult>
       "aac",
       "-af",
       "loudnorm=I=-16:TP=-1.5:LRA=11",
+      "-ar",
+      "44100",
       staged,
     ]);
 
