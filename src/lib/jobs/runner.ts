@@ -207,10 +207,12 @@ async function submit(job: JobRecord) {
     r.remoteId = handle.remoteId ?? job.id;
     r.fileOutputId = handle.fileOutputId ?? r.fileOutputId;
     r.localOutputPath = handle.localVideoPath;
+    // A provider that stages the file itself (OpenAI images) reports its charge on the same
+    // handle; booking the cost only in the remoteUrl branch would drop it silently.
+    r.costUsdActual = handle.costUsdActual ?? r.costUsdActual;
     if (handle.remoteUrl) {
       delete r.localOutputPath;
       r.remoteUrl = handle.remoteUrl;
-      r.costUsdActual = handle.costUsdActual ?? r.costUsdActual;
       r.status = "persisting";
       r.progress = 90;
     } else if (!handle.localVideoPath) {

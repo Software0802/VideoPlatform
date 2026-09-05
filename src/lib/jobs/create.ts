@@ -3,7 +3,7 @@ import { access, cp, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { estimateCostUsd, estimateHarnessCostUsd } from "@/lib/cost";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
-import { harnessEnabled, maxQueuedJobs } from "@/lib/env";
+import { harnessEnabled, maxQueuedJobs, openaiImageModel } from "@/lib/env";
 import {
   UPLOAD_ID_RE,
   type CreateJobBody,
@@ -11,7 +11,7 @@ import {
   type JobRecord,
   type UploadSidecar,
 } from "@/lib/jobs/schema";
-import { ProviderHttpError } from "@/lib/providers/types";
+import { ProviderHttpError, type NativeMode, type ProviderId } from "@/lib/providers/types";
 import { withAdmissionLock } from "@/lib/jobs/admission";
 import { lookupIdempotency, saveIdempotency } from "@/lib/jobs/idempotency";
 import { activeCount, enqueue } from "@/lib/jobs/runner";
@@ -80,7 +80,8 @@ async function createJobUnlocked(body: CreateJobBody) {
     }
   }
 
-  const model = modelForMode(mode);
+  const provider = currentProviderId(mode);
+  const model = modelForProvider(provider, mode);
   assertModeConstraints({
     jobId: "preview",
     mode,
@@ -109,7 +110,7 @@ async function createJobUnlocked(body: CreateJobBody) {
     progress: 0,
     mode,
     model,
-    provider: currentProviderId(),
+    provider,
     prompt: body.prompt,
     durationSec: dur,
     aspectRatio:
@@ -159,6 +160,14 @@ async function createJobUnlocked(body: CreateJobBody) {
   return { job: toPublic(rec), replay: false };
 }
 
+/**
+ * Model名与 provider 必须同源：OpenAI 生图用 OPENAI_IMAGE_MODEL，其余仍按 mode 走 Grok 矩阵。
+ * 对既有的 grok / mock 任务，本函数与 `modelForMode` 结果完全一致。
+ */
+function modelForProvider(provider: ProviderId, mode: NativeMode): string {
+  return provider === "openai" ? openaiImageModel() : modelForMode(mode);
+}
+
 export async function retryJob(source: JobRecord): Promise<JobPublic> {
   return withAdmissionLock(() => retryJobUnlocked(source));
 }
@@ -180,14 +189,17 @@ async function retryJobUnlocked(source: JobRecord): Promise<JobPublic> {
 
   const id = `job_${randomBytes(6).toString("hex")}`;
   const now = new Date().toISOString();
+  // Re-resolving both together keeps a retry from pairing a stale model name with a provider
+  // the current environment would now pick (e.g. an OpenAI key added since the first attempt).
+  const provider = currentProviderId(source.mode);
   const rec: JobRecord = {
     schemaVersion: 1,
     id,
     status: "queued",
     progress: 0,
     mode: source.mode,
-    model: source.model,
-    provider: currentProviderId(),
+    model: modelForProvider(provider, source.mode),
+    provider,
     prompt: source.prompt,
     durationSec: source.durationSec,
     aspectRatio: source.aspectRatio,

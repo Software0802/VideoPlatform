@@ -54,14 +54,26 @@ export async function grokGet(pathSuffix: string): Promise<Record<string, unknow
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 
-export async function fetchUpstream(url: string, init: RequestInit): Promise<Response> {
+/**
+ * `maxAttempts: 1` disables the transient-status retry, for upstreams that bill per accepted
+ * request: a retried POST there is a second charge, not a free second chance.
+ */
+export type FetchUpstreamOptions = { timeoutMs?: number; maxAttempts?: number };
+
+export async function fetchUpstream(
+  url: string,
+  init: RequestInit,
+  opts?: FetchUpstreamOptions,
+): Promise<Response> {
+  const timeoutMs = opts?.timeoutMs ?? upstreamTimeoutMs();
+  const maxAttempts = Math.max(1, Math.floor(opts?.maxAttempts ?? MAX_ATTEMPTS));
   let lastError: unknown;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), upstreamTimeoutMs());
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
-      if (!RETRYABLE_STATUS.has(response.status) || attempt === MAX_ATTEMPTS - 1) {
+      if (!RETRYABLE_STATUS.has(response.status) || attempt === maxAttempts - 1) {
         return response;
       }
       try {
@@ -73,7 +85,7 @@ export async function fetchUpstream(url: string, init: RequestInit): Promise<Res
       lastError = controller.signal.aborted
         ? new ProviderHttpError(504, "upstream_timeout", "上游请求超时")
         : error;
-      if (attempt === MAX_ATTEMPTS - 1) {
+      if (attempt === maxAttempts - 1) {
         if (controller.signal.aborted) throw lastError;
         throw new ProviderHttpError(503, "upstream_unavailable", "上游暂时不可用");
       }
@@ -89,7 +101,8 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function upstreamError(status: number, body: Record<string, unknown>): ProviderHttpError {
+/** Shared by every OpenAI-shaped upstream (xAI and OpenAI use the same error envelope). */
+export function upstreamError(status: number, body: Record<string, unknown>): ProviderHttpError {
   const raw = body.error;
   const error = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : undefined;
   const code =

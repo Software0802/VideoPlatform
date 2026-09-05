@@ -9,7 +9,7 @@ export type NativeMode =
 export type AspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "3:2" | "2:3";
 export type Resolution = "480p" | "720p" | "1080p";
 export type ImageResolution = "1k" | "2k";
-export type ProviderId = "grok" | "mock" | "jimeng";
+export type ProviderId = "grok" | "mock" | "jimeng" | "openai";
 
 export type MediaRef =
   | { kind: "path"; path: string }

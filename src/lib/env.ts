@@ -2,6 +2,8 @@ import path from "node:path";
 
 export const OFFICIAL_XAI_BASE = "https://api.x.ai/v1";
 export const DEFAULT_SUB2API_BASE = "http://127.0.0.1:8080/v1";
+export const OFFICIAL_OPENAI_BASE = "https://api.openai.com/v1";
+export const DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-1";
 
 export function dataDir(): string {
   return path.resolve(/*turbopackIgnore: true*/ process.env.DATA_DIR ?? path.join(process.cwd(), "data"));
@@ -34,8 +36,41 @@ export function forceMock(): boolean {
   return v === "1" || v === "true";
 }
 
+/** OpenAI 官方生图用的 key。只影响 text_to_image，视频路径永不读它。 */
+export function openaiApiKey(): string | undefined {
+  return process.env.OPENAI_API_KEY?.trim() || undefined;
+}
+
+export function hasOpenaiKey(): boolean {
+  return Boolean(openaiApiKey());
+}
+
+/** OpenAI REST root including `/v1`, no trailing slash. */
+export function openaiBase(): string {
+  const raw = process.env.OPENAI_BASE_URL?.trim();
+  if (!raw) return OFFICIAL_OPENAI_BASE;
+  return normalizeApiBase(raw, OFFICIAL_OPENAI_BASE);
+}
+
+export function openaiImageModel(): string {
+  return process.env.OPENAI_IMAGE_MODEL?.trim() || DEFAULT_OPENAI_IMAGE_MODEL;
+}
+
+/**
+ * gpt-image-1 常要 30–120 秒才返回，远超通用的 `UPSTREAM_TIMEOUT_MS`（默认 30s）。
+ * 用通用超时会在图片已经生成、正要返回时 abort，而这一次调用照样计费。
+ */
+export function openaiImageTimeoutMs(): number {
+  const n = Number(process.env.OPENAI_IMAGE_TIMEOUT_MS ?? 180_000);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10 * 60_000) : 180_000;
+}
+
+/**
+ * Mock 模式 = 没有任何可用的上游 key。文生图可以只靠 OpenAI key 跑真实上游，
+ * 所以一把 OpenAI key 也足以让实例脱离 mock（视频路径仍会各自按 key 回落到 mock）。
+ */
 export function isMockMode(): boolean {
-  return forceMock() || !hasXaiKey();
+  return forceMock() || (!hasXaiKey() && !hasOpenaiKey());
 }
 
 export type GrokUpstreamKind = "xai" | "sub2api";
@@ -56,8 +91,12 @@ export function xaiBase(): string {
 }
 
 export function normalizeXaiBase(input: string): string {
+  return normalizeApiBase(input, OFFICIAL_XAI_BASE);
+}
+
+function normalizeApiBase(input: string, fallback: string): string {
   let url = input.trim().replace(/\/+$/, "");
-  if (!url) return OFFICIAL_XAI_BASE;
+  if (!url) return fallback;
   if (!/\/v1$/i.test(url)) url = `${url}/v1`;
   return url;
 }

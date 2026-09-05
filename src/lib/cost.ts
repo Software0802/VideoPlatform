@@ -5,7 +5,51 @@ export const RATE_USD_PER_SEC = {
 
 export const RATE_USD_PER_IMAGE = {
   "grok-imagine-image-2.0": 0.02,
+  /**
+   * Submit-time estimate only. gpt-image-1's real charge depends on quality and size
+   * ($0.011 – $0.25, see OPENAI_IMAGE_LIST_PRICE_USD) and `estimateCostUsd(model, duration)`
+   * cannot see either, so the cheapest tier is booked as a lower bound and the provider
+   * overwrites it with the usage-based figure once the image comes back.
+   * 未经真实账单核实的列表价占位。
+   */
+  "gpt-image-1": 0.011,
 } as const;
+
+/** OpenAI bills image output tokens at $40 / M (gpt-image-1). 未经真实账单核实的列表价占位。 */
+export const OPENAI_IMAGE_RATE_USD_PER_MTOKEN_OUTPUT = 40;
+
+/**
+ * List prices derived from that $40/M rate, keyed `quality:size`.
+ * 未经真实账单核实的列表价占位（与 LLM_RATE_USD_PER_MTOKEN 同等信心）——只在响应缺 usage 时用。
+ */
+export const OPENAI_IMAGE_LIST_PRICE_USD: Record<string, number> = {
+  "low:1024x1024": 0.011,
+  "low:1536x1024": 0.016,
+  "low:1024x1536": 0.016,
+  "high:1024x1024": 0.167,
+  "high:1536x1024": 0.25,
+  "high:1024x1536": 0.25,
+};
+
+/**
+ * What one gpt-image-1 call cost. `outputTokens` from the response is authoritative; the table
+ * is the fallback, and an unknown size falls back to the priciest tier of its quality so a call
+ * is never booked cheaper than it can actually be.
+ */
+export function estimateOpenaiImageCostUsd(opts: {
+  size: string;
+  quality: string;
+  outputTokens?: number;
+}): number {
+  const tokens = opts.outputTokens;
+  if (tokens != null && Number.isFinite(tokens) && tokens > 0) {
+    // Cent rounding would erase a $0.011 image; keep micro-dollars like the LLM ledger.
+    return Math.round(((tokens * OPENAI_IMAGE_RATE_USD_PER_MTOKEN_OUTPUT) / 1_000_000) * 1e6) / 1e6;
+  }
+  const listed = OPENAI_IMAGE_LIST_PRICE_USD[`${opts.quality}:${opts.size}`];
+  if (listed != null) return listed;
+  return opts.quality === "low" ? 0.016 : 0.25;
+}
 
 /**
  * LLM list prices in USD per million tokens, for the Director and visual-QC

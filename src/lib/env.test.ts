@@ -1,11 +1,18 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_OPENAI_IMAGE_MODEL,
   DEFAULT_SUB2API_BASE,
   grokApiKey,
   grokUpstreamKind,
+  hasOpenaiKey,
+  hasXaiKey,
   isMockMode,
   normalizeXaiBase,
+  OFFICIAL_OPENAI_BASE,
   OFFICIAL_XAI_BASE,
+  openaiApiKey,
+  openaiBase,
+  openaiImageModel,
   upstreamRetryBaseMs,
   upstreamTimeoutMs,
   xaiBase,
@@ -15,6 +22,9 @@ const KEYS = [
   "XAI_API_KEY",
   "SUB2API_API_KEY",
   "XAI_BASE_URL",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "OPENAI_IMAGE_MODEL",
   "LUMEN_FORCE_MOCK",
   "UPSTREAM_TIMEOUT_MS",
   "UPSTREAM_RETRY_BASE_MS",
@@ -60,6 +70,44 @@ describe("upstream selection", () => {
     process.env.XAI_BASE_URL = "https://gw.example.com";
     expect(xaiBase()).toBe("https://gw.example.com/v1");
     expect(grokUpstreamKind()).toBe("sub2api");
+  });
+});
+
+describe("OpenAI image upstream", () => {
+  it("defaults to the official base and gpt-image-1 with no key", () => {
+    expect(openaiApiKey()).toBeUndefined();
+    expect(hasOpenaiKey()).toBe(false);
+    expect(openaiBase()).toBe(OFFICIAL_OPENAI_BASE);
+    expect(openaiImageModel()).toBe(DEFAULT_OPENAI_IMAGE_MODEL);
+  });
+
+  it("normalizes an explicit base and honours a model override", () => {
+    process.env.OPENAI_BASE_URL = "https://gw.example.com/";
+    process.env.OPENAI_IMAGE_MODEL = " gpt-image-1-mini ";
+    expect(openaiBase()).toBe("https://gw.example.com/v1");
+    expect(openaiImageModel()).toBe("gpt-image-1-mini");
+
+    process.env.OPENAI_BASE_URL = "https://api.openai.com/v1/";
+    expect(openaiBase()).toBe(OFFICIAL_OPENAI_BASE);
+  });
+
+  // 语义变更（OpenAI 生图接入）：mock 模式 = 一把上游 key 都没有。只配 OpenAI key 的实例
+  // 必须脱离 mock，否则新 provider 永远选不中。
+  it("leaves mock mode when only an OpenAI key is present", () => {
+    process.env.OPENAI_API_KEY = "sk-openai";
+    expect(hasXaiKey()).toBe(false);
+    expect(hasOpenaiKey()).toBe(true);
+    expect(isMockMode()).toBe(false);
+  });
+
+  it("still forces mock when LUMEN_FORCE_MOCK is set", () => {
+    process.env.OPENAI_API_KEY = "sk-openai";
+    process.env.LUMEN_FORCE_MOCK = "1";
+    expect(isMockMode()).toBe(true);
+  });
+
+  it("stays in mock mode when neither upstream has a key", () => {
+    expect(isMockMode()).toBe(true);
   });
 });
 
