@@ -3,7 +3,7 @@ import path from "node:path";
 
 /**
  * 冒烟用例只跑 mock 模式，并把任务数据指到临时目录，避免污染 data/jobs 存档。
- * 设置 PLAYWRIGHT_BASE_URL 时复用已在跑的服务（例如 lumen-dev 的 3000 端口）；
+ * 设置 PLAYWRIGHT_BASE_URL 时复用已在跑的服务（例如 lumen-dev 的 3000 端口），global-setup 会拒绝非 mock 服务；
  * 否则 build + start 一个独立的 3100 端口实例（Next 16 同目录不允许第二个 `next dev`）。
  */
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3100";
@@ -11,6 +11,8 @@ const dataDir = path.join(__dirname, ".tmp", "e2e-data");
 
 export default defineConfig({
   testDir: "./e2e",
+  // 无论自起还是复用服务，先确认 /api/health 的 mockMode 为 true，避免烧真实额度
+  globalSetup: "./e2e/global-setup.ts",
   timeout: 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,

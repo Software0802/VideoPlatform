@@ -24,6 +24,7 @@
 | 文件 | 改动 |
 | --- | --- |
 | `playwright.config.ts` | Chromium 单 worker；无 `PLAYWRIGHT_BASE_URL` 时 `pnpm build && pnpm start -p 3100`，环境 `LUMEN_FORCE_MOCK=1`、`DATA_DIR=.tmp/e2e-data`，不污染 `data/jobs`；headless 加 SwiftShader 参数供 three.js |
+| `e2e/global-setup.ts` | 运行前读 `/api/health`，`mockMode !== true` 直接中止，防止复用带真实 key 的服务烧额度（Codex PR 评审 P1） |
 | `e2e/smoke.spec.ts` | 5 条：空态 / 文生视频到 Done 与下载链接 / 图生视频首帧上传自动切路径 / `[fail]` 失败后 Retry 换新 Job / 存档进详情与 Reuse 回填 |
 | `package.json` | `test:e2e`；devDep `@playwright/test` |
 | `.mcp.json` | Playwright MCP（`npx @playwright/mcp@latest`），agent 探索式验证用 |
@@ -106,6 +107,7 @@
 ## 4. 已知坑
 
 - **mock 的 `poll` 是死代码**：`mockProvider.submit` 返回 `localVideoPath` 后 runner 直接进 `persisting`，从不轮询，所以 mock 里 3.5 秒的 pending 窗口从未生效，视频任务约 1 秒完成。要造失败用 `[fail]` 标记；要造慢任务得改 runner 或让 mock 不返回 `localVideoPath`。
+- 复用 dev server 跑 e2e（`PLAYWRIGHT_BASE_URL`）时，首次运行可能因路由冷编译超过 15 秒断言超时而挂一条，重跑即绿；默认 build + start 路径没有这个问题。
 - Next 16 同一目录只允许一个 `next dev`；若 3000 被遗留进程占着，`preview_start` 会启动失败（它会打印 PID），先结束旧进程再起。
 - 内置浏览器面板在页面 `scrollY > 0` 时截图为纯纸色，但 DOM 与真实渲染正常。检查下方区块时用 `document.querySelector('.lm').style.transform = 'translateY(-Npx)'` 位移后截图，或在真实浏览器里看。
 - `next dev` 会把 "This is NOT the Next.js you know" 块重新写进 `AGENTS.md`，保留它即可。
