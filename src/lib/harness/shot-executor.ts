@@ -5,6 +5,7 @@ import {
   prepareShotRetry,
   transitionShot,
   type HarnessShotRecord,
+  type ShotPatch,
 } from "./shot-state";
 import type { IdentityBible, Shot } from "./types";
 import type {
@@ -39,6 +40,11 @@ export type ShotExecutorOptions = {
   maxRetries?: number;
   /** Rewrite the shot per attempt (e.g. tighten the prompt after a QC rejection). */
   shotOverride?: (shot: Shot, record: HarnessShotRecord) => Shot;
+  /**
+   * Runs before every paid submit, including automatic retries (R06 budget gate).
+   * Throw a ShotFailure with `terminal: true` to stop the shot without further attempts.
+   */
+  beforeAttempt?: (shot: Shot, record: HarnessShotRecord) => Promise<void> | void;
 };
 
 export async function executeShotWithRetries(
@@ -57,9 +63,35 @@ export async function executeShotWithRetries(
       if (record.status === "needs_review") return record;
     }
     const shot = options.shotOverride ? options.shotOverride(options.shot, record) : options.shot;
+    if (record.status === "queued" && options.beforeAttempt) {
+      try {
+        await options.beforeAttempt(shot, record);
+      } catch (error) {
+        const failure =
+          error instanceof ShotFailure
+            ? error
+            : new ShotFailure("internal", error instanceof Error ? error.message : String(error));
+        record = transitionShot(record, "submitting");
+        record = transitionShot(record, "failed", { error: { code: failure.code, message: failure.message } });
+        await notify(options, record);
+        if (failure.terminal) {
+          record = transitionShot(record, "needs_review", { error: { code: failure.code, message: failure.message } });
+          await notify(options, record);
+          return record;
+        }
+        continue;
+      }
+    }
     record = await executeShotOnce({ ...options, shot, record });
     if (record.status !== "failed") return record;
   }
+}
+
+/** Book this attempt's charge on top of what earlier attempts already spent. */
+function attemptCost(record: HarnessShotRecord, charged: number | undefined): Pick<ShotPatch, "costUsd" | "costUnknown"> {
+  const prior = record.priorCostUsd ?? 0;
+  if (charged == null) return { costUsd: Math.max(record.costUsd, prior), costUnknown: true };
+  return { costUsd: Math.round((prior + charged) * 1e6) / 1e6, ...(record.costUnknown ? { costUnknown: true } : {}) };
 }
 
 async function executeShotOnce(options: ShotExecutorOptions): Promise<HarnessShotRecord> {
@@ -91,9 +123,7 @@ async function executeShotOnce(options: ShotExecutorOptions): Promise<HarnessSho
         current = transitionShot(current, "pending", { remoteId: handle.remoteId });
         await notify(options, current);
       } else {
-        current = transitionShot(current, "persisting", {
-          costUsd: handle.costUsdActual ?? current.costUsd,
-        });
+        current = transitionShot(current, "persisting", attemptCost(current, handle.costUsdActual));
         await notify(options, current);
       }
     } else if (current.status === "pending" || current.status === "persisting") {
@@ -127,7 +157,7 @@ async function executeShotOnce(options: ShotExecutorOptions): Promise<HarnessSho
       if (await canceled(options)) return cancelWithHandle(options, current, finalHandle);
       current = transitionShot(current, "persisting", {
         remoteId: finalHandle.remoteId,
-        costUsd: finalHandle.costUsdActual ?? current.costUsd,
+        ...attemptCost(current, finalHandle.costUsdActual),
       });
       await notify(options, current);
     }
@@ -168,7 +198,7 @@ async function executeShotOnce(options: ShotExecutorOptions): Promise<HarnessSho
     }
     current = transitionShot(current, "succeeded", {
       outputPath,
-      costUsd: finalHandle.costUsdActual ?? current.costUsd,
+      ...attemptCost(current, finalHandle.costUsdActual),
       ...(typeof persisted === "string" || !persisted.qc ? {} : { qc: persisted.qc }),
     });
     await notify(options, current);
@@ -190,7 +220,15 @@ async function executeShotOnce(options: ShotExecutorOptions): Promise<HarnessSho
       error: { code: failure.code, message: failure.message },
     });
     await notify(options, failed);
-    return failed;
+    if (!failure.terminal) return failed;
+    // A terminal failure raised mid-attempt (e.g. the visual-QC budget reserve) must not buy
+    // another attempt just so the retry's own gate can stop it; escalate here, same as the
+    // beforeAttempt path does.
+    const reviewed = transitionShot(failed, "needs_review", {
+      error: { code: failure.code, message: failure.message },
+    });
+    await notify(options, reviewed);
+    return reviewed;
   }
 }
 
@@ -248,12 +286,16 @@ function sleep(ms: number) {
 }
 
 export class ShotFailure extends Error {
+  /** Terminal failures skip the retry budget and go straight to needs_review. */
+  readonly terminal: boolean;
   constructor(
     readonly code: string,
     message: string,
+    options: { terminal?: boolean } = {},
   ) {
     super(message);
     this.name = "ShotFailure";
+    this.terminal = options.terminal ?? false;
   }
 }
 

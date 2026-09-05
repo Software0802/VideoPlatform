@@ -257,9 +257,10 @@ export function mountWall(canvas, opts = {}) {
     }
     ray.setFromCamera(ndc, camera);
     const hit = ray.intersectObjects(planes, false)[0];
-    hovered = hit ? hit.object.userData.i : -1;
+    const nextHover = hit ? hit.object.userData.i : -1;
+    if (nextHover !== hovered) { hovered = nextHover; if (opts.onHover) opts.onHover(hovered); }
     planes.forEach((m) => { const u = m.material.uniforms.uHover; u.value += ((m.userData.i === hovered ? 1 : 0) - u.value) * 0.12; });
-    canvas.style.cursor = hovered >= 0 ? 'pointer' : 'default';
+    canvas.style.cursor = hovered >= 0 ? 'pointer' : (opts.grab ? 'grab' : 'default');
     renderer.render(scene, camera);
     raf = requestAnimationFrame(frame);
   }

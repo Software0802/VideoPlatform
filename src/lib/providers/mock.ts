@@ -174,15 +174,18 @@ async function kenBurns(
   height: number,
 ) {
   // ffmpeg-static is built without libfreetype/drawtext. Watermark is burned into the still via sharp.
-  // The push-in spans the whole clip and a drifting two-ink light leak is screened on top, so
+  // The push-in spans the whole clip and a drifting neutral-grey light leak is screened on top, so
   // consecutive frames always differ: a flat still would otherwise trip the harness freezedetect QC.
+  // The blend must run in RGB (format=gbrp): screening on yuv420p planes pushes U and V up together,
+  // which tinted every clip and poster magenta regardless of the leak colours. Grey inks + RGB blend
+  // only lift luminance by a few percent, so posters cut from the clip match the uploaded first frame.
   const zoomStep = (0.12 / Math.max(1, duration * 24)).toFixed(6);
   const base = [
     `scale=${width}:${height}:force_original_aspect_ratio=increase`,
     `crop=${width}:${height}`,
     `zoompan=z='min(zoom+${zoomStep},1.12)':d=1:s=${width}x${height}:fps=24`,
   ].join(",");
-  const leak = `gradients=s=${width}x${height}:r=24:speed=0.08:nb_colors=3:c0=0x2148B8:c1=0x000000:c2=0xC65F38`;
+  const leak = `gradients=s=${width}x${height}:r=24:speed=0.08:nb_colors=3:c0=0x505050:c1=0x000000:c2=0x383838`;
 
   const args = ["-y", "-loop", "1", "-i", still, "-f", "lavfi", "-i", leak];
   if (audio) {
@@ -192,7 +195,7 @@ async function kenBurns(
     "-t",
     String(duration),
     "-filter_complex",
-    `[0:v]${base}[b];[b][1:v]blend=all_mode=screen:all_opacity=0.18[v]`,
+    `[0:v]${base},format=gbrp[b];[1:v]format=gbrp[l];[b][l]blend=all_mode=screen:all_opacity=0.18,format=yuv420p[v]`,
     "-map",
     "[v]",
     "-r",

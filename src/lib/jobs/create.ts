@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { cp, mkdir, readFile, rename, rm } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { estimateCostUsd, estimateHarnessCostUsd } from "@/lib/cost";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
@@ -16,6 +16,8 @@ import { withAdmissionLock } from "@/lib/jobs/admission";
 import { lookupIdempotency, saveIdempotency } from "@/lib/jobs/idempotency";
 import { activeCount, enqueue } from "@/lib/jobs/runner";
 import { assertCreateJobFields } from "@/lib/jobs/request-validation";
+import { resolveLocalOutput } from "@/lib/jobs/local-output";
+import { retryBlock } from "@/lib/jobs/retry-guard";
 import { readJob, tmpDir, toPublic, writeJob } from "@/lib/jobs/store";
 import { isHarnessDuration, isImageMode, modelForMode } from "@/lib/providers/grok/mode-matrix";
 import { assertModeConstraints } from "@/lib/providers/grok/rest-map";
@@ -165,6 +167,12 @@ async function retryJobUnlocked(source: JobRecord): Promise<JobPublic> {
   if (source.status !== "failed" && source.status !== "expired") {
     throw new ProviderHttpError(409, "conflict", "仅失败或过期任务可重试");
   }
+  // A shot whose submit outcome is unknown may already be paid for upstream; re-queuing it
+  // at costUsd 0 would buy it a second time. Refuse before anything is written or copied.
+  const block = retryBlock(source);
+  if (block) {
+    throw new ProviderHttpError(409, "retry_blocked", block.message);
+  }
   const n = await activeCount();
   if (n >= maxQueuedJobs()) {
     throw new ProviderHttpError(429, "queue_full", "队列已满，请等待进行中的任务完成");
@@ -190,6 +198,7 @@ async function retryJobUnlocked(source: JobRecord): Promise<JobPublic> {
     lastFrameLocksOutput: false,
     harness: { enabled: Boolean(source.harness?.enabled) },
     costUsdEstimate: source.costUsdEstimate,
+    costUsdPlanned: source.costUsdPlanned ?? null,
     costUsdActual: null,
     error: null,
     output: null,
@@ -214,6 +223,41 @@ async function retryJobUnlocked(source: JobRecord): Promise<JobPublic> {
   if (source.assets.references) rec.assets.references = source.assets.references.map((a) => ({ ...a }));
   if (source.assets.source) {
     rec.assets.source = { ...source.assets.source, xaiFileId: null };
+  }
+
+  // Harness retry keeps the plan and every succeeded shot; only failed / needs_review shots
+  // are re-queued, so a human "Retry" does not re-direct and re-pay for the whole film (R09).
+  if (source.harnessPlan && source.harnessShots) {
+    const kept = source.harnessShots.map((shot) =>
+      shot.status === "succeeded"
+        ? { ...shot }
+        : { id: shot.id, index: shot.index, status: "queued" as const, retries: 0, costUsd: 0 },
+    );
+    const keptCost = kept.reduce((sum, s) => sum + s.costUsd, 0);
+    rec.harnessPlan = source.harnessPlan;
+    rec.harnessShots = kept;
+    rec.costUsdActual = keptCost > 0 ? Math.round(keptCost * 100) / 100 : null;
+    rec.costIncomplete = kept.some((s) => s.costUnknown) || undefined;
+    const srcShots = path.join(mediaStore.jobDir(source.id), "shots");
+    const destShots = path.join(mediaStore.jobDir(id), "shots");
+    // Kept shots are booked as paid and finished, so their clips must really arrive in the new
+    // job dir; otherwise stitch would fail later against a ledger that says everything is fine.
+    // Tail frames and the like are best-effort, so only the kept outputs are verified.
+    const keptOutputs = kept.flatMap((s) => (s.status === "succeeded" && s.outputPath ? [s.outputPath] : []));
+    try {
+      await cp(srcShots, destShots, { recursive: true });
+      for (const rel of keptOutputs) await access(resolveLocalOutput(mediaStore.jobDir(id), rel));
+    } catch (error) {
+      if (keptOutputs.length) {
+        await rm(mediaStore.jobDir(id), { recursive: true, force: true }).catch(() => undefined);
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new ProviderHttpError(
+          500,
+          "retry_copy_failed",
+          `无法复制已完成分镜的成片（${detail}），重试未创建；请确认原任务目录完整后再试`,
+        );
+      }
+    }
   }
 
   await writeJob(rec);

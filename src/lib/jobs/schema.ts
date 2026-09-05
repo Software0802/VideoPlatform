@@ -47,8 +47,18 @@ export const jobPublicSchema = z.object({
   lastFrameStored: z.boolean(),
   lastFrameLocksOutput: z.literal(false),
   harness: z.object({ enabled: z.boolean() }),
+  /** Estimate shown at submit time; never rewritten afterwards (R05). */
   costUsdEstimate: z.number(),
+  /** Harness: estimate recomputed from the Director's packing, shown beside the submit-time
+   * one. The budget cap does NOT derive from it — see `budgetCap` / evals/rubric.md §5. */
+  costUsdPlanned: z.number().nullable().optional(),
+  /** Sum of every charge the upstream reported (shots, sheets, retries). */
   costUsdActual: z.number().nullable(),
+  /** True when a paid call returned no usage or LLM calls were made without a price table: actual is a lower bound. */
+  costIncomplete: z.boolean().optional(),
+  /** Soft warning (evals/rubric.md §5): actual spend passed 1.5 × the submit-time estimate.
+   * Nothing stops; the job just no longer counts as cost-compliant. The hard stop stays at ×2. */
+  costOverTarget: z.boolean().optional(),
   imageResolution: imageResolutionSchema.nullable(),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
   output: z
@@ -68,6 +78,15 @@ export const jobPublicSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   bible: z.null(),
+  /** Set when a shot may already have been paid for upstream: one-click Retry is refused
+   * server-side (409 `retry_blocked`) and the UI shows `message` instead of the button. */
+  retryBlocked: z
+    .object({
+      code: z.literal("uncertain_submit"),
+      message: z.string(),
+      shotIndexes: z.array(z.number().int().min(0)),
+    })
+    .nullable(),
   /** Harness jobs expose per-shot progress; native clips keep null. */
   shots: z
     .array(
@@ -126,13 +145,44 @@ export type UploadSidecar = {
   createdAt: string;
 };
 
+/**
+ * Director / visual-QC token ledger. `unpricedCalls` and `costUsd` were added after
+ * the first harness runs, so job.json files written before that omit them; every read
+ * goes through `normalizeLlmUsage`, which reads a missing field as 0.
+ */
+export type JobLlmUsage = {
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  /** Calls that finished without upstream usage: `costUsd` is a lower bound (default 0). */
+  unpricedCalls?: number;
+  /** List-price estimate of the priced calls, folded into `costUsdActual` (default 0). */
+  costUsd?: number;
+};
+
+export type NormalizedLlmUsage = Required<JobLlmUsage>;
+
+export function normalizeLlmUsage(usage: JobLlmUsage | null | undefined): NormalizedLlmUsage {
+  return {
+    calls: usage?.calls ?? 0,
+    promptTokens: usage?.promptTokens ?? 0,
+    completionTokens: usage?.completionTokens ?? 0,
+    unpricedCalls: usage?.unpricedCalls ?? 0,
+    costUsd: usage?.costUsd ?? 0,
+  };
+}
+
 export type JobAssetImage = { path: string; width: number; height: number };
 export type JobAssetVideo = JobAssetImage & {
   durationSec: number;
   xaiFileId: string | null;
 };
 
-export type JobRecord = JobPublic & {
+/**
+ * `retryBlocked` is derived from `harnessShots` at `toPublic` time, never stored, so it is
+ * omitted here — otherwise every writer of a record would have to carry a computed field.
+ */
+export type JobRecord = Omit<JobPublic, "retryBlocked"> & {
   schemaVersion: 1;
   remoteId?: string;
   remoteUrl?: string;
@@ -149,4 +199,8 @@ export type JobRecord = JobPublic & {
   /** Internal Phase 2 snapshot; omitted from the Phase 1 public DTO. */
   harnessPlan?: HarnessPlan | null;
   harnessShots?: HarnessShotRecord[] | null;
+  /** Director / visual-QC token ledger; see `normalizeLlmUsage` for legacy records. */
+  llmUsage?: JobLlmUsage;
+  /** Whole-film check after stitching (R08). */
+  harnessStitch?: { durationSec: number; expectedSec: number; settleSec: number; toleranceSec: number };
 };

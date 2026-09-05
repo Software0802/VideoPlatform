@@ -57,7 +57,7 @@ export function AccessTokenPrompt({ onAuthorized }: { onAuthorized: () => void }
           />
         </label>
         {error ? (
-          <p id="auth-prompt-error" role="alert" style={{ color: "var(--color-danger)" }}>
+          <p id="auth-prompt-error" role="alert" className="dialog__error">
             {error}
           </p>
         ) : null}

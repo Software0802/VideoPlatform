@@ -176,7 +176,7 @@ describe("harness state persistence", () => {
     expect(disk?.harnessShots?.[0]?.outputPath).toBeUndefined();
   });
 
-  it("recovers in-flight shots without resetting succeeded clips", async () => {
+  it("escalates an uncertain submit without resetting succeeded clips", async () => {
     const id = "job_harness_state_recover";
     await writeJob(baseRecord(id));
     await saveHarnessPlan(id, plan);
@@ -191,7 +191,13 @@ describe("harness state persistence", () => {
       status: "succeeded",
       outputPath: "shots/0/video.mp4",
     });
-    expect(recovered.harnessShots?.[1]).toMatchObject({ status: "queued", id: "shot_1" });
+    // shot_1 crashed between provider.submit and the remote id hitting job.json: the
+    // upstream may already have taken the paid request, so a human decides (R-P1-3).
+    expect(recovered.harnessShots?.[1]).toMatchObject({
+      status: "needs_review",
+      id: "shot_1",
+      error: { code: "uncertain_submit" },
+    });
     expect(recovered.harnessShots?.[1]?.remoteId).toBeUndefined();
   });
 });

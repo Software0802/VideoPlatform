@@ -50,3 +50,6 @@ next-env.d.ts
 # playwright
 /test-results
 /playwright-report
+
+# Playwright MCP 会话快照
+.playwright-mcp/

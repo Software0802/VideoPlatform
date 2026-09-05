@@ -211,7 +211,7 @@ describe("shot executor", () => {
     });
   });
 
-  it("requeues a submitting shot that never received a remote id", async () => {
+  it("does not re-submit a shot whose crash left the upstream state unknown", async () => {
     const handle: ProviderHandle = { providerId: "mock", remoteId: "remote-fresh" };
     const submit = vi.fn(async () => handle);
     const poll = vi.fn<VideoProvider["poll"]>().mockResolvedValue({
@@ -223,7 +223,30 @@ describe("shot executor", () => {
       jobId: "job_harness",
       shot,
       bible,
+      // `submitting` without a remote id: provider.submit may already have been billed.
       record: { ...createShotRecords([shot])[0]!, status: "submitting" },
+      provider: providerFor(submit, poll),
+      resolveAsset,
+      persistOutput: async () => "shots/0/video.mp4",
+      pollIntervalMs: 0,
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: "needs_review", error: { code: "uncertain_submit" } });
+  });
+
+  it("resubmits a pending shot that never received a remote id", async () => {
+    const handle: ProviderHandle = { providerId: "mock", remoteId: "remote-fresh" };
+    const submit = vi.fn(async () => handle);
+    const poll = vi.fn<VideoProvider["poll"]>().mockResolvedValue({
+      status: "done",
+      progress: 100,
+      remoteUrl: "http://fixture/video.mp4",
+    });
+    const result = await executeShotWithRetries({
+      jobId: "job_harness",
+      shot,
+      bible,
+      record: { ...createShotRecords([shot])[0]!, status: "pending" },
       provider: providerFor(submit, poll),
       resolveAsset,
       persistOutput: async () => "shots/0/video.mp4",

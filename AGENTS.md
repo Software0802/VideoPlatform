@@ -10,15 +10,18 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - 交接文档 `docs/handoff.md`：当前状态、已完成 / 未完成、下一刀。每次会话从这里开始。
 - 后端真相 `docs/design.md`（as-built）；阶段计划 `docs/plan.md`；UI 规格 `DESIGN.md`。
-- 首页设计交接包 `design_handoff/design_handoff_lumen_blueprint/README.md`，它是首页像素级还原的依据。
+- 首页设计交接包 `design_handoff/design_handoff_genius_home/README.md`（规格）+ `Lumen v2.dc.html`（定稿原型），它们是首页像素级还原的依据。
 
-## 前端约定（2026-09-05 起）
+## 前端约定（2026-09-05 晚起，Genius 单屏）
 
-- 首页是单页 `src/components/lumen/LumenHome.tsx`，视觉遵循 Mono-Color 印刷语言：纸 `#F5F1E8`、钴蓝 `#2148B8` 主墨、赭红 `#C65F38` 辅墨；无圆角、无阴影、无渐变、无模糊，结构只靠 4 / 2 / 1px 规则线。改 UI 前先读 `DESIGN.md`。
-- 样式写在 `src/app/globals.css`（BEM 风格类名 + `@theme` 令牌），不引入组件库，不用 `@react-three/fiber`、`drei` 或图标库。
-- three.js 只走 `src/lib/scene/lumen-three.ts` 的纯函数场景（`mountReel / mountWall / mountDotField`），通过 `src/components/scene/SceneHost.tsx` 挂载；需要重建场景时换 `key`，不要在 render 中碰 ref。
-- 浏览器只经 `src/lib/client/jobs.ts` 和 `useJobLive.ts` 访问 `/api/*`；组件不直接 `fetch`。401 上抛后由页面弹 `AccessTokenPrompt`。
-- UI 只暴露三条路径：文生视频 / 图生视频 / 文生图。`harnessEnabled()` 为真时时长面板多出 30 / 45 / 60（仅 t2v / i2v），读数按 `job.shots` 显示分镜进度。`reference_to_video / edit_video / extend_video` 仍在 API 与 provider 层，不要从后端删除。
+- 整站是 `src/components/lumen/LumenHome.tsx` 一个 100vh 单屏（`body overflow:hidden`），三个视图：首页 / 工作室（输入即转场：左操作台、右展览区、输入卡落底）/ 作品（环形画廊）。视觉是深色玻璃语言：页面 `#0a0d12`、卡片 `rgba(28,30,36,.92)`、描边 `rgba(214,228,255,.12)`、强调 `#DDE1E8`；圆角 26 / 22 / 12 / 9；文案全中文，品牌名 Genius。改 UI 前先读 `DESIGN.md`。
+- 样式写在 `src/app/globals.css`（BEM 风格类名 + `@theme` 令牌），字体 Manrope + Noto Sans SC 经 `next/font/google`；不引入组件库，不用 `@react-three/fiber`、`drei` 或图标库（图标是内联 SVG）。
+- three.js 只走 `src/lib/scene/lumen-three.ts` 的纯函数场景（`mountDawn` 黎明河面背景、`mountRingDark` 作品环），通过 `src/components/scene/SceneHost.tsx` 挂载；需要重建场景时换 `key`，不要在 render 中碰 ref。任务进行中 `dawn.setEnergy(1)`。
+- 浏览器只经 `src/lib/client/jobs.ts` 和 `useJobLive.ts` 访问 `/api/*`；组件不直接 `fetch`。401 上抛后由页面弹 `AccessTokenPrompt`（顶栏「登录」也打开它）。
+- UI 只暴露三条路径：文生视频 / 图生视频 / 文生图。时长与画幅是点击循环的芯片（`data-dur` / `data-ratio`）；`harnessEnabled()` 为真时时长循环追加 30 / 45 / 60（仅 t2v / i2v），展览区阶段行按 `job.shots` 显示「生成分镜 n/m」。`reference_to_video / edit_video / extend_video` 仍在 API 与 provider 层，不要从后端删除。
+- 操作台四组（滤镜 / 磨皮 / 色彩 / 镜头）每组单选，选中项的提示词以 `
+
+` 分段追加进 textarea；用户手动编辑后按"文本是否仍含该段"同步选中态。
 - `POST /api/jobs` 的请求体以 `src/lib/jobs/schema.ts` 的 `createJobBodySchema`（strict）为准，没有 `model` 字段，模型由服务端按 mode 决定。
 
 ## 后端约定
@@ -32,7 +35,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## 验证门禁
 
 - 改代码后依次跑：`pnpm exec tsc --noEmit`、`pnpm exec eslint src`、`pnpm test`，三者绿才算完成。
-- 改 UI 后跑 `pnpm e2e`（Playwright，`e2e/lumen.spec.ts`：空态 / 文生视频 / `[fail]` 重试与取消 / 存档详情 / 首帧上传 / 30s 长片，全部 mock 模式，约 1 分钟）。它会复用已在 3000 端口运行的 `next dev`（`lumen-dev` 预览），没有就自己起一个。base URL 必须是 `localhost`，`127.0.0.1` 会被 Next 16 dev 拒 403 导致不水合。仍可再用预览面板人工看一眼卷盘与画廊。
+- 改 UI 后跑 `pnpm e2e`（Playwright，`e2e/lumen.spec.ts`：空态 / 文生视频与操作台飞入 / `[fail]` 重试与取消 / 作品环与再生成 / 首帧上传 / 30s 长片 / 手机端成片位置，全部 mock 模式，约 2.5 分钟）。它会复用已在 3000 端口运行的 `next dev`（`lumen-dev` 预览），没有就自己起一个；`CI` 或 `E2E_ISOLATED=1` 时拒绝复用并用隔离 `DATA_DIR`，`CI` 或 `E2E_REQUIRE_MOCK=1` 时非 mock 直接失败而非跳过。base URL 必须是 `localhost`，`127.0.0.1` 会被 Next 16 dev 拒 403 导致不水合。仍可再用预览面板（或 Playwright 截图）人工看一眼河面与作品环。
 - 内置浏览器面板在页面滚动后截图会空白，这是截图工具的问题；用 `translateY` 位移检查下方区块，或在真实浏览器里看。
 
 ## 安全与额度
@@ -45,6 +48,16 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 写或改视频 prompt、Director 系统提示、Identity Bible、`evals/prompts.json` 时，先用 `/video-prompt`。
 - 被用户纠正时用 `/fb video-prompt <原因与期望>` 记录；反馈积累后用 `/improve-skill video-prompt` 提改进 PR。
 - 人工评分写入 `evals/runs/YYYY-MM-DD.json`（格式见 `evals/rubric.md`），它是 improver 的主要信号源。
+
+# 子代理调度
+
+本项目使用全局子代理团队（`~/.claude/agents/`，来自 skills 仓库 `agent-team`），调度顺序与 Codex 审查分层见全局 CLAUDE.md「子代理调度」。项目差异只有下面几行：
+
+- 验证门禁：`pnpm exec tsc --noEmit`、`pnpm exec eslint src`、`pnpm test`；改 UI 后再跑 `pnpm e2e`（详见上文「验证门禁」）。
+- 高风险代码（Codex 按需审 diff）：`src/lib/harness/`（预算与并发、崩溃恢复、QC / stitch）、`src/lib/jobs/`（状态机、Retry、schema）、`src/app/api/`（鉴权与请求体校验）、`src/lib/ffmpeg.ts`、`src/lib/providers/grok/`（rest-map、尾帧与 data URI 约束）。
+- 交接文档：`docs/handoff.md`；设计文档：`docs/design.md`（后端 as-built）、`DESIGN.md`（UI）；计划：`docs/plan.md`。
+- 硬约束见上文「前端约定 / 后端约定」；Codex 审查会先读本文件。想给 Codex 加审查重点，放 `.claude/codex-review/plan.md` 或 `code.md`。
+- 用户 2026-09-05 决定：跨厂商审查用在决策与高风险代码上，普通代码不审；Codex 走 ChatGPT plus 额度，同一份对象不重复审。
 
 <!-- BEGIN:nextjs-agent-rules -->
 

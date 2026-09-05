@@ -1,6 +1,6 @@
-# 流光 / Lumen — 视频工作室
+# Genius（原 流光 / Lumen）— 视频工作室
 
-单页工作室（Mono-Color 印刷风格首页）：写一句提示词，看放映机转起来。UI 只暴露三条路径——文生视频 / 图生视频 / 文生图；API 与 provider 层仍支持 Grok 原生参考生 / 编辑 / 延长。无上游密钥时走模拟模式。Harness Director 的严格规划模块已落地并可单独验证；完整长视频一致性管线仍未启用。
+深色沉浸的单屏工作室（`design_handoff/design_handoff_genius_home`）：黎明河面上写一句提示词，输入即进入工作室，左侧操作台把滤镜 / 色彩 / 镜头拼进提示词，右侧展览区看进度与成片，作品页是环形画廊。UI 只暴露三条路径——文生视频 / 图生视频 / 文生图；API 与 provider 层仍支持 Grok 原生参考生 / 编辑 / 延长。无上游密钥时走模拟模式。30 / 45 / 60 秒一致性管线（Harness）已接入，由 `HARNESS_ENABLED` 开关；mock 端到端已验证，真实 key 的质量与成本验收仍待完成（见 `docs/handoff.md`）。
 
 新会话先读 [`docs/handoff.md`](docs/handoff.md)。
 

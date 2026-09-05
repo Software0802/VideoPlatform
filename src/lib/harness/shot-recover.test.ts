@@ -15,15 +15,34 @@ function record(over: Partial<HarnessShotRecord> = {}): HarnessShotRecord {
 
 describe("shot recovery", () => {
   it("requeues in-flight shots that never received a remote id", () => {
-    expect(recoverShotDecision("submitting", false)).toBe("requeue");
     expect(recoverShotDecision("pending", false)).toBe("requeue");
     expect(recoverShotDecision("persisting", false)).toBe("requeue");
-    expect(recoverHarnessShot(record({ status: "submitting", remoteId: undefined }))).toMatchObject({
+    expect(recoverHarnessShot(record({ status: "pending", remoteId: undefined }))).toMatchObject({
       status: "queued",
       retries: 1,
       costUsd: 0.4,
     });
-    expect(recoverHarnessShot(record({ status: "submitting" })).remoteId).toBeUndefined();
+    expect(recoverHarnessShot(record({ status: "pending" })).remoteId).toBeUndefined();
+  });
+
+  it("sends an uncertain submit to human review instead of paying twice", () => {
+    // The crash window between provider.submit returning and the remote id landing in
+    // job.json may already have cost money upstream; re-submitting would pay again.
+    expect(recoverShotDecision("submitting", false)).toBe("review");
+    expect(recoverHarnessShot(record({ status: "submitting", remoteId: undefined }))).toMatchObject({
+      status: "needs_review",
+      retries: 1,
+      costUsd: 0.4,
+      error: { code: "uncertain_submit" },
+    });
+  });
+
+  it("keeps the ledger of earlier attempts when it requeues", () => {
+    expect(
+      recoverHarnessShot(
+        record({ status: "pending", retries: 1, costUsd: 1.2, priorCostUsd: 1.2, costUnknown: true }),
+      ),
+    ).toMatchObject({ status: "queued", retries: 1, costUsd: 1.2, priorCostUsd: 1.2, costUnknown: true });
   });
 
   it("resumes poll/persist when a remote id already exists", () => {
@@ -51,7 +70,7 @@ describe("shot recovery", () => {
   it("recovers a mixed plan without resetting succeeded clips", () => {
     const recovered = recoverHarnessShots([
       record({ id: "shot_0", status: "succeeded", outputPath: "shots/0/video.mp4" }),
-      record({ id: "shot_1", index: 1, status: "submitting" }),
+      record({ id: "shot_1", index: 1, status: "pending" }),
       record({ id: "shot_2", index: 2, status: "pending", remoteId: "remote-2" }),
     ]);
     expect(recovered.map((shot) => shot.status)).toEqual(["succeeded", "queued", "pending"]);

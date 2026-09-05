@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { grokApiKey, upstreamTimeoutMs, xaiBase } from "@/lib/env";
+import { normalizeCompletion, usageFromResponse, type LlmCompletion, type LlmUsage } from "./llm-usage";
 import type { HarnessPlan } from "./types";
 
 export const DIRECTOR_MODEL = "grok-4.6";
@@ -189,7 +190,7 @@ export type DirectorCompletionRequest = {
   };
 };
 
-export type DirectorCompleter = (request: DirectorCompletionRequest) => Promise<string>;
+export type DirectorCompleter = (request: DirectorCompletionRequest) => Promise<string | LlmCompletion>;
 
 const directorJsonSchema = z.toJSONSchema(directorPlanShapeSchema) as Record<string, unknown>;
 export const DIRECTOR_RESPONSE_FORMAT: DirectorCompletionRequest["responseFormat"] = {
@@ -209,7 +210,7 @@ Identity Bible 必须把人物、服装、光线、色板和镜头语言写成�
 
 export async function createDirectorPlan(
   input: DirectorInput,
-  options: { complete?: DirectorCompleter } = {},
+  options: { complete?: DirectorCompleter; onUsage?: (usage: LlmUsage | null) => void | Promise<void> } = {},
 ): Promise<HarnessPlan> {
   const parsedInput = directorInputSchema.safeParse(input);
   if (!parsedInput.success) throw new Error("Director 输入无效");
@@ -220,7 +221,11 @@ export async function createDirectorPlan(
     const request = buildRequest(parsedInput.data, attempt > 0);
     let raw: string;
     try {
-      raw = await complete(request);
+      const completion = normalizeCompletion(await complete(request));
+      raw = completion.content;
+      // A billable call that came back without usage is still reported (as null) so the
+      // ledger can mark itself incomplete instead of silently under-counting (R-P1-2).
+      await options.onUsage?.(completion.usage ?? null);
     } catch (error) {
       // The upstream client owns transport retries; do not duplicate billable calls here.
       throw error;
@@ -259,7 +264,7 @@ function buildRequest(input: z.output<typeof directorInputSchema>, retry: boolea
   };
 }
 
-async function completeWithGrok(request: DirectorCompletionRequest): Promise<string> {
+async function completeWithGrok(request: DirectorCompletionRequest): Promise<LlmCompletion> {
   const apiKey = grokApiKey();
   if (!apiKey) throw new Error("缺少 XAI_API_KEY 或 SUB2API_API_KEY");
   const client = new OpenAI({
@@ -278,5 +283,5 @@ async function completeWithGrok(request: DirectorCompletionRequest): Promise<str
   if (typeof content !== "string" || !content.trim()) {
     throw new Error("Director 未返回内容");
   }
-  return content;
+  return { content, usage: usageFromResponse(response.usage) };
 }

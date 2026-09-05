@@ -36,7 +36,12 @@ export const harnessShotRecordSchema = z
     remoteId: z.string().trim().min(1).optional(),
     outputPath: z.string().trim().min(1).optional(),
     retries: z.number().int().min(0).max(2),
+    /** Cumulative spend across every attempt of this shot (R05). */
     costUsd: z.number().finite().min(0),
+    /** Spend booked by attempts before the current one; the executor adds the current attempt on top. */
+    priorCostUsd: z.number().finite().min(0).optional(),
+    /** A paid attempt finished without usage data: costUsd is a lower bound, not a total. */
+    costUnknown: z.boolean().optional(),
     error: shotErrorSchema.nullable().optional(),
     qc: shotQcSchema.optional(),
   })
@@ -48,6 +53,7 @@ export type ShotPatch = {
   remoteId?: string;
   outputPath?: string;
   costUsd?: number;
+  costUnknown?: boolean;
   error?: HarnessShotRecord["error"];
   qc?: ShotQc;
 };
@@ -116,7 +122,13 @@ export function prepareShotRetry(
       },
     });
   }
-  const next = { ...record, status: "queued" as const, retries: record.retries + 1 };
+  // Money already spent on the failed attempt stays on the books: the next attempt adds to it.
+  const next = {
+    ...record,
+    status: "queued" as const,
+    retries: record.retries + 1,
+    priorCostUsd: record.costUsd,
+  };
   delete next.remoteId;
   delete next.outputPath;
   delete next.error;

@@ -131,7 +131,10 @@ describe("harness orchestrator", () => {
     expect(job?.harnessPlan?.shots).toHaveLength(2);
     expect(job?.harnessShots?.map((s) => s.status)).toEqual(["succeeded", "succeeded"]);
     expect(job?.harnessShots?.[0]?.qc).toMatchObject({ durationOk: true, blackFrameFree: true, freezeFree: true });
+    // Submit-time estimate is untouched; the plan-derived figure lands beside it (R05).
     expect(job?.costUsdEstimate).toBe(2.4);
+    expect(job?.costUsdPlanned).toBe(2.4);
+    expect(job?.costIncomplete).toBe(false);
     // Shot 1 is tail-chained: I2V from the sharpest frame of shot 0's tail.
     expect(job?.harnessPlan?.shots[1]).toMatchObject({
       route: "grok_i2v",
@@ -174,6 +177,27 @@ describe("harness orchestrator", () => {
     const retried = provider.submit.mock.calls[1]![0] as ProviderGenerateRequest;
     expect(retried.prompt).toContain("严格保持不变");
   }, 120_000);
+
+  it("rejects a plan that cannot fit the budget cap before any shot is submitted (R06)", async () => {
+    const id = "job_harness_budget";
+    await writeJob(record(id));
+    const provider = clipProvider((req) => req.durationSec ?? 8);
+    // Submit-time estimate is $2.40; a ×0.4 cap ($0.96) cannot fit the $2.40 plan the
+    // Director produced, so the run stops at the plan, not halfway through the shots.
+    const orchestrator = createHarnessOrchestrator({
+      enabled: () => true,
+      provider,
+      pollIntervalMs: 0,
+      budgetMultiplier: 0.4,
+    });
+    await expect(orchestrator.execute(id)).rejects.toMatchObject({ code: "budget_exceeded" });
+    const job = await readJob(id);
+    expect(provider.submit).not.toHaveBeenCalled();
+    // The plan-derived figure is still recorded for the UI; no shot ever left the queue.
+    expect(job?.costUsdPlanned).toBe(2.4);
+    expect(job?.harnessShots?.map((s) => s.status)).toEqual(["queued", "queued"]);
+    expect(job?.error ?? null).toBeNull();
+  }, 60_000);
 
   it("resumes an interrupted run from the saved plan without re-directing", async () => {
     const id = "job_harness_resume";

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { grokApiKey, upstreamTimeoutMs, xaiBase } from "@/lib/env";
+import { normalizeCompletion, usageFromResponse, type LlmCompletion, type LlmUsage } from "./llm-usage";
 import type { IdentityBible, Shot } from "./types";
 
 /**
@@ -23,7 +24,11 @@ export const visualQcScoreSchema = z
   })
   .strict();
 
-export type VisualQcScore = z.infer<typeof visualQcScoreSchema> & { overall: number };
+/**
+ * `overall` is the five-way mean kept for the rubric's style score; `identity` is
+ * min(face, hair, wardrobe) so a face swap cannot be averaged away by good lighting (R04).
+ */
+export type VisualQcScore = z.infer<typeof visualQcScoreSchema> & { overall: number; identity: number };
 
 export type VisualQcFrame = { label: string; dataUri: string };
 
@@ -43,9 +48,9 @@ export type VisualQcRequest = {
   };
 };
 
-export type VisualQcCompleter = (request: VisualQcRequest) => Promise<string>;
+export type VisualQcCompleter = (request: VisualQcRequest) => Promise<string | LlmCompletion>;
 
-const SYSTEM_PROMPT = `你是 Lumen 的一致性质检员。对照 Identity Bible 与参考帧，给当前镜头的首帧与尾帧打分。
+const SYSTEM_PROMPT = `你是 Lumen 的一致性质检员。对照 Identity Bible 与参考帧（用户首帧、角色表、上一镜尾帧），给当前镜头抽出的首、中、尾三帧打分；任一帧漂移都按最差那帧计。
 五个维度各 0–1（步长 0.1）：face 面部身份、hair 发型、wardrobe 服装、lighting 光线、palette 色调与风格。
 1 表示与参考完全一致，0.5 表示大体相同但有明显漂移，0 表示换人 / 换装 / 风格断裂。
 没有人物的镜头，face/hair/wardrobe 按场景主体的一致性评分。只输出 JSON。`;
@@ -100,16 +105,24 @@ export function parseVisualQcResponse(raw: string): VisualQcScore {
   const parsed = visualQcScoreSchema.parse(value);
   const overall =
     (parsed.face + parsed.hair + parsed.wardrobe + parsed.lighting + parsed.palette) / 5;
-  return { ...parsed, overall: Math.round(overall * 100) / 100 };
+  const identity = Math.min(parsed.face, parsed.hair, parsed.wardrobe);
+  return { ...parsed, overall: Math.round(overall * 100) / 100, identity };
+}
+
+/** A shot passes visual QC only if both the style mean and the identity floor clear the threshold. */
+export function visualQcPasses(score: Pick<VisualQcScore, "overall" | "identity">, threshold: number): boolean {
+  return score.overall >= threshold && score.identity >= threshold;
 }
 
 export async function scoreVisualConsistency(
   input: Parameters<typeof buildVisualQcRequest>[0],
-  options: { complete?: VisualQcCompleter } = {},
+  options: { complete?: VisualQcCompleter; onUsage?: (usage: LlmUsage | null) => void | Promise<void> } = {},
 ): Promise<VisualQcScore> {
   const complete = options.complete ?? completeWithGrok;
-  const raw = await complete(buildVisualQcRequest(input));
-  return parseVisualQcResponse(raw);
+  const completion = normalizeCompletion(await complete(buildVisualQcRequest(input)));
+  // Same contract as the Director: null means "billed, but usage unknown".
+  await options.onUsage?.(completion.usage ?? null);
+  return parseVisualQcResponse(completion.content);
 }
 
 /** Retry prompt tightening: restate the locked traits so the regenerated shot drifts less. */
@@ -128,7 +141,7 @@ export function tightenShotPrompt(shot: Shot, bible: IdentityBible, attempt: num
   return `${shot.prompt}\n${suffix}`.slice(0, 2000);
 }
 
-async function completeWithGrok(request: VisualQcRequest): Promise<string> {
+async function completeWithGrok(request: VisualQcRequest): Promise<LlmCompletion> {
   const apiKey = grokApiKey();
   if (!apiKey) throw new Error("缺少 XAI_API_KEY 或 SUB2API_API_KEY");
   const client = new OpenAI({
@@ -147,5 +160,5 @@ async function completeWithGrok(request: VisualQcRequest): Promise<string> {
   if (typeof content !== "string" || !content.trim()) {
     throw new Error("视觉 QC 未返回内容");
   }
-  return content;
+  return { content, usage: usageFromResponse(response.usage) };
 }

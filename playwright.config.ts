@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 /**
@@ -6,9 +7,15 @@ import { defineConfig, devices } from "@playwright/test";
  * Next 16 allows one `next dev` per directory: an already running dev server on
  * the same port is reused, and the suite then works with whatever DATA_DIR it has.
  * Use `localhost`, not `127.0.0.1`: Next 16 dev rejects the client bundle from other origins (403).
+ *
+ * Gate semantics (R12): a reused server keeps its own env, so the spec skips when the server
+ * is not in mock mode. Set `E2E_REQUIRE_MOCK=1` (CI does) to turn those skips into failures,
+ * and `E2E_ISOLATED=1` to refuse reuse and start a fresh server on `E2E_DATA_DIR`.
  */
 const PORT = Number(process.env.E2E_PORT ?? 3000);
 const BASE_URL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`;
+const ISOLATED = Boolean(process.env.CI || process.env.E2E_ISOLATED);
+const DATA_DIR = process.env.E2E_DATA_DIR ?? path.resolve(__dirname, "test-results/e2e-data");
 
 export default defineConfig({
   testDir: "./e2e",
@@ -30,11 +37,13 @@ export default defineConfig({
   webServer: {
     command: `pnpm dev --port ${PORT}`,
     url: `${BASE_URL}/api/health`,
-    reuseExistingServer: true,
+    reuseExistingServer: !ISOLATED,
     timeout: 120_000,
     env: {
       LUMEN_FORCE_MOCK: "1",
       HARNESS_ENABLED: "1",
+      // Only honoured when Playwright starts the server itself; a reused dev server keeps its data dir.
+      DATA_DIR,
     },
   },
 });

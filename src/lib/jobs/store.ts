@@ -8,6 +8,7 @@ import {
   type JobPublic,
   type JobRecord,
 } from "@/lib/jobs/schema";
+import { retryBlock } from "@/lib/jobs/retry-guard";
 import { mediaStore } from "@/lib/storage/local-fs";
 
 type GlobalLockState = typeof globalThis & {
@@ -50,13 +51,17 @@ export function toPublic(rec: JobRecord): JobPublic {
     lastFrameLocksOutput: false as const,
     harness: { enabled: Boolean(rec.harness?.enabled) },
     costUsdEstimate: rec.costUsdEstimate,
+    costUsdPlanned: rec.costUsdPlanned ?? null,
     costUsdActual: rec.costUsdActual,
+    costIncomplete: Boolean(rec.costIncomplete),
+    costOverTarget: Boolean(rec.costOverTarget),
     imageResolution: rec.imageResolution ?? null,
     error: rec.error,
     output: coerceOutput(rec.output),
     createdAt: rec.createdAt,
     updatedAt: rec.updatedAt,
     bible: null,
+    retryBlocked: retryBlock(rec),
     shots: publicShots(rec),
   };
   return jobPublicSchema.parse(pub);

@@ -150,7 +150,7 @@ describe("persisted shot plan", () => {
     );
   });
 
-  it("requeues a crashed submitting shot and resumes a pending remote shot", async () => {
+  it("escalates a crashed submitting shot and resumes a pending remote shot", async () => {
     const id = "job_persisted_plan_recover";
     await writeJob(baseRecord(id));
     await saveHarnessPlan(id, plan);
@@ -188,8 +188,11 @@ describe("persisted shot plan", () => {
     });
 
     const final = await readJob(id);
-    expect(final?.harnessShots?.map((shot) => shot.status)).toEqual(["succeeded", "succeeded"]);
-    expect(submit).toHaveBeenCalledTimes(1);
+    // shot_0 died inside the submit window (no remote id): a re-submit could pay twice, so
+    // it goes to a human. shot_1 has a remote id and simply resumes polling (R-P1-3).
+    expect(final?.harnessShots?.map((shot) => shot.status)).toEqual(["needs_review", "succeeded"]);
+    expect(final?.harnessShots?.[0]?.error).toMatchObject({ code: "uncertain_submit" });
+    expect(submit).not.toHaveBeenCalled();
     expect(poll).toHaveBeenCalled();
   });
 });

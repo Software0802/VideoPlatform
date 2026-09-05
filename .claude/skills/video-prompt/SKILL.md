@@ -27,11 +27,11 @@ Lumen 的产品目标是**跨镜头身份一致的连续视频**：同一个人�
 - 中文、英文各写一套，不要机翻；两种语言都要出现同样的锁定项。
 - 有首帧 / 参考图时用"画面中的人物…"指代，不再重新描述外貌——重复描述会和参考图打架。
 - 长度受 schema 限制（≤ 2000 字符）；形容词堆砌不会提高一致性，锁定项才会。
-- 评测用例要覆盖真实边界（最短 1s、最长 15s，extend 源片 2s / 15s），结构由 `scripts/validate-evals.mjs` 校验：20 条、5 种模式各 4 条、中英各 2 条。
+- 评测用例要覆盖真实边界（最短 1s、最长 15s，extend 源片 2s / 15s），结构由 `scripts/validate-evals.mjs` 校验：`cases` 20 条、5 种模式各 4 条、中英各 2 条；`harnessCases` ≥ 6 条覆盖 30 / 45 / 60、人物与场景、t2v 与 i2v，每条 prompt 必须含显式锁定句（中文「保持不变」/ 英文 "Keep unchanged"）；引用的素材文件必须存在。
 
 ## 通过标准（改 prompt 后用它判断"有没有变好"）
 
-- 单条：`overall5 >= 4.0` 且 `durationOk`、`moderationOk` 为 true；评测集 ≥ 70% case 达标。
+- 单条（rubric v2）：身份门槛 `identity = min(face, hair, wardrobe) >= 0.6`（场景用例评 `subjectStability`）**且**技术门槛全过（时长 / 黑帧 / 冻帧 / 连接 / 审核）；`overall5` 只作风格补充，不参与判定。评测集 ≥ 70% 是探索期门槛。
 - 评分写入 `evals/runs/YYYY-MM-DD.json`（模板见 `evals/rubric.md`）。它是本 skill 最重要的改进信号：低分 case 的 `notes` 就是下一条要写进这里的原则。
 
 ## feedback-sources

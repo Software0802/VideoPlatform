@@ -3,19 +3,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JobPublic } from "@/lib/jobs/schema";
 import type { NativeMode } from "@/lib/providers/types";
-import type { SceneProgress } from "@/types/scene";
-import { estimateCostUsd, estimateHarnessCostUsd } from "@/lib/cost";
+import { estimateHarnessCostUsd } from "@/lib/cost";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
-import { HARNESS_DURATIONS, MODEL_1_5, MODEL_IMAGE, isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
+import { HARNESS_DURATIONS, isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
 import { cancelJob, createJob, newIdempotencyKey, retryJob, uploadFile } from "@/lib/client/jobs";
 import { useJobLive } from "@/lib/client/useJobLive";
-import { formatElapsed, isActive, isFailed, isTerminal, stageIndex } from "@/lib/client/labels";
+import { formatElapsed, isActive, isFailed, isTerminal } from "@/lib/client/labels";
 import { AccessTokenPrompt } from "@/components/shell/AccessTokenPrompt";
 import { SceneHost } from "@/components/scene/SceneHost";
-import { mountReel, mountWall, type ReelHandle, type WallHandle } from "@/lib/scene/lumen-three";
-import { RegistrationMark, RuledDataStrip, SectionRule } from "./marks";
+import { mountDawn, mountRingDark, type DawnHandle, type RingHandle } from "@/lib/scene/lumen-three";
 
-/* ── 常量：三条路径、画幅、时长、示例成片 ── */
+/*
+  Genius — 单屏工作室（design_handoff/design_handoff_genius_home）。
+  三个视图：首页（标题 + 输入卡 + 最近成片）→ 工作室（操作台 / 展览区 / 输入卡落底）→ 作品（环形画廊）。
+  本组件是唯一的状态所有者；浏览器只经 lib/client/* 访问 /api/*。
+*/
+
+/* ── 常量：三条路径、画幅、时长、操作台分组、样片 ── */
 
 type UiMode = "t2v" | "i2v" | "t2i";
 const MODES: { id: UiMode; label: string; native: NativeMode }[] = [
@@ -25,130 +29,226 @@ const MODES: { id: UiMode; label: string; native: NativeMode }[] = [
 ];
 const UI_MODE_OF: Partial<Record<NativeMode, UiMode>> = { text_to_video: "t2v", image_to_video: "i2v", text_to_image: "t2i" };
 const RATIOS = ["16:9", "9:16", "1:1"] as const;
+type Ratio = (typeof RATIOS)[number];
 const DURS = [4, 6, 8, 10] as const;
-const STAGE_LABELS = ["排队 / Queued", "提交 / Submit", "生成 / Render", "落盘 / Write", "完成 / Done"];
-/** 一致性管线的阶段读数；长片不再是"提交 → 生成"，而是分镜 → 锁帧 → 生成分镜 → 质检 → 拼接 */
-const HARNESS_LABELS: Partial<Record<JobPublic["status"], string>> = {
-  directing: "分镜 / Direct",
-  keyframing: "锁帧 / Keyframe",
-  generating_shots: "生成分镜 / Shots",
-  qc: "质检 / QC",
-  stitching: "拼接 / Stitch",
-};
-const STAGES = ["排队", "提交", "生成", "落盘", "完成"];
 
-const PATHS: { id: UiMode; index: string; title: string; desc: string; meta: string }[] = [
-  { id: "t2v", index: "I", title: "文生视频", desc: "只写提示词。描述主体、光线、镜头与节奏，得到一段 4–10 秒的成片。", meta: "Text → Video · 720p" },
-  { id: "i2v", index: "II", title: "图生视频", desc: "上传一张首帧，它就是起始画面。尾帧仅保存，用于后续长片一致性。", meta: "Image → Video · First frame" },
-  { id: "t2i", index: "III", title: "文生图", desc: "一张静帧，立刻出。适合先定画面，再决定要不要让它动。", meta: "Text → Image · 1K / 2K" },
+type GroupId = "filter" | "skin" | "color" | "cam";
+type Option = { id: string; label: string; text: string };
+type Group = { id: GroupId; title: string; options: Option[] };
+/** 操作台：每组单选；选中后该选项的提示词飞入输入框，多段之间空一行 */
+const GROUPS: Group[] = [
+  {
+    id: "filter",
+    title: "滤镜",
+    options: [
+      { id: "film", label: "胶片", text: "胶片颗粒质感，轻微暗角，柔和高光" },
+      { id: "bw", label: "黑白", text: "黑白影像，高对比，银盐质感" },
+      { id: "teal", label: "青橙", text: "青橙色调，阴影偏青、肤色偏暖" },
+      { id: "soft", label: "柔光", text: "柔光滤镜，轻微光晕，低对比" },
+    ],
+  },
+  {
+    id: "skin",
+    title: "磨皮",
+    options: [
+      { id: "light", label: "轻度", text: "人物皮肤轻度磨皮，保留毛孔与纹理" },
+      { id: "mid", label: "中度", text: "人物皮肤中度磨皮，肤色均匀自然" },
+      { id: "strong", label: "强", text: "人物皮肤强磨皮，柔焦人像效果" },
+    ],
+  },
+  {
+    id: "color",
+    title: "色彩",
+    options: [
+      { id: "warm", label: "暖调", text: "整体暖色调，金色阳光氛围" },
+      { id: "cool", label: "冷调", text: "整体冷色调，蓝灰清晨氛围" },
+      { id: "sat", label: "高饱和", text: "高饱和色彩，鲜明浓烈" },
+      { id: "desat", label: "低饱和", text: "低饱和色彩，克制素净" },
+    ],
+  },
+  {
+    id: "cam",
+    title: "镜头",
+    options: [
+      { id: "push", label: "缓慢推进", text: "镜头缓慢推进，稳定平滑" },
+      { id: "orbit", label: "环绕", text: "镜头环绕主体，弧形运动" },
+      { id: "hand", label: "手持", text: "手持镜头，轻微自然晃动" },
+    ],
+  },
+];
+type Opts = Partial<Record<GroupId, string>>;
+const optionOf = (g: GroupId, o: string) => GROUPS.find((x) => x.id === g)!.options.find((x) => x.id === o)!;
+const stripSeg = (p: string, text: string) =>
+  p
+    .split("\n\n")
+    .filter((seg) => seg.trim() !== text)
+    .join("\n\n");
+
+/** 阶段读数，全部中文；长片用一致性管线的阶段名 */
+const STAGE_LABEL: Record<JobPublic["status"], string> = {
+  queued: "排队中",
+  submitting: "已提交",
+  pending: "生成中",
+  persisting: "写入中",
+  directing: "分镜",
+  keyframing: "锁帧",
+  generating_shots: "生成分镜",
+  qc: "质检",
+  stitching: "拼接",
+  succeeded: "完成",
+  failed: "失败",
+  expired: "已过期",
+  canceled: "已取消",
+};
+
+type Kind = "video" | "image";
+const SAMPLES: { id: string; prompt: string; kind: Kind }[] = [
+  { id: "2e9cde0e2fb0803e", prompt: "玉米田深处，一个穿银色防护服的人走来", kind: "video" },
+  { id: "a72d8b509c55bcd0", prompt: "像素风峡谷日出，河流蜿蜒穿过山谷", kind: "video" },
+  { id: "a1f3319d0d783e66", prompt: "雨夜的外滩，一位穿深青色风衣的女人走向江边", kind: "image" },
+  { id: "f3bfe52263d0656d", prompt: "清晨的山谷薄雾，镜头缓慢推进", kind: "video" },
+  { id: "d99c0972e1f99b67", prompt: "霓虹街道，慢速推轨", kind: "image" },
+  { id: "a9008119d34b8fc1", prompt: "海岸线航拍，日落前", kind: "video" },
+  { id: "5a09f4952b5ad9b6", prompt: "旧仓库里的一束光", kind: "image" },
+  { id: "6f297b60448c30c9", prompt: "雪后的胡同口", kind: "video" },
 ];
 
-const SAMPLE_IMGS = ["2e9cde0e2fb0803e", "a72d8b509c55bcd0", "a1f3319d0d783e66", "f3bfe52263d0656d", "d99c0972e1f99b67", "a9008119d34b8fc1", "5a09f4952b5ad9b6", "6f297b60448c30c9"];
-const SAMPLE_PROMPTS = ["玉米田深处，一个穿银色防护服的人走来", "像素风峡谷日出，河流蜿蜒穿过山谷", "雨夜的外滩，一位穿深青色风衣的女人走向江边", "清晨的山谷薄雾，镜头缓慢推进", "霓虹街道，慢速推轨", "海岸线航拍，日落前", "旧仓库里的一束光", "雪后的胡同口"];
+/* ── 作品：成功任务按 output.kind 分视频 / 图片；没有成片时回落样片 ── */
 
-type Plate = {
+type Work = {
   key: string;
-  jobId: string;
-  src: string;
-  videoUrl: string | null;
+  jobId: string | null;
+  kind: Kind;
+  /** 环上挂的静帧：视频取 poster */
+  still: string;
+  media: string;
   prompt: string;
   mode: UiMode;
   dur: number;
   ratio: string;
   quality: string;
-  model: string;
-  audio: boolean;
-  cost: number;
+  cost: number | null;
+  costIncomplete: boolean;
   sample: boolean;
 };
 
-function platesFromJobs(jobs: JobPublic[]): Plate[] {
+function worksFromJobs(jobs: JobPublic[]): Work[] {
   const real = jobs
     .filter((j) => j.status === "succeeded" && j.output && UI_MODE_OF[j.mode])
-    .map<Plate>((j) => ({
-      key: j.id,
-      jobId: j.id,
-      src: j.output!.kind === "video" ? j.output!.posterUrl : j.output!.imageUrl,
-      videoUrl: j.output!.kind === "video" ? j.output!.videoUrl : null,
-      prompt: j.prompt || "（无提示词，以素材为准）",
-      mode: UI_MODE_OF[j.mode]!,
-      dur: j.durationSec,
-      ratio: j.aspectRatio ?? "16:9",
-      quality: j.mode === "text_to_image" ? (j.imageResolution ?? "1k").toUpperCase() : (j.resolution ?? "720p"),
-      model: j.model,
-      audio: j.generateAudio,
-      cost: j.costUsdActual ?? j.costUsdEstimate,
-      sample: false,
-    }));
+    .map<Work>((j) => {
+      const out = j.output!;
+      return {
+        key: j.id,
+        jobId: j.id,
+        kind: out.kind,
+        still: out.kind === "video" ? out.posterUrl : out.imageUrl,
+        media: out.kind === "video" ? out.videoUrl : out.imageUrl,
+        prompt: j.prompt || "（无提示词，以首帧为准）",
+        mode: UI_MODE_OF[j.mode]!,
+        dur: j.durationSec,
+        ratio: j.aspectRatio ?? "16:9",
+        quality: out.kind === "image" ? (j.imageResolution ?? "1k").toUpperCase() : (j.resolution ?? "720p"),
+        cost: j.costUsdActual ?? j.costUsdEstimate,
+        costIncomplete: Boolean(j.costIncomplete),
+        sample: false,
+      };
+    });
   if (real.length) return real;
-  // 还没有成片时用占位样片撑起画廊与存档
-  return SAMPLE_IMGS.map<Plate>((n, i) => {
-    const dur = 6 + (i % 3) * 2;
-    return {
-      key: `sample-${n}`,
-      jobId: ("7F2A9C" + i).slice(-6).toUpperCase(),
-      src: `/lumina/${n}.webp`,
-      videoUrl: null,
-      prompt: SAMPLE_PROMPTS[i],
-      mode: i % 3 === 2 ? "i2v" : "t2v",
-      dur,
-      ratio: "16:9",
-      quality: "720p",
-      model: MODEL_1_5,
-      audio: true,
-      cost: dur * 0.05,
-      sample: true,
-    };
-  });
+  return SAMPLES.map<Work>((s, i) => ({
+    key: `sample-${s.id}`,
+    jobId: null,
+    kind: s.kind,
+    still: `/lumina/${s.id}.webp`,
+    media: `/lumina/${s.id}.webp`,
+    prompt: s.prompt,
+    mode: s.kind === "image" ? "t2i" : i % 3 === 0 ? "i2v" : "t2v",
+    dur: 6 + (i % 3) * 2,
+    ratio: "16:9",
+    quality: s.kind === "image" ? "1K" : "720p",
+    cost: null,
+    costIncomplete: false,
+    sample: true,
+  }));
+}
+
+const modeLabel = (m: UiMode) => MODES.find((x) => x.id === m)!.label;
+const costLabel = (cost: number, incomplete: boolean) => `${incomplete ? "≥" : "≈"} $${cost.toFixed(2)}`;
+
+function workMeta(w: Work): string {
+  const parts = w.kind === "image" ? [modeLabel(w.mode), w.quality, w.ratio] : [modeLabel(w.mode), `${w.dur}s`, w.ratio, w.quality];
+  if (w.cost != null) parts.push(costLabel(w.cost, w.costIncomplete));
+  return parts.join(" · ");
+}
+
+function jobMeta(j: JobPublic): string {
+  const mode = UI_MODE_OF[j.mode] ?? "t2v";
+  const parts = [modeLabel(mode), j.mode === "text_to_image" ? (j.imageResolution ?? "1k").toUpperCase() : `${j.durationSec}s · ${j.resolution ?? "720p"}`, j.aspectRatio ?? "16:9"];
+  const cost = j.costUsdActual ?? j.costUsdEstimate;
+  if (cost > 0) parts.push(costLabel(cost, Boolean(j.costIncomplete)));
+  parts.push(j.prompt || "首帧起始");
+  return parts.join(" · ");
 }
 
 type Frame = { preview: string; uploadId: string | null; state: "busy" | "ready" | "error"; message?: string };
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
-const modeLabel = (m: UiMode) => MODES.find((x) => x.id === m)!.label;
-/** 任务 id 是随机十六进制，取尾 4 位做读数 */
-const shortId = (id: string) => id.replace(/^job_/, "").slice(-4).toUpperCase();
+const reducedMotion = () => typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // useJobLive 需要一个 job；没有任务时给它一个终态哑对象，effect 直接跳过
 const NO_JOB = { id: "", status: "succeeded" } as const;
 
+const Chevron = () => (
+  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+);
+
 export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs: JobPublic[]; mock: boolean; harness?: boolean }) {
   const [jobs, setJobs] = useState<JobPublic[]>(initialJobs);
+  const [view, setView] = useState<"home" | "works">("home");
+  const [studio, setStudio] = useState(false);
   const [prompt, setPrompt] = useState("");
+  const [opts, setOpts] = useState<Opts>({});
   const [mode, setMode] = useState<UiMode>("t2v");
-  const [ratio, setRatio] = useState<(typeof RATIOS)[number]>("16:9");
   const [dur, setDur] = useState<number>(8);
+  const [ratio, setRatio] = useState<Ratio>("16:9");
   const [first, setFirst] = useState<Frame | null>(null);
-  const [last, setLast] = useState<Frame | null>(null);
-  const [tray, setTray] = useState(false);
   const [job, setJob] = useState<JobPublic | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState<number | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
-  const [hovered, setHovered] = useState(-1);
-  const [scrollP, setScrollP] = useState(0);
-  const [drag, setDrag] = useState(0);
-  const [detail, setDetail] = useState<number | null>(null);
+  const [kind, setKind] = useState<Kind>("video");
+  const [sel, setSel] = useState(0);
+  const [hov, setHov] = useState(-1);
+  const [angle, setAngle] = useState(0);
+  const [entering, setEntering] = useState(true);
+  const [ready, setReady] = useState(false);
 
-  const reel = useRef<ReelHandle | null>(null);
-  const wall = useRef<WallHandle | null>(null);
-  const gallery = useRef<HTMLElement>(null);
-  const detailEl = useRef<HTMLElement>(null);
+  const dawn = useRef<DawnHandle | null>(null);
+  const ring = useRef<RingHandle | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const firstInput = useRef<HTMLInputElement>(null);
-  const lastInput = useRef<HTMLInputElement>(null);
   const idempotencyKey = useRef<string | null>(null);
   const dragX = useRef<number | null>(null);
   const turn = useRef(0);
+  const focusPending = useRef(false);
 
   const isVideo = mode !== "t2i";
-  const model = isVideo ? MODEL_1_5 : MODEL_IMAGE;
-  const plates = useMemo(() => platesFromJobs(jobs), [jobs]);
-  // 环上只挂最近 12 张；设计稿 R=7.2 对应 8 张，更多时按数量放大半径保持间距
-  const ring = useMemo(() => plates.slice(0, 12), [plates]);
-  const ringRadius = Math.max(7.2, ring.length * 0.9);
-  const wallKey = ring.map((p) => p.src).join("|");
+  const works = useMemo(() => worksFromJobs(jobs), [jobs]);
+  const recent = works.slice(0, 6);
+  const list = useMemo(() => works.filter((w) => w.kind === kind), [works, kind]);
+  const ringKey = `${kind}|${list.map((w) => w.still).join("|")}`;
+  const ringRadius = Math.max(2.6, list.length * 0.58);
+
+  /* ── 首屏进场只播一次；data-ready 供 e2e 判断已水合 ── */
+  useEffect(() => {
+    const t0 = window.setTimeout(() => setReady(true), 0);
+    const t = window.setTimeout(() => setEntering(false), 2400);
+    return () => {
+      window.clearTimeout(t0);
+      window.clearTimeout(t);
+    };
+  }, []);
 
   /* ── 任务跟踪 ── */
   const onUnauthorized = useCallback(() => setAuthRequired(true), []);
@@ -165,6 +265,7 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
   useJobLive(job ?? NO_JOB, onLive, onUnauthorized);
 
   const active = !!job && isActive(job.status);
+  const working = busy || active;
   useEffect(() => {
     if (!active) return;
     const t0 = window.setTimeout(() => setNow(Date.now()), 0);
@@ -174,99 +275,126 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
       window.clearInterval(t);
     };
   }, [active]);
-
-  const progress: SceneProgress = useMemo(() => {
-    if (!job) return { phase: "idle", progress: 0 };
-    if (isActive(job.status)) return { phase: "working", progress: job.progress };
-    if (job.status === "succeeded") return { phase: "done", progress: 100 };
-    return { phase: "error", progress: job.progress };
-  }, [job]);
+  // 生成中：地平线更亮、波幅更大；完成后回落
   useEffect(() => {
-    reel.current?.setProgress(progress);
-  }, [progress]);
+    dawn.current?.setEnergy(working ? 1 : 0);
+  }, [working]);
 
-  /* ── 画廊：滚动区间进度 + 拖拽偏移 → 环旋转 ── */
-  const turnValue = scrollP * 0.5 + drag;
+  /* ── 作品页：拖拽 → 环旋转；重建环时把当前圈数带过去 ── */
   useEffect(() => {
-    turn.current = turnValue;
-    wall.current?.setScroll(turnValue);
-  }, [turnValue, wallKey]);
-  useEffect(() => {
-    const onScroll = () => {
-      const el = gallery.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      const p = Math.min(1, Math.max(0, -r.top / (r.height - window.innerHeight)));
-      setScrollP((prev) => (Math.abs(p - prev) > 0.002 ? p : prev));
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  const frac = ((turnValue % 1) + 1) % 1;
-  const derivedSel = ring.length ? Math.floor(frac * ring.length) % ring.length : 0;
-  const sel = hovered >= 0 ? hovered : detail != null && detail < ring.length ? detail : derivedSel;
-  const selPlate = ring[sel] ?? ring[0];
-
-  /* ── 详情：打开后平滑滚到该区域 ── */
-  const openDetail = useCallback((i: number) => {
-    setDetail(i);
-  }, []);
-  useEffect(() => {
-    if (detail == null) return;
-    const el = detailEl.current;
-    if (!el) return;
-    window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 40, behavior: "smooth" });
-  }, [detail]);
-
-  const scrollTop = () => window.scrollTo({ top: 0, behavior: "smooth" });
-  const scrollToId = (id: string) => (e: React.MouseEvent) => {
-    e.preventDefault();
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  /* ── 首尾帧 ── */
-  async function pickFrame(role: "start" | "last", file: File | undefined) {
-    if (!file) return;
-    const set = role === "start" ? setFirst : setLast;
-    const prev = role === "start" ? first : last;
-    if (prev?.preview) URL.revokeObjectURL(prev.preview);
-    const preview = URL.createObjectURL(file);
-    set({ preview, uploadId: null, state: "busy" });
-    if (role === "start" && mode === "t2v") setMode("i2v");
-    setError(null);
-    try {
-      const up = await uploadFile(file, role, onUnauthorized);
-      set({ preview, uploadId: up.uploadId, state: "ready" });
-    } catch (e) {
-      set({ preview, uploadId: null, state: "error", message: e instanceof Error ? e.message : "上传失败" });
+    if (view === "home" && focusPending.current) {
+      focusPending.current = false;
+      textarea.current?.focus();
     }
+  }, [view, studio]);
+
+  const current = list.length ? list[hov >= 0 && hov < list.length ? hov : Math.min(sel, list.length - 1)] : null;
+
+  /* ── 输入：首次出现非空内容即进入工作室；手动编辑时按"文本是否仍含该段"同步选中态 ── */
+  function onPromptChange(v: string) {
+    setPrompt(v);
+    setOpts((prev) => {
+      const next: Opts = {};
+      for (const g of GROUPS) {
+        const id = prev[g.id];
+        if (id && v.includes(optionOf(g.id, id).text)) next[g.id] = id;
+      }
+      return next;
+    });
+    if (v.trim()) setStudio(true);
   }
-  function toggleFrame(role: "start" | "last") {
-    const cur = role === "start" ? first : last;
-    if (cur) {
-      URL.revokeObjectURL(cur.preview);
-      (role === "start" ? setFirst : setLast)(null);
+
+  /* ── 选项飞入：在 body 上生成同样式的固定定位芯片，Web Animations 640ms 后落成提示词 ── */
+  function fly(from: DOMRect, label: string, done: () => void) {
+    const ta = textarea.current;
+    if (!ta) return done();
+    const to = ta.getBoundingClientRect();
+    const el = document.createElement("span");
+    el.className = "fly";
+    el.textContent = label;
+    el.style.left = `${from.left}px`;
+    el.style.top = `${from.top}px`;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      el.remove();
+      done();
+    };
+    if (typeof el.animate !== "function" || reducedMotion()) return finish();
+    document.body.appendChild(el);
+    const dx = to.left + 8 - from.left;
+    const dy = to.bottom - 30 - from.top;
+    const anim = el.animate(
+      [
+        { transform: "translate(0,0) scale(1)", opacity: 1 },
+        { transform: `translate(${dx * 0.55}px,${dy * 0.35 - 40}px) scale(1.04)`, opacity: 1, offset: 0.45 },
+        { transform: `translate(${dx}px,${dy}px) scale(.7)`, opacity: 0 },
+      ],
+      { duration: 640, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" },
+    );
+    anim.onfinish = finish;
+    anim.oncancel = finish;
+    window.setTimeout(finish, 720);
+  }
+
+  function pickOpt(g: Group, o: Option, e: React.MouseEvent<HTMLButtonElement>) {
+    const prev = opts[g.id];
+    if (prev === o.id) {
+      const next = { ...opts };
+      delete next[g.id];
+      setOpts(next);
+      setPrompt((p) => stripSeg(p, o.text));
       return;
     }
-    (role === "start" ? firstInput : lastInput).current?.click();
+    fly(e.currentTarget.getBoundingClientRect(), o.label, () => {
+      setOpts((cur) => ({ ...cur, [g.id]: o.id }));
+      setPrompt((cur) => {
+        const base = prev ? stripSeg(cur, optionOf(g.id, prev).text) : cur;
+        return base.trim() ? `${base.replace(/\s+$/, "")}\n\n${o.text}` : o.text;
+      });
+      setStudio(true);
+    });
   }
 
-  function pickMode(next: UiMode) {
-    setMode(next);
+  /* ── 首帧：回形针选图，自动切到图生视频；再点一次移除 ── */
+  async function pickFirst(file: File | undefined) {
+    if (!file) return;
+    if (first?.preview) URL.revokeObjectURL(first.preview);
+    const preview = URL.createObjectURL(file);
+    setFirst({ preview, uploadId: null, state: "busy" });
+    if (mode === "t2v") setMode("i2v");
     setError(null);
+    try {
+      const up = await uploadFile(file, "start", onUnauthorized);
+      setFirst({ preview, uploadId: up.uploadId, state: "ready" });
+    } catch (e) {
+      setFirst({ preview, uploadId: null, state: "error", message: e instanceof Error ? e.message : "上传失败" });
+    }
+  }
+  function toggleFirst() {
+    if (first) {
+      URL.revokeObjectURL(first.preview);
+      setFirst(null);
+      return;
+    }
+    firstInput.current?.click();
   }
 
-  /* ── 提交：沿用 GenerateForm 的 /api/jobs 契约 ── */
+  /* ── 时长 / 画幅：点击循环；开启 harness 时时长多出 30 / 45 / 60（仅视频） ── */
+  const durOptions: readonly number[] = harness ? [...DURS, ...HARNESS_DURATIONS] : DURS;
+  const cycleDur = () => setDur((d) => durOptions[(durOptions.indexOf(d) + 1) % durOptions.length]);
+  const cycleRatio = () => setRatio((r) => RATIOS[(RATIOS.indexOf(r) + 1) % RATIOS.length]);
+
+  /* ── 提交：沿用 /api/jobs 契约（createJobBodySchema，无 model 字段） ── */
   async function submit() {
-    if (busy || active) return;
+    if (working) return;
     setError(null);
     try {
       if (mode !== "i2v" && !prompt.trim()) throw new Error("这条路径需要提示词");
       if (mode === "i2v" && first?.state !== "ready") throw new Error(first?.state === "busy" ? "首帧还在上传，请稍候" : "图生视频需要先选一张首帧");
-      if (last?.state === "busy") throw new Error("尾帧还在上传，请稍候");
       setBusy(true);
+      setStudio(true);
       // 网络抖动时沿用同一个 key，服务端回放原任务而不是重复计费
       idempotencyKey.current ??= newIdempotencyKey();
       const native = MODES.find((m) => m.id === mode)!.native;
@@ -280,14 +408,11 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
         body.resolution = "720p";
         body.generateAudio = true;
         if (mode === "i2v") body.startUploadId = first!.uploadId;
-        if (last?.state === "ready" && last.uploadId) body.lastUploadId = last.uploadId;
       }
       const created = await createJob(body, onUnauthorized);
       idempotencyKey.current = null;
       setJob(created);
       upsert(created);
-      setTray(false);
-      setDetail(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -310,6 +435,8 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
   }
   async function retry() {
     if (!job || busy || (job.status !== "failed" && job.status !== "expired")) return;
+    // Second line of defence behind the server's 409: a shot may already be paid for upstream.
+    if (job.retryBlocked) return;
     setError(null);
     setBusy(true);
     try {
@@ -321,439 +448,386 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
     }
   }
 
-  function reuse(p: Plate) {
-    setPrompt(p.prompt);
-    setMode(p.mode);
-    setDetail(null);
-    scrollTop();
-    textarea.current?.focus();
+  /* ── 视图切换 ── */
+  function goHome() {
+    setView("home");
+    setStudio(false);
+  }
+  function goWorks() {
+    setHov(-1);
+    setView("works");
+  }
+  function openWork(w: Work) {
+    const i = works.filter((x) => x.kind === w.kind).indexOf(w);
+    setKind(w.kind);
+    setSel(Math.max(0, i));
+    setHov(-1);
+    setView("works");
+  }
+  function switchKind(k: Kind) {
+    if (k === kind) return;
+    setKind(k);
+    setSel(0);
+    setHov(-1);
+  }
+  /** 用这条提示词再生成：图生视频的首帧无法复用，回落到文生视频 */
+  function reuse(w: Work) {
+    setPrompt(w.prompt);
+    setOpts({});
+    setMode(w.mode === "i2v" ? "t2v" : w.mode);
+    setError(null);
+    focusPending.current = true;
+    setView("home");
+    setStudio(true);
   }
 
-  /* ── 派生文案 ── */
+  /* ── 派生读数 ── */
   const done = !!job && job.status === "succeeded" && !!job.output;
   const failed = !!job && isFailed(job.status);
-  const statusLine = !job ? "Idle · 待机" : active ? "Rendering · 渲染中" : failed ? "Failed · 失败" : "Done · 已完成";
+  const pct = job ? Math.round(done ? 100 : job.progress) : 0;
+  const shotsDone = job?.shots ? job.shots.filter((s) => s.status === "succeeded").length : 0;
+  const stage = !job
+    ? "排队中"
+    : job.status === "generating_shots" && job.shots
+      ? `生成分镜 ${shotsDone}/${job.shots.length}`
+      : STAGE_LABEL[job.status];
+  const clock = job ? formatElapsed(job.createdAt, isTerminal(job.status) ? new Date(job.updatedAt).getTime() : now) : "00:00";
+  const exhibitState: "idle" | "busy" | "done" | "failed" = working ? "busy" : done ? "done" : failed ? "failed" : "idle";
   const longForm = isVideo && isHarnessDuration(dur);
   const longCost = longForm ? estimateHarnessCostUsd(packHarnessDuration(dur)) : 0;
-  const summary = [
-    isVideo ? (longForm ? "Grok · harness" : "Grok · video") : "Grok · image",
-    modeLabel(mode),
-    isVideo ? (longForm ? `长片 ${dur}s · ≈ $${longCost.toFixed(2)}` : `${dur}s`) : null,
-    ratio,
-    first ? "首帧" : null,
-    isVideo && last ? "尾帧" : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const stageIdx = job ? stageIndex(job.status) : -1;
-  const shotsDone = job?.shots ? job.shots.filter((s) => s.status === "succeeded").length : 0;
-  const jobStage = !job
-    ? ""
-    : failed
-      ? `失败 / ${job.status === "canceled" ? "Canceled" : job.status === "expired" ? "Expired" : "Failed"}`
-      : job.status === "generating_shots" && job.shots
-        ? `${HARNESS_LABELS.generating_shots} ${shotsDone}/${job.shots.length}`
-        : (HARNESS_LABELS[job.status] ?? STAGE_LABELS[Math.max(0, stageIdx)]);
-  const jobClock = job ? formatElapsed(job.createdAt, isTerminal(job.status) ? new Date(job.updatedAt).getTime() : now) : "00:00";
-  const jobPct = job ? `${Math.round(isTerminal(job.status) && !failed ? 100 : job.progress)}%` : "";
-  const resultMeta = job
-    ? [modeLabel(UI_MODE_OF[job.mode] ?? "t2v"), job.mode === "text_to_image" ? (job.imageResolution ?? "1k").toUpperCase() : `${job.durationSec}s · ${job.resolution ?? "720p"}`, job.aspectRatio ?? ratio].join(" · ")
-    : "";
-  const detailPlate = detail != null ? plates[detail] : null;
-  const wallPos = String(Math.round(frac * 360)).padStart(3, "0") + "°";
-  const frameNote = mode === "i2v" ? "首帧即起始画面；尾帧仅保存。" : "选首帧会切到图生视频；尾帧仅保存。";
-  const placeholder = mode === "i2v" ? "首帧图作为起始画面，提示词可选…" : "雨夜的外滩，一位穿深青色风衣的女人走向江边…";
-
-  const frameBtn = (f: Frame | null, label: string, role: "start" | "last") => (
-    <button
-      type="button"
-      className="frame-btn"
-      data-on={!!f}
-      data-state={f?.state}
-      title={f?.message ?? (f ? `移除${label}` : `选择${label}`)}
-      style={f ? { backgroundImage: `url(${f.preview})` } : undefined}
-      onClick={() => toggleFrame(role)}
-    >
-      <span>{f ? (f.state === "busy" ? `${label} …` : f.state === "error" ? `${label} ✕` : `${label} ✓`) : `+ ${label}`}</span>
-    </button>
-  );
+  const modelName = `${isVideo ? "grok-imagine-video" : "grok-imagine-image"}${longForm ? ` · ≈ $${longCost.toFixed(2)}` : ""}${mock ? " · 模拟" : ""}`;
+  const placeholder = mode === "i2v" ? "已选首帧，提示词可选" : mode === "t2i" ? "清晨山谷薄雾，一束光落在湖面" : "清晨山谷薄雾，镜头缓慢推进…";
+  const rows = studio ? Math.min(7, Math.max(3, prompt.split("\n").length)) : 2;
+  const exhibitBottom = 236 + (rows - 3) * 23;
+  const angleLabel = `${String(angle).padStart(3, "0")}°`;
+  const retryLabel = job?.shots?.length ? "重做失败分镜" : "重新生成";
 
   return (
-    <div className="lm" id="top">
-      {/* ── 1. 首屏：放映机线版 + 居中输入框 ── */}
-      <section className="hero">
+    <div className="app" data-enter={entering} data-ready={ready} data-view={view}>
+      <SceneHost
+        className="app__dawn"
+        aria-hidden="true"
+        mount={(c) => mountDawn(c, { horizon: 0.46 })}
+        onReady={(h) => {
+          dawn.current = h;
+        }}
+      />
+      {view === "works" ? (
         <SceneHost
-          className="hero__canvas"
-          aria-hidden="true"
-          mount={(c) => mountReel(c, { ink: "#2148B8", accent: "#C65F38", follow: true, distance: 4.2, offsetX: -1.3 })}
+          key={ringKey}
+          className="works__canvas"
+          aria-label="作品环，拖拽旋转"
+          mount={(c) =>
+            mountRingDark(c, {
+              images: list.map((w) => w.still),
+              radius: ringRadius,
+              autoRotate: true,
+              onSelect: setSel,
+              onHover: setHov,
+              onTurn: setAngle,
+            })
+          }
           onReady={(h) => {
-            reel.current = h;
-            h?.setProgress(progress);
+            ring.current = h;
+            h?.setScroll(turn.current);
+          }}
+          onPointerDown={(e) => {
+            dragX.current = e.clientX;
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }}
+          onPointerMove={(e) => {
+            if (dragX.current == null) return;
+            const d = (e.clientX - dragX.current) / window.innerWidth;
+            dragX.current = e.clientX;
+            turn.current -= d * 0.6;
+            ring.current?.setScroll(turn.current);
+          }}
+          onPointerUp={() => {
+            dragX.current = null;
+          }}
+          onPointerCancel={() => {
+            dragX.current = null;
           }}
         />
-        <header className="masthead">
-          <a href="#top" className="masthead__brand" onClick={scrollToId("top")}>
-            <span className="masthead__cn">流光</span>
-            <span className="masthead__en">Lumen</span>
-          </a>
-          <nav className="masthead__nav">
-            <a href="#gallery" onClick={scrollToId("gallery")}>画廊 / Gallery</a>
-            <a href="#archive" onClick={scrollToId("archive")}>存档 / Archive</a>
-            <span className="ink-accent">Cobalt + Terracotta</span>
-          </nav>
-        </header>
-        <div className="masthead__rule" />
-        <div className="hero__title">
-          <h1>
-            写下一个镜头，
-            <br />
-            看它转起来。
-          </h1>
-          <p>
-            Write a shot. Watch it turn.
-            <br />
-            Text to video · image to video · text to image
-          </p>
-        </div>
+      ) : null}
 
-        <div className="prompt-wrap">
-          <div className="prompt">
-            <div className="prompt__top">
-              <span>Prompt / 提示词</span>
-              <span className={active ? "ink-accent" : undefined}>{statusLine}</span>
+      <div className="frame" data-studio={view === "home" && studio}>
+        {/* ── 顶栏 ── */}
+        <header className="top">
+          <button type="button" className="brand" onClick={goHome} aria-label="Genius，回首页">
+            <span className="brand__ring" aria-hidden="true" />
+            Genius
+          </button>
+          <nav className="nav" aria-label="主导航">
+            <button type="button" className="nav__item" data-on={view === "home"} onClick={goHome}>
+              首页
+            </button>
+            <button type="button" className="nav__item" data-on={view === "works"} onClick={goWorks}>
+              作品
+            </button>
+            <button type="button" className="nav__item" aria-disabled="true" title="即将推出">
+              我的
+            </button>
+          </nav>
+          <button type="button" className="login" onClick={() => setAuthRequired(true)}>
+            登录
+          </button>
+        </header>
+
+        {view === "home" ? (
+          <div className="stage" data-studio={studio} style={{ "--exhibit-bottom": `${exhibitBottom}px` } as React.CSSProperties}>
+            <div className="hero" aria-hidden={studio}>
+              <h1 className="hero__title">创建你的世界</h1>
             </div>
-            <textarea
-              ref={textarea}
-              rows={3}
-              value={prompt}
-              maxLength={2000}
-              placeholder={placeholder}
-              aria-label="提示词"
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+
+            {/* ── 操作台 ── */}
+            <aside className="console" aria-label="操作台" aria-hidden={!studio}>
+              <div className="console__panel">
+                {GROUPS.map((g) => (
+                  <div key={g.id} className="group">
+                    <div className="group__head">
+                      <span>{g.title}</span>
+                      <span className="group__current">{opts[g.id] ? optionOf(g.id, opts[g.id]!).label : ""}</span>
+                    </div>
+                    <div className="group__chips" role="group" aria-label={g.title}>
+                      {g.options.map((o) => (
+                        <button key={o.id} type="button" className="chip" aria-pressed={opts[g.id] === o.id} data-on={opts[g.id] === o.id} tabIndex={studio ? 0 : -1} onClick={(e) => pickOpt(g, o, e)}>
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </aside>
+
+            {/* ── 展览区 ── */}
+            <div className="exhibit-wrap" aria-hidden={!studio}>
+              <div className="exhibit" data-state={exhibitState} data-kind={job?.output?.kind ?? ""} data-job-id={job?.id ?? ""} data-status={job?.status ?? ""} aria-live="polite">
+                {exhibitState === "idle" ? <span className="exhibit__hint">预览</span> : null}
+                {exhibitState === "busy" ? (
+                  <>
+                    <div className="exhibit__center">
+                      <span className="exhibit__pct">{pct}%</span>
+                      <span className="exhibit__stage">
+                        {stage} · {clock}
+                      </span>
+                      {active ? (
+                        <div className="exhibit__links">
+                          <button type="button" className="exhibit__link" disabled={busy} onClick={() => void cancel()}>
+                            取消
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="exhibit__bar" style={{ width: `${pct}%` }} />
+                  </>
+                ) : null}
+                {exhibitState === "failed" && job ? (
+                  <div className="exhibit__center">
+                    <span className="exhibit__pct">{STAGE_LABEL[job.status]}</span>
+                    <span className="exhibit__stage">
+                      {stage} · {clock}
+                    </span>
+                    {job.error ? (
+                      <span className="exhibit__err" role="alert">
+                        {job.error.message}
+                      </span>
+                    ) : null}
+                    {job.retryBlocked ? (
+                      <span className="exhibit__blocked" role="alert">
+                        {job.retryBlocked.message}
+                      </span>
+                    ) : null}
+                    <div className="exhibit__links">
+                      {(job.status === "failed" || job.status === "expired") && !job.retryBlocked ? (
+                        <button type="button" className="exhibit__link" disabled={busy} onClick={() => void retry()}>
+                          {retryLabel}
+                        </button>
+                      ) : null}
+                      <button type="button" className="exhibit__link" onClick={() => setJob(null)}>
+                        关闭
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {exhibitState === "done" && job?.output ? (
+                  <>
+                    <div className="exhibit__media">
+                      {job.output.kind === "video" ? (
+                        <video key={job.id} src={job.output.videoUrl} poster={job.output.posterUrl} controls playsInline preload="metadata" />
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img key={job.id} src={job.output.imageUrl} alt={job.prompt || "生成图像"} />
+                      )}
+                    </div>
+                    <div className="exhibit__foot">
+                      <span className="exhibit__meta" title={jobMeta(job)}>
+                        {jobMeta(job)}
+                      </span>
+                      <a className="exhibit__action" href={`${job.output.kind === "video" ? job.output.videoUrl : job.output.imageUrl}?download=1`} download>
+                        下载
+                      </a>
+                      <button type="button" className="exhibit__action exhibit__action--dim" onClick={() => setJob(null)}>
+                        关闭
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+
+            {/* ── 输入卡 ── */}
+            <div className="composer-pos">
+              <form
+                className="composer"
+                onSubmit={(e) => {
                   e.preventDefault();
                   void submit();
-                }
-              }}
-            />
-            <div className="prompt__bar">
-              <button type="button" className="prompt__summary" onClick={() => setTray((v) => !v)} aria-expanded={tray}>
-                <span className="ink-accent prompt__glyph">{tray ? "−" : "+"}</span>
-                <span>{summary}</span>
-              </button>
-              <button type="button" className="prompt__submit" onClick={() => void submit()} disabled={busy || active}>
-                {active ? "Rendering" : busy ? "Sending" : "Generate 生成"}
-              </button>
-            </div>
-
-            {tray ? (
-              <div className="tray">
-                <div className="tray__row">
-                  <span className="tray__key">路径 / Path</span>
-                  <div className="tray__modes" role="radiogroup" aria-label="路径">
+                }}
+              >
+                <textarea
+                  ref={textarea}
+                  className="composer__text"
+                  rows={rows}
+                  value={prompt}
+                  maxLength={2000}
+                  placeholder={placeholder}
+                  aria-label="提示词"
+                  onChange={(e) => onPromptChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      void submit();
+                    }
+                  }}
+                />
+                <div className="composer__bar">
+                  <div className="composer__chips" role="radiogroup" aria-label="路径">
                     {MODES.map((m) => (
-                      <button key={m.id} type="button" role="radio" aria-checked={mode === m.id} className="radio" data-on={mode === m.id} onClick={() => pickMode(m.id)}>
-                        <span className="radio__dot" />
+                      <button
+                        key={m.id}
+                        type="button"
+                        role="radio"
+                        className="chip"
+                        aria-checked={mode === m.id}
+                        data-on={mode === m.id}
+                        onClick={() => {
+                          setMode(m.id);
+                          setError(null);
+                        }}
+                      >
                         {m.label}
                       </button>
                     ))}
-                  </div>
-                </div>
-                <div className="tray__row">
-                  <span className="tray__key">模型 / Model</span>
-                  <select
-                    className="tray__select"
-                    aria-label="模型"
-                    value={model}
-                    onChange={(e) => pickMode(e.target.value === MODEL_IMAGE ? "t2i" : mode === "t2i" ? "t2v" : mode)}
-                  >
-                    <option value={MODEL_1_5}>grok-imagine-video</option>
-                    <option value={MODEL_IMAGE}>grok-imagine-image</option>
-                  </select>
-                </div>
-                {isVideo ? (
-                  <div className="tray__row">
-                    <span className="tray__key">时长 / Length</span>
-                    <div className="seg" role="radiogroup" aria-label="时长">
-                      {DURS.map((d) => (
-                        <button key={d} type="button" role="radio" aria-checked={dur === d} data-on={dur === d} onClick={() => setDur(d)}>
-                          {d}s
-                        </button>
-                      ))}
-                      {harness ? (
-                        <>
-                          <span className="seg__gap" aria-hidden="true" />
-                          {HARNESS_DURATIONS.map((d) => (
-                            <button key={d} type="button" role="radio" aria-checked={dur === d} aria-label={`${d}s 长片`} data-on={dur === d} title="一致性管线：分镜 → 锁帧 → 生成 → 质检 → 拼接" onClick={() => setDur(d)}>
-                              {d}s
-                            </button>
-                          ))}
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-                <div className="tray__row" data-last={!isVideo}>
-                  <span className="tray__key">画幅 / Ratio</span>
-                  <div className="seg" role="radiogroup" aria-label="画幅">
-                    {RATIOS.map((r) => (
-                      <button key={r} type="button" role="radio" aria-checked={ratio === r} data-on={ratio === r} onClick={() => setRatio(r)}>
-                        {r}
+                    {isVideo ? (
+                      <button type="button" className="chip chip--menu" data-dur={dur} aria-label={`时长 ${dur} 秒，点击切换`} title="点击切换时长" onClick={cycleDur}>
+                        {dur}s
+                        <Chevron />
                       </button>
-                    ))}
+                    ) : null}
+                    <button type="button" className="chip chip--menu" data-ratio={ratio} aria-label={`画幅 ${ratio}，点击切换`} title="点击切换画幅" onClick={cycleRatio}>
+                      {ratio}
+                      <Chevron />
+                    </button>
+                  </div>
+                  <div className="composer__cluster">
+                    <span className="composer__model">{modelName}</span>
+                    <button
+                      type="button"
+                      className="composer__clip"
+                      data-on={!!first}
+                      data-state={first?.state ?? ""}
+                      aria-label={first ? "移除首帧" : "选择首帧"}
+                      title={first?.message ?? (first ? "移除首帧" : "选择首帧（会切到图生视频）")}
+                      onClick={toggleFirst}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                      </svg>
+                    </button>
+                    <button type="submit" className="composer__send" aria-label={working ? `生成中 ${pct}%` : "生成"} data-busy={working} disabled={working} style={{ "--p": `${pct}%` } as React.CSSProperties}>
+                      {working ? (
+                        <span className="composer__send-pct">{pct}%</span>
+                      ) : (
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#15171c" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="m5 12 7-7 7 7" />
+                          <path d="M12 19V5" />
+                        </svg>
+                      )}
+                    </button>
                   </div>
                 </div>
-                {isVideo ? (
-                  <div className="tray__row" data-last>
-                    <span className="tray__key">首尾帧 / Frames</span>
-                    <div className="frames">
-                      {frameBtn(first, "首帧", "start")}
-                      <span className="ink-accent">→</span>
-                      {frameBtn(last, "尾帧", "last")}
-                      <span className="frames__note">{frameNote}</span>
-                    </div>
-                  </div>
+                {error ? (
+                  <p className="composer__error" role="alert">
+                    {error}
+                  </p>
                 ) : null}
-              </div>
-            ) : null}
-          </div>
-
-          {error ? (
-            <p className="prompt__error" role="alert">
-              {error}
-            </p>
-          ) : null}
-
-          {job ? (
-            <div className="readout">
-              <div className="readout__lines">
-                <div className="readout__meta">
-                  <span className="ink-accent readout__id">Job {shortId(job.id)}</span>
-                  <span className={failed ? "ink-accent" : undefined}>{jobStage}</span>
-                  <span>{jobClock}</span>
-                </div>
-                <div className="readout__track">
-                  <div className="readout__fill" style={{ width: failed ? "0%" : done ? "100%" : `${job.progress}%` }} />
-                </div>
-                {failed && job.error ? <span className="readout__err">{job.error.message}</span> : null}
-                {active || job.status === "failed" || job.status === "expired" ? (
-                  <div className="readout__actions">
-                    {active ? (
-                      <button type="button" className="link-accent" disabled={busy} onClick={() => void cancel()}>
-                        取消任务 / Cancel
-                      </button>
-                    ) : (
-                      <button type="button" className="link-accent" disabled={busy} onClick={() => void retry()}>
-                        重新生成 / Retry
-                      </button>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-              <span className="readout__pct">{jobPct}</span>
+              </form>
             </div>
-          ) : null}
-        </div>
 
-        <input ref={firstInput} type="file" accept="image/*" hidden aria-hidden="true" tabIndex={-1} onChange={(e) => { void pickFrame("start", e.target.files?.[0]); e.target.value = ""; }} />
-        <input ref={lastInput} type="file" accept="image/*" hidden aria-hidden="true" tabIndex={-1} onChange={(e) => { void pickFrame("last", e.target.files?.[0]); e.target.value = ""; }} />
-
-        <div className="hero__legend">
-          <span>Reel speed = progress</span>
-          <span>Ink density = status</span>
-          {harness ? <span>Harness · 30 / 45 / 60s</span> : null}
-          {mock ? <span className="ink-accent">Mock · 模拟输出</span> : null}
-        </div>
-        <div className="hero__mark">
-          <RegistrationMark size={26} ink="#C65F38" />
-        </div>
-      </section>
-
-      {/* ── 2. 成片 ── */}
-      {done && job.output ? (
-        <section className="output">
-          <div className="output__text">
-            <SectionRule number="00" title="成片" subtitle="OUTPUT / 01" />
-            <p className="output__prompt">{job.prompt || "（无提示词，以素材为准）"}</p>
-            <span className="ink-accent mono-12">{resultMeta}</span>
-            <a className="link-accent" href={`${job.output.kind === "video" ? job.output.videoUrl : job.output.imageUrl}?download=1`} download>
-              下载 / Download ↓
-            </a>
-          </div>
-          <div className="plate-frame">
-            {job.output.kind === "video" ? (
-              <video src={job.output.videoUrl} poster={job.output.posterUrl} controls playsInline preload="metadata" />
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={job.output.imageUrl} alt={job.prompt || "生成图像"} />
-            )}
-          </div>
-        </section>
-      ) : null}
-
-      {/* ── 3. 三条路径 ── */}
-      <section className="paths">
-        <SectionRule number="01" title="三条路径" subtitle="THREE PATHS · ONE BOX" />
-        <div className="paths__grid">
-          {PATHS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className="path"
-              onClick={() => {
-                pickMode(p.id);
-                setTray(true);
-                scrollTop();
-              }}
-            >
-              <span className="path__index">{p.index}</span>
-              <span className="path__title">{p.title}</span>
-              <span className="path__desc">{p.desc}</span>
-              <span className="path__meta ink-accent">{p.meta}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {/* ── 4. 画廊：环形展廊 ── */}
-      <section id="gallery" ref={gallery} className="gallery">
-        <div className="gallery__sticky">
-          <SceneHost
-            key={wallKey}
-            className="gallery__canvas"
-            aria-label="最近成片，拖拽或滚动旋转"
-            mount={(c) =>
-              mountWall(c, {
-                images: ring.map((p) => p.src),
-                ink: "#2148B8",
-                paper: "#F5F1E8",
-                layout: "ring",
-                cells: 58,
-                radius: ringRadius,
-                onSelect: openDetail,
-                onHover: setHovered,
-              })
-            }
-            onReady={(h) => {
-              wall.current = h;
-              h?.setScroll(turn.current);
-            }}
-            onPointerDown={(e) => {
-              dragX.current = e.clientX;
-              e.currentTarget.setPointerCapture(e.pointerId);
-            }}
-            onPointerMove={(e) => {
-              if (dragX.current == null) return;
-              const d = (e.clientX - dragX.current) / window.innerWidth;
-              dragX.current = e.clientX;
-              setDrag((v) => v - d * 0.6);
-            }}
-            onPointerUp={() => {
-              dragX.current = null;
-            }}
-            onPointerCancel={() => {
-              dragX.current = null;
-            }}
-          />
-          <div className="gallery__head">
-            <SectionRule number="02" title="最近成片" subtitle="RECENT · DRAG OR SCROLL TO TURN" />
-          </div>
-          {selPlate ? (
-            <div className="gallery__info">
-              <span className="ink-accent mono-12 bold">
-                Plate {pad2(sel + 1)} / {pad2(ring.length)} · {modeLabel(selPlate.mode)} · {selPlate.mode === "t2i" ? selPlate.quality : `${selPlate.dur}s`}
-              </span>
-              <p>{selPlate.prompt}</p>
-            </div>
-          ) : null}
-          <div className="gallery__pos">{wallPos}</div>
-        </div>
-      </section>
-
-      {/* ── 5. 存档 ── */}
-      <section id="archive" className="archive">
-        <SectionRule number="03" title="存档" subtitle={`${pad2(plates.length)} 部成片 / OUTPUTS${plates[0]?.sample ? " · SAMPLE" : ""}`} />
-        <div className="archive__grid">
-          {plates.map((p, i) => (
-            <button key={p.key} type="button" className="plate" data-on={detail === i} onClick={() => openDetail(i)}>
-              <span className="plate__img">
-                <span role="img" aria-label={p.prompt} style={{ backgroundImage: `url(${p.src})` }} />
-              </span>
-              <span className="plate__meta">
-                <span className="bold">Plate {pad2(i + 1)}</span>
-                <span>
-                  {p.mode === "t2i" ? "文生图" : p.mode === "i2v" ? "图生" : "文生"} · {p.mode === "t2i" ? p.quality : `${p.dur}s`}
-                </span>
-              </span>
-              <span className="plate__prompt">{p.prompt}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {/* ── 6. 任务详情 ── */}
-      {detailPlate ? (
-        <section ref={detailEl} className="detail">
-          <div className="detail__media">
-            <div className="plate-frame plate-frame--ink">
-              {detailPlate.videoUrl ? (
-                <video src={detailPlate.videoUrl} poster={detailPlate.src} controls playsInline preload="metadata" />
-              ) : (
-                <span role="img" aria-label={detailPlate.prompt} className="plate-frame__screen" style={{ backgroundImage: `url(${detailPlate.src})` }} />
-              )}
-            </div>
-            <div className="detail__caption mono-12">
-              <span className="ink-accent bold">
-                Plate {pad2(detail! + 1)} / {pad2(plates.length)}
-              </span>
-              <span>
-                {modeLabel(detailPlate.mode)} · {detailPlate.mode === "t2i" ? detailPlate.quality : `${detailPlate.dur}s · ${detailPlate.quality}`} · {detailPlate.ratio}
-              </span>
-            </div>
-          </div>
-          <div className="detail__text">
-            <SectionRule number="04" title="任务" subtitle={`JOB ${detailPlate.jobId.replace(/^job_/, "").slice(-6).toUpperCase()}${detailPlate.sample ? " · SAMPLE" : ""}`} />
-            <p className="detail__prompt">{detailPlate.prompt}</p>
-            <div className="facts">
-              {[
-                ["路径 / Path", modeLabel(detailPlate.mode)],
-                ["模型 / Model", detailPlate.model],
-                ["时长 / Length", detailPlate.mode === "t2i" ? `静帧 · ${detailPlate.ratio} · ${detailPlate.quality}` : `${detailPlate.dur}s · ${detailPlate.ratio} · ${detailPlate.quality}`],
-                ["音轨 / Audio", detailPlate.mode === "t2i" ? "无 / None" : detailPlate.audio ? "已生成 / Generated" : "未生成 / Off"],
-                ["成本 / Cost", `≈ $${(detailPlate.sample ? estimateCostUsd(detailPlate.model, detailPlate.dur) : detailPlate.cost).toFixed(2)} · 以 xAI 账单为准`],
-              ].map(([k, v]) => (
-                <div key={k} className="facts__row">
-                  <span className="facts__key">{k}</span>
-                  <span>{v}</span>
-                </div>
-              ))}
-              <div className="facts__end" />
-            </div>
-            <div className="stages">
-              {STAGES.map((s) => (
-                <span key={s}>
-                  <span className="stages__dot" />
-                  {s}
-                </span>
+            {/* ── 最近成片 ── */}
+            <div className="recent" aria-label="最近成片" aria-hidden={studio}>
+              {recent.map((w, i) => (
+                <button
+                  key={w.key}
+                  type="button"
+                  className="recent__item"
+                  title={w.prompt}
+                  aria-label={w.prompt}
+                  tabIndex={studio ? -1 : 0}
+                  style={{ backgroundImage: `url(${w.still})`, "--delay": `${(1.08 + i * 0.06).toFixed(2)}s` } as React.CSSProperties}
+                  onClick={() => openWork(w)}
+                />
               ))}
             </div>
-            <div className="detail__actions">
-              <button type="button" className="link-accent" onClick={() => reuse(detailPlate)}>
-                用这条提示词再生成 / Reuse ↑
-              </button>
-              <button type="button" className="link-plain" onClick={() => setDetail(null)}>
-                关闭 / Close
-              </button>
-            </div>
           </div>
-        </section>
-      ) : null}
+        ) : (
+          <main className="works">
+            <div className="works__tabs">
+              <div className="pill" role="tablist" aria-label="作品类型">
+                {(["video", "image"] as const).map((k) => (
+                  <button key={k} type="button" role="tab" className="tab" aria-selected={kind === k} data-on={kind === k} onClick={() => switchKind(k)}>
+                    {k === "video" ? "视频" : "图片"}
+                    <span className="tab__count">{works.filter((w) => w.kind === k).length}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {!list.length ? <span className="works__empty">还没有{kind === "video" ? "视频" : "图片"}作品</span> : null}
+            <div className="works__foot">
+              <div className="works__info">
+                <span className="works__meta">{current ? workMeta(current) : ""}</span>
+                <p className="works__prompt">{current?.prompt ?? ""}</p>
+              </div>
+              <div className="works__actions">
+                <span className="works__angle">{angleLabel} · 拖拽旋转</span>
+                <button type="button" className="btn-glass" disabled={!current} onClick={() => current && reuse(current)}>
+                  用这条提示词再生成
+                </button>
+                {current ? (
+                  <a className="btn-light" href={current.sample ? current.media : `${current.media}?download=1`} download>
+                    下载
+                  </a>
+                ) : null}
+              </div>
+            </div>
+          </main>
+        )}
+      </div>
 
-      {/* ── 7. Footer ── */}
-      <footer className="foot">
-        <RuledDataStrip items={["流光 · Lumen", "Grok Imagine / Native", "Paper #F5F1E8 · Cobalt #2148B8 · Terracotta #C65F38", "2026"]} weight={4} size={13} />
-      </footer>
+      <input
+        ref={firstInput}
+        type="file"
+        accept="image/*"
+        hidden
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={(e) => {
+          void pickFirst(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
 
       {authRequired ? <AccessTokenPrompt onAuthorized={() => setAuthRequired(false)} /> : null}
     </div>

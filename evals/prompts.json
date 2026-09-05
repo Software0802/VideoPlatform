@@ -85,7 +85,10 @@
       "durationSec": 1,
       "aspectRatio": "1:1",
       "resolution": "480p",
-      "referenceFixtures": ["assets/character-zh.jpg", "assets/palette-amber.jpg"],
+      "referenceFixtures": [
+        "assets/character-zh.jpg",
+        "assets/palette-amber.jpg"
+      ],
       "prompt": "参考人物与色板，人物在暖琥珀色房间里转身看向镜头，保持服装质感与光线方向。"
     },
     {
@@ -95,7 +98,10 @@
       "durationSec": 15,
       "aspectRatio": "1:1",
       "resolution": "720p",
-      "referenceFixtures": ["assets/character-zh.jpg", "assets/palette-amber.jpg"],
+      "referenceFixtures": [
+        "assets/character-zh.jpg",
+        "assets/palette-amber.jpg"
+      ],
       "prompt": "依据参考人物和色板，人物穿过有雾的旧车站大厅，镜头横向移动并在末尾停住；保持脸部、服装、琥珀色调和阴影方向一致。"
     },
     {
@@ -105,7 +111,10 @@
       "durationSec": 1,
       "aspectRatio": "1:1",
       "resolution": "480p",
-      "referenceFixtures": ["assets/character-en.jpg", "assets/palette-amber.jpg"],
+      "referenceFixtures": [
+        "assets/character-en.jpg",
+        "assets/palette-amber.jpg"
+      ],
       "prompt": "Using the character and palette references, the person turns toward camera in a warm amber room; preserve wardrobe texture and light direction."
     },
     {
@@ -115,7 +124,10 @@
       "durationSec": 15,
       "aspectRatio": "1:1",
       "resolution": "720p",
-      "referenceFixtures": ["assets/character-en.jpg", "assets/palette-amber.jpg"],
+      "referenceFixtures": [
+        "assets/character-en.jpg",
+        "assets/palette-amber.jpg"
+      ],
       "prompt": "Following the character and palette references, the person crosses a foggy vintage station hall as the camera tracks sideways and settles at the end; preserve face, wardrobe, amber grade, and shadow direction."
     },
     {
@@ -186,5 +198,131 @@
       "durationSec": 10,
       "prompt": "Extend continuously for ten seconds from the final moment as the person leaves the station into the rain; keep character, wardrobe, grade, and camera speed unchanged."
     }
-  ]
+  ],
+  "harnessCases": [
+    {
+      "id": "h30-t2v-zh-person",
+      "mode": "text_to_video",
+      "language": "zh",
+      "durationSec": 30,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "subject": "person",
+      "expectContinuity": [
+        "tail_chain",
+        "hard_cut"
+      ],
+      "prompt": "深夜雨巷，一位穿深青色风衣、及肩黑色直发的女人从巷口走到便利店门前，停下抬头看招牌。三个镜头：远景跟拍、中景侧面、近景抬头；每次换镜都要能认出是同一个人。严格保持不变：同一位人物的脸、及肩黑色直发、深青色风衣与白色衬衫领；钨丝暖光从画面左侧来，冷蓝街光在右侧作为补光，胶片颗粒与 35mm 镜头语言不变。"
+    },
+    {
+      "id": "h30-t2v-en-person",
+      "mode": "text_to_video",
+      "language": "en",
+      "durationSec": 30,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "subject": "person",
+      "expectContinuity": [
+        "tail_chain",
+        "hard_cut"
+      ],
+      "prompt": "A rainy alley at night: a woman in a deep-teal trench coat with shoulder-length straight black hair walks from the alley mouth to a convenience-store door, stops, and looks up at the sign. Three shots: wide tracking, medium profile, close-up looking up; she must read as the same person across every cut. Keep unchanged throughout: the same person's face, shoulder-length straight black hair, deep-teal trench coat with a white shirt collar; warm tungsten key from frame left, cool blue street light as fill from the right, film grain and 35mm lens language."
+    },
+    {
+      "id": "h30-i2v-zh-person",
+      "mode": "image_to_video",
+      "language": "zh",
+      "durationSec": 30,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "subject": "person",
+      "startFixture": "assets/character-zh.jpg",
+      "expectContinuity": [
+        "tail_chain"
+      ],
+      "prompt": "画面中的人物从首帧的姿态开始，沿昏暗走廊走向尽头的窗，镜头从正面缓慢绕到侧面再回到正面；不要重新描述外貌，以首帧为唯一身份依据。严格保持不变：同一位人物的脸、及肩黑色直发、深青色风衣与白色衬衫领；钨丝暖光从画面左侧来，冷蓝街光在右侧作为补光，胶片颗粒与 35mm 镜头语言不变。"
+    },
+    {
+      "id": "h30-i2v-en-person",
+      "mode": "image_to_video",
+      "language": "en",
+      "durationSec": 30,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "subject": "person",
+      "startFixture": "assets/character-en.jpg",
+      "expectContinuity": [
+        "tail_chain"
+      ],
+      "prompt": "Starting from the pose in the first frame, the person walks down a dim corridor toward the window at its end while the camera arcs slowly from front to profile and back; the first frame is the only identity reference, do not re-describe the face. Keep unchanged throughout: the same person's face, shoulder-length straight black hair, deep-teal trench coat with a white shirt collar; warm tungsten key from frame left, cool blue street light as fill from the right, film grain and 35mm lens language."
+    },
+    {
+      "id": "h45-t2v-zh-scene",
+      "mode": "text_to_video",
+      "language": "zh",
+      "durationSec": 45,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "subject": "scene",
+      "expectContinuity": [
+        "tail_chain",
+        "hard_cut"
+      ],
+      "prompt": "清晨的山谷薄雾，镜头从山脊缓慢推进到谷底溪流，再切到雾中松林的中景，最后停在被晨光穿透的雾面。无人物。严格保持不变：同一座山谷的地形轮廓、雾的浓度层次、青灰色调与低角度暖金侧光；镜头速度均匀，不加任何人物。"
+    },
+    {
+      "id": "h45-t2v-en-scene",
+      "mode": "text_to_video",
+      "language": "en",
+      "durationSec": 45,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "subject": "scene",
+      "expectContinuity": [
+        "tail_chain",
+        "hard_cut"
+      ],
+      "prompt": "Morning mist in a valley: the camera pushes slowly from the ridge down to the creek, cuts to a medium shot of pines inside the mist, and settles on the mist face pierced by first light. No people. Keep unchanged throughout: the same valley silhouette, the layering of the mist, the blue-grey grade with low-angle warm gold side light; even camera speed, no people introduced."
+    },
+    {
+      "id": "h60-t2v-zh-person",
+      "mode": "text_to_video",
+      "language": "zh",
+      "durationSec": 60,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "subject": "person",
+      "expectContinuity": [
+        "extend",
+        "tail_chain"
+      ],
+      "prompt": "同一位穿深青色风衣的女人穿过雨夜的旧车站：进站大厅是一段 25 秒的连续动作（生成后延长，不能切镜），随后切到站台等车、列车驶来的车窗反射、最后她登车回头。四段里始终是同一个人。严格保持不变：同一位人物的脸、及肩黑色直发、深青色风衣与白色衬衫领；钨丝暖光从画面左侧来，冷蓝街光在右侧作为补光，胶片颗粒与 35mm 镜头语言不变。"
+    },
+    {
+      "id": "h60-i2v-zh-person-lastframe",
+      "mode": "image_to_video",
+      "language": "zh",
+      "durationSec": 60,
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "subject": "person",
+      "startFixture": "assets/character-zh.jpg",
+      "lastFixture": "assets/character-zh.jpg",
+      "expectContinuity": [
+        "tail_chain",
+        "hard_cut"
+      ],
+      "prompt": "画面中的人物离开首帧位置，穿过有雾的旧车站大厅、走上站台、在列车灯光中停下，最后回到与首帧相同的姿态和位置收尾。尾帧仅保存不硬锁，评分时记录结尾定格是否合理。严格保持不变：同一位人物的脸、及肩黑色直发、深青色风衣与白色衬衫领；钨丝暖光从画面左侧来，冷蓝街光在右侧作为补光，胶片颗粒与 35mm 镜头语言不变。"
+    }
+  ],
+  "harnessProtocol": {
+    "repeatsPerCase": 2,
+    "baseline": "naive_concat",
+    "baselineNote": "同一 prompt 由三条独立 ≤15s 原生 T2V 直接 concat，不经 Director / 尾帧链 / QC；与 Harness 成片盲评对照。",
+    "operatorScenarios": {
+      "qc_retry": "对 h30-t2v-zh-person 设 HARNESS_QC_VISUAL_THRESHOLD=0.99 跑一次，记录每镜 retries、needs_review 与账目。",
+      "interrupt_resume": "对 h45-t2v-en-scene 在 generating_shots 阶段停掉 next dev 再启动，记录续跑是否重跑 Director、重付已成功镜。"
+    },
+    "denominatorRule": "所有尝试进 evals/runs，失败样本不得从分母移除；定阈值样本与报告样本分开标注 purpose: calibration | report。"
+  }
 }

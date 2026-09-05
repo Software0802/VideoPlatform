@@ -26,7 +26,7 @@ export type StitchResult = {
 };
 
 const AUDIO_FADE_SEC = 0.02;
-const DEFAULT_SETTLE_SEC = 0.75;
+export const DEFAULT_SETTLE_SEC = 0.75;
 const DEFAULT_FPS = 24;
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 720;
