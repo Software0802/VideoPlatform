@@ -5,7 +5,7 @@
 | 更新日期 | 2026-09-05 |
 | 基线 | `ee1ac26 feat: 失败态重试 / 取消入口与 mock 失败标记`；本轮（M2.4 Harness 接入）见 §1 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | `tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 37 文件 / 158 用例绿 |
+| 门禁状态 | `tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 37 文件 / 158 用例绿；`pnpm e2e` 6 用例绿（mock，约 60s） |
 | 运行 | `pnpm dev` → http://localhost:3000；无密钥即 mock 模式。预览配置 `.claude/launch.json` → `lumen-dev`。本机 `.env.local`（不入库）已设 `HARNESS_ENABLED=1` |
 
 新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，§7 是 harness）、`DESIGN.md`（UI 规格）、`docs/plan.md`（里程碑）。
@@ -54,6 +54,16 @@
   - QC 真实拦截：改 mock 前，第一条 30s 任务因 `qc_frozen_frames` 重试 2 次后以 `needs_review` 失败，错误文案带原因（这是 QC 在工作，不是 bug）。
 - `data/jobs/` 里没有残留 `*-shot-*` 暂存目录。
 
+### 1c. Playwright 冒烟（2026-09-05 晚）
+
+| 文件 | 作用 |
+| --- | --- |
+| `playwright.config.ts` | `testDir: e2e`，单 worker；`webServer` 用 `pnpm dev --port 3000` + `LUMEN_FORCE_MOCK=1 HARNESS_ENABLED=1`，`reuseExistingServer: true`（Next 16 同目录只能有一个 dev server）；base URL 用 `localhost` |
+| `e2e/lumen.spec.ts` | 6 条：空态与三条路径 / 文生视频到成片（含 Range 206、下载链接、存档置顶）/ `[fail]` → Retry 换任务 → 取消 / 存档 → 详情 → Reuse 回填 / 首帧上传自动切图生视频且请求体带 `startUploadId` 无 `model` / 30s 长片读数推进到成片并核对 `shots` 与时长 |
+| `package.json` | `pnpm e2e`、`pnpm e2e:ui`；`@playwright/test` 1.63 + Chromium 已装到本机 |
+
+要点：`beforeEach` 等 `.hero canvas` 出现再操作（dev 模式水合慢，早点的 click 会被吞）；用 `127.0.0.1` 访问会 403（Next 16 dev origin 校验），必须 `localhost`。跑在已有 `data/` 上，不清库，用例都只看自己新建的任务。
+
 ## 2. 设计取舍（本轮）
 
 | 项 | 取舍 | 原因 |
@@ -77,7 +87,7 @@
 ### 首页相关（沿用）
 
 - [ ] 「video · fast」变体需要 `createJobBodySchema` 加字段。
-- [ ] Playwright 冒烟未建；本轮仍是内置浏览器 + curl 人工验证。
+- [x] Playwright 冒烟（2026-09-05，见 §1c）。未做：隔离 `DATA_DIR`（受 Next 16 单 dev server 限制，只能复用现有库）；CI 未接。
 - [ ] 移动端只做了基本折行。
 - [ ] 三条路径区块的文生视频描述仍写「4–10 秒」，开启 harness 时未提长片。
 
@@ -98,6 +108,5 @@
 
 ## 5. 下一刀建议
 
-1. 提交本轮：`feat: M2.4 一致性管线接入 - QC / orchestrator / 放开 30-45-60`。
-2. 真实 key 跑 30s（§3 第一条），把 Director 真实计划样本存进 `evals/runs/`，定视觉 QC 阈值。
-3. 然后回到 M1.9 对账与 M3。
+1. 真实 key 跑 30s（§3 第一条），把 Director 真实计划样本存进 `evals/runs/`，定视觉 QC 阈值。
+2. 然后回到 M1.9 对账与 M3。

@@ -46,3 +46,7 @@ next-env.d.ts
 
 # local verification screenshots
 /.tmp
+
+# playwright
+/test-results
+/playwright-report

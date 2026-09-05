@@ -109,7 +109,7 @@ flowchart LR
 
 ## 6. 下一步(按优先级)
 
-0. **首页收尾(小):** 「video · fast」模型变体需要 API 契约支持才可接入;Playwright 冒烟(空态 / 提交 / 详情)未建;移动端只做了基本折行。详见 `docs/handoff.md`。
+0. **首页收尾(小):** 「video · fast」模型变体需要 API 契约支持才可接入;Playwright 冒烟已建(`pnpm e2e`,6 例 mock);移动端只做了基本折行。详见 `docs/handoff.md`。
 1. **M2.4 收口(产品主线):** 代码已接入(见 `docs/handoff.md`)。剩余:用真实 key 跑一条 30s,核对 Director 真实输出经 `lockPlan` 归一化后是否可执行、extend 镜的 Files 上传与 QC 期望时长;把结果记入 `evals/runs/`,据此定 `HARNESS_QC_VISUAL_THRESHOLD`。
 2. **M2.2 收口(随 M2.4):** 角色表 assetId 写入 JobRecord / Identity Bible;`sheetAssetIds` 进入 R2V 参考图。
 3. **M1.1:** 按模块分批 git 提交,避免工作区继续只活在未跟踪文件里。

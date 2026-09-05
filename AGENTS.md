@@ -32,7 +32,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## 验证门禁
 
 - 改代码后依次跑：`pnpm exec tsc --noEmit`、`pnpm exec eslint src`、`pnpm test`，三者绿才算完成。
-- 改 UI 后用 `.claude/launch.json` 的 `lumen-dev` 启动预览，在 mock 模式下真实提交一次任务（文生视频 + 图生视频首帧上传）确认读数、卷盘、成片区块都动。
+- 改 UI 后跑 `pnpm e2e`（Playwright，`e2e/lumen.spec.ts`：空态 / 文生视频 / `[fail]` 重试与取消 / 存档详情 / 首帧上传 / 30s 长片，全部 mock 模式，约 1 分钟）。它会复用已在 3000 端口运行的 `next dev`（`lumen-dev` 预览），没有就自己起一个。base URL 必须是 `localhost`，`127.0.0.1` 会被 Next 16 dev 拒 403 导致不水合。仍可再用预览面板人工看一眼卷盘与画廊。
 - 内置浏览器面板在页面滚动后截图会空白，这是截图工具的问题；用 `translateY` 位移检查下方区块，或在真实浏览器里看。
 
 ## 安全与额度
@@ -45,3 +45,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 写或改视频 prompt、Director 系统提示、Identity Bible、`evals/prompts.json` 时，先用 `/video-prompt`。
 - 被用户纠正时用 `/fb video-prompt <原因与期望>` 记录；反馈积累后用 `/improve-skill video-prompt` 提改进 PR。
 - 人工评分写入 `evals/runs/YYYY-MM-DD.json`（格式见 `evals/rubric.md`），它是 improver 的主要信号源。
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
