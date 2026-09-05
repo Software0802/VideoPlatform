@@ -56,3 +56,6 @@ next-env.d.ts
 
 # Playwright 登录态（e2e/auth.setup.ts 生成）
 /e2e/.auth
+
+# Agent 隔离 worktree 检出（工具产物）
+/.claude/worktrees/

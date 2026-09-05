@@ -18,6 +18,30 @@ export function adminUserId(): string | undefined {
   return process.env.LUMEN_ADMIN_USER_ID?.trim() || undefined;
 }
 
+/**
+ * 免费档每人每天能出的图数（plan §6.1）。口径是「今日成功 + 当前在途 < 上限」，
+ * 失败 / 取消 / 过期不占额度，只对文生图计数。0 表示暂停所有人的生图提交。
+ */
+export function freeDailyImageQuota(): number {
+  return intFromEnv(process.env.FREE_DAILY_IMAGE_QUOTA, 10, 0);
+}
+
+/**
+ * 止损阀（plan §6.1）：今日失败 + 取消达到它就拒绝该账号的新提交。
+ * 与配额相互独立——它挡的是「反复提交再失败」消耗上游余额，不是正常用量。
+ */
+export function freeDailyFailureLimit(): number {
+  return intFromEnv(process.env.FREE_DAILY_FAILURE_LIMIT, 30, 1);
+}
+
+/** 空串与非法值一律回落默认，避免 `Number("")===0` 把额度悄悄清零。 */
+function intFromEnv(raw: string | undefined, fallback: number, min: number): number {
+  const text = raw?.trim();
+  if (!text) return fallback;
+  const n = Number(text);
+  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
+}
+
 export function jobConcurrency(): number {
   const n = Number(process.env.JOB_CONCURRENCY ?? 2);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 2;

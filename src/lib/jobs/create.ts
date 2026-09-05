@@ -14,6 +14,7 @@ import {
 import { ProviderHttpError, type NativeMode, type ProviderId } from "@/lib/providers/types";
 import { withAdmissionLock } from "@/lib/jobs/admission";
 import { lookupIdempotency, saveIdempotency } from "@/lib/jobs/idempotency";
+import { assertQuota } from "@/lib/jobs/quota";
 import { activeCount, enqueue } from "@/lib/jobs/runner";
 import { assertCreateJobFields } from "@/lib/jobs/request-validation";
 import { resolveLocalOutput } from "@/lib/jobs/local-output";
@@ -54,6 +55,12 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
   if (n >= maxQueuedJobs()) {
     throw new ProviderHttpError(429, "queue_full", "队列已满，请等待进行中的任务完成");
   }
+  // Same critical section as the `writeJob` below (plan §6.2). The reservation this
+  // admits only becomes visible to the next caller once that write lands, so the
+  // check and the write must not be separated — otherwise five concurrent requests
+  // all see the same last free slot. The idempotent replay above deliberately
+  // returns before this point: a replay is not a new consumption.
+  await assertQuota(ownerId, body.mode);
 
   const mode = body.mode;
   const image = isImageMode(mode);
@@ -213,6 +220,9 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
   if (n >= maxQueuedJobs()) {
     throw new ProviderHttpError(429, "queue_full", "队列已满，请等待进行中的任务完成");
   }
+  // A retry issues a brand-new billable upstream request, so it spends a slot exactly like a
+  // first submission — same judge, same lock (plan §6.2).
+  await assertQuota(ownerId, source.mode);
 
   const id = `job_${randomBytes(6).toString("hex")}`;
   const now = new Date().toISOString();
