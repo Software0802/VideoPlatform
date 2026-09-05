@@ -37,6 +37,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 改 UI 后用 `.claude/launch.json` 的 `lumen-dev` 启动预览，在 mock 模式下真实提交一次任务（文生视频 + 图生视频首帧上传）确认读数、卷盘、成片区块都动。
 - 内置浏览器面板在页面滚动后截图会空白，这是截图工具的问题；用 `translateY` 位移检查下方区块，或在真实浏览器里看。
 
+## PR 评审流程
+
+- PR 上的机器人 / 人工评审意见（Devin、Codex、CodeRabbit、reviewer）逐条判断：成立的修复并推送，不成立的说明理由。
+- 每条成立的意见修复并推送后，用 `gh api` 在原评论线程下回复：修复提交号 + 改了什么 + 怎么验证的。这是用户 2026-09-05 授权的自动动作，不必再询问；不成立的意见也回复说明，不要静默忽略。
+- 回复只针对已推送的修复，不要预告"将要修"。
+
 ## 安全与额度
 
 - 密钥只在 `.env.local`，不进聊天、不进提交。
