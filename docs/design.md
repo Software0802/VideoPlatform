@@ -74,6 +74,36 @@ flowchart TB
 
 定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.02/张;实际以 `usage.cost_in_usd_ticks / 1e10` 为准,两者都进 DTO。
 
+## 2b. 生图 provider 路由(2026-09-06,as-built)
+
+`text_to_image` 不再单走 xAI,`src/lib/providers/router.ts` 的 `selectProvider`/`currentProviderId` 按 key 是否存在分流,视频路径不受影响:
+
+| 优先级 | 条件 | provider |
+| --- | --- | --- |
+| 1 | `OPENAI_API_KEY` 设置 | `openaiImageProvider`(`src/lib/providers/openai-image/`),官方 `gpt-image-1` 或兼容中转 |
+| 2 | 无 OpenAI key,`XAI_API_KEY`/`SUB2API_API_KEY` 设置 | `grokNativeProvider` |
+| 3 | 都没有 | `mockProvider` |
+
+`isMockMode()`(`src/lib/env.ts`)改为「xAI 与 OpenAI 两把 key 都没有才算 mock」——只配生图 key 的实例整体脱离 mock 模式(视频路径仍各自按自己的 key 回落)。
+
+### 上游三种响应
+
+`POST /images/generations` 由 `client.ts` 按状态码 + Content-Type 分流:
+
+| 响应 | 含义 |
+| --- | --- |
+| 200 + JSON | `{data:[{b64_json}], usage}`,官方 OpenAI 只走这条 |
+| 200 + `image/*` | 部分兼容中转直接回二进制 |
+| 202 + JSON | 任务未完成,回任务句柄 `{id, poll_after_ms, status:"running"}` |
+
+202 由 `task-poll.ts` 处理:按响应里的 `poll_after_ms`(下限 1s)轮询 `GET /v1/images/tasks/{id}`,`status==="succeeded"` 后 `GET /v1/images/tasks/{id}/result` 取二进制;总时长上限 `OPENAI_IMAGE_TASK_TIMEOUT_MS`(默认 600000ms/10 分钟,上限 60 分钟)。实测 ccgoai high 档 2K 一张需 100–110 秒,202 是主路径而非边缘情况。**计费语义**:上游任务状态 `charged:false`/`charge_status:"pending_delivery"` 直到取回 result 才结算——轮询免费可重复,但重发生成 POST 会新建任务并重复付费,因此生成 POST 请求固定 `maxAttempts:1`,超时即失败、不自动重试。
+
+### 画幅 / 画质 / 计价
+
+- `OPENAI_IMAGE_FLEXIBLE_SIZES=1`(仅接受任意尺寸的兼容中转,如 ccgoai)时 7 个画幅 × 1k/2k 全部原生出图、零裁切(尺寸均为 16 的倍数);未开启时走官方三档尺寸 + `crop.ts`(sharp)居中裁切。官方 `gpt-image-1` 不接受任意尺寸,不要对官方开启此项。
+- `OPENAI_IMAGE_QUALITY`(low/medium/high/auto,默认 `high`)必须显式带进请求——漏传被上游按 medium 计费。
+- `OPENAI_IMAGE_PRICE_TABLE`(JSON,quality × {1K,2K,4K},`src/lib/cost.ts` 的 `openaiImagePriceTable`/`estimateCostUsd`)配置后按档计价,忽略 token;⚠️ 单位随上游而定——ccgoai 的 `pricing_currency` 是 `CNY`,配表后 `costUsdEstimate`/`costUsdActual` 实际是人民币额度,未做汇率换算。未配表回落 `output_tokens × $40/M`。
+
 ## 3. Job 生命周期
 
 状态:`queued → submitting → pending → persisting → succeeded`,终态另有 `failed | expired | canceled`。t2i 同步返回,submit 后直接 `persisting`。长片(30/45/60)走 `queued → directing → keyframing → generating_shots → qc → stitching → persisting → succeeded`,由 orchestrator 推进,runner 只接手最后的 persisting。
@@ -193,6 +223,19 @@ data/
 - `serverExternalPackages: ["ffmpeg-static", "sharp"]`;ffmpeg 一律经 `src/lib/ffmpeg.ts`(路径来自 ffmpeg-static,禁止 PATH spawn);
 - mock 水印字体 `src/lib/media/fonts/NotoSansSC-subset.ttf`(OFL),缺失时 health `ok:false`;
 - 观测:`log.ts` JSON 行 + `data/jobs/{id}/logs.jsonl`;health 顶栏点;指标 Phase 4 再 Prometheus。
+
+### 10.1 生产部署实例(2026-09-06,阿里云 8.209.212.178)
+
+Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在此路径行不通(Next 生成的 pnpm 符号链接写死构建机绝对路径,到 Linux 全是死链),改为手工打包 + 服务器装依赖:
+
+1. 本地 `pnpm build`,打包 `.next`(排除 `cache`/`dev`/`types`)+ `public` + `package.json` + `pnpm-lock.yaml` + `pnpm-workspace.yaml` + `next.config.ts`(约 11MB)。
+2. 服务器 `pnpm install --prod`——**必须在服务器装**,`sharp`/`ffmpeg-static` 是平台相关原生二进制,Windows 版不能用。
+3. **必做**:Turbopack 把 `serverExternalPackages`(`ffmpeg-static`/`sharp`)编成带 hash 的别名(如 `ffmpeg-static-<16位hex>`),构建机与部署机解析的 hash 不一致,不补齐就 500 起不来;部署脚本需扫 `.next/server/chunks/*.js` 提取这类别名,在 `node_modules` 里按真实包名建软链。
+4. 路径 `/opt/genius`,配置 `/opt/genius/.env`(权限 600,`DATA_DIR=/opt/genius/data`、`JOB_CONCURRENCY=1`、`HARNESS_ENABLED=false`);systemd 单元 `genius.service`(`MemoryHigh=550M`/`MemoryMax=700M`/`OOMPolicy=stop`,实测常驻 86–145MB)。
+5. 反代入口借用同机已有的 taiyu Caddy 容器,新增站点块 `genius.homeaistack.online → reverse_proxy 10.255.1.1:3000`(`taiyu_default` 网络网关,不是 docker0 的 10.255.0.1);Caddyfile 改前备份。
+6. 健康检查:`curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/api/health`。
+
+详细操作步骤见 `docs/handoff.md` §0.4;DNS/HTTPS 尚未完成,3000 端口不对外(安全组只开 22/80/443)。
 
 ## 11. 与 rev 3 的差异清单
 

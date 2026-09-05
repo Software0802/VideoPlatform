@@ -2,13 +2,76 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 更新日期 | 2026-09-05（晚，第三轮：预算门禁全覆盖 + 子代理调度） |
-| 基线 | HEAD `6c01ba6`（M2.4 接入 + Playwright 冒烟已提交）；工作区未提交：审查 R01–R12 处理 + **Genius 单屏 UI 重构** + **第三轮**：Director / 角色表 / 视觉 QC 纳入预算预留、`uncertain_submit` 恢复决策、`costOverTarget` 软告警、新增子代理调度体系（`.claude/agents/`、`codex-review`）+ **第三轮续**：Codex 代码审查处置（崩溃重启预留重建、终态失败即时升级、`retryJob` 复制校验）+ Retry 禁用守卫（`retry-guard.ts`） |
+| 更新日期 | 2026-09-06（生图 OpenAI 兼容 provider + 生产部署上线） |
+| 基线 | HEAD `2c6695a`（已提交，工作区干净）。链路：`293f84e`（OpenAI 官方生图 provider）→ `c088f9e`（接 ccgoai、七画幅原生尺寸、档位计价）→ `2c6695a`（202 异步出图协议）。此前一轮的 `6c01ba6`（M2.4 + Playwright 冒烟）与紧随其后的 `b897b7b`（Genius 单屏 UI 重构 + 预算门禁全覆盖 + 子代理调度体系，即下方历史小节里"工作区未提交"的那批改动）均已提交，不再是未提交状态 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | 2026-09-05 晚（第三轮收尾，含 Codex 审查处置 + Retry 守卫后最终重跑）：`tsc --noEmit` 绿；`eslint src e2e` 绿；`pnpm test` 42 文件 / 197 用例通过、1 条 skip；`pnpm e2e` 7 例通过（mock，1.9 分钟）；`pnpm run evals:check` 红（缺人物素材，预期） |
-| 运行 | `pnpm dev` → http://localhost:3000；无密钥即 mock 模式。预览配置 `.claude/launch.json` → `lumen-dev`。本机 `.env.local`（不入库）已设 `HARNESS_ENABLED=1` |
+| 门禁状态 | 2026-09-06（生图三轮改动后重跑）：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 46 文件 / 301 用例通过、1 条 skip。本轮只改 provider / 路由 / 计价，未碰 UI，故未跑 `pnpm e2e`；`pnpm run evals:check` 仍红（缺 `character-en.jpg` / `character-zh.jpg` 两张人物素材，与本轮无关，见 `evals/README.md` → 素材） |
+| 运行 | `pnpm dev` → http://localhost:3000；无任何 key 即 mock 模式，只配 `OPENAI_API_KEY` 时视频路径仍各自回落 mock、文生图走真实 OpenAI 兼容上游。预览配置 `.claude/launch.json` → `lumen-dev`。本机 `.env.local`（不入库）已设 `HARNESS_ENABLED=1` |
+| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`，详见 §0 |
 
-新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，§6 前端 / §7 harness）、`DESIGN.md`（UI 规格，Genius 单屏）、`docs/plan.md`（里程碑）。
+新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，§2b 生图 provider / §6 前端 / §7 harness）、`DESIGN.md`（UI 规格，Genius 单屏）、`docs/plan.md`（里程碑）。
+
+---
+
+## 0. 本轮（2026-09-06）：文生图接 OpenAI 兼容 provider + 生产部署
+
+范围只有**文生图 + 生产部署**，视频 / harness 未改动。
+
+### 0.1 新增 provider `src/lib/providers/openai-image/`
+
+| 文件 | 作用 |
+| --- | --- |
+| `rest-map.ts` | 请求体映射（size/quality、画幅→尺寸表） |
+| `crop.ts` | 官方三档尺寸路径下的居中裁切（sharp） |
+| `client.ts` | 按状态码 + Content-Type 分流三种上游响应（见下） |
+| `native.ts` | provider 实现，落盘照 mock 的生图分支写法 |
+| `task-poll.ts` | 202 异步任务轮询 + 取结果 |
+
+路由（`src/lib/providers/router.ts` `selectProvider`）：`text_to_image` 有 `OPENAI_API_KEY` 走 `openaiImageProvider`，否则回落 grok / mock；视频路径不受影响。`isMockMode()`（`src/lib/env.ts`）语义改为「xAI 与 OpenAI 两把 key 都没有才算 mock」，否则只配生图 key 的实例会整体掉进 mock。落盘时**绝不把 base64 放进 handle**（会被原样写进 job.json），mock 分支也一样写 `tmp/image.jpg` 后返回 `localVideoPath`。
+
+### 0.2 上游三种响应（最容易踩的坑）
+
+`POST /images/generations` 按状态码 + Content-Type 分流（`client.ts`）：
+
+| 响应 | 含义 |
+| --- | --- |
+| 200 + JSON | `{data:[{b64_json}], usage}`，官方 OpenAI 只走这条 |
+| 200 + `image/*` | 部分中转直接回二进制 |
+| 202 + JSON | 图还没好，只给任务句柄 `{id, poll_after_ms, status:"running"}` |
+
+202 处理（`task-poll.ts`）：按 `poll_after_ms`（下限 1s）轮询 `GET /v1/images/tasks/{id}`，`status==="succeeded"` 后 `GET /v1/images/tasks/{id}/result` 取二进制。总时长上限 `OPENAI_IMAGE_TASK_TIMEOUT_MS`（默认 10 分钟）。**实测：ccgoai 的 high 档 2K 一张要 100–110 秒，远超同步窗口，202 是主路径而非边缘情况**（生产环境验证过一条 9:16 2K high 走完整异步链路耗时 108 秒）。
+
+**计费语义**：上游任务状态里 `charged:false` / `charge_status:"pending_delivery"`，**只有取回 result 才真正结算**——轮询与状态查询免费可重复，但**重发生成 POST 会新建任务、重复付费**，所以生成 POST 固定 `maxAttempts:1`。
+
+### 0.3 画幅 / 画质 / 计价
+
+- `OPENAI_IMAGE_FLEXIBLE_SIZES=1` 时 7 个画幅 × 1k/2k 全部**原生出图、零裁切**（尺寸都是 16 的倍数，如 16:9→2048x1152、9:16→1152x2048、3:2→2016x1344）；未开启时走官方 `gpt-image-1` 的三档尺寸 + sharp 居中裁切。
+- `OPENAI_IMAGE_QUALITY` 决定画质，**默认 high**；请求必须显式带 quality，漏传会被上游按 medium 计费。
+- `OPENAI_IMAGE_PRICE_TABLE`（JSON，quality × 1K/2K/4K，`src/lib/cost.ts`）配置后按档计价，忽略 token。⚠️ **单位随上游而定**：ccgoai 的任务状态里 `pricing_currency: "CNY"`，配表后 `costUsdEstimate` / `costUsdActual` 是**上游额度（人民币）而非美元**，没有做汇率换算，做配额 / 花费上限的人必须知道这一点。上游 `actual_charge` 只在配了档表时才采信（同口径），否则回落 token × $40/M。修了 `estimateCostUsd` 对未知图片模型返回 0 的缺口。
+
+### 0.4 生产部署（阿里云 8.209.212.178）
+
+- 路径 `/opt/genius`，systemd 单元 `genius.service`（`MemoryHigh=550M` / `MemoryMax=700M` / `OOMPolicy=stop`，与 taiyu 共存；实测常驻 86–145MB）。
+- 配置 `/opt/genius/.env`（权限 600），`DATA_DIR=/opt/genius/data`，`JOB_CONCURRENCY=1`，`HARNESS_ENABLED=false`。
+- 入口：taiyu 的 Caddy 容器加站点块 `genius.homeaistack.online` → `reverse_proxy 10.255.1.1:3000`（`taiyu_default` 网络的网关，**不是** docker0 的 10.255.0.1）。Caddyfile 改前备份为 `Caddyfile.bak.20260906`。
+- **部署流程（照做步骤）**：
+  1. 本地 `pnpm build`，打包 `.next`（排除 `cache` / `dev` / `types`）+ `public` + `package.json` + `pnpm-lock.yaml` + `pnpm-workspace.yaml` + `next.config.ts`，约 11MB。
+  2. 服务器 `pnpm install --prod`（**必须在服务器装**，sharp 与 ffmpeg-static 是平台相关的原生二进制，Windows 版不能用）。
+  3. **坑一（必做）**：Turbopack 把 `serverExternalPackages` 编成带 hash 的别名（`ffmpeg-static-<hash>`、`sharp-<hash>`），构建机与部署机解析不一致，不补就 500 起不来。部署时扫 `.next/server/chunks/*.js` 提取 `<pkg>-<16位hex>` 形式的别名，在 `node_modules` 里按真实包名建软链。
+  4. **坑二**：`output: "standalone"` 这条路在 Windows→Linux 行不通——Next 生成的 pnpm 符号链接写死了构建机绝对路径（`/d/dev/repos/...`），到 Linux 全是死链且递归断链。已放弃，不要再试。
+- 启动 `systemctl start genius`，健康检查 `curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/api/health`。
+
+### 0.5 上游选型结论（避免后人重复踩）
+
+评估过三家 OpenAI 兼容中转：**portdan**（`/images/generations` 404，只能走 responses 工具，size/quality 不可控、恒 low）、**runapi**（同上，且无图片渠道）、**ccgoai**（✅ 标准端点、size/quality 精确生效、中文正常、有 `/v1/usage` 查余额）。前两家本质是 Codex 订阅反代，参数不可透传，**不适合做生图后端**。
+
+### 0.6 状态与未完成
+
+- 门禁：`tsc` / `eslint` 绿，`pnpm test` 46 文件 / 301 通过 / 1 跳过。UI 未改故未跑 e2e。
+- 生产已验证：中文提示词、16:9 与 9:16、2K high、202 异步链路、档位计价，成片尺寸与画幅一致。
+- **未完成**：`genius.homeaistack.online` 的 DNS A 记录尚未添加，因此 HTTPS 未启用、外部还访问不到（安全组只开 22/80/443，3000 不对外）。
+- **未完成（用户已排期）**：用户系统与注册登录页、按用户的日配额（免费档 3 张/天）、`data/` 留存清理。
+- 已知：`mockFont.present:false`（生产不用 mock，无影响）；`harnessRunnable:false`（只做生图）。
 
 ---
 

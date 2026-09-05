@@ -31,6 +31,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 状态先写 `data/jobs/{id}/job.json` 再发 SSE；轮询是真相。
 - Harness（30/45/60 长视频）由 `HARNESS_ENABLED` 开关：未开启时 `orchestrator.execute` 抛 `HARNESS_NOT_ENABLED`、API 对 30/45/60 返回 400；开启后 `src/lib/harness/orchestrator.ts` 走 directing → keyframing → generating_shots → qc → stitching → persisting，30/45/60 永不直接发给 Grok（rest-map golden 保障）。mock 模式用 `mock-director.ts` 的确定性计划；视觉 QC 只在设置 `HARNESS_QC_VISUAL_THRESHOLD` 时启用。
 - ffmpeg 一律经 `src/lib/ffmpeg.ts`（ffmpeg-static），不 spawn PATH 里的 ffmpeg。
+- 文生图（`text_to_image`）设置 `OPENAI_API_KEY` 时改走 `src/lib/providers/openai-image/`（OpenAI 官方或兼容中转，如 ccgoai），未设置回落 xAI/mock，视频路径不受影响；路由见 `src/lib/providers/router.ts` `selectProvider`。上游可能 202 异步出图（`OPENAI_IMAGE_TASK_TIMEOUT_MS` 控制轮询总时限），生成 POST 一旦被接受即计费，故固定 `maxAttempts:1` 不自动重试。新增环境变量：`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_IMAGE_MODEL`、`OPENAI_IMAGE_FLEXIBLE_SIZES`、`OPENAI_IMAGE_QUALITY`、`OPENAI_IMAGE_PRICE_TABLE`、`OPENAI_IMAGE_TIMEOUT_MS`、`OPENAI_IMAGE_TASK_TIMEOUT_MS`，说明见 `.env.example` 与 `docs/design.md` §2b。
 
 ## 验证门禁
 
@@ -42,6 +43,11 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - 密钥只在 `.env.local`，不进聊天、不进提交。
 - 未设 `LUMEN_ACCESS_TOKEN` 时不要把开发端口暴露到公网。
+
+## 部署
+
+- 生产实例：阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`，反代借用同机 taiyu 的 Caddy 容器。完整步骤（打包内容、服务器装依赖、Turbopack 别名软链的必做步骤、`output: "standalone"` 为何在 Windows→Linux 不可用）见 `docs/handoff.md` §0.4 与 `docs/design.md` §10.1。
+- 部署机与构建机跨平台（Windows 构建、Linux 部署）时，`sharp`/`ffmpeg-static` 必须在部署机 `pnpm install --prod`，不能直接拷贝 Windows 的 `node_modules`。
 
 # Skills
 
