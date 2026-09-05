@@ -93,7 +93,9 @@ data/invites/<code>.json   # { code, createdAt, note?, usedBy?, usedAt? }
 
 现状：`upload.ts` 写的 sidecar 没有归属字段，`create.ts` 的 `loadSidecar` / 认领只校验 ID 与 role 就 `rename` —— **知道他人 uploadId 就能把他的文件认领走**。
 
-修订：sidecar 增加 `ownerId`，上传时写入；`loadSidecar` 校验归属，不符即按「上传不存在」拒绝（同样用 404 语义，不泄露存在性）。旧的无主上传视为不存在。验收要覆盖「跨用户认领被拒且原文件仍在」。
+修订：sidecar 增加 `ownerId`，上传时写入；`loadSidecar` 校验归属，不符即按「上传不存在」拒绝。旧的无主上传视为不存在。验收要覆盖「跨用户认领被拒且原文件仍在」。
+
+**例外说明**（Codex 第二批 diff 审查 P2-1）：这条返回的是 **400 `invalid_argument`** 而非 404——它是 `POST /api/jobs` 请求体校验错误，语义就是 400；关键是响应与「上传真的不存在」**逐字一致**，因此不构成存在性预言机。「越权一律 404」的约定适用于按 id 寻址的资源路由（任务 / 媒体 / SSE），不适用于请求体字段校验。
 
 ## 6. 配额：每人每天 10 张
 

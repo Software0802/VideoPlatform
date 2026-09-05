@@ -22,8 +22,11 @@ import { STORAGE_STATE } from "./paths";
 
 const REPO_ROOT = path.resolve(__dirname, "..");
 
-const EMAIL = "e2e@lumen.test";
-const PASSWORD = "e2e-smoke-password";
+// Fresh credentials every run. A reused dev server keeps its real `data/`, and a
+// fixed email + password would leave an account anyone with the source could log
+// into. Random ones are unguessable, and the cookie is all the suite needs.
+const EMAIL = `e2e-${randomBytes(6).toString("hex")}@lumen.test`;
+const PASSWORD = randomBytes(18).toString("base64url");
 const INVITE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 function dataDirCandidates(): string[] {
@@ -59,24 +62,24 @@ async function login(request: APIRequestContext): Promise<boolean> {
 }
 
 setup("注册并登录一个 e2e 用户，Cookie 交给后续用例", async ({ request }) => {
-  if (!(await login(request))) {
-    const failures: string[] = [];
-    for (const dataDir of dataDirCandidates()) {
-      const invite = await mintInvite(dataDir);
-      const res = await request.post("/api/auth/register", {
-        data: { email: EMAIL, password: PASSWORD, inviteCode: invite.code },
-      });
-      if (res.ok()) break;
-      // The server reads a different data dir (or refused for another reason):
-      // take the unused code back out so no live invite is left lying around.
-      await rm(invite.file, { force: true });
-      failures.push(`${dataDir} → ${res.status()} ${await res.text()}`);
-    }
-    expect(
-      await login(request),
-      `无法为 e2e 建立会话，已尝试的 DATA_DIR：\n${failures.join("\n")}`,
-    ).toBeTruthy();
+  // Credentials are random per run, so there is never an existing account to
+  // fall back to: always register fresh.
+  const failures: string[] = [];
+  for (const dataDir of dataDirCandidates()) {
+    const invite = await mintInvite(dataDir);
+    const res = await request.post("/api/auth/register", {
+      data: { email: EMAIL, password: PASSWORD, inviteCode: invite.code },
+    });
+    if (res.ok()) break;
+    // The server reads a different data dir (or refused for another reason):
+    // take the unused code back out so no live invite is left lying around.
+    await rm(invite.file, { force: true });
+    failures.push(`${dataDir} → ${res.status()} ${await res.text()}`);
   }
+  expect(
+    await login(request),
+    `无法为 e2e 建立会话，已尝试的 DATA_DIR：\n${failures.join("\n")}`,
+  ).toBeTruthy();
 
   await mkdir(path.dirname(STORAGE_STATE), { recursive: true });
   await request.storageState({ path: STORAGE_STATE });
