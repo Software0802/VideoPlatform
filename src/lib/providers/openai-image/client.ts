@@ -5,45 +5,124 @@ import { fetchUpstream, upstreamError } from "@/lib/providers/grok/client";
 import { ProviderHttpError } from "@/lib/providers/types";
 
 /** The key never appears in a return value, a log line or an error message. */
-export function openaiHeaders(): Record<string, string> {
+export function openaiHeaders(json = true): Record<string, string> {
   const key = openaiApiKey();
   if (!key) {
     throw new ProviderHttpError(500, "missing_api_key", "缺少 OPENAI_API_KEY");
   }
-  return { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+  const headers: Record<string, string> = { Authorization: `Bearer ${key}` };
+  if (json) headers["Content-Type"] = "application/json";
+  return headers;
+}
+
+/**
+ * One upstream answer, already split by wire shape.
+ *
+ * `POST /images/generations` has three documented outcomes and only the *transport* can tell
+ * them apart: 200 + JSON (`b64_json`), 200 + raw image bytes (some relays answer that way), and
+ * 202 + JSON (the image is not ready; a task handle came back instead). `status` is carried
+ * through so the caller can recognise the 202 without re-reading the response.
+ */
+export type OpenaiResponseBody =
+  | { kind: "json"; status: number; data: Record<string, unknown> }
+  | { kind: "binary"; status: number; bytes: Buffer; mime: string };
+
+/** `image/png`, `image/jpeg; charset=…` → true. Anything else (JSON, text, empty) → false. */
+export function isImageMime(contentType: string | null | undefined): boolean {
+  return /^image\/[a-z0-9.+-]+$/i.test(mimeOf(contentType));
+}
+
+function mimeOf(contentType: string | null | undefined): string {
+  return String(contentType ?? "").split(";")[0]!.trim().toLowerCase();
 }
 
 export async function openaiPost(
   pathSuffix: string,
   body: unknown,
-): Promise<Record<string, unknown>> {
+): Promise<OpenaiResponseBody> {
   const res = await fetchUpstream(
     `${openaiBase()}${pathSuffix}`,
     {
       method: "POST",
-      headers: openaiHeaders(),
+      headers: openaiHeaders(true),
       body: JSON.stringify(body),
     },
     // One attempt only, on a timeout long enough for gpt-image-1: every accepted request is
     // billed, so a retry after a timeout or a 5xx pays twice for one image. Let it fail and
-    // let the user decide whether to resubmit.
+    // let the user decide whether to resubmit. (A 202 handle is *not* a retry case either —
+    // it is polled, never resubmitted.)
     { timeoutMs: openaiImageTimeoutMs(), maxAttempts: 1 },
   );
-  // Read the body as text first: a base64 image is megabytes, and swallowing a decode
-  // failure into `{}` would surface later as the misleading "上游未返回图片".
+  return readUpstreamBody(res);
+}
+
+/**
+ * Task-status GET. Free and side-effect-free upstream (only fetching the *result* settles the
+ * charge), so the generic transient-status retry stays on — unlike the billed POST above.
+ */
+export async function openaiGetJson(pathSuffix: string): Promise<Record<string, unknown>> {
+  const res = await fetchUpstream(`${openaiBase()}${pathSuffix}`, {
+    method: "GET",
+    headers: openaiHeaders(false),
+  });
+  const body = await readUpstreamBody(res);
+  if (body.kind !== "json") {
+    throw new ProviderHttpError(
+      502,
+      "upstream_invalid_response",
+      `任务状态接口返回了 ${body.mime}，不是 JSON`,
+    );
+  }
+  return body.data;
+}
+
+/**
+ * Result GET on an absolute URL (the task result is bytes, and the upstream hands out an
+ * absolute-path `result_url` that must not be pasted onto the `/v1` base a second time — see
+ * `resolveTaskResultUrl`). Kept on the long image timeout: the body is megabytes.
+ */
+export async function openaiGetBody(url: string): Promise<OpenaiResponseBody> {
+  const res = await fetchUpstream(
+    url,
+    { method: "GET", headers: openaiHeaders(false) },
+    { timeoutMs: openaiImageTimeoutMs() },
+  );
+  return readUpstreamBody(res);
+}
+
+/**
+ * Split one response into JSON or bytes, and turn any non-2xx into a `ProviderHttpError`.
+ *
+ * Content-Type decides first, and only for a 2xx: an error page served as `image/*` is not an
+ * image, and an error envelope is always JSON. Reading a megabyte-sized base64 body as text
+ * before parsing keeps a decode failure from being swallowed into `{}` and resurfacing later
+ * as the misleading "上游未返回图片".
+ */
+async function readUpstreamBody(res: Response): Promise<OpenaiResponseBody> {
+  const contentType = res.headers.get("content-type");
+  if (res.ok && isImageMime(contentType)) {
+    let buf: ArrayBuffer;
+    try {
+      buf = await res.arrayBuffer();
+    } catch (cause) {
+      throw bodyReadFailed(res.status, cause);
+    }
+    const bytes = Buffer.from(buf);
+    if (bytes.length === 0) {
+      throw new ProviderHttpError(502, "upstream_invalid_response", "上游返回了空的图片响应体");
+    }
+    return { kind: "binary", status: res.status, bytes, mime: mimeOf(contentType) };
+  }
+
   let text: string;
   try {
     text = await res.text();
   } catch (cause) {
-    throw new ProviderHttpError(
-      502,
-      "upstream_body_read_failed",
-      `读取上游响应失败（HTTP ${res.status}）：${cause instanceof Error ? cause.message : String(cause)}`,
-    );
+    throw bodyReadFailed(res.status, cause);
   }
-  let data: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    data = JSON.parse(text) as Record<string, unknown>;
+    parsed = JSON.parse(text);
   } catch {
     if (!res.ok) throw upstreamError(res.status, {});
     throw new ProviderHttpError(
@@ -52,8 +131,21 @@ export async function openaiPost(
       `上游响应不是 JSON（HTTP ${res.status}，${text.length} 字节）`,
     );
   }
+  // `null` and arrays are valid JSON but not an envelope; downstream reads fields off an object.
+  const data =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
   if (!res.ok) {
     throw upstreamError(res.status, data);
   }
-  return data;
+  return { kind: "json", status: res.status, data };
+}
+
+function bodyReadFailed(status: number, cause: unknown): ProviderHttpError {
+  return new ProviderHttpError(
+    502,
+    "upstream_body_read_failed",
+    `读取上游响应失败（HTTP ${status}）：${cause instanceof Error ? cause.message : String(cause)}`,
+  );
 }

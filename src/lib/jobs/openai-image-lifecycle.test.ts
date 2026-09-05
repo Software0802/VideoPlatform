@@ -155,6 +155,88 @@ describe("OpenAI image job lifecycle", () => {
     expect({ width: meta.width, height: meta.height }).toEqual({ width: 2048, height: 1152 });
   });
 
+  it("rides out a 202 async task: polls, fetches the result and books the tiered price", async () => {
+    process.env.OPENAI_IMAGE_FLEXIBLE_SIZES = "1";
+    process.env.OPENAI_IMAGE_PRICE_TABLE = JSON.stringify({
+      high: { "1K": 0.2, "2K": 0.2, "4K": 0.23 },
+    });
+    const taskId = "imgtask_cc90a11dfeed4e83b208d03c45d3d3a3";
+    const resultPng = await sharp({
+      create: { width: 2048, height: 1152, channels: 3, background: { r: 12, g: 40, b: 90 } },
+    })
+      .png()
+      .toBuffer();
+
+    const fetchMock = vi.fn(async (url: string, init: RequestInit = {}) => {
+      if ((init.method ?? "GET") === "POST") {
+        // The slow path in production: high-tier 2K takes ~102s upstream, far past its
+        // synchronous window, so the generation call comes back accepted-but-empty.
+        return new Response(
+          JSON.stringify({
+            error: { message: "图片仍在生成中…", type: "image_task_pending" },
+            id: taskId,
+            // Clamped up to the 1s floor, so the whole test still settles in about a second.
+            poll_after_ms: 1,
+            status: "running",
+          }),
+          { status: 202, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/result")) {
+        return new Response(new Uint8Array(resultPng), {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          id: taskId,
+          status: "succeeded",
+          result_available: true,
+          result_url: `/v1/images/tasks/${taskId}/result`,
+          result_content_type: "image/png",
+          // Nothing is billed until the result is fetched, so the finished task still reports
+          // no settled charge — the tier table has to price this job.
+          charged: false,
+          charge_status: "pending_delivery",
+          actual_charge: 0,
+          estimated_charge: 0.2,
+          pricing_currency: "CNY",
+          image_quality: "high",
+          image_size: "2K",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { job } = await createJob({
+      mode: "text_to_image",
+      prompt: "慢工出的宽幅海岸线",
+      aspectRatio: "16:9",
+      imageResolution: "2k",
+    } as Parameters<typeof createJob>[0]);
+
+    const settled = await waitForSettled(job.id);
+    expect(settled.status).toBe("succeeded");
+    expect(settled.costUsdActual).toBe(0.2);
+
+    const meta = await sharp(
+      await readFile(path.join(dataRoot, "jobs", job.id, "outputs", "image.jpg")),
+    ).metadata();
+    expect({ width: meta.width, height: meta.height }).toEqual({ width: 2048, height: 1152 });
+
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    // One billed generation POST; the polls and the result fetch are free GETs.
+    expect(calls.filter(([, init]) => (init.method ?? "GET") === "POST")).toHaveLength(1);
+    expect(calls.filter(([url]) => url.endsWith("/result"))).toHaveLength(1);
+    expect(calls.filter(([url]) => url.includes("/images/tasks/") && !url.endsWith("/result"))).toHaveLength(1);
+    for (const [url] of calls) expect(url).not.toContain("/v1/v1/");
+
+    const rawJson = await readFile(path.join(dataRoot, "jobs", job.id, "job.json"), "utf8");
+    expect(rawJson).not.toMatch(/b64_json|data:image/);
+  });
+
   it("does not retry a billed POST when the upstream returns a retryable status", async () => {
     const fetchMock = vi.fn(
       async () => new Response(JSON.stringify({ error: { message: "boom" } }), { status: 503 }),

@@ -101,6 +101,19 @@ export function openaiImageTimeoutMs(): number {
 }
 
 /**
+ * 异步出图任务的**总**时长上限（毫秒），默认 10 分钟。
+ *
+ * 与 `OPENAI_IMAGE_TIMEOUT_MS` 是两回事：那条管**单次 HTTP 请求**，这条管
+ * 「202 受理 → 轮询 `/images/tasks/{id}` → 取回 result」整条链。中转站（ccgoai）在出图慢时
+ * 直接回 202，实测 high 档 2K 一张约 102 秒、4K 更久，所以总上限必须远宽于单请求超时。
+ * 超时只是本地放弃等待：任务在上游仍然活着，也仍然只在取回 result 时才计费。
+ */
+export function openaiImageTaskTimeoutMs(): number {
+  const n = Number(process.env.OPENAI_IMAGE_TASK_TIMEOUT_MS ?? 600_000);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 60 * 60_000) : 600_000;
+}
+
+/**
  * Mock 模式 = 没有任何可用的上游 key。文生图可以只靠 OpenAI key 跑真实上游，
  * 所以一把 OpenAI key 也足以让实例脱离 mock（视频路径仍会各自按 key 回落到 mock）。
  */
