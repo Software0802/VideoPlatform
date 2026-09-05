@@ -42,6 +42,9 @@ export default defineConfig({
     env: {
       LUMEN_FORCE_MOCK: "1",
       HARNESS_ENABLED: "1",
+      // The server refuses to start without a session secret (plan §3). Fixed
+      // throwaway value: e2e never depends on cookies surviving a restart.
+      LUMEN_SESSION_SECRET: "e2e-only-session-secret-not-for-production",
       // Only honoured when Playwright starts the server itself; a reused dev server keeps its data dir.
       DATA_DIR,
     },

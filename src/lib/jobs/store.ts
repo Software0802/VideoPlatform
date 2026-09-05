@@ -1,7 +1,7 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/lib/env";
+import { writeJsonAtomic } from "@/lib/storage/atomic-json";
 import {
   clampProgress,
   jobPublicSchema,
@@ -138,34 +138,9 @@ export async function updateJob(
 }
 
 async function writeJobJson(dir: string, record: JobRecord): Promise<void> {
-  const destination = path.join(dir, "job.json");
-  // A unique temporary file prevents independent requests/processes from
-  // clobbering one another. Windows can briefly reject replacing a file that
-  // a read stream still has open, so retry the atomic rename for a short,
-  // bounded window before surfacing the error.
-  const temporary = path.join(dir, `.job-${process.pid}-${randomUUID()}.tmp`);
-  try {
-    await writeFile(temporary, JSON.stringify(record, null, 2), "utf8");
-    await renameWithRetry(temporary, destination);
-  } finally {
-    await rm(temporary, { force: true }).catch(() => undefined);
-  }
-}
-
-async function renameWithRetry(source: string, destination: string): Promise<void> {
-  const maxAttempts = 8;
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await rename(source, destination);
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (!(code === "EPERM" || code === "EBUSY" || code === "EACCES") || attempt >= maxAttempts) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, Math.min(10 * 2 ** attempt, 160)));
-    }
-  }
+  // Temporary file + atomic rename, with the Windows retry — see
+  // `@/lib/storage/atomic-json`, which the user store shares.
+  await writeJsonAtomic(path.join(dir, "job.json"), record);
 }
 
 async function readJobUnlocked(id: string): Promise<JobRecord | null> {
