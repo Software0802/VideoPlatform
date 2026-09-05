@@ -3,9 +3,9 @@
 | 字段 | 值 |
 | --- | --- |
 | 日期 | 2026-08-30 |
-| 基线 | 仓库当前实现(Phase 1 已落地,M2.3 库层已齐,未 git 提交) |
-| 配套文档 | 设计书 `docs/design.md`;审查报告 `docs/review-2026-08-29.md`;历史 Phase 0 设计 `docs/architecture.md` |
-| 状态 | 执行中。2026-09-05 完成 Blueprint 首页重建(见 `docs/handoff.md`)。下一刀: M1.1 git 提交 → M2.4(QC + 接入 orchestrator + 放开 30/45/60) |
+| 基线 | 仓库当前实现(Phase 1 已落地,M2.3 库层已齐;首页重建与重试 / 取消已提交) |
+| 配套文档 | 设计书 `docs/design.md`;当前状态与待办以 `docs/handoff.md` 为准;历史稿在 `docs/archive/` |
+| 状态 | 执行中。2026-09-05 完成 Blueprint 首页重建(见 `docs/handoff.md`)。下一刀: M2.4(QC + 接入 orchestrator + 放开 30/45/60) |
 
 ---
 
@@ -19,23 +19,7 @@
 2. **核心(本计划重心):** Harness 管线 —— Director LLM 分镜、Identity Bible、关键帧锁定、tail-chain/extend 链接、QC 重试、ffmpeg 拼接。竞品可以复刻"包一层 API",难以复刻的是这条管线与其评测体系。
 3. **延伸:** 文件化 skills/workflows、人审门、即梦首尾帧硬锁、账密计费多租户。
 
-## 2. 现状盘点(2026-08-30)
-
-产品可用形态:本地单用户工作室,Grok 原生五视频模式 + 文生图端到端(提交 → SSE/轮询 → 落盘 → 画廊)。Harness 库层(导演、锁帧、分镜并行/恢复、硬切 stitch)已齐,**尚未接到 JobRunner**,选 30/45/60 仍 400。`pnpm test` 145 绿,`tsc --noEmit` 绿。git 仍只有 create-next-app 的 initial commit,全部业务代码未提交。
-
-| 模块 | 状态 |
-| --- | --- |
-| 类型 + Zod 模式矩阵(含 t2i) | ✅ 有单测 |
-| Grok REST client / rest-map / router / mock provider | ✅ 有 golden 测试;源视频禁止 data URI |
-| Job 状态机 / 磁盘 store / in-process runner / 幂等 / sweep | ✅ 含 harness 阶段 `directing…stitching`;boot recover;并发 2 / 队列 20 |
-| HTTP API(uploads 流式 / jobs / cancel / retry / SSE / Range media / health) | ✅ Range suffix、SSE 心跳、uploadId 正则、ACCESS_TOKEN |
-| 工作室 UI(2026-09-05 Blueprint 单页首页:三条路径、折叠面板、任务读数、成片、画廊、存档、详情) | ✅ 像素级按交接包还原;UI 只暴露 t2v / i2v / t2i,30/45/60 与 r2v / edit / extend 不在 UI 上 |
-| 场景层(纯 three.js `mountReel / mountWall / mountDotField` + `SceneHost`) | ✅ 单一 `three@0.185`,R3F / drei / 图标库已卸载 |
-| Harness 库层 | ✅ Director / keyframe / shot 并行与崩溃恢复 / stitch;orchestrator 恒 throw |
-| Harness 产品化(接 runner、QC、放开长视频) | ⏳ M2.4 |
-| git 提交 | ❌ 仅 `3038174 Initial commit from Create Next App` |
-
-## 3. 阶段计划
+## 2. 阶段计划
 
 ```mermaid
 flowchart LR
@@ -89,13 +73,13 @@ flowchart LR
 - 账户/credits/支付;`S3MediaStore`;BullMQ 队列;多实例部署;
 - 验收:双供应商混合 packing 出片;计费与 ticks 对账误差 <1%。
 
-## 4. 质量与评测(贯穿)
+## 3. 质量与评测(贯穿)
 
 - **回归:** 任何 prompt 模板/harness 改动后必跑 `evals/` 20 条,评分留档在 `evals/runs/{date}.json`;
 - **单测门禁:** `pnpm test` 绿是合并前提;REST golden、状态机、Range、Zod 矩阵不允许回退;
 - **成本守护:** `JOB_CONCURRENCY=2`、`MAX_QUEUED_JOBS=20`、提交前预估、`cost_in_usd_ticks` 对账;M2 起 harness job 增加单 job 成本上限(超预算 ×2 自动停止重试)。
 
-## 5. 风险登记(更新)
+## 4. 风险登记(更新)
 
 | 风险 | 严重度 | 缓解 |
 | --- | --- | --- |
@@ -107,7 +91,7 @@ flowchart LR
 | vidgen URL 过期 | 中 | 已实现 done 后立刻下载 + storage_options 备份 |
 | 端口暴露烧额度 | 中 | M1.6 最小鉴权;README 警告 |
 
-## 6. 下一步(按优先级)
+## 5. 下一步(按优先级)
 
 0. **首页收尾(小):** 「video · fast」模型变体需要 API 契约支持才可接入;Playwright 冒烟(空态 / 提交 / 详情)未建;移动端只做了基本折行。详见 `docs/handoff.md`。
 1. **M2.4(产品主线):** QC(时长 ≤0.4s、blackdetect/freezedetect、视觉 rubric)→ 把已有 Director / Keyframe / shot plan / stitch 接入 `harnessOrchestrator.execute` → 读取 `HARNESS_ENABLED` → 放开 30/45/60。Grok-only:用户尾帧用 freeze settle,不调即梦。

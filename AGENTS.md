@@ -11,6 +11,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 交接文档 `docs/handoff.md`：当前状态、已完成 / 未完成、下一刀。每次会话从这里开始。
 - 后端真相 `docs/design.md`（as-built）；阶段计划 `docs/plan.md`；UI 规格 `DESIGN.md`。
 - 首页设计交接包 `design_handoff/design_handoff_lumen_blueprint/README.md`，它是首页像素级还原的依据。
+- `docs/archive/` 是历史稿，与现行文档冲突时以现行文档为准，不要据它改代码。
 
 ## 前端约定（2026-09-05 起）
 
@@ -31,7 +32,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## 验证门禁
 
-- 改代码后依次跑：`pnpm exec tsc --noEmit`、`pnpm exec eslint src`、`pnpm test`，三者绿才算完成。
+- 改代码后依次跑：`pnpm exec tsc --noEmit`、`pnpm exec eslint src`、`pnpm test`，三者绿才算完成。改 UI 或任务链路再跑 `pnpm test:e2e`（Playwright，mock 模式，自带 build + 3100 端口；`PLAYWRIGHT_BASE_URL=http://localhost:3000` 可复用已在跑的 dev server，但会把任务写进 `data/jobs`）。
+- 探索式验证优先用 Playwright MCP（`.mcp.json` 已配）；mock 里提示词含 `[fail]` 可稳定制造失败任务。
 - 改 UI 后用 `.claude/launch.json` 的 `lumen-dev` 启动预览，在 mock 模式下真实提交一次任务（文生视频 + 图生视频首帧上传）确认读数、卷盘、成片区块都动。
 - 内置浏览器面板在页面滚动后截图会空白，这是截图工具的问题；用 `translateY` 位移检查下方区块，或在真实浏览器里看。
 

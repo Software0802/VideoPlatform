@@ -3,8 +3,8 @@
 | 字段 | 值 |
 | --- | --- |
 | 日期 | 2026-08-30 |
-| 基线 | 仓库当前实现;本文以代码为准,取代 `docs/architecture.md`(rev 3,保留为 Phase 0 历史设计与决策依据) |
-| 配套 | 计划书 `docs/plan.md`;审查报告 `docs/review-2026-08-29.md` |
+| 基线 | 仓库当前实现;本文以代码为准,取代 rev 3 设计(已归档到 `docs/archive/architecture-rev3.md`,仍成立的决策见 §12) |
+| 配套 | 计划书 `docs/plan.md`;会话交接 `docs/handoff.md`;历史审查报告在 `docs/archive/` |
 | 环境 | Windows / PowerShell,`D:\dev\repos\VideoPlatFrom`,Next.js 16.3.3,pnpm 10.33 |
 
 约定:审查报告 C1–C10 / M1.6 已按本文目标行为落地。标注 **[Phase 2]** 的是 harness 详设；当前已落地 Director、成本、Keyframe 基础能力、shot 并行/恢复与 stitch 库，但完整 orchestrator 仍保持恒 throw 桩。
@@ -127,7 +127,7 @@ data/
 - 场景层:`lib/scene/lumen-three.ts` 是纯 three.js(无 R3F)的三个 mount 函数——`mountReel`(转速 = 进度、墨密度 = 状态)、`mountWall`(ring 布局的网点化静帧,滚动 + 拖拽驱动,raycast hover / click)、`mountDotField`(点阵,已移植未挂载)。`components/scene/SceneHost.tsx` 在 `useEffect` 中挂载并 dispose;mount 抛错时静默留白。画廊最多挂最近 12 张,半径 `max(7.2, n×0.9)`。
 - 成片来源:存档与画廊直接用 `JobPublic.output`(视频取 `posterUrl`,图片取 `imageUrl`);无成片时回落 `public/lumina/*.webp` 八张样片并标 `SAMPLE`。
 - 依赖:`three@0.185` 单一版本;`@react-three/fiber`、`@react-three/drei`、`@phosphor-icons/react` 已卸载;字体经 `next/font/google`(Libre Bodoni / Courier Prime / Jost / Noto Sans SC)。
-- `/gallery`、`/jobs/[id]`、`/studio/*` 保留为跳转到 `/`。2026-09-02 的 Agent 会话页(`components/agent/*`)已删除,其决策记录见 `docs/review-2026-09-02.md`。
+- `/gallery`、`/jobs/[id]`、`/studio/*` 保留为跳转到 `/`。2026-09-02 的 Agent 会话页(`components/agent/*`)已删除,其决策记录见 `docs/archive/review-2026-09-02.md`。
 
 ## 7. Harness 一致性管线 **[Phase 2 详设 — 产品核心]**
 
@@ -168,7 +168,7 @@ data/
 
 ## 8. Skills / Workflows **[Phase 3]**
 
-沿用 architecture.md 设计:`skills/<id>/SKILL.md`(frontmatter 对齐 `SkillManifest`)、`WorkflowGraph` + `GateNode` 人审门、`awaiting_approval` 状态与 approve 路由。当前仅类型与空目录。
+沿用 rev 3 设计:`skills/<id>/SKILL.md`(frontmatter 对齐 `SkillManifest`)、`WorkflowGraph` + `GateNode` 人审门、`awaiting_approval` 状态与 approve 路由。当前仅类型与空目录。
 
 ## 9. 安全
 
@@ -201,3 +201,18 @@ data/
 7. harness 详设吸收 H1–H5(清晰度选帧、QC 校准、shot 断点/并行、成本护栏、即梦 spike 前置);
 8. 最小鉴权(ACCESS_TOKEN)从 Phase 4 提前到 M1;
 9. PR 计划由 `docs/plan.md` 的 M1–M4 里程碑取代。
+
+## 12. 仍成立的 rev 3 决策(摘自归档的 architecture-rev3.md)
+
+1. 单进程 Next.js App Router,不拆 Python / 多进程;`VideoProvider` + `JobRunner` + `MediaStore` 三接口是骨架,S3 / BullMQ / 即梦以相同接口后补。
+2. 视频走 xAI REST `fetch`,禁止 `openai.videos.*`(方法名相似、协议不同);OpenAI SDK 只用于 `chat.completions` 指向 `api.x.ai`。
+3. 模式由字段组合决定,服务端 Zod 硬校验;UI 不是安全边界。`GrokNativeProvider` 永不读取尾帧文件。
+4. 默认模型按模式自动选择:t2v / i2v / r2v → `grok-imagine-video-1.5`,edit / extend → `grok-imagine-video`(1.0),不提供"auto 模型"黑盒。
+5. 本机 `data/` 是成片唯一真相,`vidgen.x.ai` 只作瞬态,`done` 后立即落盘;Files `storage_options` 只作备份,不当画廊 CDN。
+6. 无 key = mock,有 key = live,禁止静默降级;`LUMEN_FORCE_MOCK=1` 可强制 mock。
+7. three.js 是可替换皮肤,不是生成逻辑;场景层只依赖 `three`,不 import 任务逻辑。
+8. 长视频(30/45/60)在 harness 就绪前保持禁用,不用 extend + concat 冒充。
+9. I2V / 参考图先经 `sharp` 压成 ≤256KB、最长边 ≤1280 的 JPEG 再交给 Grok。
+10. `ffmpeg-static` / `sharp` 必须 `serverExternalPackages`,health 缺二进制即失败。
+
+被拒绝的路线:cine 式四进程、FastAPI + LangGraph 双运行时、fork ArcReel(AGPL)/ OpenMontage、Vercel AI SDK `generateVideo`。理由见归档文档 Alternatives 一节。

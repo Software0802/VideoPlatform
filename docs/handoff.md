@@ -3,9 +3,9 @@
 | 字段 | 值 |
 | --- | --- |
 | 更新日期 | 2026-09-05 |
-| 基线 | `dc66201 feat: 按 Blueprint 交接包重建 Mono-Color 单页首页`；本轮（失败态重试 / 取消入口 + mock 失败标记）尚在工作区 |
+| 基线 | `ee1ac26 feat: 失败态重试 / 取消入口与 mock 失败标记`；本轮（Playwright 冒烟 + Playwright MCP）尚在工作区 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | `tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 33 文件 / 143 用例绿（冷启动偶发超时，重跑即可） |
+| 门禁状态 | `tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 33 文件 / 143 用例绿（冷启动偶发超时，重跑即可）；`pnpm test:e2e` 5 条绿（约 1 分钟，含 build） |
 | 运行 | `pnpm dev` → http://localhost:3000；无密钥即 mock 模式。预览配置 `.claude/launch.json` → `lumen-dev` |
 
 新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built）、`DESIGN.md`（UI 规格）、`docs/plan.md`（里程碑）。
@@ -13,6 +13,23 @@
 ---
 
 ## 1. 本轮做了什么（2026-09-05）
+
+### 1d. 文档收敛
+
+删除 `IDEA.md`（一句话）与 `PRODUCT.md`（暗场 / 钨丝灯方向，与 Mono-Color 冲突；仍成立的四条原则并入 `DESIGN.md` 「产品原则」）。`docs/architecture.md` 与两份 review 移到 `docs/archive/`，rev 3 仍成立的决策摘进 `docs/design.md` §12。`docs/plan.md` 删去与本文重复的「现状盘点」。现行文档只剩：`AGENTS.md`、`README.md`、`DESIGN.md`、`docs/design.md`、`docs/plan.md`、本文。
+
+
+### 1c. Playwright 冒烟 + Playwright MCP（2026-09-05 晚）
+
+| 文件 | 改动 |
+| --- | --- |
+| `playwright.config.ts` | Chromium 单 worker；无 `PLAYWRIGHT_BASE_URL` 时 `pnpm build && pnpm start -p 3100`，环境 `LUMEN_FORCE_MOCK=1`、`DATA_DIR=.tmp/e2e-data`，不污染 `data/jobs`；headless 加 SwiftShader 参数供 three.js |
+| `e2e/smoke.spec.ts` | 5 条：空态 / 文生视频到 Done 与下载链接 / 图生视频首帧上传自动切路径 / `[fail]` 失败后 Retry 换新 Job / 存档进详情与 Reuse 回填 |
+| `package.json` | `test:e2e`；devDep `@playwright/test` |
+| `.mcp.json` | Playwright MCP（`npx @playwright/mcp@latest`），agent 探索式验证用 |
+| `.gitignore` | `.playwright-mcp/`、`playwright-report/` |
+| `AGENTS.md` | 验证门禁加 e2e 与 MCP 说明 |
+
 
 ### 1b. 失败态重试 / 取消入口（2026-09-05 晚）
 
@@ -72,7 +89,7 @@
 ### 首页相关（小）
 
 - [ ] 「video · fast」变体：若要支持，需在 `createJobBodySchema` 加 `model`（或 `speed`）字段并在 rest-map 映射，再把下拉恢复三项。
-- [ ] Playwright 冒烟（mock 模式：空态 / 提交并等待完成 / 点击存档进详情）尚未建立；目前只有人工验证。
+- [x] Playwright 冒烟 5 条（2026-09-05）。取消用例未写：mock 任务 1 秒完成，没有稳定窗口。
 - [ ] 移动端只做了基本折行（≤720px）；交接包是桌面优先，未提供移动稿。
 - [x] 失败态重试链接（2026-09-05）。
 - [x] 取消任务入口（2026-09-05）。取消窗口很短：mock 视频约 1 秒即完成，真实 Grok 才有意义。
@@ -97,6 +114,6 @@
 
 ## 5. 下一刀建议
 
-1. 提交本轮：`feat: 失败态重试 / 取消入口与 mock 失败标记`。
-2. Playwright 冒烟（空态 / 提交等完成 / `[fail]` 重试 / 点存档进详情），mock 的 `[fail]` 标记已为此准备好。
-3. 然后回到 **M2.4**。
+1. 提交本轮：`test: Playwright 冒烟五条与 Playwright MCP 配置`。
+2. 回到 **M2.4**（QC + Director / Keyframe / shot plan / stitch 接入 `orchestrator.execute`）。
+3. 若要给取消写 e2e，先给 mock 加 `[slow]` 标记让 submit 延时几秒。

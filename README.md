@@ -79,5 +79,4 @@ pnpm run smoke:live
 - 当前设计（as-built）：[`docs/design.md`](docs/design.md)
 - UI 设计系统（Blueprint 首页）：[`DESIGN.md`](DESIGN.md)；原始交接包 `design_handoff/design_handoff_lumen_blueprint/`
 - 阶段计划：[`docs/plan.md`](docs/plan.md)
-- 审查报告：[`docs/review-2026-09-02.md`](docs/review-2026-09-02.md)（架构与 UI 重构）、[`docs/review-2026-08-29.md`](docs/review-2026-08-29.md)
-- Phase 0 历史设计：[`docs/architecture.md`](docs/architecture.md)
+- 历史稿（仅供追溯，不再维护）：`docs/archive/`（rev 3 架构设计、两份审查报告）
