@@ -11,6 +11,8 @@ import type { JobRecord } from "./schema";
 // start executing the fresh job against whatever HARNESS_ENABLED happens to be.
 vi.mock("@/lib/jobs/runner", () => ({ enqueue: vi.fn(), activeCount: async () => 0 }));
 
+const TEST_OWNER = "usr_00000000000000a1";
+
 let dataRoot = "";
 let writeJob: (record: JobRecord) => Promise<JobRecord>;
 let readJob: (id: string) => Promise<JobRecord | null>;
@@ -72,7 +74,7 @@ describe("retryJob on a harness job (review R09)", () => {
     await writeFile(path.join(dataRoot, "jobs", "job_src", "shots", "0", "video.mp4"), "clip");
     await writeFile(path.join(dataRoot, "jobs", "job_src", "shots", "0", "tail.jpg"), "tail");
 
-    const next = await retryJob(source);
+    const next = await retryJob(source, TEST_OWNER);
     const retried = await readJob(next.id);
     expect(retried?.status).toBe("queued");
     expect(retried?.harnessPlan).toEqual(plan);
@@ -131,8 +133,8 @@ describe("retryJob on a harness job (review R09)", () => {
     await writeJob(source);
     const before = (await readdir(path.join(dataRoot, "jobs"))).sort();
 
-    await expect(retryJob(source)).rejects.toMatchObject({ status: 500, code: "retry_copy_failed" });
-    await expect(retryJob(source)).rejects.toBeInstanceOf(ProviderHttpError);
+    await expect(retryJob(source, TEST_OWNER)).rejects.toMatchObject({ status: 500, code: "retry_copy_failed" });
+    await expect(retryJob(source, TEST_OWNER)).rejects.toBeInstanceOf(ProviderHttpError);
 
     // Nothing new was enqueued and the half-built job dir was removed again.
     expect((await readdir(path.join(dataRoot, "jobs"))).sort()).toEqual(before);

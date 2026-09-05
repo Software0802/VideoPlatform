@@ -5,6 +5,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import sharp from "sharp";
 import { handleUpload } from "./upload";
 
+const TEST_OWNER = "usr_00000000000000a1";
+
 let dataRoot = "";
 
 beforeAll(async () => {
@@ -24,6 +26,7 @@ describe("handleUpload", () => {
     await expect(
       handleUpload(
         new Request("http://localhost/api/uploads", { method: "POST", body: form }),
+        TEST_OWNER,
       ),
     ).rejects.toThrow("缺少文件");
   });
@@ -36,6 +39,7 @@ describe("handleUpload", () => {
           body: JSON.stringify({ role: "start" }),
           headers: { "content-type": "application/json" },
         }),
+        TEST_OWNER,
       ),
     ).rejects.toThrow("multipart/form-data");
   });
@@ -49,7 +53,7 @@ describe("handleUpload", () => {
       body: form,
     });
 
-    await expect(handleUpload(request)).rejects.toThrow("仅支持 MP4 视频");
+    await expect(handleUpload(request, TEST_OWNER)).rejects.toThrow("仅支持 MP4 视频");
     const names = await readdir(path.join(dataRoot, "tmp")).catch(() => []);
     expect(names).toEqual([]);
   });
@@ -75,6 +79,7 @@ describe("handleUpload", () => {
 
     const side = await handleUpload(
       new Request("http://localhost/api/uploads", { method: "POST", body: form }),
+      TEST_OWNER,
     );
 
     expect(side.role).toBe("last");

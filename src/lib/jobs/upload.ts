@@ -13,7 +13,9 @@ import { ProviderHttpError } from "@/lib/providers/types";
 const MAX_IMAGE = 12 * 1024 * 1024;
 const MAX_VIDEO = 48 * 1024 * 1024;
 
-export async function handleUpload(request: Request): Promise<UploadSidecar> {
+/** `ownerId` is the session user; it is stamped into the sidecar so only that
+ * user can later claim the file into a job (plan §5.3). */
+export async function handleUpload(request: Request, ownerId: string): Promise<UploadSidecar> {
   if (!request.body) throw new ProviderHttpError(400, "invalid_argument", "缺少文件");
   const contentType = request.headers.get("content-type") ?? "";
   if (!/^multipart\/form-data\s*;/i.test(contentType)) {
@@ -152,6 +154,7 @@ export async function handleUpload(request: Request): Promise<UploadSidecar> {
       }
       const side: UploadSidecar = {
         uploadId,
+        ownerId,
         role: parsedRole.data,
         width: probe.width,
         height: probe.height,
@@ -173,6 +176,7 @@ export async function handleUpload(request: Request): Promise<UploadSidecar> {
     await writeFile(dest, jpeg.jpeg);
     const side: UploadSidecar = {
       uploadId,
+      ownerId,
       role: parsedRole.data,
       width: jpeg.width,
       height: jpeg.height,

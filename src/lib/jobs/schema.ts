@@ -136,6 +136,12 @@ export type UploadRole = z.infer<typeof uploadRoleSchema>;
 
 export type UploadSidecar = {
   uploadId: string;
+  /**
+   * Who uploaded the file (plan §5.3). Without it, knowing someone else's
+   * upload id was enough to claim their file into your own job. Missing means a
+   * pre-user-system upload, which `createJob` treats as non-existent.
+   */
+  ownerId?: string;
   role: UploadRole;
   width: number;
   height: number;
@@ -184,6 +190,12 @@ export type JobAssetVideo = JobAssetImage & {
  */
 export type JobRecord = Omit<JobPublic, "retryBlocked"> & {
   schemaVersion: 1;
+  /**
+   * Owning user (plan §5). Deliberately absent from `JobPublic`: the browser
+   * never needs it and must not learn other people's user ids. Missing means a
+   * pre-user-system job — see `canAccessJob`.
+   */
+  ownerId?: string;
   remoteId?: string;
   remoteUrl?: string;
   fileOutputId?: string;

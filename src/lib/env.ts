@@ -9,6 +9,15 @@ export function dataDir(): string {
   return path.resolve(/*turbopackIgnore: true*/ process.env.DATA_DIR ?? path.join(process.cwd(), "data"));
 }
 
+/**
+ * The single administrator, bound to a user id rather than an email (plan §4:
+ * an email can be squatted). Unset means nobody is an administrator, and the
+ * ownerless jobs from before the user system are then visible to no one.
+ */
+export function adminUserId(): string | undefined {
+  return process.env.LUMEN_ADMIN_USER_ID?.trim() || undefined;
+}
+
 export function jobConcurrency(): number {
   const n = Number(process.env.JOB_CONCURRENCY ?? 2);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 2;

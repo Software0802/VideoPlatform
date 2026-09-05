@@ -2,12 +2,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+const TEST_OWNER = "usr_00000000000000a1";
+
 let dataRoot = "";
-let createJob: (body: {
-  mode: "text_to_image";
-  prompt: string;
-  idempotencyKey?: string;
-}) => Promise<{ job: { id: string }; replay: boolean }>;
+let createJob: (
+  body: {
+    mode: "text_to_image";
+    prompt: string;
+    idempotencyKey?: string;
+  },
+  ownerId: string,
+) => Promise<{ job: { id: string }; replay: boolean }>;
 let activeCount: () => Promise<number>;
 
 beforeAll(async () => {
@@ -37,7 +42,7 @@ async function waitForIdle() {
 describe("job admission", () => {
   it("admits at most the configured number of concurrent jobs", async () => {
     const results = await Promise.allSettled(
-      Array.from({ length: 8 }, () => createJob({ mode: "text_to_image", prompt: "one" })),
+      Array.from({ length: 8 }, () => createJob({ mode: "text_to_image", prompt: "one" }, TEST_OWNER)),
     );
 
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
@@ -48,7 +53,7 @@ describe("job admission", () => {
   it("replays one job for concurrent requests with the same idempotency key", async () => {
     const results = await Promise.all(
       Array.from({ length: 8 }, () =>
-        createJob({ mode: "text_to_image", prompt: "same", idempotencyKey: "same-key" }),
+        createJob({ mode: "text_to_image", prompt: "same", idempotencyKey: "same-key" }, TEST_OWNER),
       ),
     );
 

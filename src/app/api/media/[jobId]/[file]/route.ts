@@ -2,8 +2,11 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
+import { jsonError } from "@/lib/http";
 import { parseByteRange } from "@/lib/jobs/range";
+import { readJobForUser } from "@/lib/jobs/store";
 import { mediaStore } from "@/lib/storage/local-fs";
+import { requireUser } from "@/lib/users/session";
 
 export const runtime = "nodejs";
 
@@ -26,6 +29,17 @@ export async function GET(
   const { jobId, file } = await ctx.params;
   if (!ALLOWED.has(file)) {
     return Response.json({ error: { code: "not_found", message: "文件不存在" } }, { status: 404 });
+  }
+  // Being a static file is no excuse for skipping the owner check (plan §5.1):
+  // the media URL is guessable from a job id, so it gets the same 404 as an
+  // unknown job rather than streaming someone else's footage.
+  try {
+    const user = await requireUser(request);
+    if (!(await readJobForUser(jobId, user.id))) {
+      return Response.json({ error: { code: "not_found", message: "文件不存在" } }, { status: 404 });
+    }
+  } catch (e) {
+    return jsonError(e);
   }
   let abs: string;
   try {

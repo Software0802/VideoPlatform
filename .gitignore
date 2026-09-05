@@ -53,3 +53,6 @@ next-env.d.ts
 
 # Playwright MCP 会话快照
 .playwright-mcp/
+
+# Playwright 登录态（e2e/auth.setup.ts 生成）
+/e2e/.auth

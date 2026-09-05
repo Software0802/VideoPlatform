@@ -1,12 +1,20 @@
+import { jsonError } from "@/lib/http";
 import { onJob } from "@/lib/jobs/events";
-import { readJob, toPublic } from "@/lib/jobs/store";
+import { readJobForUser, toPublic } from "@/lib/jobs/store";
+import { requireUser } from "@/lib/users/session";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
 
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const rec = await readJob(id);
+  let rec;
+  try {
+    const user = await requireUser(request);
+    rec = await readJobForUser(id, user.id);
+  } catch (e) {
+    return jsonError(e);
+  }
   if (!rec) return Response.json({ error: { code: "not_found", message: "任务不存在" } }, { status: 404 });
 
   const stream = new ReadableStream({

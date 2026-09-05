@@ -28,16 +28,23 @@ import {
 import { currentProviderId } from "@/lib/providers/router";
 import { mediaStore } from "@/lib/storage/local-fs";
 
-export async function createJob(body: CreateJobBody) {
-  return withAdmissionLock(() => createJobUnlocked(body));
+/**
+ * `ownerId` comes from the session (`requireUser`), never from the request
+ * body — a client must not be able to name the account a job is filed under.
+ */
+export async function createJob(body: CreateJobBody, ownerId: string) {
+  return withAdmissionLock(() => createJobUnlocked(body, ownerId));
 }
 
-async function createJobUnlocked(body: CreateJobBody) {
+async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
   if (body.idempotencyKey) {
-    const existing = await lookupIdempotency(body.idempotencyKey);
+    const existing = await lookupIdempotency(ownerId, body.idempotencyKey);
     if (existing) {
       const rec = await readJob(existing);
-      if (rec) return { job: toPublic(rec), replay: true };
+      // The owner-namespaced filename should already make a cross-user hit
+      // impossible; re-checking the record keeps that true even if a stale or
+      // hand-edited mapping file points somewhere else (plan §5.2).
+      if (rec && rec.ownerId === ownerId) return { job: toPublic(rec), replay: true };
     }
   }
 
@@ -65,13 +72,13 @@ async function createJobUnlocked(body: CreateJobBody) {
     }
   }
 
-  const start = body.startUploadId ? await loadSidecar(body.startUploadId, "start") : undefined;
-  const last = body.lastUploadId ? await loadSidecar(body.lastUploadId, "last") : undefined;
+  const start = body.startUploadId ? await loadSidecar(body.startUploadId, "start", ownerId) : undefined;
+  const last = body.lastUploadId ? await loadSidecar(body.lastUploadId, "last", ownerId) : undefined;
   const refs = body.referenceUploadIds
-    ? await Promise.all(body.referenceUploadIds.map((id) => loadSidecar(id, "reference")))
+    ? await Promise.all(body.referenceUploadIds.map((id) => loadSidecar(id, "reference", ownerId)))
     : [];
   const source = body.sourceVideoUploadId
-    ? await loadSidecar(body.sourceVideoUploadId, "source_video")
+    ? await loadSidecar(body.sourceVideoUploadId, "source_video", ownerId)
     : undefined;
 
   if (mode === "edit_video" && source && (source.durationSec ?? 0) > 8.7) {
@@ -119,6 +126,7 @@ async function createJobUnlocked(body: CreateJobBody) {
   const rec: JobRecord = {
     schemaVersion: 1,
     id,
+    ownerId,
     status: "queued",
     progress: 0,
     mode,
@@ -168,7 +176,7 @@ async function createJobUnlocked(body: CreateJobBody) {
   }
 
   await writeJob(rec);
-  if (body.idempotencyKey) await saveIdempotency(body.idempotencyKey, id);
+  if (body.idempotencyKey) await saveIdempotency(ownerId, body.idempotencyKey, id);
   enqueue(id);
   return { job: toPublic(rec), replay: false };
 }
@@ -181,11 +189,17 @@ function modelForProvider(provider: ProviderId, mode: NativeMode): string {
   return provider === "openai" ? openaiImageModel() : modelForMode(mode);
 }
 
-export async function retryJob(source: JobRecord): Promise<JobPublic> {
-  return withAdmissionLock(() => retryJobUnlocked(source));
+/**
+ * The retry is filed under the caller, not under `source.ownerId`: the route
+ * already checked the caller may see `source`, and the only case where the two
+ * differ is the administrator retrying an ownerless legacy job — which should
+ * then belong to the administrator rather than stay ownerless.
+ */
+export async function retryJob(source: JobRecord, ownerId: string): Promise<JobPublic> {
+  return withAdmissionLock(() => retryJobUnlocked(source, ownerId));
 }
 
-async function retryJobUnlocked(source: JobRecord): Promise<JobPublic> {
+async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<JobPublic> {
   if (source.status !== "failed" && source.status !== "expired") {
     throw new ProviderHttpError(409, "conflict", "仅失败或过期任务可重试");
   }
@@ -208,6 +222,7 @@ async function retryJobUnlocked(source: JobRecord): Promise<JobPublic> {
   const rec: JobRecord = {
     schemaVersion: 1,
     id,
+    ownerId,
     status: "queued",
     progress: 0,
     mode: source.mode,
@@ -290,7 +305,11 @@ async function retryJobUnlocked(source: JobRecord): Promise<JobPublic> {
   return toPublic(rec);
 }
 
-async function loadSidecar(uploadId: string, expected: UploadSidecar["role"]): Promise<UploadSidecar> {
+async function loadSidecar(
+  uploadId: string,
+  expected: UploadSidecar["role"],
+  ownerId: string,
+): Promise<UploadSidecar> {
   if (!UPLOAD_ID_RE.test(uploadId)) {
     throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
   }
@@ -302,6 +321,13 @@ async function loadSidecar(uploadId: string, expected: UploadSidecar["role"]): P
     throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
   }
   if (raw.uploadId !== uploadId || !UPLOAD_ID_RE.test(raw.uploadId)) {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
+  }
+  // Someone else's upload — and an ownerless one from before the user system —
+  // must be indistinguishable from a missing upload (plan §5.3): the message
+  // and code stay the same so the id cannot be probed for existence. Nothing is
+  // moved or deleted, so the real owner's file stays where it is.
+  if (raw.ownerId !== ownerId) {
     throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
   }
   if (raw.role !== expected) {

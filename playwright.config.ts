@@ -1,5 +1,6 @@
 import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
+import { STORAGE_STATE } from "./e2e/paths";
 
 /**
  * Mock-mode smoke suite (docs/handoff.md §3). Runs against `pnpm dev` with the
@@ -33,7 +34,20 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
     viewport: { width: 1440, height: 900 },
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } }],
+  projects: [
+    // `/api/*` needs a session now (plan §4): this project registers/logs in a
+    // throwaway account through the real endpoints and saves the cookie.
+    { name: "setup", testMatch: /auth\.setup\.ts/ },
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1440, height: 900 },
+        storageState: STORAGE_STATE,
+      },
+      dependencies: ["setup"],
+    },
+  ],
   webServer: {
     command: `pnpm dev --port ${PORT}`,
     url: `${BASE_URL}/api/health`,

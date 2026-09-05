@@ -5,13 +5,18 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import sharp from "sharp";
 import type { JobPublic } from "./schema";
 
+const TEST_OWNER = "usr_00000000000000a1";
+
 let dataRoot = "";
-let createJob: (body: {
-  mode: "image_to_video";
-  prompt: string;
-  durationSec: number;
-  startUploadId: string;
-}) => Promise<{ job: JobPublic; replay: boolean }>;
+let createJob: (
+  body: {
+    mode: "image_to_video";
+    prompt: string;
+    durationSec: number;
+    startUploadId: string;
+  },
+  ownerId: string,
+) => Promise<{ job: JobPublic; replay: boolean }>;
 let readJob: (id: string) => Promise<{ status: string } | null>;
 
 beforeAll(async () => {
@@ -43,6 +48,7 @@ describe("createJob upload claims", () => {
       path.join(tmp, `${uploadId}.json`),
       JSON.stringify({
         uploadId,
+        ownerId: TEST_OWNER,
         role: "start",
         width: 2,
         height: 2,
@@ -53,12 +59,15 @@ describe("createJob upload claims", () => {
       }),
     );
 
-    const { job } = await createJob({
-      mode: "image_to_video",
-      prompt: "a slow camera move",
-      durationSec: 1,
-      startUploadId: uploadId,
-    });
+    const { job } = await createJob(
+      {
+        mode: "image_to_video",
+        prompt: "a slow camera move",
+        durationSec: 1,
+        startUploadId: uploadId,
+      },
+      TEST_OWNER,
+    );
 
     await expect(access(path.join(tmp, `${uploadId}.json`))).rejects.toThrow();
     await expect(readFile(path.join(dataRoot, "jobs", job.id, "inputs", "start.jpg"))).resolves.toEqual(jpeg);

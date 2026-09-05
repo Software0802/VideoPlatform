@@ -17,6 +17,8 @@ import type { JobRecord } from "./schema";
 
 const API_KEY = "sk-openai-lifecycle";
 
+const TEST_OWNER = "usr_00000000000000a1";
+
 let dataRoot = "";
 let createJob: typeof import("./create").createJob;
 let readJob: (id: string) => Promise<JobRecord | null>;
@@ -85,7 +87,7 @@ describe("OpenAI image job lifecycle", () => {
       prompt: "黄昏的灯塔",
       aspectRatio: "16:9",
       imageResolution: "1k",
-    } as Parameters<typeof createJob>[0]);
+    } as Parameters<typeof createJob>[0], TEST_OWNER);
 
     expect(job.provider).toBe("openai");
     expect(job.model).toBe("gpt-image-1");
@@ -135,7 +137,7 @@ describe("OpenAI image job lifecycle", () => {
       prompt: "宽幅海岸线",
       aspectRatio: "16:9",
       imageResolution: "2k",
-    } as Parameters<typeof createJob>[0]);
+    } as Parameters<typeof createJob>[0], TEST_OWNER);
 
     // Booked at submit from the same size/quality the request will carry — never 0.
     expect(job.costUsdEstimate).toBe(0.2);
@@ -215,7 +217,7 @@ describe("OpenAI image job lifecycle", () => {
       prompt: "慢工出的宽幅海岸线",
       aspectRatio: "16:9",
       imageResolution: "2k",
-    } as Parameters<typeof createJob>[0]);
+    } as Parameters<typeof createJob>[0], TEST_OWNER);
 
     const settled = await waitForSettled(job.id);
     expect(settled.status).toBe("succeeded");
@@ -247,7 +249,7 @@ describe("OpenAI image job lifecycle", () => {
       mode: "text_to_image",
       prompt: "重复计费守卫",
       aspectRatio: "1:1",
-    } as Parameters<typeof createJob>[0]);
+    } as Parameters<typeof createJob>[0], TEST_OWNER);
 
     const settled = await waitForSettled(job.id);
     expect(settled.status).toBe("failed");

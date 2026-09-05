@@ -8,6 +8,7 @@ import {
   type JobPublic,
   type JobRecord,
 } from "@/lib/jobs/schema";
+import { canAccessJob } from "@/lib/jobs/ownership";
 import { retryBlock } from "@/lib/jobs/retry-guard";
 import { mediaStore } from "@/lib/storage/local-fs";
 
@@ -161,6 +162,23 @@ export async function listJobRecords(): Promise<JobRecord[]> {
   }
   out.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   return out;
+}
+
+/**
+ * `readJob` with the visibility rule applied. A job the caller may not see must
+ * be indistinguishable from one that does not exist (plan §5.1: 404, never 403,
+ * so job ids cannot be probed), which is why every route funnels through here
+ * instead of comparing `ownerId` itself.
+ */
+export async function readJobForUser(id: string, userId: string): Promise<JobRecord | null> {
+  const rec = await readJob(id);
+  return rec && canAccessJob(rec, userId) ? rec : null;
+}
+
+/** The list one user is allowed to see (plan §5.1). */
+export async function listJobRecordsForUser(userId: string): Promise<JobRecord[]> {
+  const recs = await listJobRecords();
+  return recs.filter((rec) => canAccessJob(rec, userId));
 }
 
 export function tmpDir() {

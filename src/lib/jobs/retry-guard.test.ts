@@ -15,6 +15,8 @@ import type { RetryBlock } from "./retry-guard";
 // rationale as retry-harness.test.ts).
 vi.mock("@/lib/jobs/runner", () => ({ enqueue: vi.fn(), activeCount: async () => 0 }));
 
+const TEST_OWNER = "usr_00000000000000a1";
+
 let dataRoot = "";
 let writeJob: (record: JobRecord) => Promise<JobRecord>;
 let readJob: (id: string) => Promise<JobRecord | null>;
@@ -190,7 +192,7 @@ describe("retryJob blocks retrying an uncertain_submit harness job", () => {
     const before = (await listJobRecords()).map((r) => r.id).sort();
     let caught: unknown;
     try {
-      await retryJob(source);
+      await retryJob(source, TEST_OWNER);
     } catch (e) {
       caught = e;
     }
@@ -226,7 +228,7 @@ describe("retryJob blocks retrying an uncertain_submit harness job", () => {
     await mkdir(path.join(dataRoot, "jobs", "job_src_allowed", "shots", "0"), { recursive: true });
     await writeFile(path.join(dataRoot, "jobs", "job_src_allowed", "shots", "0", "video.mp4"), "clip");
 
-    const next = await retryJob(source);
+    const next = await retryJob(source, TEST_OWNER);
     expect(next.status).toBe("queued");
     const retried = await readJob(next.id);
     expect(retried?.harnessShots?.map((s) => s.status)).toEqual(["succeeded", "queued"]);
