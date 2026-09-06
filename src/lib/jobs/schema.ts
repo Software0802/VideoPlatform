@@ -32,6 +32,23 @@ export const jobStatusSchema = z.enum([
 ]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
+/**
+ * Statuses with no outgoing edges in `state-machine.ts`. Lives here rather than
+ * next to the transition table so that both the store (which stamps
+ * `completedAt` on the way in) and the quota counter (which reads it back) share
+ * one definition instead of two hand-kept copies.
+ */
+export const TERMINAL_STATUSES: ReadonlySet<JobStatus> = new Set<JobStatus>([
+  "succeeded",
+  "failed",
+  "canceled",
+  "expired",
+]);
+
+export function isTerminalStatus(status: JobStatus): boolean {
+  return TERMINAL_STATUSES.has(status);
+}
+
 export const jobPublicSchema = z.object({
   id: z.string(),
   status: jobStatusSchema,
@@ -196,6 +213,17 @@ export type JobRecord = Omit<JobPublic, "retryBlocked"> & {
    * pre-user-system job — see `canAccessJob`.
    */
   ownerId?: string;
+  /**
+   * When the job first reached a terminal status, ISO. Stamped once by
+   * `store.updateJob` and never rewritten, so a later write (a产物 sweep, a
+   * cost correction) cannot move the job to another day.
+   *
+   * The daily quota buckets settled jobs by this, not by `createdAt`: a job
+   * submitted at 23:59 and finished at 00:05 belongs to the day it *finished*,
+   * otherwise it counts towards neither day and comes out free. Records written
+   * before this field existed fall back to `updatedAt`.
+   */
+  completedAt?: string;
   remoteId?: string;
   remoteUrl?: string;
   fileOutputId?: string;
