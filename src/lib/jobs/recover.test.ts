@@ -15,8 +15,13 @@ describe("recoverDecision", () => {
     expect(recoverDecision("generating_shots", JOB_STALE_MS - 1, true)).toBe("keep");
   });
 
-  it("requeues submitting without a remote id", () => {
-    expect(recoverDecision("submitting", 1000, false)).toBe("requeue");
+  it("calls submitting without a remote id uncertain rather than re-submitting it", () => {
+    expect(recoverDecision("submitting", 1000, false)).toBe("uncertain");
+  });
+
+  it("keeps calling it uncertain once stale: age says nothing about who paid", () => {
+    // Expiring would re-open one-click Retry, which is the second way to pay twice.
+    expect(recoverDecision("submitting", JOB_STALE_MS * 4, false)).toBe("uncertain");
   });
 
   it("resumes submitting that already has a remote id", () => {

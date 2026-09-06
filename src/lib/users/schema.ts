@@ -25,6 +25,15 @@ export const userRecordSchema = z.object({
   /** Bumped on password change; part of the signed session payload. */
   sessionEpoch: z.number().int().min(1),
   plan: userPlanSchema,
+  /**
+   * 余额，人民币元（方案 §3.2）。准入判据是「余额 − 在途预留 ≥ 本次售价」，成功的
+   * 任务在终态边沿扣款。只由 `@/lib/billing/ledger` 的 `applyBalanceChange` 与
+   * `scripts/grant-balance.mjs` 改写，两者都在用户锁内读改写并追加一行流水。
+   *
+   * `.default(0)`：这个字段是后加的，用户系统上线时创建的记录里没有它，读出即 0。
+   * 允许为负——预留已经放行的任务照样要结算，负数只会出现在并发边缘。
+   */
+  balanceCny: z.number().default(0),
   disabled: z.boolean().optional(),
   /** Which one-time invite created this account (traceability, plan §6.4). */
   inviteCode: z.string().regex(INVITE_CODE_RE).optional(),
@@ -32,6 +41,11 @@ export const userRecordSchema = z.object({
   updatedAt: z.string(),
 });
 export type UserRecord = z.infer<typeof userRecordSchema>;
+/**
+ * 写入侧的形状：有默认值的字段（`balanceCny`）可以不写，由 `writeUser` 的 parse 补上。
+ * 读出来的永远是补全后的 `UserRecord`，所以只有构造记录的那几处能省。
+ */
+export type UserRecordInput = z.input<typeof userRecordSchema>;
 
 /** `data/invites/<code>.json`. */
 export const inviteRecordSchema = z.object({

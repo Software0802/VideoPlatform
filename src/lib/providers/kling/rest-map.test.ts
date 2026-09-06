@@ -50,11 +50,26 @@ describe("resolveKlingSettings", () => {
   it("forces 1080p when audio is native, even if KLING_VIDEO_RESOLUTION says 720p", () => {
     vi.stubEnv("KLING_VIDEO_AUDIO", "native");
     vi.stubEnv("KLING_VIDEO_RESOLUTION", "720p");
-    expect(resolveKlingSettings(base({ durationSec: 5 }))).toEqual({
+    expect(resolveKlingSettings(base({ durationSec: 5, generateAudio: true }))).toEqual({
       resolution: "1080p",
       audio: "native",
       durationSec: 5,
     });
+  });
+
+  it("honours the user's 无声 choice on a native-audio instance and keeps the instance resolution", () => {
+    vi.stubEnv("KLING_VIDEO_AUDIO", "native");
+    vi.stubEnv("KLING_VIDEO_RESOLUTION", "720p");
+    expect(resolveKlingSettings(base({ durationSec: 5, generateAudio: false }))).toEqual({
+      resolution: "720p",
+      audio: "off",
+      durationSec: 5,
+    });
+  });
+
+  it("ignores a 有声 request when the instance does not allow audio", () => {
+    vi.stubEnv("KLING_VIDEO_AUDIO", "off");
+    expect(resolveKlingSettings(base({ durationSec: 5, generateAudio: true })).audio).toBe("off");
   });
 });
 

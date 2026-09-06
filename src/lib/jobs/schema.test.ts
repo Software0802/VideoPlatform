@@ -20,6 +20,7 @@ function rec(over: Partial<JobRecord> = {}): JobRecord {
     lastFrameStored: false,
     lastFrameLocksOutput: false,
     harness: { enabled: false },
+    priceCny: 0,
     costUsdEstimate: 0.32,
     costUsdActual: null,
     imageResolution: null,

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JobPublic } from "@/lib/jobs/schema";
 import type { NativeMode, ProviderId } from "@/lib/providers/types";
 import { estimateHarnessCostUsd } from "@/lib/cost";
+import { formatCny, priceCny } from "@/lib/billing/prices";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { HARNESS_DURATIONS, isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
 import { cancelJob, createJob, newIdempotencyKey, retryJob, uploadFile } from "@/lib/client/jobs";
@@ -131,8 +132,10 @@ type Work = {
   dur: number;
   ratio: string;
   quality: string;
-  cost: number | null;
-  costIncomplete: boolean;
+  /** 售价（元）。样片没有账，为 null；余额模型之前的老任务是 0，同样不显示。 */
+  priceCny: number | null;
+  /** 有声 / 无声——上游是否真的出了音轨，界面必须说清楚（方案 §3.4 的诚实性） */
+  audio: boolean;
   sample: boolean;
   /** 留存期满、成片与素材已删（方案 §8）：环上换占位卡，不给播放 / 下载 / 重试 */
   purged: boolean;
@@ -158,8 +161,8 @@ function worksFromJobs(jobs: JobPublic[]): Work[] {
         dur: j.durationSec,
         ratio: j.aspectRatio ?? "16:9",
         quality: out.kind === "image" ? (j.imageResolution ?? "1k").toUpperCase() : (j.resolution ?? "720p"),
-        cost: j.costUsdActual ?? j.costUsdEstimate,
-        costIncomplete: Boolean(j.costIncomplete),
+        priceCny: j.priceCny,
+        audio: j.generateAudio,
         sample: false,
         purged,
       };
@@ -176,27 +179,36 @@ function worksFromJobs(jobs: JobPublic[]): Work[] {
     dur: 6 + (i % 3) * 2,
     ratio: "16:9",
     quality: s.kind === "image" ? "1K" : "720p",
-    cost: null,
-    costIncomplete: false,
+    priceCny: null,
+    audio: false,
     sample: true,
     purged: false,
   }));
 }
 
 const modeLabel = (m: UiMode) => MODES.find((x) => x.id === m)!.label;
-const costLabel = (cost: number, incomplete: boolean) => `${incomplete ? "≥" : "≈"} $${cost.toFixed(2)}`;
+/**
+ * 卡片上的钱是**售价**（人民币），不是我们付给上游的成本：`costUsdActual` 只留给
+ * 管理员对账，用户看的和被扣的必须是同一个数（方案 §3.2）。
+ */
+const audioLabel = (audio: boolean) => (audio ? "有声" : "无声");
 
 function workMeta(w: Work): string {
-  const parts = w.kind === "image" ? [modeLabel(w.mode), w.quality, w.ratio] : [modeLabel(w.mode), `${w.dur}s`, w.ratio, w.quality];
-  if (w.cost != null) parts.push(costLabel(w.cost, w.costIncomplete));
+  const parts =
+    w.kind === "image"
+      ? [modeLabel(w.mode), w.quality, w.ratio]
+      : [modeLabel(w.mode), `${w.dur}s`, w.ratio, w.quality, audioLabel(w.audio)];
+  if (w.priceCny != null && w.priceCny > 0) parts.push(formatCny(w.priceCny));
   return parts.join(" · ");
 }
 
 function jobMeta(j: JobPublic): string {
   const mode = UI_MODE_OF[j.mode] ?? "t2v";
-  const parts = [modeLabel(mode), j.mode === "text_to_image" ? (j.imageResolution ?? "1k").toUpperCase() : `${j.durationSec}s · ${j.resolution ?? "720p"}`, j.aspectRatio ?? "16:9"];
-  const cost = j.costUsdActual ?? j.costUsdEstimate;
-  if (cost > 0) parts.push(costLabel(cost, Boolean(j.costIncomplete)));
+  const image = j.mode === "text_to_image";
+  const parts = [modeLabel(mode), image ? (j.imageResolution ?? "1k").toUpperCase() : `${j.durationSec}s · ${j.resolution ?? "720p"}`, j.aspectRatio ?? "16:9"];
+  // 音轨只对视频有意义；给一张图标「无声」是噪音。
+  if (!image) parts.push(audioLabel(j.generateAudio));
+  if (j.priceCny > 0) parts.push(formatCny(j.priceCny));
   parts.push(j.prompt || "首帧起始");
   return parts.join(" · ");
 }
@@ -211,6 +223,8 @@ const NO_JOB = { id: "", status: "succeeded" } as const;
 /** 顶栏只放 @ 前的部分；完整邮箱留在 title / aria-label 里 */
 const shortName = (email: string) => email.split("@")[0] || email;
 const QUOTA_EXHAUSTED = "今日额度已用完，北京时间 0 点重置";
+/** 当前这套参数的售价超过可用余额时的提示（方案 §5 的用户原话）。 */
+const BALANCE_SHORT = "当前配置，余额可能不够，请充值";
 
 const Chevron = () => (
   <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -224,6 +238,7 @@ export function LumenHome({
   harness = false,
   videoProvider = "grok",
   videoModel = "grok-imagine-video",
+  audioAvailable = true,
   initialEmail,
 }: {
   initialJobs: JobPublic[];
@@ -233,6 +248,12 @@ export function LumenHome({
   videoProvider?: ProviderId;
   /** 服务端解析的视频模型名，只用于工作室读数（可灵实例显示 kling-2.6 而不是 grok） */
   videoModel?: string;
+  /**
+   * 当前实例的视频 provider 会不会真的出音轨（与 /api/health 的 audioAvailable 同源）。
+   * 为假时「有声」芯片锁死在无声、标「暂不可用」——功能照常交付，供应商差异在这里吸收，
+   * 而不是把入口藏掉让用户以为没这功能。
+   */
+  audioAvailable?: boolean;
   /** SSR 已经解析过会话，先用它渲染顶栏，避免首帧右上角空着 */
   initialEmail: string;
 }) {
@@ -247,6 +268,8 @@ export function LumenHome({
   const baseDurs: readonly number[] = videoProvider === "kling" ? KLING_DURS : DURS;
   const [dur, setDur] = useState<number>(baseDurs.includes(DEFAULT_DUR) ? DEFAULT_DUR : baseDurs[0]);
   const [ratio, setRatio] = useState<Ratio>("16:9");
+  // 有声是加价项（价目表里 +¥1），默认开——这是绝大多数人想要的，也是改动前的行为。
+  const [audio, setAudio] = useState(true);
   const [first, setFirst] = useState<Frame | null>(null);
   const [job, setJob] = useState<JobPublic | null>(null);
   const [busy, setBusy] = useState(false);
@@ -272,6 +295,11 @@ export function LumenHome({
   const focusPending = useRef(false);
 
   const isVideo = mode !== "t2i";
+  /*
+    这次提交真正会不会出声：芯片状态 ∧ 实例能力。估价、请求体、芯片文案全都读它，
+    所以「本次约 ¥x」与服务端写进 priceCny 的数不会因为芯片而分叉。
+  */
+  const audioOn = audioAvailable && audio;
   const works = useMemo(() => worksFromJobs(jobs), [jobs]);
   const recent = works.slice(0, 6);
   const list = useMemo(() => works.filter((w) => w.kind === kind), [works, kind]);
@@ -295,6 +323,22 @@ export function LumenHome({
   const email = me?.email ?? initialEmail;
   const quota = me?.quota;
   const quotaExhausted = !!quota && quota.remaining <= 0;
+  const balance = me?.balance;
+  /*
+    本次售价：客户端和服务端跑的是同一个纯函数、同一张表（表随 /api/me 下来），所以
+    面板上的「本次约 ¥x」就是 createJob 会写进 priceCny 的那个数。音轨是加价项，取的是
+    芯片的**生效值**（`audioOn`），不再恒按有声估——不然可灵关声的实例会按有声报价却
+    交付无声视频。唯一仍对不齐的是可灵实例的分辨率档（由服务端环境变量决定，浏览器
+    看不见），那里这个数是下限，最终判定仍以服务端的 402 为准（方案 §3.2）。
+  */
+  const estimateCny = priceCny(
+    mode === "t2i"
+      ? { mode: "text_to_image", imageResolution: "1k" }
+      : { mode: mode === "i2v" ? "image_to_video" : "text_to_video", durationSec: dur, resolution: "720p", generateAudio: audioOn },
+    me?.prices,
+  );
+  // 余额读数缺失（旧服务端、或 /api/me 挂了）时不拦提交：拦了用户也没有别的路可走
+  const balanceShort = !!balance && estimateCny > balance.availableCny;
 
   async function signOut() {
     if (signingOut) return;
@@ -465,6 +509,11 @@ export function LumenHome({
   const durOptions: readonly number[] = harness ? [...baseDurs, ...HARNESS_DURATIONS] : baseDurs;
   const cycleDur = () => setDur((d) => durOptions[(durOptions.indexOf(d) + 1) % durOptions.length]);
   const cycleRatio = () => setRatio((r) => RATIOS[(RATIOS.indexOf(r) + 1) % RATIOS.length]);
+  /** 实例不支持音轨时芯片是死的：点了也不改状态，免得估价与成片再次分叉 */
+  const cycleAudio = () => {
+    if (!audioAvailable) return;
+    setAudio((a) => !a);
+  };
 
   /* ── 提交：沿用 /api/jobs 契约（createJobBodySchema，无 model 字段） ── */
   async function submit() {
@@ -472,6 +521,7 @@ export function LumenHome({
     setError(null);
     try {
       if (quotaExhausted) throw new Error(QUOTA_EXHAUSTED);
+      if (balanceShort) throw new Error(BALANCE_SHORT);
       if (mode !== "i2v" && !prompt.trim()) throw new Error("这条路径需要提示词");
       if (mode === "i2v" && first?.state !== "ready") throw new Error(first?.state === "busy" ? "首帧还在上传，请稍候" : "图生视频需要先选一张首帧");
       setBusy(true);
@@ -487,7 +537,7 @@ export function LumenHome({
         body.durationSec = dur;
         body.aspectRatio = ratio;
         body.resolution = "720p";
-        body.generateAudio = true;
+        body.generateAudio = audioOn;
         if (mode === "i2v") body.startUploadId = first!.uploadId;
       }
       const created = await createJob(body);
@@ -495,7 +545,7 @@ export function LumenHome({
       setJob(created);
       upsert(created);
     } catch (e) {
-      // 429 quota_exceeded / failure_limit_reached：服务端消息原样展示
+      // 402 insufficient_balance / 429 quota_exceeded / failure_limit_reached：服务端消息原样展示
       setError(e instanceof Error ? e.message : String(e));
       refreshMe();
     } finally {
@@ -586,7 +636,10 @@ export function LumenHome({
   const exhibitBottom = 236 + (rows - 3) * 23;
   const angleLabel = `${String(angle).padStart(3, "0")}°`;
   const retryLabel = job?.shots?.length ? "重做失败分镜" : "重新生成";
-  const quotaResetHint = quota ? `今日已用 ${quota.used}/${quota.limit}，北京时间 0 点重置` : undefined;
+  // 悬停才展开的三个数：面板上只放「本次约 / 余额」，预留是解释「钱去哪了」用的
+  const balanceHint = balance
+    ? `余额 ${formatCny(balance.balanceCny)}，在途预留 ${formatCny(balance.reservedCny)}，可用 ${formatCny(balance.availableCny)}`
+    : undefined;
 
   return (
     <div className="app" data-enter={entering} data-ready={ready} data-view={view}>
@@ -659,6 +712,16 @@ export function LumenHome({
             <span className="account__name" title={email} aria-label={`当前账号 ${email}`}>
               {shortName(email)}
             </span>
+            {/* 余额跟着账号名一起在极窄屏隐藏：那点宽度先留给「退出」 */}
+            {balance ? (
+              <span
+                className="account__balance"
+                title={`余额 ${formatCny(balance.balanceCny)}，在途预留 ${formatCny(balance.reservedCny)}`}
+                aria-label={`余额 ${formatCny(balance.balanceCny)}`}
+              >
+                余额 {formatCny(balance.balanceCny)}
+              </span>
+            ) : null}
             <button type="button" className="login" disabled={signingOut} onClick={() => void signOut()}>
               {signingOut ? "退出中" : "退出"}
             </button>
@@ -822,10 +885,28 @@ export function LumenHome({
                       {ratio}
                       <Chevron />
                     </button>
-                    {/* 配额由 /api/me 提供；字段缺失（尚未上线）时整行不渲染 */}
-                    {quota ? (
-                      <span className="composer__quota" data-empty={quotaExhausted} title={quotaResetHint}>
-                        今日剩余 {Math.max(0, quota.remaining)}/{quota.limit}
+                    {/*
+                      有声 / 无声。实例不支持音轨时不隐藏这个入口，而是标「暂不可用」——
+                      藏起来用户只会以为产品没这功能，说清楚才知道是这台实例的事。
+                    */}
+                    {isVideo ? (
+                      <button
+                        type="button"
+                        className="chip chip--menu"
+                        data-audio={audioOn ? "on" : "off"}
+                        aria-disabled={audioAvailable ? undefined : true}
+                        aria-label={audioAvailable ? (audioOn ? "有声，点击切换为无声" : "无声，点击切换为有声") : "无声，当前视频服务暂不支持音轨"}
+                        title={audioAvailable ? "点击切换音轨（有声加价）" : "当前视频服务未开启音轨，暂不可用"}
+                        onClick={cycleAudio}
+                      >
+                        {audioAvailable ? audioLabel(audioOn) : `${audioLabel(false)} · 暂不可用`}
+                        {audioAvailable ? <Chevron /> : null}
+                      </button>
+                    ) : null}
+                    {/* 本次售价与可用余额由 /api/me 提供；字段缺失时整行不渲染 */}
+                    {balance ? (
+                      <span className="composer__quota" data-empty={balanceShort} title={balanceHint}>
+                        本次约 {formatCny(estimateCny)} · 余额 {formatCny(balance.availableCny)}
                       </span>
                     ) : null}
                   </div>
@@ -847,10 +928,10 @@ export function LumenHome({
                     <button
                       type="submit"
                       className="composer__send"
-                      aria-label={working ? `生成中 ${pct}%` : quotaExhausted ? QUOTA_EXHAUSTED : "生成"}
-                      title={quotaExhausted ? QUOTA_EXHAUSTED : undefined}
+                      aria-label={working ? `生成中 ${pct}%` : quotaExhausted ? QUOTA_EXHAUSTED : balanceShort ? BALANCE_SHORT : "生成"}
+                      title={quotaExhausted ? QUOTA_EXHAUSTED : balanceShort ? BALANCE_SHORT : undefined}
                       data-busy={working}
-                      disabled={working || quotaExhausted}
+                      disabled={working || quotaExhausted || balanceShort}
                       style={{ "--p": `${pct}%` } as React.CSSProperties}
                     >
                       {working ? (
@@ -870,6 +951,9 @@ export function LumenHome({
                   </p>
                 ) : quotaExhausted ? (
                   <p className="composer__error composer__error--quota">{QUOTA_EXHAUSTED}</p>
+                ) : balanceShort ? (
+                  // 余额不够是「换个配置或去充值」，不是报错，但要比配额那行更显眼
+                  <p className="composer__error composer__error--balance">{BALANCE_SHORT}</p>
                 ) : null}
               </form>
             </div>

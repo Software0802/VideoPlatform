@@ -28,11 +28,14 @@ export function normalizeKlingDuration(sec: number | undefined): 5 | 10 {
 }
 
 /**
- * 一次可灵调用真正会用的三个参数。分辨率与音频档由环境变量决定（UI 不暴露），
- * 有声只在 1080p 出片，所以 `native` 会把分辨率抬上去——静默降级会让成片与账单对不上。
+ * 一次可灵调用真正会用的三个参数。音频 = 实例允许有声（`KLING_VIDEO_AUDIO=native`）
+ * **且**用户没有选无声（`req.generateAudio !== false`）；实例不允许时用户的选择被忽略，
+ * UI 侧对应显示「无声 · 暂不可用」。有声只在 1080p 出片，所以 `native` 会把分辨率抬上去——
+ * 静默降级会让成片与账单对不上；用户选无声时分辨率回到实例默认档，不再多收 1080p 的钱。
  */
 export function resolveKlingSettings(req: ProviderGenerateRequest): KlingSettings {
-  const audio = klingVideoAudio();
+  const audio: KlingSettings["audio"] =
+    klingVideoAudio() === "native" && req.generateAudio !== false ? "native" : "off";
   const resolution = audio === "native" ? "1080p" : klingVideoResolution();
   return { resolution, audio, durationSec: normalizeKlingDuration(req.durationSec) };
 }

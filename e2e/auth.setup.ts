@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { expect, test as setup, type APIRequestContext } from "@playwright/test";
 import { dataDirCandidates, newInviteCode, writeInvite } from "./invites";
 import { DATA_DIR_HINT, STORAGE_STATE } from "./paths";
@@ -32,6 +34,18 @@ async function mintInvite(dataDir: string): Promise<{ code: string; file: string
   return { code, file: await writeInvite(dataDir, code) };
 }
 
+/**
+ * 余额模型（方案 §3.2）上线后，新账号余额为 0，任何提交都会被 402 挡下——冒烟要真的
+ * 出片，就得先充值。充值同样没有 HTTP 入口（和铸邀请码一样是管理员动作），所以这里
+ * 直接调真正的 CLI：既省掉一份重复的落盘逻辑，也顺带在每次 e2e 里验证它还能跑。
+ */
+async function fundAccount(dataDir: string): Promise<void> {
+  const script = path.resolve(__dirname, "../scripts/grant-balance.mjs");
+  await promisify(execFile)(process.execPath, [script, EMAIL, "1000", "--note", "playwright e2e"], {
+    env: { ...process.env, DATA_DIR: dataDir },
+  });
+}
+
 async function login(request: APIRequestContext): Promise<boolean> {
   const res = await request.post("/api/auth/login", { data: { email: EMAIL, password: PASSWORD } });
   return res.ok();
@@ -60,6 +74,7 @@ setup("注册并登录一个 e2e 用户，Cookie 交给后续用例", async ({ r
     await login(request),
     `无法为 e2e 建立会话，已尝试的 DATA_DIR：\n${failures.join("\n")}`,
   ).toBeTruthy();
+  await fundAccount(liveDataDir);
 
   await mkdir(path.dirname(STORAGE_STATE), { recursive: true });
   await request.storageState({ path: STORAGE_STATE });

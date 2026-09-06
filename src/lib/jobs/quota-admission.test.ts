@@ -16,6 +16,16 @@ import type { JobRecord, JobStatus } from "./schema";
  */
 vi.mock("@/lib/jobs/runner", () => ({ enqueue: vi.fn(), activeCount: async () => 0 }));
 
+/**
+ * 余额是另一条闸门（方案 §3.2），有自己的测试；这里放行它，否则每个测试的一次性
+ * owner 都得先建一个有钱的账号，配额本身反而被埋掉。与上面的 runner mock 同一个理由：
+ * 只留下这个文件真正要考的那条判定。
+ */
+vi.mock("@/lib/billing/admission", () => ({
+  assertBalance: async () => {},
+  loadBalanceUsage: async () => ({ balanceCny: 0, reservedCny: 0, availableCny: 0 }),
+}));
+
 const SESSION_SECRET = "quota-admission-test-secret-0123456789";
 
 let dataRoot = "";
@@ -31,7 +41,9 @@ beforeAll(async () => {
   process.env.DATA_DIR = dataRoot;
   process.env.LUMEN_FORCE_MOCK = "1";
   process.env.LUMEN_SESSION_SECRET = SESSION_SECRET;
-  delete process.env.FREE_DAILY_IMAGE_QUOTA;
+  // 余额成为主闸门后配额的默认值抬到了 200（方案 §3.2），这些用例考的是配额的口径而不是
+  // 那个数字，所以显式钉回 10，断言里的 11 次、剩 9 次才继续成立。
+  process.env.FREE_DAILY_IMAGE_QUOTA = "10";
   delete process.env.FREE_DAILY_FAILURE_LIMIT;
   delete process.env.LUMEN_ADMIN_USER_ID;
   ({ createJob, retryJob } = await import("./create"));
@@ -47,6 +59,7 @@ afterAll(async () => {
   delete process.env.DATA_DIR;
   delete process.env.LUMEN_FORCE_MOCK;
   delete process.env.LUMEN_SESSION_SECRET;
+  delete process.env.FREE_DAILY_IMAGE_QUOTA;
   await rm(dataRoot, { recursive: true, force: true });
 });
 
@@ -75,6 +88,7 @@ function imageRecord(ownerId: string | undefined, status: JobStatus): JobRecord 
     lastFrameStored: false,
     lastFrameLocksOutput: false,
     harness: { enabled: false },
+    priceCny: 0,
     costUsdEstimate: 0,
     costUsdActual: null,
     error: null,

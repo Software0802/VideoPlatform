@@ -1,4 +1,5 @@
 import { ApiError, parseAuthed, parseJson } from "@/lib/client/http";
+import { DEFAULT_PRICE_TABLE, type PriceTable } from "@/lib/billing/prices";
 
 /**
  * Browser wrappers over the auth endpoints and `GET /api/me`. Components never
@@ -22,10 +23,20 @@ export type QuotaPublic = {
   resetsAt: string;
 };
 
+/** 余额模型（方案 §3.2）：`available = balance − 在途预留`，提交面板拿它判够不够。 */
+export type BalancePublic = {
+  balanceCny: number;
+  reservedCny: number;
+  availableCny: number;
+};
+
 export type MePublic = {
   userId: string;
   email: string;
   plan: string;
+  balance?: BalancePublic;
+  /** 服务端当前生效的价目表；缺失时调用方用 `DEFAULT_PRICE_TABLE` 也算不错。 */
+  prices?: PriceTable;
   quota?: QuotaPublic;
 };
 
@@ -44,10 +55,55 @@ function readQuota(raw: unknown): QuotaPublic | undefined {
   };
 }
 
+/** 同样只信检查过的字段：三个数缺一个，整块余额读数就不渲染（而不是显示 ¥NaN）。 */
+function readBalance(raw: unknown): BalancePublic | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const b = raw as Record<string, unknown>;
+  const nums = ["balanceCny", "reservedCny", "availableCny"] as const;
+  if (!nums.every((k) => typeof b[k] === "number" && Number.isFinite(b[k]))) return undefined;
+  return {
+    balanceCny: b.balanceCny as number,
+    reservedCny: b.reservedCny as number,
+    availableCny: b.availableCny as number,
+  };
+}
+
+/** 价目表只按默认表的形状取，缺项补默认——服务端加了新档也不会算出 undefined。 */
+function readPrices(raw: unknown): PriceTable | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const p = raw as Partial<PriceTable>;
+  const video = (p.video ?? {}) as Partial<PriceTable["video"]>;
+  const image = (p.image ?? {}) as Partial<PriceTable["image"]>;
+  const pick = (value: unknown, fallback: number): number =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+  const d = DEFAULT_PRICE_TABLE;
+  return {
+    video: {
+      "5": pick(video["5"], d.video["5"]),
+      "10": pick(video["10"], d.video["10"]),
+      hd: pick(video.hd, d.video.hd),
+      audio: pick(video.audio, d.video.audio),
+    },
+    extend: pick(p.extend, d.extend),
+    edit: pick(p.edit, d.edit),
+    image: { "1k": pick(image["1k"], d.image["1k"]), "2k": pick(image["2k"], d.image["2k"]) },
+  };
+}
+
 export async function fetchMe(): Promise<MePublic> {
   const res = await fetch("/api/me", { cache: "no-store" });
-  const data = await parseAuthed<MePublic & { quota?: unknown }>(res, "无法读取账号信息");
-  return { userId: data.userId, email: data.email, plan: data.plan, quota: readQuota(data.quota) };
+  const data = await parseAuthed<MePublic & { quota?: unknown; balance?: unknown; prices?: unknown }>(
+    res,
+    "无法读取账号信息",
+  );
+  return {
+    userId: data.userId,
+    email: data.email,
+    plan: data.plan,
+    balance: readBalance(data.balance),
+    prices: readPrices(data.prices),
+    quota: readQuota(data.quota),
+  };
 }
 
 export type LoginInput = { email: string; password: string };

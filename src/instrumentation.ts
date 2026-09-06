@@ -8,6 +8,31 @@ export async function register() {
   // directories at boot so a crash between the two writes cannot hide an account.
   const { ensureUserIndex } = await import("./lib/users/store");
   await ensureUserIndex();
+  await tuneSharp();
   const { startJobRunner } = await import("./lib/jobs/runner");
   await startJobRunner();
+}
+
+/**
+ * Cap libvips' appetite before the first upload arrives (plan §3.3, P1).
+ *
+ * Out of the box sharp sizes its thread pool to the CPU count and keeps a 50MB
+ * decoded-tile cache per process; on a 2-core / 1.8G box under `MemoryMax=700M`
+ * that is a resident cost we never get back plus parallel decodes we did not ask
+ * for — `JOB_CONCURRENCY` bounds jobs, not uploads.
+ *
+ * Deliberately non-fatal: a sharp that cannot be loaded should degrade to "uploads
+ * fail" the way it always has, not to "the server refuses to boot".
+ */
+async function tuneSharp() {
+  try {
+    const sharp = (await import("sharp")).default;
+    sharp.concurrency(1);
+    sharp.cache(false);
+  } catch (error) {
+    const { log } = await import("./lib/log");
+    log("warn", "sharp tuning skipped", {
+      msg: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

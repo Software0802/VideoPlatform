@@ -194,6 +194,7 @@ describe("runPersistedPlan treats a recovered needs_review shot as terminal", ()
       lastFrameStored: false,
       lastFrameLocksOutput: false,
       harness: { enabled: false },
+      priceCny: 0,
       costUsdEstimate: 2.4,
       costUsdActual: null,
       imageResolution: null,

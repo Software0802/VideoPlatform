@@ -33,6 +33,18 @@ beforeAll(async () => {
   ({ writeJob, readJob, listJobRecords, toPublic } = await import("./store"));
   ({ retryJob } = await import("./create"));
   ({ retryBlock, UNCERTAIN_SUBMIT_CODE } = await import("./retry-guard"));
+  // 余额模型（方案 §3.2）：提交与重试都要先过余额判定，先把测试账号建出来并充够。
+  const { writeUser } = await import("@/lib/users/store");
+  await writeUser({
+    id: TEST_OWNER,
+    email: "owner@example.com",
+    passwordHash: "scrypt$16384$8$1$00$00",
+    sessionEpoch: 1,
+    plan: "free",
+    balanceCny: 1000,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
 });
 
 afterAll(async () => {
@@ -61,6 +73,7 @@ function baseRecord(overrides: Partial<JobRecord> = {}): JobRecord {
     lastFrameStored: false,
     lastFrameLocksOutput: false,
     harness: { enabled: false },
+    priceCny: 0,
     costUsdEstimate: 1,
     costUsdActual: null,
     imageResolution: null,
@@ -127,14 +140,23 @@ describe("retryBlock", () => {
     expect(retryBlock(baseRecord({ harness: { enabled: true }, harnessShots: [] }))).toBeNull();
   });
 
-  it("ignores a job-level error even when its own code is uncertain_submit", () => {
+  it("blocks on a job-level uncertain_submit, with no shot indexes to name", () => {
+    // Changed with G1 (plan §3.2): `runner.recover()` now writes this code at job level
+    // for a single-clip job interrupted between submit and the remote id landing, and the
+    // 409 path has to catch it too. Shot-level markers still win the message.
     const rec = baseRecord({
       harness: { enabled: true },
-      // Job-level error deliberately reuses the code string; only shot-level errors should count.
-      error: { code: "uncertain_submit", message: "job 级别，不应被读取" },
+      error: { code: "uncertain_submit", message: "job 级别" },
       harnessShots: [okShot(0), otherFailureShot(1, "retry_exhausted")],
     });
-    expect(retryBlock(rec)).toBeNull();
+    const block = retryBlock(rec);
+    expect(block?.code).toBe("uncertain_submit");
+    expect(block?.shotIndexes).toEqual([]);
+    expect(/[一-龥]/.test(block?.message ?? "")).toBe(true);
+  });
+
+  it("still returns null for any other job-level error code", () => {
+    expect(retryBlock(baseRecord({ error: { code: "moderation", message: "x" } }))).toBeNull();
   });
 
   it("flags every uncertain_submit shot, sorted ascending, regardless of input order or shot status", () => {

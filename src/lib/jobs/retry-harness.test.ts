@@ -24,6 +24,18 @@ beforeAll(async () => {
   process.env.LUMEN_FORCE_MOCK = "1";
   ({ writeJob, readJob } = await import("./store"));
   ({ retryJob } = await import("./create"));
+  // 余额模型（方案 §3.2）：提交与重试都要先过余额判定，先把测试账号建出来并充够。
+  const { writeUser } = await import("@/lib/users/store");
+  await writeUser({
+    id: TEST_OWNER,
+    email: "owner@example.com",
+    passwordHash: "scrypt$16384$8$1$00$00",
+    sessionEpoch: 1,
+    plan: "free",
+    balanceCny: 1000,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
 });
 
 afterAll(async () => {
@@ -52,6 +64,7 @@ describe("retryJob on a harness job (review R09)", () => {
       lastFrameStored: false,
       lastFrameLocksOutput: false,
       harness: { enabled: true },
+      priceCny: 0,
       costUsdEstimate: 2.1,
       costUsdPlanned: 2.4,
       costUsdActual: 1.2,
@@ -112,6 +125,7 @@ describe("retryJob on a harness job (review R09)", () => {
       lastFrameStored: false,
       lastFrameLocksOutput: false,
       harness: { enabled: true },
+      priceCny: 0,
       costUsdEstimate: 2.1,
       costUsdPlanned: 2.4,
       costUsdActual: 1.2,

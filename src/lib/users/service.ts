@@ -68,6 +68,10 @@ export async function registerUser(input: {
       passwordHash,
       sessionEpoch: 1,
       plan: "free",
+      // 新账号余额为 0（方案 §5 的决策）：充值走管理员 CLI `scripts/grant-balance.mjs`，
+      // 支付网关在第三阶段。写显式的 0 而不是靠 schema 的 default，是为了让「新用户
+      // 一分钱都没有」这件事在注册这一处能读出来。
+      balanceCny: 0,
       inviteCode: invite.code,
       createdAt: now,
       updatedAt: now,

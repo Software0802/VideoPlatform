@@ -34,6 +34,7 @@ function record(id: string, over: Partial<JobRecord> = {}): JobRecord {
     lastFrameStored: false,
     lastFrameLocksOutput: false,
     harness: { enabled: true },
+    priceCny: 0,
     costUsdEstimate: 2.4,
     costUsdActual: null,
     imageResolution: null,

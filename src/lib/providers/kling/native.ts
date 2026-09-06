@@ -47,6 +47,19 @@ export const klingProvider: VideoProvider = {
     }
     return mapKlingTask(task);
   },
+  /**
+   * `mapToKlingRequest` sends our job id as `external_task_id` precisely so a submit whose
+   * outcome we never recorded can be looked up instead of re-paid for. A free GET, so the
+   * generic transient retry in `klingGet` applies.
+   */
+  async lookupByExternalId(externalId: string): Promise<string | null> {
+    const data = await klingGet(
+      `/tasks?external_task_ids=${encodeURIComponent(externalId)}`,
+    );
+    const task = (Array.isArray(data.data) ? data.data : []).find(isRecord);
+    const remoteId = typeof task?.id === "string" ? task.id.trim() : "";
+    return remoteId || null;
+  },
 };
 
 /** 落盘的首帧读成 data URI 再发（上游接受 base64）；其余引用形态原样交给 rest-map。 */

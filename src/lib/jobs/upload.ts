@@ -10,8 +10,17 @@ import { preprocessImage } from "@/lib/media/preprocess";
 import { uploadRoleSchema, type UploadSidecar } from "@/lib/jobs/schema";
 import { ProviderHttpError } from "@/lib/providers/types";
 
-const MAX_IMAGE = 12 * 1024 * 1024;
-const MAX_VIDEO = 48 * 1024 * 1024;
+/**
+ * Sized for the production box (2 cores / 1.8G, `MemoryMax=700M`) rather than for
+ * generosity (plan §3.3, P1): an image is buffered whole in memory before sharp gets
+ * it, and two concurrent uploads at the old 12MB/48MB were already enough to matter.
+ * `preprocessImage` re-encodes everything to ≤256KB anyway, so the ceiling only ever
+ * refuses inputs whose extra bytes would have been thrown away.
+ */
+const MAX_IMAGE = 6 * 1024 * 1024;
+const MAX_VIDEO = 24 * 1024 * 1024;
+const MAX_IMAGE_LABEL = "6MB";
+const MAX_VIDEO_LABEL = "24MB";
 
 /** `ownerId` is the session user; it is stamped into the sidecar so only that
  * user can later claim the file into a job (plan §5.3). */
@@ -119,7 +128,11 @@ export async function handleUpload(request: Request, ownerId: string): Promise<U
 
   if (truncated) {
     await rm(dest, { force: true }).catch(() => undefined);
-    throw new ProviderHttpError(400, "invalid_argument", "文件过大");
+    throw new ProviderHttpError(
+      400,
+      "invalid_argument",
+      isVideo ? `视频文件超过 ${MAX_VIDEO_LABEL}` : `图片文件超过 ${MAX_IMAGE_LABEL}`,
+    );
   }
   if (!fileSeen) {
     await cleanupUpload(dest);

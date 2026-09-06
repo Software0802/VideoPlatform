@@ -277,3 +277,48 @@ describe("jobs that cross midnight", () => {
     expect(usage([swept], NEXT_MS)).toMatchObject({ used: 1 });
   });
 });
+
+/**
+ * The stop-loss valve exists to stop *this user* from burning the platform's money on
+ * a prompt that keeps failing. `rate_limited` / `quota_exhausted` are the upstream's
+ * problem, not the user's, and `uncertain_submit` is ours (a crash between submit and
+ * the remote id landing) — none of the three should ever count as one of their failures.
+ */
+describe("blameless failure codes stay out of the stop-loss count", () => {
+  it("does not count a failed job whose error.code is rate_limited, quota_exhausted or uncertain_submit", () => {
+    for (const code of ["rate_limited", "quota_exhausted", "uncertain_submit"]) {
+      const jobs = [job({ status: "failed", error: { code } })];
+      expect(usage(jobs, LAST_MS)).toMatchObject({ failures: 0 });
+    }
+  });
+
+  it("applies the same exemption to a canceled job, not only a failed one", () => {
+    const jobs = [job({ status: "canceled", error: { code: "uncertain_submit" } })];
+    expect(usage(jobs, LAST_MS)).toMatchObject({ failures: 0 });
+  });
+
+  it("still counts a failure carrying any other error code", () => {
+    const jobs = [job({ status: "failed", error: { code: "internal" } })];
+    expect(usage(jobs, LAST_MS)).toMatchObject({ failures: 1 });
+  });
+
+  it("still counts a failure with no error field at all (records written before it existed)", () => {
+    const jobs = [job({ status: "failed", error: undefined })];
+    expect(usage(jobs, LAST_MS)).toMatchObject({ failures: 1 });
+  });
+
+  it("keeps the valve from tripping on 30 blameless failures, unlike 30 ordinary ones", () => {
+    const blameless = Array.from({ length: 30 }, () => job({ status: "failed", error: { code: "rate_limited" } }));
+    expect(quotaBlock(usage(blameless, LAST_MS))).toBeNull();
+
+    const ordinary = Array.from({ length: 30 }, () => job({ status: "failed", error: { code: "internal" } }));
+    expect(quotaBlock(usage(ordinary, LAST_MS))?.code).toBe("failure_limit_reached");
+  });
+
+  it("does not let a blameless code exempt an otherwise-consumed quota slot", () => {
+    // Blameless-ness only affects the stop-loss valve; a rate-limited job still
+    // occupies its reservation until it settles, and a succeeded one still counts as used.
+    const jobs = [job({ status: "pending", error: null }), job({ status: "succeeded" })];
+    expect(usage(jobs, LAST_MS)).toMatchObject({ used: 1, inFlight: 1, failures: 0 });
+  });
+});

@@ -235,6 +235,13 @@ canvas {
   color: var(--accent);
   text-shadow: 0 1px 12px rgba(0, 0, 0, 0.32);
 }
+/* 余额：顶栏第二等信息，比账号名暗一档，等宽数字免得读数跳动 */
+.account__balance {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .login {
   pointer-events: auto;
   height: 40px;
@@ -423,6 +430,14 @@ canvas {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+/* 能力缺席的芯片（如可灵关声实例的「无声 · 暂不可用」）：留在原位、灰一档、不接受点击 */
+.chip[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+.chip[aria-disabled="true"]:hover {
+  color: var(--chip-fg);
 }
 
 /* ---- 展览区 ---- */
@@ -795,6 +810,10 @@ canvas {
 /* 额度用完是常驻说明而非一次性报错，压暗一档不与错误行抢注意力 */
 .composer__error--quota {
   color: var(--muted);
+  opacity: 1;
+}
+/* 余额不够则要看见：它挡着提交，且用户有明确的下一步（换配置或充值） */
+.composer__error--balance {
   opacity: 1;
 }
 
@@ -1208,9 +1227,10 @@ canvas {
   }
 }
 
-/* 极窄屏：绝对居中的导航会撞上账号名，只留「退出」，账号名在首页外可见即可 */
+/* 极窄屏：绝对居中的导航会撞上账号名，只留「退出」，账号名与余额在提交面板里还看得到 */
 @media (max-width: 520px) {
-  .account__name {
+  .account__name,
+  .account__balance {
     display: none;
   }
 }

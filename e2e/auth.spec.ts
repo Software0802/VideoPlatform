@@ -67,16 +67,20 @@ test("未登录被送到登录页；注册后进首页、顶栏显示账号；�
     // 新账号没有任何任务：作品环回落样片，不串到别人的成片
     await expect(page.locator(".recent__item")).toHaveCount(6);
 
-    // 6. 配额行：/api/me 给了 quota 就显示，没给就整行不渲染（方案 §6.3 的降级）
+    // 6. 余额行：/api/me 给了 balance 就显示「本次约 ¥x · 余额 ¥y」，没给就整行不渲染
+    //    （方案 §3.2）。新账号余额是 0，所以这里同时验证「不够就禁用提交并给出充值提示」。
     const me = (await (await page.request.get("/api/me")).json()) as {
       email: string;
-      quota?: { limit: number; remaining: number };
+      balance?: { availableCny: number };
     };
     expect(me.email).toBe(EMAIL);
-    if (me.quota) {
+    if (me.balance) {
       await expect(page.locator(".composer__quota")).toHaveText(
-        `今日剩余 ${me.quota.remaining}/${me.quota.limit}`,
+        new RegExp(`^本次约 ¥\\d+\\.\\d{2} · 余额 ¥${me.balance.availableCny.toFixed(2)}$`),
       );
+      expect(me.balance.availableCny).toBe(0);
+      await expect(page.getByRole("button", { name: "当前配置，余额可能不够，请充值" })).toBeDisabled();
+      await expect(page.locator(".composer__error")).toHaveText("当前配置，余额可能不够，请充值");
     } else {
       await expect(page.locator(".composer__quota")).toHaveCount(0);
     }

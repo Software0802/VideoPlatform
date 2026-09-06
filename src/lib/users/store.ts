@@ -10,6 +10,7 @@ import {
   userIndexSchema,
   userRecordSchema,
   type UserRecord,
+  type UserRecordInput,
 } from "@/lib/users/schema";
 
 export function usersDir(): string {
@@ -49,8 +50,13 @@ export async function readUser(id: string): Promise<UserRecord | null> {
   }
 }
 
-/** Atomic replace of the source of truth. Callers hold `withUserLock`. */
-export async function writeUser(user: UserRecord): Promise<UserRecord> {
+/**
+ * Atomic replace of the source of truth. Callers hold `withUserLock`.
+ *
+ * 收 `UserRecordInput`：有默认值的字段（`balanceCny`）在这里补齐，调用方构造新记录时
+ * 不必知道每一个后加的字段该填什么。
+ */
+export async function writeUser(user: UserRecordInput): Promise<UserRecord> {
   const record = userRecordSchema.parse({ ...user, updatedAt: new Date().toISOString() });
   await writeJsonAtomic(userFilePath(record.id), record);
   return record;

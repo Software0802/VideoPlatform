@@ -4,6 +4,7 @@ import { jobConcurrency, upstreamRetryBaseMs } from "@/lib/env";
 import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
 import { emitJob } from "@/lib/jobs/events";
 import { recoverDecision } from "@/lib/jobs/recover";
+import { JOB_UNCERTAIN_SUBMIT_MESSAGE, UNCERTAIN_SUBMIT_CODE } from "@/lib/jobs/retry-guard";
 import { sweepRetention } from "@/lib/jobs/retention";
 import { sweepIdempotency, sweepTmp } from "@/lib/jobs/sweep";
 import { listJobRecords, readJob, tmpDir, toPublic, updateJob } from "@/lib/jobs/store";
@@ -29,6 +30,8 @@ type RunnerState = {
   started: boolean;
   inflight: Set<string>;
   timer?: NodeJS.Timeout;
+  /** Wakes `pump()` when the earliest backed-off job becomes eligible again. */
+  backoffTimer?: NodeJS.Timeout;
 };
 
 function state(): RunnerState {
@@ -89,6 +92,24 @@ async function recover() {
       await fail(job.id, "expired", "任务超时");
       continue;
     }
+    if (decision === "uncertain") {
+      // Last chance to turn "unknown" back into "known" without spending anything:
+      // a provider that carries our job id upstream can be asked whether it already
+      // has that task. Only a positive, unambiguous answer resumes the job.
+      const remoteId = await lookupInterruptedSubmit(job);
+      if (remoteId) {
+        await updateJob(job.id, (r) => {
+          if (r.status !== "submitting") return r;
+          r.remoteId = remoteId;
+          r.status = "pending";
+          return r;
+        }).then(emitRec);
+        log("info", "uncertain submit resolved upstream", { id: job.id, provider: job.provider });
+        continue;
+      }
+      await fail(job.id, UNCERTAIN_SUBMIT_CODE, JOB_UNCERTAIN_SUBMIT_MESSAGE);
+      continue;
+    }
     if (decision === "requeue" && job.status !== "queued") {
       await updateJob(job.id, (r) => {
         r.status = "queued";
@@ -105,12 +126,122 @@ async function recover() {
   }
 }
 
+/**
+ * A single-clip job that crashed between `provider.submit` returning and `remoteId`
+ * being written. Returns the upstream task id when the provider can prove one exists,
+ * null otherwise — including when the lookup itself fails.
+ *
+ * Never throws: recovery runs during boot, and a flaky upstream must not keep the
+ * server from starting. A failed lookup is simply "still unknown", which is the safe
+ * side: the job ends up `uncertain_submit` and nothing is re-submitted.
+ */
+async function lookupInterruptedSubmit(job: JobRecord): Promise<string | null> {
+  try {
+    const provider = providerForId(job.provider);
+    if (!provider.lookupByExternalId) return null;
+    return await provider.lookupByExternalId(job.id);
+  } catch (error) {
+    log("warn", "uncertain submit lookup failed", {
+      id: job.id,
+      provider: job.provider,
+      msg: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * Upstream refusals that are nobody's fault and pass on their own: the account is out
+ * of credit, or the platform's concurrency ceiling is full right now. Failing the job
+ * outright would show "失败" for what is really "排队", and — because a submit that was
+ * refused was never billed — retrying it costs nothing but time.
+ */
+const UPSTREAM_BACKOFF_CODES: ReadonlySet<string> = new Set(["rate_limited", "quota_exhausted"]);
+const MAX_UPSTREAM_RETRIES = 3;
+const UPSTREAM_BACKOFF_BASE_MS = 15_000;
+
+/**
+ * Send a refused submit back to `queued` with an exponential delay (15s / 30s / 60s),
+ * or report that the budget of retries is spent so the caller can fail it.
+ *
+ * Returns true when the job has been dealt with (re-queued, or already canceled) and
+ * `runOne` should simply return.
+ */
+async function backoffRequeue(id: string, error: unknown): Promise<boolean> {
+  if (!(error instanceof ProviderHttpError) || !UPSTREAM_BACKOFF_CODES.has(error.code)) {
+    return false;
+  }
+  const rec = await readJob(id);
+  if (!rec) return false;
+  // A cancel that landed while the refused request was in flight wins; there is
+  // nothing to re-queue and nothing to fail.
+  if (rec.canceled || rec.status === "canceled") return true;
+  const attempts = rec.upstreamRetries ?? 0;
+  if (attempts >= MAX_UPSTREAM_RETRIES) return false;
+  const delayMs = UPSTREAM_BACKOFF_BASE_MS * 2 ** attempts;
+  const next = await updateJob(id, (r) => {
+    if (r.status === "canceled" || r.canceled) return r;
+    r.status = "queued";
+    r.upstreamRetries = (r.upstreamRetries ?? 0) + 1;
+    r.nextAttemptAt = new Date(Date.now() + delayMs).toISOString();
+    return r;
+  });
+  emitRec(next);
+  log("info", "upstream refused submit, backing off", {
+    id,
+    code: error.code,
+    attempt: attempts + 1,
+    delayMs,
+  });
+  return true;
+}
+
+/** User-facing wording for a refusal that survived every retry; upstream text goes to `detail`. */
+function upstreamFailure(error: ProviderHttpError): { message: string; detail: string } {
+  const message =
+    error.code === "quota_exhausted"
+      ? "平台余额不足，请联系管理员"
+      : `上游繁忙，已重试 ${MAX_UPSTREAM_RETRIES} 次仍失败，请稍后再试`;
+  return { message, detail: error.message };
+}
+
+/**
+ * Re-arm the wake-up for backed-off jobs. Called on every pump so the timer always
+ * tracks the *earliest* deadline currently on disk; `unref` keeps it from holding a
+ * short-lived process (tests, scripts) open.
+ */
+function scheduleBackoffPump(s: RunnerState, atMs: number) {
+  if (s.backoffTimer) {
+    clearTimeout(s.backoffTimer);
+    s.backoffTimer = undefined;
+  }
+  if (!Number.isFinite(atMs)) return;
+  // Cap the sleep so a corrupt far-future timestamp cannot park the queue forever.
+  const delay = Math.min(Math.max(atMs - Date.now(), 50), 5 * 60_000);
+  s.backoffTimer = setTimeout(() => {
+    s.backoffTimer = undefined;
+    void pump();
+  }, delay);
+  s.backoffTimer.unref();
+}
+
 async function pump() {
   const s = state();
   const cap = jobConcurrency();
   if (s.inflight.size >= cap) return;
   const jobs = await listJobRecords();
-  const queued = jobs.filter((j) => j.status === "queued" && !s.inflight.has(j.id));
+  const now = Date.now();
+  let earliestDeferred = Infinity;
+  const queued = jobs.filter((j) => {
+    if (j.status !== "queued" || s.inflight.has(j.id)) return false;
+    const at = j.nextAttemptAt ? Date.parse(j.nextAttemptAt) : NaN;
+    if (Number.isFinite(at) && at > now) {
+      earliestDeferred = Math.min(earliestDeferred, at);
+      return false;
+    }
+    return true;
+  });
+  scheduleBackoffPump(s, earliestDeferred);
   const pending = jobs.filter(
     (j) =>
       (j.status === "pending" || j.status === "persisting" || HARNESS_ACTIVE.has(j.status)) &&
@@ -143,7 +274,19 @@ async function runOne(id: string) {
     }
     if (job.status === "queued") {
       job = await transition(id, "submitting");
-      await submit(job);
+      try {
+        await submit(job);
+      } catch (error) {
+        // A refused submit was never billed, so it may be re-sent. Handled here rather
+        // than in the catch below so "已重试 3 次" can only be said once that is true.
+        if (await backoffRequeue(id, error)) return;
+        if (error instanceof ProviderHttpError && UPSTREAM_BACKOFF_CODES.has(error.code)) {
+          const { message, detail } = upstreamFailure(error);
+          await fail(id, error.code, message, detail);
+          return;
+        }
+        throw error;
+      }
       job = await readJob(id);
       if (!job || job.status === "canceled" || job.canceled) return;
     }
@@ -545,7 +688,7 @@ async function transition(id: string, to: JobRecord["status"]) {
   return rec;
 }
 
-async function fail(id: string, code: string, message: string) {
+async function fail(id: string, code: string, message: string, detail?: string) {
   const rec = await readJob(id);
   if (
     !rec ||
@@ -561,7 +704,7 @@ async function fail(id: string, code: string, message: string) {
   const next = await updateJob(id, (r) => {
     if (["succeeded", "failed", "expired", "canceled"].includes(r.status) || r.canceled) return r;
     r.status = code === "expired" ? "expired" : "failed";
-    r.error = { code, message };
+    r.error = detail ? { code, message, detail } : { code, message };
     return r;
   });
   emitRec(next);

@@ -71,15 +71,31 @@ test("空态：顶栏、标题、输入卡、最近成片；工作室与作品�
   await expect(page.getByRole("radio", { name: "文生视频" })).toHaveAttribute("aria-checked", "true");
   await expect(page.locator(".chip[data-dur]")).toHaveText(/8s/);
   await expect(page.locator(".chip[data-ratio]")).toHaveText(/16:9/);
+  // mock 的 audioAvailable 是 true：芯片可切换、默认有声（不可用的实例会是「无声 · 暂不可用」）
+  const audioChip = page.locator(".chip[data-audio]");
+  await expect(audioChip).toHaveAttribute("data-audio", "on");
+  await expect(audioChip).toHaveText("有声");
+  // 有声是加价项：切到无声，「本次约」必须跟着降——估价读的是芯片状态，不再恒按有声算
+  const quota = page.locator(".composer__quota");
+  await expect(quota).toBeVisible();
+  const estimate = async () => Number(/¥([\d.]+)/.exec((await quota.textContent()) ?? "")?.[1]);
+  const withAudio = await estimate();
+  expect(withAudio).toBeGreaterThan(0);
+  await audioChip.click();
+  await expect(audioChip).toHaveText("无声");
+  expect(await estimate()).toBeLessThan(withAudio);
+  await audioChip.click();
+  await expect(audioChip).toHaveAttribute("data-audio", "on");
   await expect(page.locator(".composer__model")).toContainText("grok-imagine-video");
   // 未进工作室：操作台留在 DOM 里但透明、不可点、对读屏隐藏（Playwright 的 hidden 不看 opacity）
   await expect(page.locator(".console")).toHaveAttribute("aria-hidden", "true");
   await expect(page.locator(".console")).toHaveCSS("opacity", "0");
   await expect(page.locator(".works__canvas")).toHaveCount(0);
 
-  // 文生图：时长芯片消失，模型名切换
+  // 文生图：时长 / 音轨芯片消失，模型名切换
   await page.getByRole("radio", { name: "文生图" }).click();
   await expect(page.locator(".chip[data-dur]")).toHaveCount(0);
+  await expect(page.locator(".chip[data-audio]")).toHaveCount(0);
   await expect(page.locator(".composer__model")).toContainText("grok-imagine-image");
 
   // 空提示词提交：提示错误，不进入工作室
@@ -117,7 +133,7 @@ test("文生视频：输入即进工作室 → 操作台飞入 → 读数推进 
   const create = page.waitForRequest((r) => r.url().endsWith("/api/jobs") && r.method() === "POST");
   await page.getByRole("button", { name: "生成", exact: true }).click();
   const body = (await create).postDataJSON() as Record<string, unknown>;
-  expect(body).toMatchObject({ mode: "text_to_video", durationSec: 4, aspectRatio: "9:16", resolution: "720p" });
+  expect(body).toMatchObject({ mode: "text_to_video", durationSec: 4, aspectRatio: "9:16", resolution: "720p", generateAudio: true });
   expect(body).not.toHaveProperty("model");
 
   await expect(exhibit(page)).toHaveAttribute("data-state", "busy");

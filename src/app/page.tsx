@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { LumenHome } from "@/components/lumen/LumenHome";
-import { harnessEnabled, isMockMode, klingVideoModel } from "@/lib/env";
+import { harnessEnabled, isMockMode, klingVideoAudio, klingVideoModel } from "@/lib/env";
 import { currentProviderId } from "@/lib/providers/router";
 import { listJobRecordsForUser, toPublic } from "@/lib/jobs/store";
 import { SESSION_COOKIE, sessionUserFromValue } from "@/lib/users/session";
@@ -32,6 +32,10 @@ export default async function Home() {
       // 芯片得跟着变，用户看到的才是会被计费的那个时长。
       videoProvider={videoProvider}
       videoModel={videoProvider === "kling" ? klingVideoModel() : "grok-imagine-video"}
+      // 可灵实例出不出声由 KLING_VIDEO_AUDIO 说了算，浏览器看不见那个变量。不下发的话
+      // 用户能选「有声」、被按有声估价，却拿到一段无声视频；所以能力在这里判定一次，
+      // 不支持时芯片显示「暂不可用」而不是藏起来（与 /api/health 的 audioAvailable 同源）。
+      audioAvailable={videoProvider === "kling" ? klingVideoAudio() === "native" : true}
       initialJobs={recs.slice(0, 40).map(toPublic)}
       initialEmail={user.email}
     />

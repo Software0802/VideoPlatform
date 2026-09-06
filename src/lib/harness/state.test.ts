@@ -84,6 +84,7 @@ function baseRecord(id: string): JobRecord {
     lastFrameStored: false,
     lastFrameLocksOutput: false,
     harness: { enabled: false },
+    priceCny: 0,
     costUsdEstimate: 0.64,
     costUsdActual: null,
     imageResolution: null,

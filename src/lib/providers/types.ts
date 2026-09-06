@@ -81,6 +81,16 @@ export interface VideoProvider {
   };
   submit(req: ProviderGenerateRequest): Promise<ProviderHandle>;
   poll(handle: ProviderHandle): Promise<ProviderPoll>;
+  /**
+   * Crash recovery (plan §3.2, G1): find the task the upstream may already have created
+   * for `externalId` — our own job id, which such a provider sends along as its client-side
+   * task id. Returns the upstream task id, or null when the upstream has no task under it.
+   *
+   * **Optional on purpose.** A provider that cannot ask this question omits the method,
+   * and the runner then leaves an interrupted submit as `uncertain_submit` rather than
+   * guessing; adding the method must never become a reason to re-POST a billable request.
+   */
+  lookupByExternalId?(externalId: string): Promise<string | null>;
 }
 
 export class ProviderHttpError extends Error {

@@ -25,9 +25,13 @@ export function adminUserId(): string | undefined {
 /**
  * 免费档每人每天能出的图数（plan §6.1）。口径是「今日成功 + 当前在途 < 上限」，
  * 失败 / 取消 / 过期不占额度，只对文生图计数。0 表示暂停所有人的生图提交。
+ *
+ * 自 2026-09-06 的余额模型（方案 §3.2）起它不再是主闸门——主闸门是
+ * `@/lib/billing/admission` 的「余额 − 在途预留 ≥ 本次售价」——所以默认值从 10 抬到
+ * 200，只当防滥用兜底：正常付费用户碰不到，脚本刷图仍会被挡住。
  */
 export function freeDailyImageQuota(): number {
-  return intFromEnv(process.env.FREE_DAILY_IMAGE_QUOTA, 10, 0);
+  return intFromEnv(process.env.FREE_DAILY_IMAGE_QUOTA, 200, 0);
 }
 
 /**
@@ -135,6 +139,14 @@ export function openaiImageQuality(): OpenaiImageQuality {
  */
 export function openaiImagePriceTableRaw(): string | undefined {
   return process.env.OPENAI_IMAGE_PRICE_TABLE?.trim() || undefined;
+}
+
+/**
+ * 用户售价表的 JSON 原文（方案 §3.2）。与上面那张成本表无关：这张是我们向用户
+ * 收的人民币定价。解析、部分覆盖与坏 JSON 的回落都在 `@/lib/billing/prices`。
+ */
+export function priceTableRaw(): string | undefined {
+  return process.env.LUMEN_PRICE_TABLE?.trim() || undefined;
 }
 
 /**

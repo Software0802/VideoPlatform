@@ -1,0 +1,48 @@
+# 门禁 CI：与 AGENTS.md「验证门禁」前三条逐字一致（tsc / eslint / vitest）。
+# 不跑 pnpm e2e——它要装浏览器 + next build，几分钟起步，留到后续单独的 workflow。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一分支连推时只留最后一次，省额度。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: tsc · eslint · test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # 版本不写死：package.json 的 packageManager 字段（pnpm@10.33.0）就是唯一来源，
+      # 本机与 CI 用同一个 pnpm。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # sharp / ffmpeg-static 是原生依赖，pnpm-workspace.yaml 的 onlyBuiltDependencies
+      # 已放行它们的构建脚本，Ubuntu 上会拉对应平台的二进制——这正是我们要在 Linux 上验的。
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm exec eslint src
+
+      # 各测试文件自己 set/delete LUMEN_SESSION_SECRET（session.test.ts 还专门断言「没设置就抛」），
+      # 所以这里不注入任何假值，注入了反而不真实。
+      - name: Test
+        run: pnpm test

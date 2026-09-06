@@ -64,6 +64,14 @@ export const jobPublicSchema = z.object({
   lastFrameStored: z.boolean(),
   lastFrameLocksOutput: z.literal(false),
   harness: z.object({ enabled: z.boolean() }),
+  /**
+   * 对用户的售价，人民币元（方案 §3.2）。提交时按归一后的参数定一次，之后永不改写——
+   * 它同时是在途预留的金额和成功后扣款的金额，改写它会让两者对不上。
+   *
+   * `.default(0)`：余额模型之前的记录里没有这个字段，读出即 0，也就是既不占预留也
+   * 不扣款——那些任务当时走的是日配额，不该被追溯计费。
+   */
+  priceCny: z.number().default(0),
   /** Estimate shown at submit time; never rewritten afterwards (R05). */
   costUsdEstimate: z.number(),
   /** Harness: estimate recomputed from the Director's packing, shown beside the submit-time
@@ -213,8 +221,16 @@ export type JobAssetVideo = JobAssetImage & {
  * `retryBlocked` is derived from `harnessShots` at `toPublic` time, never stored, so it is
  * omitted here — otherwise every writer of a record would have to carry a computed field.
  */
-export type JobRecord = Omit<JobPublic, "retryBlocked" | "artifactsPurgedAt"> & {
+export type JobRecord = Omit<JobPublic, "retryBlocked" | "artifactsPurgedAt" | "error"> & {
   schemaVersion: 1;
+  /**
+   * Widened from the public shape by `detail`. When an upstream refusal is shown to the
+   * user through a Chinese fallback ("平台余额不足…"), the upstream's own wording still has
+   * to survive for whoever reads `job.json` afterwards. `toPublic` parses through
+   * `jobPublicSchema`, whose `error` object drops unknown keys — so `detail` stays
+   * server-side without any extra filtering at the boundary.
+   */
+  error: { code: string; message: string; detail?: string } | null;
   /**
    * Set once by the retention sweep (`retention.ts`) after it deleted the job's
    * `inputs/` and `outputs/`. Absent on every record that still has its bytes,
@@ -238,6 +254,26 @@ export type JobRecord = Omit<JobPublic, "retryBlocked" | "artifactsPurgedAt"> & 
    * before this field existed fall back to `updatedAt`.
    */
   completedAt?: string;
+  /**
+   * 结算标记（方案 §3.2）。`chargedAt` 一旦写上，这条任务的 `priceCny` 就已经从余额里
+   * 扣掉了；`store.updateJob` 只在「非终态 → succeeded」那一次写它，并以它自身为
+   * 幂等键，所以任何后续写盘（产物清理、成本回填）都不会重复扣款。
+   * 服务端字段，不进 `JobPublic`——浏览器不需要知道钱是哪一刻扣的。
+   */
+  billing?: { chargedAt: string };
+  /**
+   * How many times an upstream refusal that is nobody's fault (rate limit, platform
+   * balance) sent this job back to `queued` instead of failing it. Absent on records
+   * written before the field existed, so every read goes through `?? 0`.
+   */
+  upstreamRetries?: number;
+  /**
+   * Earliest instant the runner may pick this `queued` job up again, ISO. Written
+   * together with `upstreamRetries` by the backoff path; `pump()` skips a queued job
+   * until it passes. Absent means "eligible now", which is the case for every job that
+   * was never bounced off the upstream.
+   */
+  nextAttemptAt?: string;
   remoteId?: string;
   remoteUrl?: string;
   fileOutputId?: string;

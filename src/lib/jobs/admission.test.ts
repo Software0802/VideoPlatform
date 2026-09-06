@@ -22,6 +22,18 @@ beforeAll(async () => {
   process.env.MAX_QUEUED_JOBS = "1";
   ({ createJob } = await import("./create"));
   ({ activeCount } = await import("./runner"));
+  // 余额模型（方案 §3.2）：提交与重试都要先过余额判定，先把测试账号建出来并充够。
+  const { writeUser } = await import("@/lib/users/store");
+  await writeUser({
+    id: TEST_OWNER,
+    email: "owner@example.com",
+    passwordHash: "scrypt$16384$8$1$00$00",
+    sessionEpoch: 1,
+    plan: "free",
+    balanceCny: 1000,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
 });
 
 afterAll(async () => {

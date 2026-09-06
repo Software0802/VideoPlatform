@@ -36,7 +36,22 @@ export type QuotaJob = {
   updatedAt: string;
   /** Stamped by `store.updateJob` on the first terminal transition; see `settledAtMs`. */
   completedAt?: string;
+  /** Only `code` is read, to tell a user's failure from the platform's — see `BLAMELESS_FAILURE_CODES`. */
+  error?: { code: string } | null;
 };
+
+/**
+ * Failures the stop-loss valve must not count. The valve exists to stop *this user*
+ * from burning the platform's money on a prompt that keeps failing; an upstream that
+ * is out of credit or over its concurrency ceiling is the platform's problem, and an
+ * interrupted submit is ours. Counting those would suspend an innocent account —
+ * and, for `rate_limited`, suspend everyone at once exactly when the upstream hiccups.
+ */
+const BLAMELESS_FAILURE_CODES: ReadonlySet<string> = new Set([
+  "rate_limited",
+  "quota_exhausted",
+  "uncertain_submit",
+]);
 
 export type QuotaLimits = {
   limit: number;
@@ -174,7 +189,12 @@ export function computeQuotaUsage(
     const settled = settledAtMs(job);
     if (settled === null || settled < startMs || settled >= endMs) continue;
     if (job.status === "succeeded") used += 1;
-    else if (job.status === "failed" || job.status === "canceled") failures += 1;
+    else if (
+      (job.status === "failed" || job.status === "canceled") &&
+      !BLAMELESS_FAILURE_CODES.has(job.error?.code ?? "")
+    ) {
+      failures += 1;
+    }
   }
 
   return {

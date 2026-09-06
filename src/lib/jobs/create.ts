@@ -7,6 +7,8 @@ import {
   type ImagePricingHint,
   type VideoPricingHint,
 } from "@/lib/cost";
+import { assertBalance } from "@/lib/billing/admission";
+import { priceCny } from "@/lib/billing/prices";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { harnessEnabled, klingVideoModel, maxQueuedJobs, openaiImageModel } from "@/lib/env";
 import {
@@ -108,7 +110,7 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
   const model = modelForProvider(provider, mode);
   // 可灵只收 5 / 10 秒，分辨率与音频档由环境变量说了算。归一后的值要写回记录：
   // 4 秒的请求上游按 5 秒计费，账目与详情卡都得是「会被计费的那个值」（方案 §4）。
-  const kling = klingSettingsFor(provider, mode, durationSec, body.prompt, model);
+  const kling = klingSettingsFor(provider, mode, durationSec, body.prompt, model, body.generateAudio ?? true);
   assertModeConstraints({
     jobId: "preview",
     mode,
@@ -145,6 +147,14 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
           quality: mapOpenaiImageQuality(body.imageResolution ?? "1k"),
         }
       : undefined;
+  // 售价按**归一后**的三个参数定：可灵把 4 秒的请求按 5 秒下单，用户看到并被扣的就该是
+  // 5 秒那一档，否则界面上的「本次约 ¥x」与账单永远差一档（方案 §3.2）。
+  const resolution =
+    mode === "edit_video" || mode === "extend_video" || image
+      ? null
+      : (kling?.resolution ?? body.resolution ?? "720p");
+  const generateAudio = image ? false : kling ? kling.audio === "native" : (body.generateAudio ?? true);
+  const imageResolution = image ? (body.imageResolution ?? "1k") : null;
   const rec: JobRecord = {
     schemaVersion: 1,
     id,
@@ -158,15 +168,13 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     durationSec: dur,
     aspectRatio:
       mode === "edit_video" || mode === "extend_video" ? null : (body.aspectRatio ?? "16:9"),
-    resolution:
-      mode === "edit_video" || mode === "extend_video" || image
-        ? null
-        : (kling?.resolution ?? body.resolution ?? "720p"),
-    imageResolution: image ? (body.imageResolution ?? "1k") : null,
-    generateAudio: image ? false : kling ? kling.audio === "native" : (body.generateAudio ?? true),
+    resolution,
+    imageResolution,
+    generateAudio,
     lastFrameStored: Boolean(last),
     lastFrameLocksOutput: false,
     harness: { enabled: harness },
+    priceCny: priceCny({ mode, durationSec: dur, resolution, generateAudio, imageResolution }),
     costUsdEstimate: harness
       ? estimateHarnessCostUsd(packHarnessDuration(dur as 30 | 45 | 60))
       : estimateCostUsd(model, dur, imagePricing, videoPricingOf(kling)),
@@ -180,6 +188,11 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     assets: {},
     voiceIds: body.voiceIds,
   };
+
+  // 余额是主闸门（方案 §3.2），配额退居防滥用兜底。判定与下面的 `writeJob` 必须在
+  // 同一个 `withAdmissionLock` 临界区里：预留是「在途任务的售价之和」，只有那次写盘
+  // 落地后才对下一个请求可见。放在认领素材之前，被拒时磁盘上不留半个任务目录。
+  await assertBalance(ownerId, rec.priceCny);
 
   await mkdir(path.join(mediaStore.jobDir(id), "inputs"), { recursive: true });
   if (start) rec.assets.start = await claim(id, start, "inputs/start.jpg");
@@ -226,10 +239,11 @@ function klingSettingsFor(
   durationSec: number | undefined,
   prompt: string,
   model: string,
+  generateAudio: boolean,
 ): KlingSettings | null {
   if (provider !== "kling") return null;
   if (mode !== "text_to_video" && mode !== "image_to_video") return null;
-  return resolveKlingSettings({ jobId: "preview", mode, prompt, model, durationSec, generateAudio: false });
+  return resolveKlingSettings({ jobId: "preview", mode, prompt, model, durationSec, generateAudio });
 }
 
 function videoPricingOf(kling: KlingSettings | null): VideoPricingHint | undefined {
@@ -280,7 +294,13 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
   const model = modelForProvider(provider, source.mode);
   // 源任务可能是 grok 时代的 6 秒片：换到可灵后同样要归一，否则重试会照着一个上游
   // 根本不收的时长下单，账目也还是旧 provider 的估价。
-  const kling = klingSettingsFor(provider, source.mode, source.durationSec, source.prompt, model);
+  const kling = klingSettingsFor(provider, source.mode, source.durationSec, source.prompt, model, source.generateAudio);
+  // 重试是一次全新的、要计费的上游请求，所以按**当下**的参数重新定价，而不是抄源任务的
+  // `priceCny`：源任务可能是换 provider 之前的 6 秒片，归一后时长档都变了。
+  const durationSec = kling?.durationSec ?? source.durationSec;
+  const resolution = kling?.resolution ?? source.resolution;
+  const generateAudio = kling ? kling.audio === "native" : source.generateAudio;
+  const imageResolution = source.imageResolution ?? null;
   const rec: JobRecord = {
     schemaVersion: 1,
     id,
@@ -291,14 +311,15 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     model,
     provider,
     prompt: source.prompt,
-    durationSec: kling?.durationSec ?? source.durationSec,
+    durationSec,
     aspectRatio: source.aspectRatio,
-    resolution: kling?.resolution ?? source.resolution,
-    imageResolution: source.imageResolution ?? null,
-    generateAudio: kling ? kling.audio === "native" : source.generateAudio,
+    resolution,
+    imageResolution,
+    generateAudio,
     lastFrameStored: source.lastFrameStored,
     lastFrameLocksOutput: false,
     harness: { enabled: harness },
+    priceCny: priceCny({ mode: source.mode, durationSec, resolution, generateAudio, imageResolution }),
     costUsdEstimate: kling
       ? estimateCostUsd(model, kling.durationSec, undefined, videoPricingOf(kling))
       : source.costUsdEstimate,
@@ -313,6 +334,9 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     assets: {},
     voiceIds: source.voiceIds,
   };
+
+  // 同一个判官、同一把锁（方案 §3.2）：重试和首次提交花的是一样的钱。
+  await assertBalance(ownerId, rec.priceCny);
 
   const srcInputs = path.join(mediaStore.jobDir(source.id), "inputs");
   const destInputs = path.join(mediaStore.jobDir(id), "inputs");
