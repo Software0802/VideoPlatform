@@ -11,6 +11,7 @@ import { fetchMe, logout, type MePublic } from "@/lib/client/auth";
 import { useJobLive } from "@/lib/client/useJobLive";
 import { formatElapsed, isActive, isFailed, isTerminal } from "@/lib/client/labels";
 import { SceneHost } from "@/components/scene/SceneHost";
+import { ClothVeil } from "@/components/lumen/ClothVeil";
 import { mountDawn, mountRingDark, type DawnHandle, type RingHandle } from "@/lib/scene/lumen-three";
 
 /*
@@ -674,6 +675,7 @@ export function LumenHome({
             {/* ── 展览区 ── */}
             <div className="exhibit-wrap" aria-hidden={!studio}>
               <div className="exhibit" data-state={exhibitState} data-kind={job?.output?.kind ?? ""} data-job-id={job?.id ?? ""} data-status={job?.status ?? ""} aria-live="polite">
+                <ClothVeil state={exhibitState} />
                 {exhibitState === "idle" ? <span className="exhibit__hint">预览</span> : null}
                 {exhibitState === "busy" ? (
                   <>

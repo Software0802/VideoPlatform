@@ -13,6 +13,16 @@
 
 ---
 
+## 0a. 2026-09-06：展览区「丝绸幕布」（ThreeUI WovenCloth · iridescent）
+
+- 生成中（`exhibitState === "busy"`）展览区黑框被一块虹彩丝绸盖住；出片（done）整块布 `rotateY(180deg)` 翻转露出成片后卸载；失败 / 关闭淡出；下一次 busy 重新挂载。组件 `src/components/lumen/ClothVeil.tsx`，样式 `globals.css` 的 `.exhibit__veil*`（z-index 1，百分比 / 阶段行 / 取消按钮在 z-index 2 压在布上，e2e 断言不受影响）。
+- 源码来自 ThreeUI 注册包 `https://threeui.com/source-code/woven-cloth.json`。`src/shaders/woven-cloth/woven-cloth-iridescent.html` 逐字落盘，SHA-256 `e3b14ada…bee7b` 与注册值一致，**不要手改**；它在 `sandbox="allow-scripts"` 的 srcDoc iframe 里跑，自带 three r160（jsdelivr CDN），与站内 three 0.185 互不影响。
+- `WovenCloth.tsx` 保留了原 `CompanionCloth`（iframe + hue/saturation/brightness 滤镜）实现，但只落地 `iridescent`：原包的默认变体 `woven-cloth` 依赖 6 份未随包分发的 Neuform 源文档，`atelier` / `washi` 与 `threeui.css`（无 `.shader-frame`，引用未分发字体）未使用，故未落盘。
+- `?raw` 导入在 Turbopack 里换成 `next.config.ts` 的 `turbopack.rules["*.html"] → raw-loader`（新增 devDependency `raw-loader`），类型声明 `src/shaders/html.d.ts`。
+- 幕布在 busy 后 **延迟 1.2s 挂载**（`MOUNT_DELAY_MS`）：一是让读数先落位再淡入；二是无头 Chromium 的软件 GPU 会被 iframe 的 WebGL 帧拖住几秒，mock 任务 3~4s 就完成，不延迟则 e2e「文生视频读数」「失败态→取消」两条必挂（A/B 验证过；`IsolateSandboxedIframes` 进程隔离无效，卡的是共享 GPU 进程而非 JS 主线程）。布还没铺上任务就结束时直接收起、不翻转。
+- 已知：iframe 首帧要等 CDN 脚本 + 1600×1000 贴图生成，约 1s 内是 `#05060d` 纯色，随后布淡入。内置浏览器面板不绘制时 CSS 动画会停在起点，真实浏览器无此现象；组件另有 1.6s 兜底计时器保证幕布最终卸载。
+- 本地 dev 现在必须有 `LUMEN_SESSION_SECRET`（第二批用户系统引入），已补进 `.env.local`；`AccessTokenPrompt` 仍 POST 已不存在的 `/api/auth/session`，登录弹窗需要改成邮箱 / 密码（待办）。
+
 ## 0. 本轮（2026-09-06）：文生图接 OpenAI 兼容 provider + 生产部署
 
 范围只有**文生图 + 生产部署**，视频 / harness 未改动。

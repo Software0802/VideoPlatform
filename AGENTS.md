@@ -19,6 +19,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - three.js 只走 `src/lib/scene/lumen-three.ts` 的纯函数场景（`mountDawn` 黎明河面背景、`mountRingDark` 作品环），通过 `src/components/scene/SceneHost.tsx` 挂载；需要重建场景时换 `key`，不要在 render 中碰 ref。任务进行中 `dawn.setEnergy(1)`。
 - 浏览器只经 `src/lib/client/jobs.ts` 和 `useJobLive.ts` 访问 `/api/*`；组件不直接 `fetch`。401 上抛后由页面弹 `AccessTokenPrompt`（顶栏「登录」也打开它）。
 - UI 只暴露三条路径：文生视频 / 图生视频 / 文生图。时长与画幅是点击循环的芯片（`data-dur` / `data-ratio`）；`harnessEnabled()` 为真时时长循环追加 30 / 45 / 60（仅 t2v / i2v），展览区阶段行按 `job.shots` 显示「生成分镜 n/m」。`reference_to_video / edit_video / extend_video` 仍在 API 与 provider 层，不要从后端删除。
+- 展览区生成中的「丝绸幕布」是 ThreeUI `WovenCloth`（iridescent）的注册源码，走 `src/components/lumen/ClothVeil.tsx` → `src/shaders/woven-cloth/`（srcDoc iframe，自带 three r160）。`woven-cloth-iridescent.html` 逐字对应注册哈希，不要手改；`*.html` 经 `next.config.ts` 的 raw-loader 规则作字符串导入。
 - 操作台四组（滤镜 / 磨皮 / 色彩 / 镜头）每组单选，选中项的提示词以 `
 
 ` 分段追加进 textarea；用户手动编辑后按"文本是否仍含该段"同步选中态。

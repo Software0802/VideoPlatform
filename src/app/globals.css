@@ -464,6 +464,64 @@ canvas {
 .exhibit[data-state="idle"] {
   background: #0c0e13 linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0) 60%);
 }
+/* 丝绸幕布：生成中盖住展览区，出片时整块翻转露出成片；文字与进度条压在布上 */
+.exhibit__veil {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  perspective: 1400px;
+  pointer-events: none;
+}
+.exhibit__veil-cloth {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  backface-visibility: hidden;
+  transform-origin: 50% 50%;
+  animation: veil-in 0.9s var(--ease-soft) both;
+}
+.exhibit__veil[data-phase="flip"] .exhibit__veil-cloth {
+  animation: veil-flip 1.25s cubic-bezier(0.6, 0, 0.2, 1) both;
+}
+.exhibit__veil[data-phase="fade"] .exhibit__veil-cloth {
+  animation: veil-fade 0.5s ease both;
+}
+@keyframes veil-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3%) scale(1.03);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes veil-flip {
+  0% {
+    transform: rotateY(0deg);
+    opacity: 1;
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    transform: rotateY(180deg) translateZ(-120px);
+    opacity: 0;
+  }
+}
+@keyframes veil-fade {
+  to {
+    opacity: 0;
+  }
+}
+.exhibit__center,
+.exhibit__bar {
+  z-index: 2;
+}
+.exhibit[data-state="busy"] .exhibit__center {
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.7);
+}
 .exhibit__hint {
   position: absolute;
   left: 20px;
