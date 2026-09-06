@@ -1,6 +1,6 @@
 import { freeDailyFailureLimit, freeDailyImageQuota } from "@/lib/env";
 import { listJobRecordsForUser } from "@/lib/jobs/store";
-import type { JobRecord, JobStatus } from "@/lib/jobs/schema";
+import { isTerminalStatus, type JobRecord, type JobStatus } from "@/lib/jobs/schema";
 import { isImageMode } from "@/lib/providers/grok/mode-matrix";
 import { ProviderHttpError } from "@/lib/providers/types";
 
@@ -22,9 +22,6 @@ import { ProviderHttpError } from "@/lib/providers/types";
  * would drift from the only source of truth we have.
  */
 
-/** Statuses with no outgoing edges in `state-machine.ts`: the reservation is released. */
-const TERMINAL: ReadonlySet<JobStatus> = new Set(["succeeded", "failed", "canceled", "expired"]);
-
 /** Plan §6.3: one fixed day boundary for everyone, no per-user time zone. */
 export const QUOTA_TIME_ZONE = "Asia/Shanghai";
 
@@ -36,6 +33,9 @@ export type QuotaJob = {
   mode: JobRecord["mode"];
   status: JobStatus;
   createdAt: string;
+  updatedAt: string;
+  /** Stamped by `store.updateJob` on the first terminal transition; see `settledAtMs`. */
+  completedAt?: string;
 };
 
 export type QuotaLimits = {
@@ -55,8 +55,19 @@ export type QuotaUsage = QuotaLimits & {
   failures: number;
 };
 
-/** What `GET /api/me` exposes; `failures` stays server-side. */
-export type QuotaPublic = Pick<QuotaUsage, "limit" | "used" | "inFlight" | "remaining" | "resetsAt">;
+/** The stop-loss valve as the client sees it — the raw `failures` count stays server-side. */
+export type QuotaStopLoss = { code: "failure_limit_reached"; message: string };
+
+/** What `GET /api/me` exposes; `failures` and `failureLimit` stay server-side. */
+export type QuotaPublic = Pick<QuotaUsage, "limit" | "used" | "inFlight" | "remaining" | "resetsAt"> & {
+  /**
+   * Non-null when the stop-loss valve is refusing new submissions, verbatim from
+   * `quotaBlock` so the client is never told something `assertQuota` would
+   * contradict. Running out of quota is *not* reported here — `remaining === 0`
+   * already says that, and saying it twice invites the two to disagree.
+   */
+  blocked: QuotaStopLoss | null;
+};
 
 export type QuotaBlock = { code: "quota_exceeded" | "failure_limit_reached"; message: string };
 
@@ -116,6 +127,23 @@ export function dayWindow(nowMs: number): { startMs: number; endMs: number } {
 }
 
 /**
+ * Which day a settled job belongs to.
+ *
+ * Deliberately **not** `createdAt`: a job submitted at 23:59 Beijing and finished
+ * at 00:05 has a yesterday `createdAt`, so bucketing by it would leave the job
+ * counted on neither day — free of charge on the success side, and invisible to
+ * the stop-loss valve on the failure side.
+ *
+ * `completedAt` is stamped once, on the first terminal transition. Records
+ * written before the field existed fall back to `updatedAt`, which for a
+ * finished job is the instant it finished.
+ */
+function settledAtMs(job: QuotaJob): number | null {
+  const ms = Date.parse(job.completedAt ?? job.updatedAt);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
  * Pure counter: `nowMs` is injected so the day boundary can be tested without
  * waiting for midnight.
  *
@@ -137,14 +165,14 @@ export function computeQuotaUsage(
   for (const job of jobs) {
     if (job.ownerId !== ownerId) continue;
     if (!isImageMode(job.mode)) continue;
-    if (!TERMINAL.has(job.status)) {
+    if (!isTerminalStatus(job.status)) {
       // A reservation is held regardless of the day it was made: a job started
       // yesterday and still running is spending an upstream call right now.
       inFlight += 1;
       continue;
     }
-    const created = Date.parse(job.createdAt);
-    if (!Number.isFinite(created) || created < startMs || created >= endMs) continue;
+    const settled = settledAtMs(job);
+    if (settled === null || settled < startMs || settled >= endMs) continue;
     if (job.status === "succeeded") used += 1;
     else if (job.status === "failed" || job.status === "canceled") failures += 1;
   }
@@ -184,12 +212,18 @@ export function quotaBlock(usage: QuotaUsage): QuotaBlock | null {
 }
 
 export function publicQuota(usage: QuotaUsage): QuotaPublic {
+  // Reuse the admission judge rather than re-deriving the condition: `/api/me`
+  // saying "还剩 10 次" while `assertQuota` refuses every submission is exactly
+  // the divergence this reuse rules out.
+  const block = quotaBlock(usage);
   return {
     limit: usage.limit,
     used: usage.used,
     inFlight: usage.inFlight,
     remaining: usage.remaining,
     resetsAt: usage.resetsAt,
+    blocked:
+      block?.code === "failure_limit_reached" ? { code: block.code, message: block.message } : null,
   };
 }
 

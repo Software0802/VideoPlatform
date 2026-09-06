@@ -44,7 +44,7 @@ export const openaiImageProvider: VideoProvider = {
     // submit for the same job is a second charge. Transport retries stay in fetchUpstream,
     // which only repeats on statuses that never produced an image.
     const response = await openaiPost(IMAGE_PATH, buildImageRequest(req));
-    const { png, usage, actualCharge } = await resolveImage(response);
+    const { png, usage, actualCharge } = await resolveImage(response, req.shouldAbort);
     const jpeg = await cropToAspect(png, crop);
     // Bytes go to the job dir, never into the handle: a base64 data URI on the handle would be
     // copied verbatim into job.json.
@@ -84,8 +84,15 @@ export const openaiImageProvider: VideoProvider = {
  *
  * `submit` stays synchronous from the runner's point of view either way: the wait happens here,
  * bounded by `OPENAI_IMAGE_TASK_TIMEOUT_MS`, and the runner still finds a staged file.
+ *
+ * Only the third shape can block long enough for the job to be canceled underneath it, so it
+ * is the only one that consults `shouldAbort`; the two synchronous paths have already been
+ * paid for by the time they return.
  */
-async function resolveImage(response: OpenaiResponseBody): Promise<{
+async function resolveImage(
+  response: OpenaiResponseBody,
+  shouldAbort?: () => Promise<boolean>,
+): Promise<{
   png: Buffer;
   usage?: OpenAiImageUsage;
   actualCharge?: number;
@@ -93,6 +100,6 @@ async function resolveImage(response: OpenaiResponseBody): Promise<{
   if (response.kind === "binary") return { png: response.bytes };
   const pending = readPendingTask(response.status, response.data);
   if (!pending) return parseImageResponse(response.data);
-  const outcome = await awaitImageTask(pending);
+  const outcome = await awaitImageTask(pending, { shouldAbort });
   return { png: outcome.bytes, usage: outcome.usage, actualCharge: outcome.actualCharge };
 }

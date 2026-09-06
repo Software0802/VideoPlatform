@@ -16,13 +16,22 @@ const LAST_MS = Date.parse("2026-09-05T15:59:59.999Z");
 /** 2026-09-06 00:00:00.000 Beijing — one millisecond later, a new Beijing day. */
 const NEXT_MS = Date.parse("2026-09-05T16:00:00.000Z");
 
-function job(overrides: Partial<QuotaJob> = {}): QuotaJob {
+/**
+ * A job that was submitted *and* settled at the same instant. `settledAt`
+ * overrides only the pair that decides which day it counts on, so a test can say
+ * "finished after midnight" without restating the whole record.
+ */
+function job(overrides: Partial<QuotaJob> & { settledAt?: string } = {}): QuotaJob {
+  const { settledAt, ...rest } = overrides;
+  const at = new Date(LAST_MS).toISOString();
   return {
     ownerId: OWNER,
     mode: "text_to_image",
     status: "succeeded",
-    createdAt: new Date(LAST_MS).toISOString(),
-    ...overrides,
+    createdAt: at,
+    updatedAt: settledAt ?? at,
+    completedAt: settledAt ?? at,
+    ...rest,
   };
 }
 
@@ -95,7 +104,7 @@ describe("computeQuotaUsage", () => {
       job({ status: "canceled" }),
       job({ status: "expired" }),
       // Yesterday's failure is outside the window.
-      job({ status: "failed", createdAt: "2026-09-04T15:00:00.000Z" }),
+      job({ status: "failed", settledAt: "2026-09-04T15:00:00.000Z" }),
     ];
     expect(usage(jobs, LAST_MS)).toMatchObject({ failures: 2, used: 0, remaining: 10 });
   });
@@ -123,8 +132,8 @@ describe("computeQuotaUsage", () => {
     expect(usage(jobs, LAST_MS)).toMatchObject({ used: 1, inFlight: 0, remaining: 9 });
   });
 
-  it("ignores a record with an unparseable createdAt instead of counting it", () => {
-    expect(usage([job({ createdAt: "not-a-date" })], LAST_MS)).toMatchObject({ used: 0 });
+  it("ignores a record with an unparseable settle time instead of counting it", () => {
+    expect(usage([job({ settledAt: "not-a-date" })], LAST_MS)).toMatchObject({ used: 0 });
   });
 
   it("never reports negative remaining when the limit is lowered", () => {
@@ -180,8 +189,91 @@ describe("publicQuota", () => {
       inFlight: 1,
       remaining: 8,
       resetsAt: "2026-09-05T16:00:00.000Z",
+      blocked: null,
     });
     expect(Object.keys(shaped)).not.toContain("failures");
     expect(Object.keys(shaped)).not.toContain("failureLimit");
+  });
+
+  it("reports the stop-loss valve verbatim, while remaining still tells the truth", () => {
+    const jobs = Array.from({ length: 30 }, () => job({ status: "failed" }));
+    const state = usage(jobs, LAST_MS);
+    const shaped = publicQuota(state);
+
+    // 30 failures consumed no quota, so `remaining` must not pretend otherwise …
+    expect(shaped.remaining).toBe(10);
+    // … but the client would still be refused, and now it is told why.
+    expect(shaped.blocked).toEqual({
+      code: "failure_limit_reached",
+      message: quotaBlock(state)!.message,
+    });
+  });
+
+  it("leaves blocked null when it is the quota, not the valve, that is exhausted", () => {
+    const state = usage(Array.from({ length: 10 }, () => job()), LAST_MS);
+    // `remaining: 0` already says this; duplicating it into `blocked` would give
+    // the client two fields that can disagree.
+    expect(quotaBlock(state)?.code).toBe("quota_exceeded");
+    expect(publicQuota(state)).toMatchObject({ remaining: 0, blocked: null });
+  });
+});
+
+/**
+ * Finding 1: a job submitted at 23:59 Beijing and settled at 00:05 used to be
+ * bucketed by `createdAt`, so it counted on neither day — a free image on the
+ * success side, and a failure the stop-loss valve never saw.
+ */
+describe("jobs that cross midnight", () => {
+  /** 2026-09-05 23:59 Beijing. */
+  const SUBMITTED = "2026-09-05T15:59:00.000Z";
+  /** 2026-09-06 00:05 Beijing — six minutes later, the next Beijing day. */
+  const SETTLED = "2026-09-05T16:05:00.000Z";
+
+  const crossed = (status: QuotaJob["status"]): QuotaJob =>
+    job({ status, createdAt: SUBMITTED, settledAt: SETTLED });
+
+  it("counts a success against the day it finished, not the day it started", () => {
+    const jobs = [crossed("succeeded")];
+    // Yesterday it was still in flight, so it counted nowhere as used …
+    expect(usage(jobs, LAST_MS)).toMatchObject({ used: 0, failures: 0 });
+    // … and today it is used, rather than escaping both days.
+    expect(usage(jobs, NEXT_MS)).toMatchObject({ used: 1, remaining: 9 });
+  });
+
+  it("counts a cross-midnight failure or cancel against the day it finished", () => {
+    const jobs = [crossed("failed"), crossed("canceled")];
+    expect(usage(jobs, NEXT_MS)).toMatchObject({ used: 0, remaining: 10, failures: 2 });
+  });
+
+  it("still trips the stop-loss valve when every failure crossed midnight", () => {
+    const jobs = Array.from({ length: 30 }, () => crossed("failed"));
+    expect(quotaBlock(usage(jobs, NEXT_MS))?.code).toBe("failure_limit_reached");
+  });
+
+  it("falls back to updatedAt for records written before completedAt existed", () => {
+    const legacy: QuotaJob = {
+      ownerId: OWNER,
+      mode: "text_to_image",
+      status: "succeeded",
+      createdAt: SUBMITTED,
+      updatedAt: SETTLED,
+    };
+    expect(legacy.completedAt).toBeUndefined();
+    expect(usage([legacy], NEXT_MS)).toMatchObject({ used: 1 });
+    expect(usage([legacy], LAST_MS)).toMatchObject({ used: 0 });
+  });
+
+  it("prefers completedAt over updatedAt when both are present", () => {
+    // A later write (a cost correction, a future artifact sweep) moves
+    // `updatedAt` but must not move the job to another day.
+    const swept: QuotaJob = {
+      ownerId: OWNER,
+      mode: "text_to_image",
+      status: "succeeded",
+      createdAt: SUBMITTED,
+      completedAt: SETTLED,
+      updatedAt: "2026-09-20T03:00:00.000Z",
+    };
+    expect(usage([swept], NEXT_MS)).toMatchObject({ used: 1 });
   });
 });

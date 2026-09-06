@@ -22,6 +22,7 @@ const TEST_OWNER = "usr_00000000000000a1";
 let dataRoot = "";
 let createJob: typeof import("./create").createJob;
 let readJob: (id: string) => Promise<JobRecord | null>;
+let updateJob: typeof import("./store").updateJob;
 
 async function pngBody(width: number, height: number): Promise<string> {
   const png = await sharp({
@@ -30,6 +31,31 @@ async function pngBody(width: number, height: number): Promise<string> {
     .png()
     .toBuffer();
   return png.toString("base64");
+}
+
+/**
+ * Wait until the fake upstream has stopped being called for `quietMs`, so that
+ * "no result GET was ever sent" is a claim about a finished run rather than about
+ * a race the assertion happened to win.
+ */
+async function waitUntilQuiet(
+  mock: { mock: { calls: unknown[] } },
+  quietMs = 1_500,
+  timeoutMs = 20_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let seen = -1;
+  let changedAt = Date.now();
+  while (Date.now() < deadline) {
+    if (mock.mock.calls.length !== seen) {
+      seen = mock.mock.calls.length;
+      changedAt = Date.now();
+    } else if (Date.now() - changedAt >= quietMs) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("upstream never stopped being called");
 }
 
 /** Poll job.json until the runner leaves the in-flight states. */
@@ -52,7 +78,7 @@ beforeAll(async () => {
   delete process.env.SUB2API_API_KEY;
   delete process.env.LUMEN_FORCE_MOCK;
   ({ createJob } = await import("./create"));
-  ({ readJob } = await import("./store"));
+  ({ readJob, updateJob } = await import("./store"));
 });
 
 afterEach(() => {
@@ -238,6 +264,67 @@ describe("OpenAI image job lifecycle", () => {
     const rawJson = await readFile(path.join(dataRoot, "jobs", job.id, "job.json"), "utf8");
     expect(rawJson).not.toMatch(/b64_json|data:image/);
   });
+
+  it("abandons an async task when the job is canceled, and pays for nothing", async () => {
+    const taskId = "imgtask_canceled_midpoll";
+    let sawPost: () => void = () => {};
+    const posted = new Promise<void>((resolve) => {
+      sawPost = resolve;
+    });
+    const running = () =>
+      new Response(
+        JSON.stringify({ id: taskId, status: "running", poll_after_ms: 1 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    const fetchMock = vi.fn(async (url: string, init: RequestInit = {}) => {
+      if ((init.method ?? "GET") === "POST") {
+        sawPost();
+        return new Response(
+          JSON.stringify({ id: taskId, status: "running", poll_after_ms: 1 }),
+          { status: 202, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/result")) {
+        // Reaching here is the bug: the result endpoint is what settles the charge.
+        return new Response(new Uint8Array(Buffer.from("should never be fetched")), {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        });
+      }
+      return running();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { job } = await createJob({
+      mode: "text_to_image",
+      prompt: "取消也要花钱吗",
+      aspectRatio: "1:1",
+    } as Parameters<typeof createJob>[0], TEST_OWNER);
+
+    // Cancel once the billed POST is out and the provider is polling — the same write
+    // `POST /api/jobs/:id/cancel` performs, minus the session plumbing.
+    await posted;
+    await updateJob(job.id, (r) => {
+      r.status = "canceled";
+      r.canceled = true;
+      r.error = { code: "canceled", message: "已取消" };
+      return r;
+    });
+
+    await waitUntilQuiet(fetchMock);
+
+    const settled = await readJob(job.id);
+    // Canceled, not failed: the runner's `fail` is a no-op on an already-canceled record,
+    // so the 499 the provider throws does not rewrite the user's own decision.
+    expect(settled?.status).toBe("canceled");
+    expect(settled?.error?.code).toBe("canceled");
+    expect(settled?.costUsdActual).toBeNull();
+
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    expect(calls.filter(([, init]) => (init.method ?? "GET") === "POST")).toHaveLength(1);
+    expect(calls.filter(([url]) => url.endsWith("/result"))).toHaveLength(0);
+  }, 30_000);
 
   it("does not retry a billed POST when the upstream returns a retryable status", async () => {
     const fetchMock = vi.fn(

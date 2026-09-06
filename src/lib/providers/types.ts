@@ -31,6 +31,17 @@ export type ProviderGenerateRequest = {
   referenceImages?: MediaRef[];
   referenceAudios?: { voiceId: string }[];
   sourceVideo?: MediaRef;
+  /**
+   * Cooperative cancellation for providers whose `submit` blocks for minutes.
+   *
+   * The runner only checks `canceled` on either side of `submit()`, which is
+   * enough for a provider that finishes in one request but not for the OpenAI
+   * async image task: it can poll for up to `OPENAI_IMAGE_TASK_TIMEOUT_MS`, and
+   * fetching the result at the end is what settles the charge upstream. Such a
+   * provider must call this before every billable step and abort when it
+   * resolves true. Optional — the video providers never need it.
+   */
+  shouldAbort?: () => Promise<boolean>;
 };
 
 export type ProviderHandle = {
