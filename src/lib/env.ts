@@ -208,8 +208,15 @@ export type VideoProviderChoice = "grok" | "kling" | "yman";
 /** 能接视频任务的 provider（按能力路由，不含只出图的 openai 与占位的 jimeng）。 */
 export const VIDEO_PROVIDER_IDS: readonly VideoProviderChoice[] = ["kling", "yman", "grok"];
 
-/** 没有任何显式配置时的优先级：先试可灵，接不了的模式落回 xAI。 */
-const DEFAULT_VIDEO_PROVIDER_ORDER: readonly VideoProviderChoice[] = ["kling", "grok"];
+/**
+ * 没有任何显式配置时的优先级：只有 xAI。
+ *
+ * 换供应商是一次显式选择，不是「配了 key 就自动生效」的副作用——把可灵放进默认次序，
+ * 一个为了别的用途（对账、试跑一次）配上的 `KLING_API_KEY` 就会静默改变全站视频的落点、
+ * 时长档位与成片质感，而运维那边什么都没改。要走可灵，写 `VIDEO_PROVIDER_ORDER`
+ * （或旧的 `VIDEO_PROVIDER=kling`）说出来。
+ */
+const DEFAULT_VIDEO_PROVIDER_ORDER: readonly VideoProviderChoice[] = ["grok"];
 
 /**
  * 视频路由的优先级列表（方案 §3.4「功能先于供应商」）。router 按「模式 → 声明支持它且
@@ -217,8 +224,8 @@ const DEFAULT_VIDEO_PROVIDER_ORDER: readonly VideoProviderChoice[] = ["kling", "
  * provider 接不了这个模式时会自动跳到下一个，不需要在这里为每种模式各写一份。
  *
  * 兼容旧的单一开关 `VIDEO_PROVIDER`：`=kling` 视为 `kling,grok`，`=grok`（以及任何
- * 非法值）视为只有 `grok`——旧配置的语义就是「除非点名，否则别让可灵抢路由」。
- * 未设 ORDER 也未设 VIDEO_PROVIDER 时用默认次序。列表里认不出的名字直接丢掉，
+ * 非法值）视为只有 `grok`——旧配置的语义就是「除非点名，否则别让可灵抢路由」，
+ * 默认次序（`grok`）现在与它同一个语义。列表里认不出的名字直接丢掉，
  * 全丢光了就当没设过（回到兼容分支），免得一个拼错的名字把视频功能整个关掉。
  */
 export function videoProviderOrder(): VideoProviderChoice[] {

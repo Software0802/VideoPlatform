@@ -139,7 +139,7 @@ async function readUpstreamBody(res: Response): Promise<OpenaiResponseBody> {
   try {
     parsed = JSON.parse(text);
   } catch {
-    if (!res.ok) throw upstreamError(res.status, {});
+    if (!res.ok) throw normalizeImageUpstreamError(res.status, {});
     throw new ProviderHttpError(
       502,
       "upstream_invalid_json",
@@ -152,9 +152,37 @@ async function readUpstreamBody(res: Response): Promise<OpenaiResponseBody> {
       ? (parsed as Record<string, unknown>)
       : {};
   if (!res.ok) {
-    throw upstreamError(res.status, data);
+    throw normalizeImageUpstreamError(res.status, data);
   }
   return { kind: "json", status: res.status, data };
+}
+
+/**
+ * 「这条通道没钱了」在兼容 OpenAI 的中转上有好几种写法，归一成同一个 `quota_exhausted`。
+ *
+ * 归一是耗尽自动切换的入口条件：runner 只认 `quota_exhausted` 这一个码去 `markExhausted`
+ * 并改走下一家（`switchAwayFromExhausted`）。不归一的话，402 会被当成一个普通的 4xx 直接
+ * 判失败，429 会被当成「上游忙」白等 15/30/60 秒再撞同一堵没钱的墙。
+ *
+ * 判据：
+ *  - HTTP 402 一律算——这个状态码在支付语义里就是「余额 / 额度不足」，没有别的用法。
+ *  - HTTP 429 只在错误码指向额度时算（`insufficient_quota` / `insufficient_credits`，以及
+ *    任何含 quota / credit 的写法，大小写不敏感）；不带这类码的 429 是真的限流，该退避。
+ *
+ * 状态码统一记 429 而不是保留 402：402 在本项目里是「用户余额不足」的对外语义
+ * （`insufficient_balance`），上游没钱与用户没钱不是一回事，不能共用一个状态码。
+ */
+const QUOTA_CODE = /quota|credit/i;
+
+export function normalizeImageUpstreamError(
+  status: number,
+  data: Record<string, unknown>,
+): ProviderHttpError {
+  const error = upstreamError(status, data);
+  if (status === 402 || (status === 429 && QUOTA_CODE.test(error.code))) {
+    return new ProviderHttpError(429, "quota_exhausted", error.message);
+  }
+  return error;
 }
 
 function bodyReadFailed(status: number, cause: unknown): ProviderHttpError {

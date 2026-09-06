@@ -1,6 +1,17 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProviderHttpError, type ProviderGenerateRequest } from "./types";
-import { currentProviderId, needsSourceFileUpload, providerForId, selectProvider } from "./router";
+import {
+  currentProviderId,
+  needsSourceFileUpload,
+  providerForId,
+  selectProvider,
+  uiProviderId,
+  videoAspectRatios,
+  videoDurationsFor,
+} from "./router";
 
 const ENV_KEYS = [
   "LUMEN_FORCE_MOCK",
@@ -361,5 +372,174 @@ describe("selectProvider / currentProviderId — ratio-aware routing", () => {
     process.env.YMAN_API_KEY = "yman-test-key";
     expect(selectProvider(req("text_to_video")).id).toBe("yman");
     expect(currentProviderId("text_to_video")).toBe("yman");
+  });
+});
+
+/**
+ * env.ts: `videoProviderOrder()`'s bare default (no `VIDEO_PROVIDER`, no
+ * `VIDEO_PROVIDER_ORDER`) changed from `kling,grok` to `grok`-only — the legacy
+ * `VIDEO_PROVIDER=kling` switch is the only way to opt Kling back in. A stray
+ * `KLING_API_KEY` sitting in the environment must not be enough on its own.
+ */
+describe("selectProvider / currentProviderId — bare default order is Grok-only", () => {
+  it("ignores a configured Kling key on the bare default (no VIDEO_PROVIDER, no ORDER)", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    delete process.env.VIDEO_PROVIDER;
+    delete process.env.VIDEO_PROVIDER_ORDER;
+    process.env.KLING_API_KEY = "kling-test-key";
+    process.env.XAI_API_KEY = "xai-live";
+    expect(selectProvider(req("text_to_video")).id).toBe("grok");
+    expect(currentProviderId("text_to_video")).toBe("grok");
+  });
+});
+
+/**
+ * Exhaustion-aware routing (`@/lib/providers/exhaustion`): once `markExhausted` records a
+ * provider+kind as out of credit, `pickVideoProvider` / `pickImageProvider` / the Grok
+ * fallback must all skip it until the TTL elapses. These tests write to
+ * `<DATA_DIR>/provider-state.json`, so each one gets its own temporary DATA_DIR — this must
+ * never touch the repo's real `data/` directory.
+ */
+describe("selectProvider / currentProviderId — exhaustion-aware routing", () => {
+  let dataRoot = "";
+  let markExhausted: typeof import("@/lib/providers/exhaustion").markExhausted;
+
+  beforeEach(async () => {
+    dataRoot = await mkdtemp(path.join(os.tmpdir(), "lumen-router-exhaustion-"));
+    process.env.DATA_DIR = dataRoot;
+    ({ markExhausted } = await import("@/lib/providers/exhaustion"));
+  });
+
+  afterEach(async () => {
+    delete process.env.DATA_DIR;
+    await rm(dataRoot, { recursive: true, force: true });
+  });
+
+  it("skips an exhausted leader and falls through to the next entry in VIDEO_PROVIDER_ORDER", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "kling,yman";
+    process.env.KLING_API_KEY = "kling-test-key";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    await markExhausted("kling", "video", "积分不足");
+
+    expect(selectProvider(req("text_to_video")).id).toBe("yman");
+    expect(currentProviderId("text_to_video")).toBe("yman");
+  });
+
+  it("skips an exhausted image provider and falls through IMAGE_PROVIDER_ORDER", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.OPENAI_API_KEY = "sk-openai";
+    process.env.XAI_API_KEY = "xai-live";
+    await markExhausted("openai", "image", "余额不足");
+
+    expect(selectProvider(req("text_to_image")).id).toBe("grok");
+    expect(currentProviderId("text_to_image")).toBe("grok");
+  });
+
+  it("throws 503 no_provider_available for video once every configured provider, including the Grok fallback, is exhausted", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "kling";
+    process.env.KLING_API_KEY = "kling-test-key";
+    process.env.XAI_API_KEY = "xai-live";
+    await markExhausted("kling", "video", "积分不足");
+    await markExhausted("grok", "video", "积分不足"); // the fallback itself must be checked too
+
+    expect(() => selectProvider(req("text_to_video"))).toThrow(ProviderHttpError);
+    try {
+      currentProviderId("text_to_video");
+      throw new Error("expected currentProviderId to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProviderHttpError);
+      expect(error).toMatchObject({ status: 503, code: "no_provider_available" });
+    }
+  });
+
+  it("throws 503 no_provider_available for text_to_image once OpenAI and its Grok fallback are both exhausted", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.OPENAI_API_KEY = "sk-openai";
+    process.env.XAI_API_KEY = "xai-live";
+    await markExhausted("openai", "image", "余额不足");
+    await markExhausted("grok", "image", "余额不足");
+
+    expect(() => selectProvider(req("text_to_image"))).toThrow(ProviderHttpError);
+    try {
+      currentProviderId("text_to_image");
+      throw new Error("expected currentProviderId to throw");
+    } catch (error) {
+      expect(error).toMatchObject({ status: 503, code: "no_provider_available" });
+    }
+  });
+
+  it("never 503s a fully-mock instance — zero real keys means mock stays the normal outcome even with a stray exhaustion record", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    delete process.env.XAI_API_KEY;
+    delete process.env.SUB2API_API_KEY;
+    delete process.env.KLING_API_KEY;
+    delete process.env.YMAN_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    // A leftover record from before every key was removed (e.g. a redeployed instance)
+    // must not turn "no key configured" into a 503.
+    await markExhausted("kling", "video", "历史记录");
+
+    expect(selectProvider(req("text_to_video")).id).toBe("mock");
+    expect(currentProviderId("text_to_video")).toBe("mock");
+    expect(selectProvider(req("text_to_image")).id).toBe("mock");
+    expect(currentProviderId("text_to_image")).toBe("mock");
+  });
+
+  it("uiProviderId never throws even when currentProviderId would 503 — the homepage must still render", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "kling";
+    process.env.KLING_API_KEY = "kling-test-key";
+    process.env.XAI_API_KEY = "xai-live";
+    await markExhausted("kling", "video", "积分不足");
+    await markExhausted("grok", "video", "积分不足");
+
+    // The submit path must still refuse …
+    expect(() => currentProviderId("text_to_video")).toThrow(ProviderHttpError);
+    // … but the read-only display path degrades instead of throwing, so `/` and
+    // `/api/health` can still render something rather than a 500.
+    expect(() => uiProviderId("text_to_video")).not.toThrow();
+    expect(uiProviderId("text_to_video")).toBe("kling");
+  });
+
+  /**
+   * `videoAspectRatios()` unions capabilities only from providers it does not skip.
+   * With YMan as the sole (keyed) entry, an exhausted YMan must behave like "no keyed
+   * provider at all" — the union is empty, so it must fall back to the full three-ratio
+   * chip set rather than silently keeping YMan's now-unreachable 16:9/9:16 pair.
+   */
+  it("videoAspectRatios drops an exhausted sole provider's ratios and falls back to the full chip set", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+
+    // Before exhaustion: YMan's default t2v/i2v models only declare 16:9/9:16 (see
+    // yman/catalog.test.ts's ymanVideoRatios tests), so 1:1 is absent.
+    expect(videoAspectRatios().sort()).toEqual(["16:9", "9:16"].sort());
+
+    await markExhausted("yman", "video", "积分不足");
+
+    expect(videoAspectRatios().sort()).toEqual(["1:1", "16:9", "9:16"].sort());
+  });
+
+  /**
+   * Integration check mirroring how `page.tsx` / `/api/health` actually chain these two
+   * functions: the duration chip must follow whichever provider `uiProviderId` resolves to,
+   * so once the leader is exhausted the chip switches from Kling's [5, 10] to Grok's
+   * continuous default ladder rather than staying stuck on the unreachable provider's values.
+   */
+  it("videoDurationsFor(uiProviderId(...)) follows the provider once the leader becomes exhausted", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "kling,grok";
+    process.env.KLING_API_KEY = "kling-test-key";
+    process.env.XAI_API_KEY = "xai-live";
+
+    expect(videoDurationsFor(uiProviderId("text_to_video"))).toEqual([5, 10]);
+
+    await markExhausted("kling", "video", "积分不足");
+
+    expect(uiProviderId("text_to_video")).toBe("grok");
+    expect(videoDurationsFor(uiProviderId("text_to_video"))).toEqual([4, 6, 8, 10]);
   });
 });

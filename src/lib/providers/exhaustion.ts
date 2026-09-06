@@ -62,30 +62,60 @@ function readState(): StateFile {
 }
 
 /**
+ * 进程内串行锁（与 `jobs/store.ts` 的 `withLock` 同一个写法），键固定 `"provider-state"`。
+ *
+ * `markExhausted` 是一次读-改-写：两条任务在同一毫秒里各自标记一家耗尽时，后写的那份
+ * 是基于自己读到的旧快照拼出来的，先写的那条记录会被整个覆盖掉——正是「切走了却没生效」
+ * 这类幽灵故障的来源。跨进程仍靠 `writeJsonAtomic` + mtime 复读兜底，这里只解决本进程内
+ * 最常见的那种并发（同一个 runner 的并发任务同时撞到 402）。
+ */
+const locks = new Map<string, Promise<unknown>>();
+
+async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const previous = locks.get(key) ?? Promise.resolve();
+  let release: () => void = () => {};
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  locks.set(key, current);
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (locks.get(key) === current) locks.delete(key);
+  }
+}
+
+/**
  * 记下「这家这条通道积分耗尽」，`PROVIDER_EXHAUSTED_TTL_MS`（默认 6 小时）后自动解除。
  *
  * 写盘而不是只放内存：runner 崩溃重启后不该又把下一批任务全撞到同一家已经没钱的上游上。
  * 写失败只记一条 warn——切换本身是尽力而为的优化，不能因为写不了状态文件就把任务打挂。
+ *
+ * 读快照与写盘整段在锁里：并发的两次标记必须叠加，不能互相覆盖（见上面的 `withLock`）。
  */
 export async function markExhausted(
   providerId: ProviderId,
   kind: ExhaustionKind,
   reason: string,
 ): Promise<void> {
-  const until = new Date(Date.now() + providerExhaustedTtlMs()).toISOString();
-  const state = { ...readState() };
-  state[providerId] = { ...state[providerId], [kind]: { until, reason: String(reason ?? "").slice(0, 300) } };
-  try {
-    await writeJsonAtomic(stateFile(), state);
-    // 自己刚写的那份直接失效，下次读按 mtime 重新载入。
-    cache = null;
-  } catch (error) {
-    log("warn", "provider 耗尽状态写盘失败", {
-      providerId,
-      kind,
-      msg: error instanceof Error ? error.message : String(error),
-    });
-  }
+  await withLock("provider-state", async () => {
+    const until = new Date(Date.now() + providerExhaustedTtlMs()).toISOString();
+    const state = { ...readState() };
+    state[providerId] = { ...state[providerId], [kind]: { until, reason: String(reason ?? "").slice(0, 300) } };
+    try {
+      await writeJsonAtomic(stateFile(), state);
+      // 自己刚写的那份直接失效，下次读按 mtime 重新载入。
+      cache = null;
+    } catch (error) {
+      log("warn", "provider 耗尽状态写盘失败", {
+        providerId,
+        kind,
+        msg: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
 }
 
 /** 这家这条通道现在是不是还在「已耗尽」窗口里。同步——路由是同步的。 */

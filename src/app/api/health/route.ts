@@ -17,7 +17,8 @@ import { exhaustedList } from "@/lib/providers/exhaustion";
 import { mockHasFont } from "@/lib/providers/mock";
 import {
   audioAvailableFor,
-  currentProviderId,
+  imageAspectRatios,
+  uiProviderId,
   videoAspectRatios,
   videoDurationsFor,
 } from "@/lib/providers/router";
@@ -44,7 +45,9 @@ export async function GET() {
     dataDirWritable = false;
   }
   const queued = await activeCount();
-  const videoProvider = currentProviderId("text_to_video");
+  // 与首页同源，且同样用不抛的那个：健康检查在「全家耗尽」时必须还能回话，
+  // 那正是最需要看 `exhausted` 这一段的时刻。
+  const videoProvider = uiProviderId("text_to_video");
   const ok = Boolean(ffmpegPath) && dataDirWritable && (!mock || fontOk);
   return Response.json(
     {
@@ -66,6 +69,9 @@ export async function GET() {
       // （与 `src/app/page.tsx` 下发的同名 prop 同一个判据）。一家都接不下的画幅
       // 不会出现在芯片上，也不会被提交。
       videoAspectRatios: videoAspectRatios(),
+      // 文生图的画幅芯片：恒定七个，与视频 provider 的能力无关（三条生图通道都能出）。
+      // 与 `src/app/page.tsx` 下发的同名 prop 同源。
+      imageAspectRatios: imageAspectRatios(),
       // 这一刻的视频 provider 会不会真的**按我们的要求**出音轨。可灵由 KLING_VIDEO_AUDIO
       // 决定（默认 off，上游只在 1080p 出声）；YMan 的建任务接口根本没有音频参数，出不出声
       // 由模型自己决定，所以是「不可控」而不是「一定无声」——不可控就不能向用户收有声的

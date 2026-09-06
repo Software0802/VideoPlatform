@@ -4,6 +4,7 @@ import path from "node:path";
 import sharp from "sharp";
 import { commitLocalOutput, resolveLocalOutput } from "@/lib/jobs/local-output";
 import { persistRemote } from "@/lib/media/persist";
+import type { ProviderId } from "@/lib/providers/types";
 import type { IdentitySheetResult } from "./identity-sheet";
 
 export type IdentitySheetAsset = {
@@ -20,6 +21,8 @@ export type IdentitySheetStoreOptions = {
   jobDir: string;
   tempDir: string;
   isCanceled?: () => Promise<boolean>;
+  /** 角色表出自哪家上游；下载鉴权头按它绑定（见 `media/download-headers.ts`）。 */
+  providerId?: ProviderId;
 };
 
 export async function persistIdentitySheet(
@@ -46,6 +49,7 @@ export async function persistIdentitySheet(
       dest: staged,
       remoteUrl: result.handle.remoteUrl,
       fileId: result.handle.fileOutputId,
+      providerId: options.providerId,
     });
     const normalized = await normalizeImage(staged);
     await writeFile(staged, normalized.bytes);

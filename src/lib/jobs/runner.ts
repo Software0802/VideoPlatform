@@ -1,5 +1,6 @@
 import { access, copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { priceCny } from "@/lib/billing/prices";
 import { estimateCostUsd } from "@/lib/cost";
 import { jobConcurrency, upstreamRetryBaseMs } from "@/lib/env";
 import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
@@ -210,9 +211,13 @@ async function backoffRequeue(id: string, error: unknown): Promise<boolean> {
  * 被拒的 submit 从来没有被计费，所以换家不是「再买一次」，而是同一次任务换个门；
  * 相比 `backoffRequeue` 的等 15/30/60 秒再撞同一堵墙，充值之前那堵墙不会自己消失。
  *
- * 换家会重算 model 与上游档位（新家的时长 / 分辨率枚举不一样），但**不动 `priceCny`**：
- * 那是我们向用户的报价，用户没做任何事，不能因为我们内部换了供应商就改价。
- * `upstreamRetries` 也不加——退避重试的预算是留给「同一家暂时忙」的。
+ * 换家会重算 model 与上游档位（新家的时长 / 分辨率枚举不一样），`priceCny` 则**只降不升**：
+ * 换家是我们内部的事，用户什么都没做，不能让他多付；新家的档位反而更便宜时照低的收，
+ * 因为交付的确实是更低的那一档。`upstreamRetries` 不加——退避重试的预算是留给「同一家
+ * 暂时忙」的。
+ *
+ * 新家的时长档位比原来**大**（可灵 5 秒 → 只有 10/15 档的模型）且售价会因此上涨时，
+ * 干脆不换：那等于替用户买了一个他没选的时长。这种任务交回退避路径，按原规则重试或失败。
  *
  * 返回 true 表示这次失败已经被处理掉（换家或任务已取消），`runOne` 直接返回。
  */
@@ -246,6 +251,25 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
     resolution: rec.resolution ?? undefined,
     generateAudio: rec.generateAudio,
   }, model);
+  // 新家归一后这次任务该值多少钱。图片模式 `settings` 恒为 null，算出来与原价同档。
+  const switchedPrice = priceCny({
+    mode: rec.mode,
+    durationSec: settings ? settings.durationSec : rec.durationSec,
+    resolution: settings ? settings.resolution : rec.resolution,
+    generateAudio: settings ? settings.audio === "native" : rec.generateAudio,
+    imageResolution: rec.imageResolution,
+  });
+  // 用户选的是 5 秒，新家最短 10 秒且因此更贵：这不是「同一件事换个门」，是另一件商品。
+  if (settings && settings.durationSec > rec.durationSec && switchedPrice > rec.priceCny) {
+    log("info", `provider ${rec.provider} 积分耗尽，但 ${next} 的时长档更长且更贵，放弃换家`, {
+      id,
+      from: rec.provider,
+      to: next,
+      fromDurationSec: rec.durationSec,
+      toDurationSec: settings.durationSec,
+    });
+    return false;
+  }
   const from = rec.provider;
   const updated = await updateJob(id, (r) => {
     if (r.canceled || r.status === "canceled") return r;
@@ -256,6 +280,8 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
       r.resolution = settings.resolution;
       r.generateAudio = settings.audio === "native";
     }
+    // 只降不升：报价是对用户的承诺，换家不能让它涨；新档更便宜就照新档收。
+    r.priceCny = Math.min(r.priceCny, switchedPrice);
     r.costUsdEstimate = isImageMode(r.mode)
       ? r.costUsdEstimate
       : estimateCostUsd(model, r.durationSec, undefined, videoPricingOf(settings, next));
@@ -631,6 +657,7 @@ async function persist(job: JobRecord) {
       localPath: latest.localOutputPath,
       remoteUrl: latest.remoteUrl,
       fileId: latest.fileOutputId,
+      providerId: latest.provider,
     });
     if (!committed) return;
     const next = await updateJob(job.id, (r) => {
@@ -661,6 +688,7 @@ async function persist(job: JobRecord) {
     localPath: latest.localOutputPath,
     remoteUrl: latest.remoteUrl,
     fileId: latest.fileOutputId,
+    providerId: latest.provider,
   });
   if (!committed) return;
 
@@ -717,6 +745,8 @@ async function stageThenCommit(opts: {
   localPath?: string;
   remoteUrl?: string;
   fileId?: string;
+  /** 成片属于哪家上游；下载鉴权头按它绑定（见 `download-headers.ts`）。 */
+  providerId?: ProviderId;
 }): Promise<boolean> {
   const finalAbs = path.join(mediaStore.jobDir(opts.jobId), opts.destRel);
   const isCanceled = async () => {
@@ -742,6 +772,7 @@ async function stageThenCommit(opts: {
       dest: opts.tmpAbs,
       remoteUrl: opts.remoteUrl,
       fileId: opts.fileId,
+      providerId: opts.providerId,
     });
     return commitLocalOutput(opts.tmpAbs, finalAbs, isCanceled);
   } else {

@@ -4,10 +4,16 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { downloadHeadersFor } from "@/lib/media/download-headers";
 import { fetchUpstream, downloadXaiFile } from "@/lib/providers/grok/client";
+import type { ProviderId } from "@/lib/providers/types";
 import { log } from "@/lib/log";
 
-export async function downloadToFile(url: string, dest: string) {
-  const res = await fetchUpstream(url, { headers: downloadHeadersFor(url) });
+/**
+ * `providerId` 是这次成片属于哪家任务（`job.provider`）。给了它，鉴权头就按 provider
+ * 绑定分发——只有「这家的 origin」才拿得到「这家的 key」；不给则退回按 origin 匹配的
+ * 旧行为。见 `download-headers.ts`。
+ */
+export async function downloadToFile(url: string, dest: string, providerId?: ProviderId) {
+  const res = await fetchUpstream(url, { headers: downloadHeadersFor(url, providerId) });
   if (!res.ok || !res.body) {
     throw new Error(`下载失败 HTTP ${res.status}`);
   }
@@ -24,10 +30,12 @@ export async function persistRemote(opts: {
   dest: string;
   remoteUrl?: string;
   fileId?: string;
+  /** 这次成片属于哪家 provider 的任务；透传给 `downloadToFile` 做鉴权头绑定。 */
+  providerId?: ProviderId;
 }): Promise<void> {
   if (opts.remoteUrl?.startsWith("http")) {
     try {
-      await downloadToFile(opts.remoteUrl, opts.dest);
+      await downloadToFile(opts.remoteUrl, opts.dest, opts.providerId);
       return;
     } catch (e) {
       if (!opts.fileId) throw e;

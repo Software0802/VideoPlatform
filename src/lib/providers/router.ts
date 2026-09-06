@@ -8,9 +8,9 @@ import {
   klingVideoAudio,
   videoProviderOrder,
 } from "@/lib/env";
-import { isExhausted } from "@/lib/providers/exhaustion";
+import { isExhausted, type ExhaustionKind } from "@/lib/providers/exhaustion";
 import { grokNativeProvider } from "@/lib/providers/grok/native";
-import { isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
+import { ASPECT_RATIOS, isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
 import { klingProvider } from "@/lib/providers/kling/native";
 import { mockProvider } from "@/lib/providers/mock";
 import { jimengProvider } from "@/lib/providers/jimeng";
@@ -55,6 +55,37 @@ function servesRatio(provider: VideoProvider, aspectRatio?: AspectRatio): boolea
 }
 
 const NO_PROVIDER_FOR_RATIO = "当前画幅暂无可用的生成服务";
+const NO_PROVIDER_AVAILABLE = "所有生成服务暂时不可用，请稍后再试";
+
+/** 这台实例有没有配任何一把真实上游 key。只要有一把，mock 就不再是合法的落点。 */
+/**
+ * 这台实例有没有为**这一类**任务配过真上游。按 kind 分开看：只配了 OPENAI_API_KEY 的
+ * 纯生图实例，从没打算接视频单，请求视频时落 mock 是它的正常形态，不该 503。
+ */
+function hasAnyRealKey(kind: ExhaustionKind): boolean {
+  if (kind === "image") return hasOpenaiKey() || hasYmanKey() || hasXaiKey();
+  return hasXaiKey() || hasKlingKey() || hasYmanKey();
+}
+
+/**
+ * ORDER 里一个都没选中时的兜底。
+ *
+ * 先试 grok（能力最全，是 `edit_video` / `extend_video` / 长片的落点），但它同样要过
+ * 「没被判定耗尽」这一关——`isExhausted` 记的是「这家没钱了」，绕开它正是耗尽切换的
+ * 全部意义，兜底路径上漏掉这个判断等于让钱花光的那家继续接任务。
+ *
+ * 真的一家都没有时**不能**悄悄落 mock：mock 出的是一段带水印的占位片，交付它等于拿
+ * 假成片冒充真成片，还照常扣了用户的钱。只要这台实例配了任何一把真 key，就说明它本
+ * 意是接真单的，此时一律 503 让用户稍后再试；完全没配 key 的实例（本地开发、CI）才
+ * 是「mock 就是它的正常形态」，照旧返回 mock。
+ */
+function fallbackProvider(kind: ExhaustionKind): VideoProvider {
+  if (hasXaiKey() && !isExhausted("grok", kind)) return grokNativeProvider;
+  if (!forceMock() && hasAnyRealKey(kind)) {
+    throw new ProviderHttpError(503, "no_provider_available", NO_PROVIDER_AVAILABLE);
+  }
+  return mockProvider;
+}
 
 /**
  * 视频路由（方案 §3.4「功能先于供应商」）：按 `VIDEO_PROVIDER_ORDER` 的次序，取第一个
@@ -83,13 +114,16 @@ function pickVideoProvider(mode: NativeMode, aspectRatio?: AspectRatio): VideoPr
     return provider;
   }
   if (ratioBlocked) return null;
-  return hasXaiKey() ? grokNativeProvider : mockProvider;
+  return fallbackProvider("video");
 }
 
 /**
  * 文生图路由：按 `IMAGE_PROVIDER_ORDER`（默认 `openai,grok`，即加 YMan 之前那条硬编码
- * 阶梯）取第一个「有 key、没耗尽、声明 text_to_image」的 provider，都没有才 mock。
+ * 阶梯）取第一个「有 key、没耗尽、声明 text_to_image」的 provider。
  * 画幅不参与——三条生图通道都能出全部七个画幅。
+ *
+ * 一个都没选中时走与视频同一个 `fallbackProvider`：配了真 key 的实例宁可 503 也不落
+ * mock，只有完全没 key 的实例才拿 mock 当正常形态。
  */
 function pickImageProvider(): VideoProvider {
   for (const id of imageProviderOrder()) {
@@ -97,7 +131,7 @@ function pickImageProvider(): VideoProvider {
     const provider = providerForId(id);
     if (provider.capabilities().modes.includes("text_to_image")) return provider;
   }
-  return mockProvider;
+  return fallbackProvider("image");
 }
 
 /**
@@ -105,13 +139,16 @@ function pickImageProvider(): VideoProvider {
  *
  * 视频模式走 `pickVideoProvider` 的「能力 + 优先级」；30 / 45 / 60 秒长片例外——它由一致性
  * 管线拆成多个 shot 交给 xAI（extend 依赖 Files API），别家接不了，所以恒定留在 grok。
- * 没有任何一家接得下请求画幅时抛 400，而不是悄悄换一个画幅出片。
+ * 没有任何一家接得下请求画幅时抛 400，而不是悄悄换一个画幅出片；配了真 key 却一家可用
+ * 的都不剩（全被判定耗尽）时抛 503，而不是悄悄落 mock 交一段水印片。
  */
 export function selectProvider(req?: ProviderGenerateRequest): VideoProvider {
   if (forceMock()) return mockProvider;
   if (req?.mode === "text_to_image") return pickImageProvider();
   if (isHarnessDuration(req?.durationSec)) {
-    return hasXaiKey() ? grokNativeProvider : mockProvider;
+    // 长片只有 grok 接得下，所以这里就是「grok 或者没人」——同一条兜底规则：
+    // grok 没钱了也不能把长片交给 mock。
+    return fallbackProvider("video");
   }
   const provider = pickVideoProvider(req?.mode ?? "text_to_video", req?.aspectRatio);
   if (!provider) throw new ProviderHttpError(400, "invalid_argument", NO_PROVIDER_FOR_RATIO);
@@ -130,7 +167,7 @@ export function currentProviderId(
   if (forceMock()) return "mock";
   if (mode === "text_to_image") return pickImageProvider().id;
   if (opts?.harness || isHarnessDuration(opts?.durationSec)) {
-    return hasXaiKey() ? "grok" : "mock";
+    return fallbackProvider("video").id;
   }
   const provider = pickVideoProvider(mode ?? "text_to_video", opts?.aspectRatio);
   if (!provider) throw new ProviderHttpError(400, "invalid_argument", NO_PROVIDER_FOR_RATIO);
@@ -174,13 +211,16 @@ const UI_VIDEO_RATIOS: readonly AspectRatio[] = ["16:9", "9:16", "1:1"];
  * 并集而不是第一顺位那一家：路由本来就会按画幅挑人，只要有一家接得下 1:1，这个芯片就
  * 该露出来。反过来，一家都接不下的画幅必须从芯片上消失——留着它等于让用户选一个提交
  * 就会 400 的东西。有 provider 不声明画幅（xAI / mock，什么都收）时直接给全集。
+ *
+ * 被判定耗尽的 provider 不计入并集：它这几个小时里根本不会被路由选中，把它独有的画幅
+ * 留在芯片上就是「能选、一提交就被拒」——与上面那条「一家都接不下就别露出」同一个道理。
  */
 export function videoAspectRatios(): AspectRatio[] {
   if (forceMock()) return [...UI_VIDEO_RATIOS];
   const allowed = new Set<AspectRatio>();
   let sawKeyedProvider = false;
   for (const id of videoProviderOrder()) {
-    if (!hasProviderKey(id)) continue;
+    if (!hasProviderKey(id) || isExhausted(id, "video")) continue;
     const caps = providerForId(id).capabilities();
     if (!caps.modes.includes("text_to_video")) continue;
     sawKeyedProvider = true;
@@ -192,6 +232,40 @@ export function videoAspectRatios(): AspectRatio[] {
   // 全被筛没了（配置错到没有一家能出这三个画幅中的任何一个）就退回全集：
   // 芯片留空是个死界面，露出来至少还能拿到一句明确的 400。
   return out.length ? out : [...UI_VIDEO_RATIOS];
+}
+
+/**
+ * 文生图的画幅芯片。
+ *
+ * 与视频**完全独立**：三条生图通道（openai / yman / grok）都能出 `ASPECT_RATIOS` 的
+ * 全部七个，所以这里恒定给七个，不看 `videoProviderOrder` 也不看视频 provider 的
+ * `aspectRatios`。共用 `videoAspectRatios()` 的话，一台只配了 16:9/9:16 视频模型的实例
+ * 会把文生图的 4:3 / 3:2 一起吞掉——那是拿视频供应商的限制去砍图片功能。
+ *
+ * 取值来自 `ASPECT_RATIOS` 这一份事实，只是把 UI 惯用的三个排到前面（芯片是点击循环，
+ * 顺序就是用户看到的循环顺序）。
+ */
+export function imageAspectRatios(): AspectRatio[] {
+  return [...UI_VIDEO_RATIOS, ...ASPECT_RATIOS.filter((r) => !UI_VIDEO_RATIOS.includes(r))];
+}
+
+/**
+ * 首页 / `/api/health` 的读数用哪家的能力来渲染。
+ *
+ * 与 `currentProviderId` 同一条路径，区别只在**不抛**：全家耗尽时 `currentProviderId`
+ * 会 503（提交必须被拒），但界面不能因为上游没钱就整页 500——用户还得能看见自己的作品、
+ * 能读到那句「暂时不可用」。此时退回 ORDER 里第一个有 key 的 provider，芯片照常按它的
+ * 档位显示；真正的拒绝仍然发生在提交那一刻。
+ */
+export function uiProviderId(mode: NativeMode = "text_to_video"): ProviderId {
+  try {
+    return currentProviderId(mode);
+  } catch {
+    for (const id of videoProviderOrder()) {
+      if (hasProviderKey(id) && providerForId(id).capabilities().modes.includes(mode)) return id;
+    }
+    return hasXaiKey() ? "grok" : "mock";
+  }
 }
 
 /**

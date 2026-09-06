@@ -267,7 +267,12 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
           const handle = await materializeLocalHandle(result.requestJobId, result.handle);
           const persisted = await persistIdentitySheet(
             { ...result, handle },
-            { jobDir, tempDir: tmpDir(), isCanceled: () => isCanceled(job.id) },
+            {
+              jobDir,
+              tempDir: tmpDir(),
+              isCanceled: () => isCanceled(job.id),
+              providerId: provider.id,
+            },
           );
           await rm(mediaStore.jobDir(result.requestJobId), { recursive: true, force: true }).catch(
             () => undefined,
@@ -406,7 +411,12 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
         await copyFile(src, staged);
         await rm(mediaStore.jobDir(requestJobId), { recursive: true, force: true }).catch(() => undefined);
       } else {
-        await persistRemote({ dest: staged, remoteUrl: handle.remoteUrl, fileId: handle.fileOutputId });
+        await persistRemote({
+          dest: staged,
+          remoteUrl: handle.remoteUrl,
+          fileId: handle.fileOutputId,
+          providerId: provider.id,
+        });
       }
 
       const expected =
