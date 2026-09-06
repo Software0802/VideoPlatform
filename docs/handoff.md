@@ -46,7 +46,7 @@
 
 - `main` 已合并 `integrate/users2`（本提交）。用户的 ThreeUI 丝绸幕布实验已由其自行提交（`e45f527`）并随合并进入 `main`，**生产部署的仍是不含实验的 `integrate/users2` 代码**；实验何时上线由用户决定。
 - `scripts/smoke-lumen.mjs` / `smoke-cancel.mjs` 仍读已删除的 `LUMEN_ACCESS_TOKEN`，现已无法打进需会话的 `/api/*`，待改为会话登录。
-- 第五批 Codex 审查待补（用量恢复后 `--mode base --base 333159d`）。
+- 第五批（留存清理）由主代理审查通过（Codex 当时用量上限）：路径安全 / 误删防护 / 与配额归日的补章顺序 / 先删后盖章的幂等 / UI 零 media 请求均核实；两条 P3 记录——① 清理先删 `inputs/` 再盖章，与对同一条 ≥30 天任务的重试有几秒窗口（重试报 ENOENT 而非 409，无副作用）；② `jobDir` 取记录 `id` 而非目录名，仅磁盘篡改可致不一致。
 - 配额按账号；同一人拿多个邀请码可开多号（分发环节，代码不再加机制）。
 - `gallery|studio|jobs/[id]` 桩页未登录会两跳（`/` → `/login`）。
 
