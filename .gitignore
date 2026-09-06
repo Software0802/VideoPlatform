@@ -59,3 +59,4 @@ next-env.d.ts
 
 # Agent 隔离 worktree 检出（工具产物）
 /.claude/worktrees/
+ui-*.jpeg

@@ -9,6 +9,19 @@
       ],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "lumen-mock",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "dev"
+      ],
+      "port": 3000,
+      "autoPort": true,
+      "env": {
+        "LUMEN_FORCE_MOCK": "1",
+        "DATA_DIR": ".tmp/ui-mock-data"
+      }
     }
   ]
 }
