@@ -218,6 +218,23 @@ canvas {
 .nav__item[data-on="true"] {
   opacity: 1;
 }
+.account {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  pointer-events: auto;
+}
+.account__name {
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--accent);
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.32);
+}
 .login {
   pointer-events: auto;
   height: 40px;
@@ -238,6 +255,13 @@ canvas {
 .login:active {
   transform: translateY(1px);
 }
+.login:disabled {
+  opacity: 0.6;
+  filter: none;
+}
+.login:disabled:active {
+  transform: none;
+}
 
 /* 进场动画只播一次：根节点 data-enter 在首屏动画结束后移除 */
 [data-enter="true"] .brand {
@@ -255,7 +279,7 @@ canvas {
 [data-enter="true"] .nav__item:nth-child(3) {
   animation: e-down 0.5s var(--ease-soft) 0.26s both;
 }
-[data-enter="true"] .login {
+[data-enter="true"] .account {
   animation: e-down 0.55s var(--ease-soft) 0.34s both;
 }
 [data-enter="true"] .hero__title {
@@ -622,6 +646,20 @@ canvas {
   gap: 6px;
   flex-wrap: wrap;
 }
+/* 今日剩余：跟芯片同一行、同高，但不是可点的芯片，所以只借文字尺寸 */
+.composer__quota {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding-left: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.composer__quota[data-empty="true"] {
+  color: var(--accent);
+}
 .composer__cluster {
   margin-left: auto;
   display: flex;
@@ -695,6 +733,11 @@ canvas {
   font-size: 12px;
   color: var(--accent);
   opacity: 0.85;
+}
+/* 额度用完是常驻说明而非一次性报错，压暗一档不与错误行抢注意力 */
+.composer__error--quota {
+  color: var(--muted);
+  opacity: 1;
 }
 
 /* ---- 最近成片 ---- */
@@ -896,49 +939,89 @@ canvas {
 }
 
 /* ================================================================== */
-/* 4. 访问令牌对话框（同一套玻璃面板）                                    */
+/* 4. 登录 / 注册页（/login，同一套玻璃面板）                              */
 /* ================================================================== */
-.dialog {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: grid;
-  place-items: center;
-  padding: 24px;
+/* 卡片在 .frame 的剩余高度里居中；用 margin:auto 而非 align-items:center，
+   这样窄屏 + 软键盘把内容顶高时上边不会被裁掉 */
+.auth {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow-y: auto;
+  scrollbar-width: none;
+  pointer-events: auto;
+  padding: 24px 0;
 }
-.dialog__backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(10, 13, 18, 0.72);
+.auth::-webkit-scrollbar {
+  display: none;
 }
-.dialog__card {
-  position: relative;
+.auth__card {
+  margin: auto;
   width: min(420px, 100%);
-  border-radius: 22px;
-  background: var(--panel);
+  border-radius: 26px;
+  background: var(--card);
   box-shadow:
     inset 0 0 0 1px var(--line),
     0 30px 80px rgba(0, 0, 0, 0.45);
-  padding: 26px 24px;
+  padding: 30px 26px 26px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  animation: e-panel 0.5s var(--ease-primary) both;
+  gap: 18px;
+  animation: e-panel 0.9s var(--ease-primary) 0.24s both;
 }
-.dialog__card h2 {
+.auth__head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.auth__title {
   margin: 0;
-  font-size: 18px;
+  font-size: 24px;
   font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
 }
-.dialog__card p {
+.auth__sub {
   margin: 0;
   font-size: 13px;
   line-height: 1.6;
   color: var(--muted);
 }
-.dialog__error {
-  color: var(--accent) !important;
+.auth__tabs {
+  align-self: flex-start;
 }
+.auth__tab {
+  min-width: 76px;
+  justify-content: center;
+}
+.auth__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* 邀请码是 12 位 base32，拉开字距更好逐位核对；大写只是显示，值仍按用户输入提交 */
+.field--code {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
+}
+.auth__error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--accent);
+}
+.auth__submit {
+  margin-top: 2px;
+}
+.auth__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* ---- 表单元件（登录页与后续对话框共用） ---- */
 .field-label {
   display: flex;
   flex-direction: column;
@@ -1020,6 +1103,26 @@ canvas {
   }
   .works__prompt {
     font-size: 18px;
+  }
+  .account {
+    gap: 10px;
+  }
+  .account__name {
+    max-width: 96px;
+    font-size: 12px;
+  }
+  .auth__card {
+    padding: 24px 20px 22px;
+  }
+  .auth__title {
+    font-size: 21px;
+  }
+}
+
+/* 极窄屏：绝对居中的导航会撞上账号名，只留「退出」，账号名在首页外可见即可 */
+@media (max-width: 520px) {
+  .account__name {
+    display: none;
   }
 }
 

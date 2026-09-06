@@ -9,3 +9,10 @@ import path from "node:path";
  * a run, and it also holds the isolated `DATA_DIR`.
  */
 export const STORAGE_STATE = path.join(__dirname, ".auth/session.json");
+
+/**
+ * Which `DATA_DIR` the running server turned out to read, written by
+ * `auth.setup.ts` once registration succeeded. Other specs need it to mint an
+ * invite the server will actually see.
+ */
+export const DATA_DIR_HINT = path.join(__dirname, ".auth/data-dir.txt");

@@ -86,6 +86,13 @@ export type ImageTaskDeps = {
   timeoutMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Asked between polls and, crucially, immediately before the result fetch.
+   * Without it a cancellation during a ten-minute poll would still end in the
+   * one call that costs money. Omitted (the default) means "never abort", which
+   * is exactly the previous behaviour.
+   */
+  shouldAbort?: () => Promise<boolean>;
 };
 
 /**
@@ -178,6 +185,11 @@ export async function awaitImageTask(
   const timeoutMs = deps.timeoutMs ?? openaiImageTaskTimeoutMs();
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? defaultSleep;
+  const shouldAbort = deps.shouldAbort;
+
+  const abortIfCanceled = async (): Promise<void> => {
+    if (shouldAbort && (await shouldAbort())) throw taskCanceled(task.id);
+  };
 
   const started = now();
   let snapshot = task.snapshot;
@@ -185,12 +197,22 @@ export async function awaitImageTask(
 
   for (;;) {
     const state = taskState(snapshot);
-    if (state === "succeeded") return deliver(task.id, snapshot, base, fetchResult);
+    if (state === "succeeded") {
+      // The last gate before the only billed GET in this file. A job canceled while we
+      // were napping must not have its image fetched — `charge_status:"pending_delivery"`
+      // means the upstream settles on delivery, so taking it would make cancelling *cost*
+      // money.
+      await abortIfCanceled();
+      return deliver(task.id, snapshot, base, fetchResult);
+    }
     if (state === "failed") throw taskFailed(task.id, snapshot);
     // Never sleep past the deadline: waiting out a nap we already know is too long would only
     // delay the same failure. The task keeps running upstream either way.
     if (now() - started + delayMs > timeoutMs) throw taskTimedOut(task.id, timeoutMs);
     await sleep(delayMs);
+    // Woken up: the job may have been canceled during the nap, so stop before even the
+    // free status GET rather than looping on a job nobody wants any more.
+    await abortIfCanceled();
     snapshot = await fetchStatus(task.id);
     delayMs = clampPollDelayMs(snapshot.poll_after_ms, delayMs);
   }
@@ -232,6 +254,21 @@ function taskFailed(taskId: string, snapshot: Record<string, unknown>): Provider
     str(snapshot.failure_reason) ||
     "上游未说明原因";
   return new ProviderHttpError(502, code, `上游出图任务失败（${status}）：${message}`);
+}
+
+/**
+ * Abandoning a task the caller no longer wants. 499 is deliberately outside the
+ * runner's retryable range, and the runner's `fail` is a no-op on an
+ * already-canceled record, so this ends the job as `canceled` rather than
+ * `failed`. The task keeps running upstream; nobody fetches its result, which is
+ * what keeps it unbilled.
+ */
+function taskCanceled(taskId: string): ProviderHttpError {
+  return new ProviderHttpError(
+    499,
+    "canceled",
+    `任务已取消，未取回上游出图结果（任务 ${taskId}）`,
+  );
 }
 
 function taskTimedOut(taskId: string, timeoutMs: number): ProviderHttpError {

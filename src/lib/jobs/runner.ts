@@ -251,6 +251,13 @@ function toProviderReq(job: JobRecord): ProviderGenerateRequest {
     referenceImages: refs,
     referenceAudios: job.voiceIds?.map((voiceId) => ({ voiceId })),
     sourceVideo: source,
+    // Re-read job.json rather than close over a flag: "轮询是真相" applies here too —
+    // the cancel route writes the record from another request, and a provider that
+    // blocks for minutes has to see that write while it is still blocking.
+    shouldAbort: async () => {
+      const latest = await readJob(job.id);
+      return !latest || latest.status === "canceled" || Boolean(latest.canceled);
+    },
   };
 }
 

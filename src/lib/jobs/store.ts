@@ -4,6 +4,7 @@ import { dataDir } from "@/lib/env";
 import { writeJsonAtomic } from "@/lib/storage/atomic-json";
 import {
   clampProgress,
+  isTerminalStatus,
   jobPublicSchema,
   type JobPublic,
   type JobRecord,
@@ -129,13 +130,35 @@ export async function updateJob(
   return withLock(id, async () => {
     const rec = await readJobUnlocked(id);
     if (!rec) throw new Error("job not found");
+    const before = rec.status;
     const next = await fn(rec);
+    stampCompletedAt(before, next);
     next.updatedAt = new Date().toISOString();
     const dir = mediaStore.jobDir(id);
     await mkdir(dir, { recursive: true });
     await writeJobJson(dir, next);
     return next;
   });
+}
+
+/**
+ * The one place a job gets its `completedAt`.
+ *
+ * Every terminal transition in the codebase goes through `updateJob` (`writeJob`
+ * only ever creates or re-queues a record), so stamping here — rather than at
+ * each `fail` / `succeed` / cancel call site — is what makes the field
+ * exhaustive: a new terminal path cannot forget it.
+ *
+ * Two guards keep the stamp meaningful as a *settle day* for the quota:
+ *  - it is only written on the non-terminal → terminal edge, so a later write on
+ *    an already-finished job (an artifact sweep, a cost correction) cannot move
+ *    the job into today;
+ *  - an existing value is never overwritten, for the same reason.
+ */
+function stampCompletedAt(before: JobRecord["status"], next: JobRecord): void {
+  if (next.completedAt) return;
+  if (isTerminalStatus(before) || !isTerminalStatus(next.status)) return;
+  next.completedAt = new Date().toISOString();
 }
 
 async function writeJobJson(dir: string, record: JobRecord): Promise<void> {

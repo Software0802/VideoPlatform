@@ -12,6 +12,12 @@ export const runtime = "nodejs";
  * accounts for jobs still running, so the UI can show "今日剩余 n/10" without
  * knowing about the reservation model. `resetsAt` is the next Asia/Shanghai
  * midnight, in ISO.
+ *
+ * `quota.blocked` carries the stop-loss valve (plan §6.1). It exists because
+ * `remaining` alone lies in one case: 30 failures with nothing succeeded reads
+ * as "还剩 10 次" while every submission is refused with `failure_limit_reached`.
+ * It is produced by the same `quotaBlock` the admission check uses, so the two
+ * cannot drift apart.
  */
 export async function GET(request: Request) {
   try {

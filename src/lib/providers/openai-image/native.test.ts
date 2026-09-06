@@ -509,6 +509,92 @@ describe("openaiImageProvider.submit — 202 async image task", () => {
     expect(upstream.resultGets()).toHaveLength(0);
   });
 
+  /**
+   * Finding 2: `submit` can block for the whole `OPENAI_IMAGE_TASK_TIMEOUT_MS`, and the
+   * runner only checks cancellation on either side of it. Without `shouldAbort`, cancelling
+   * a job kept polling and still fetched the result — the one call the upstream bills, since
+   * it settles on delivery (`charge_status: "pending_delivery"`). Cancelling used to cost money.
+   */
+  it("stops between polls once the job is canceled, before even the free status GET", async () => {
+    const upstream = asyncTaskFetch({
+      statuses: [
+        { id: TASK_ID, status: "running", poll_after_ms: 2000 },
+        { id: TASK_ID, status: "running", poll_after_ms: 2000 },
+        succeededStatus(),
+      ],
+    });
+    // Canceled while the third nap is under way, i.e. after two polls.
+    const shouldAbort = vi.fn(async () => upstream.statusGets().length >= 2);
+    vi.stubGlobal("fetch", upstream.mock);
+    vi.useFakeTimers();
+
+    const settled = openaiImageProvider
+      .submit(req({ aspectRatio: "1:1", shouldAbort }))
+      .then(() => null, (error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(await settled).toMatchObject({ status: 499, code: "canceled" });
+    expect(upstream.posts()).toHaveLength(1);
+    expect(upstream.statusGets()).toHaveLength(2);
+    expect(upstream.resultGets()).toHaveLength(0);
+    // Nothing was staged, so the runner has no half-finished artifact to commit.
+    await expect(
+      readFile(path.join(dataRoot, "jobs", jobId, "tmp/image.jpg")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses the billed result fetch even when the image is already waiting upstream", async () => {
+    const upstream = asyncTaskFetch({ statuses: [succeededStatus()] });
+    // False for the first gate (between polls), true by the time the task reports success —
+    // so the only gate that can stop this run is the one guarding the result fetch.
+    const shouldAbort = vi.fn(async () => upstream.statusGets().length >= 1);
+    vi.stubGlobal("fetch", upstream.mock);
+    vi.useFakeTimers();
+
+    const settled = openaiImageProvider
+      .submit(req({ aspectRatio: "1:1", shouldAbort }))
+      .then(() => null, (error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    const thrown = await settled;
+    expect(thrown).toMatchObject({ status: 499, code: "canceled" });
+    expect((thrown as Error).message).toContain(TASK_ID);
+    expect(upstream.statusGets()).toHaveLength(1);
+    expect(upstream.resultGets()).toHaveLength(0);
+  });
+
+  it("is unchanged when shouldAbort never fires", async () => {
+    const resultPng = await pngBuffer(1024, 1024);
+    const upstream = asyncTaskFetch({
+      statuses: [{ id: TASK_ID, status: "running", poll_after_ms: 2000 }, succeededStatus()],
+      result: () => imageResponse(resultPng),
+    });
+    const shouldAbort = vi.fn(async () => false);
+    vi.stubGlobal("fetch", upstream.mock);
+    vi.useFakeTimers();
+
+    const pending = openaiImageProvider.submit(req({ aspectRatio: "1:1", shouldAbort }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    const handle = await pending;
+
+    expect(handle.localVideoPath).toBe("tmp/image.jpg");
+    expect(upstream.posts()).toHaveLength(1);
+    expect(upstream.statusGets()).toHaveLength(2);
+    expect(upstream.resultGets()).toHaveLength(1);
+    expect(shouldAbort).toHaveBeenCalled();
+  });
+
+  it("never consults shouldAbort on the synchronous path, which is already paid for", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => okResponse({ data: [{ b64_json: await pngBody(1024, 1024) }] })));
+    // Even an always-true predicate must not throw away an image we have already been billed for.
+    const shouldAbort = vi.fn(async () => true);
+
+    const handle = await openaiImageProvider.submit(req({ aspectRatio: "1:1", shouldAbort }));
+
+    expect(handle.localVideoPath).toBe("tmp/image.jpg");
+    expect(shouldAbort).not.toHaveBeenCalled();
+  });
+
   it("fails clearly when a 202 carries no task id to poll", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({ status: "running", poll_after_ms: 2000 }, 202),
