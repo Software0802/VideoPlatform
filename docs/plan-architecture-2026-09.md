@@ -64,7 +64,7 @@
 
 **内存**：`sharp(input, { limitInputPixels: 40e6, sequentialRead: true })`；`MAX_IMAGE` 12→6MB、`MAX_VIDEO` 48→24MB；质量回退改为对已缩放中间结果重压；启动时 `sharp.concurrency(1); sharp.cache(false)`；systemd 加 `NODE_OPTIONS=--max-old-space-size=1024`。`uploadXaiFile` 改流式 FormData。
 
-**IO**：`data/jobs/index.json`（`id, ownerId, status, mode, createdAt, completedAt, artifactsPurgedAt, costUsdEstimate/Actual`），由 `writeJob / updateJob` 增量维护，启动重建（照 `users/index.json` 的模式）。首页、`/api/jobs`、配额、`activeCount`、retention 全部改读索引；`pump()` 改为内存待办集合。超过 3× 留存期的记录归档到 `data/archive/`。做完之前 `DATA_RETENTION_DAYS` 先降到 14 控制目录数。
+**IO**：`data/jobs/index.json`（`id, ownerId, status, mode, createdAt, completedAt, artifactsPurgedAt, costUsdEstimate/Actual`），由 `writeJob / updateJob` 增量维护，启动重建（照 `users/index.json` 的模式）。首页、`/api/jobs`、配额、`activeCount`、retention 全部改读索引；`pump()` 改为内存待办集合。超过 3× 留存期的记录归档到 `data/archive/`。`DATA_RETENTION_DAYS` 保持 30（用户决策），目录数增长靠索引与归档吸收。
 
 **带宽**：`/api/media` 加 `Cache-Control: private, max-age=31536000, immutable` + 弱 ETag + 304；Caddy 直出 `/_next/static/*` 与 `/lumina/*`。
 
