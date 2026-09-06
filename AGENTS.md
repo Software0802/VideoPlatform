@@ -9,7 +9,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## 先读什么
 
 - 交接文档 `docs/handoff.md`：当前状态、已完成 / 未完成、下一刀。每次会话从这里开始。
-- 后端真相 `docs/design.md`（as-built）；阶段计划 `docs/plan.md`；UI 规格 `DESIGN.md`。
+- 后端真相 `docs/design.md`（as-built）；阶段计划 `docs/plan.md`；UI 规格 `DESIGN.md`；用户系统 / 配额 / 留存清理方案 `docs/plan-users-quota.md`。
 - 首页设计交接包 `design_handoff/design_handoff_genius_home/README.md`（规格）+ `Lumen v2.dc.html`（定稿原型），它们是首页像素级还原的依据。
 
 ## 前端约定（2026-09-05 晚起，Genius 单屏）
@@ -17,7 +17,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 整站是 `src/components/lumen/LumenHome.tsx` 一个 100vh 单屏（`body overflow:hidden`），三个视图：首页 / 工作室（输入即转场：左操作台、右展览区、输入卡落底）/ 作品（环形画廊）。视觉是深色玻璃语言：页面 `#0a0d12`、卡片 `rgba(28,30,36,.92)`、描边 `rgba(214,228,255,.12)`、强调 `#DDE1E8`；圆角 26 / 22 / 12 / 9；文案全中文，品牌名 Genius。改 UI 前先读 `DESIGN.md`。
 - 样式写在 `src/app/globals.css`（BEM 风格类名 + `@theme` 令牌），字体 Manrope + Noto Sans SC 经 `next/font/google`；不引入组件库，不用 `@react-three/fiber`、`drei` 或图标库（图标是内联 SVG）。
 - three.js 只走 `src/lib/scene/lumen-three.ts` 的纯函数场景（`mountDawn` 黎明河面背景、`mountRingDark` 作品环），通过 `src/components/scene/SceneHost.tsx` 挂载；需要重建场景时换 `key`，不要在 render 中碰 ref。任务进行中 `dawn.setEnergy(1)`。
-- 浏览器只经 `src/lib/client/jobs.ts` 和 `useJobLive.ts` 访问 `/api/*`；组件不直接 `fetch`。401 上抛后由页面弹 `AccessTokenPrompt`（顶栏「登录」也打开它）。
+- 浏览器只经 `src/lib/client/jobs.ts` 和 `useJobLive.ts` 访问 `/api/*`；组件不直接 `fetch`。未登录访问 `/` 服务端 307 到 `/login`；`src/lib/client/http.ts` 收到 401 时整页跳转 `/login`（`window.location.assign`），不再弹窗——`AccessTokenPrompt` 与 `LUMEN_ACCESS_TOKEN` 已删除，鉴权改为 `src/proxy.ts` 校验 HMAC 签名会话 Cookie。顶栏显示账号名 + 「退出」（≤520px 隐藏账号名）。
 - UI 只暴露三条路径：文生视频 / 图生视频 / 文生图。时长与画幅是点击循环的芯片（`data-dur` / `data-ratio`）；`harnessEnabled()` 为真时时长循环追加 30 / 45 / 60（仅 t2v / i2v），展览区阶段行按 `job.shots` 显示「生成分镜 n/m」。`reference_to_video / edit_video / extend_video` 仍在 API 与 provider 层，不要从后端删除。
 - 操作台四组（滤镜 / 磨皮 / 色彩 / 镜头）每组单选，选中项的提示词以 `
 
@@ -31,7 +31,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 状态先写 `data/jobs/{id}/job.json` 再发 SSE；轮询是真相。
 - Harness（30/45/60 长视频）由 `HARNESS_ENABLED` 开关：未开启时 `orchestrator.execute` 抛 `HARNESS_NOT_ENABLED`、API 对 30/45/60 返回 400；开启后 `src/lib/harness/orchestrator.ts` 走 directing → keyframing → generating_shots → qc → stitching → persisting，30/45/60 永不直接发给 Grok（rest-map golden 保障）。mock 模式用 `mock-director.ts` 的确定性计划；视觉 QC 只在设置 `HARNESS_QC_VISUAL_THRESHOLD` 时启用。
 - ffmpeg 一律经 `src/lib/ffmpeg.ts`（ffmpeg-static），不 spawn PATH 里的 ffmpeg。
-- 文生图（`text_to_image`）设置 `OPENAI_API_KEY` 时改走 `src/lib/providers/openai-image/`（OpenAI 官方或兼容中转，如 ccgoai），未设置回落 xAI/mock，视频路径不受影响；路由见 `src/lib/providers/router.ts` `selectProvider`。上游可能 202 异步出图（`OPENAI_IMAGE_TASK_TIMEOUT_MS` 控制轮询总时限），生成 POST 一旦被接受即计费，故固定 `maxAttempts:1` 不自动重试。新增环境变量：`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_IMAGE_MODEL`、`OPENAI_IMAGE_FLEXIBLE_SIZES`、`OPENAI_IMAGE_QUALITY`、`OPENAI_IMAGE_PRICE_TABLE`、`OPENAI_IMAGE_TIMEOUT_MS`、`OPENAI_IMAGE_TASK_TIMEOUT_MS`，说明见 `.env.example` 与 `docs/design.md` §2b。
+- 文生图（`text_to_image`）设置 `OPENAI_API_KEY` 时改走 `src/lib/providers/openai-image/`（OpenAI 官方或兼容中转，如 ccgoai），未设置回落 xAI/mock，视频路径不受影响；路由见 `src/lib/providers/router.ts` `selectProvider`。上游可能 202 异步出图（`OPENAI_IMAGE_TASK_TIMEOUT_MS` 控制轮询总时限），生成 POST 一旦被接受即计费，故固定 `maxAttempts:1` 不自动重试；取消任务时 `ProviderGenerateRequest.shouldAbort` 会让 `task-poll.ts` 在下次 sleep 后与取 result 前中断，绝不发出计费的 result GET。新增环境变量：`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_IMAGE_MODEL`、`OPENAI_IMAGE_FLEXIBLE_SIZES`、`OPENAI_IMAGE_QUALITY`、`OPENAI_IMAGE_PRICE_TABLE`、`OPENAI_IMAGE_TIMEOUT_MS`、`OPENAI_IMAGE_TASK_TIMEOUT_MS`，说明见 `.env.example` 与 `docs/design.md` §2b。
+- 用户系统：`src/lib/users/` 是用户存储与会话事实源（`user.json` 为事实源，`index.json` 为可重建缓存），`src/proxy.ts` 对 `/api/*` 做会话校验（register/login/logout/health 放行）。所有任务读写（detail/SSE/media/cancel/retry）、幂等 key、上传 sidecar 都必须带 `ownerId` 校验，非本人一律 404（上传认领因是请求体字段校验、语义就是 400，例外见 `docs/plan-users-quota.md` §5.3）。配额只算 `text_to_image`，判定与落盘必须在同一个 `withAdmissionLock` 临界区内完成（`src/lib/jobs/quota.ts`），`createJob` 与 `retryJob` 共用；新环境变量 `LUMEN_SESSION_SECRET`（必需，缺失即拒绝启动）、`FREE_DAILY_IMAGE_QUOTA`、`FREE_DAILY_FAILURE_LIMIT`、`LUMEN_ADMIN_USER_ID`。数据留存清理（`src/lib/jobs/retention.ts`）只写 `artifactsPurgedAt`，不改 `status`，不碰非终态任务；新环境变量 `DATA_RETENTION_DAYS`（默认 30，0 关闭）。已清理任务禁止一键重试。方案见 `docs/plan-users-quota.md`。
 
 ## 验证门禁
 
@@ -46,7 +47,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## 部署
 
-- 生产实例：阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`，反代借用同机 taiyu 的 Caddy 容器。完整步骤（打包内容、服务器装依赖、Turbopack 别名软链的必做步骤、`output: "standalone"` 为何在 Windows→Linux 不可用）见 `docs/handoff.md` §0.4 与 `docs/design.md` §10.1。
+- 生产实例：阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`，反代借用同机 taiyu 的 Caddy 容器。完整步骤（打包内容、服务器装依赖、Turbopack 别名软链的必做步骤、`output: "standalone"` 为何在 Windows→Linux 不可用）见 `docs/handoff.md` §0a.4 与 `docs/design.md` §10.1。
 - 部署机与构建机跨平台（Windows 构建、Linux 部署）时，`sharp`/`ffmpeg-static` 必须在部署机 `pnpm install --prod`，不能直接拷贝 Windows 的 `node_modules`。
 
 # Skills
@@ -60,7 +61,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 本项目使用全局子代理团队（`~/.claude/agents/`，来自 skills 仓库 `agent-team`），调度顺序与 Codex 审查分层见全局 CLAUDE.md「子代理调度」。项目差异只有下面几行：
 
 - 验证门禁：`pnpm exec tsc --noEmit`、`pnpm exec eslint src`、`pnpm test`；改 UI 后再跑 `pnpm e2e`（详见上文「验证门禁」）。
-- 高风险代码（Codex 按需审 diff）：`src/lib/harness/`（预算与并发、崩溃恢复、QC / stitch）、`src/lib/jobs/`（状态机、Retry、schema）、`src/app/api/`（鉴权与请求体校验）、`src/lib/ffmpeg.ts`、`src/lib/providers/grok/`（rest-map、尾帧与 data URI 约束）。
+- 高风险代码（Codex 按需审 diff）：`src/lib/harness/`（预算与并发、崩溃恢复、QC / stitch）、`src/lib/jobs/`（状态机、Retry、schema、`quota.ts`、`retention.ts`）、`src/app/api/`（鉴权与请求体校验）、`src/lib/ffmpeg.ts`、`src/lib/providers/grok/`（rest-map、尾帧与 data URI 约束）、`src/lib/users/`（密码 / 会话 / 邀请码）、`src/proxy.ts`（会话网关）。
 - 交接文档：`docs/handoff.md`；设计文档：`docs/design.md`（后端 as-built）、`DESIGN.md`（UI）；计划：`docs/plan.md`。
 - 硬约束见上文「前端约定 / 后端约定」；Codex 审查会先读本文件。想给 Codex 加审查重点，放 `.claude/codex-review/plan.md` 或 `code.md`。
 - 用户 2026-09-05 决定：跨厂商审查用在决策与高风险代码上，普通代码不审；Codex 走 ChatGPT plus 额度，同一份对象不重复审。
