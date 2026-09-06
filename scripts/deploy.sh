@@ -58,7 +58,7 @@ PKG="$(mktemp -t genius-deploy-XXXXXX)"
 tar czf "$PKG" \
   --exclude=.next/cache --exclude=.next/dev --exclude=.next/types --exclude=.next/standalone \
   .next public package.json pnpm-lock.yaml pnpm-workspace.yaml next.config.ts \
-  scripts/mint-invites.mjs scripts/backup.sh scripts/grant-balance.mjs scripts/mint-gift-codes.mjs
+  scripts/mint-invites.mjs scripts/backup.sh scripts/grant-balance.mjs scripts/mint-gift-codes.mjs \n  scripts/reset-password.mjs scripts/disable-user.mjs scripts/usage.mjs scripts/lib data-seed
 ls -lh "$PKG" | awk '{print "   包大小:", $5}'
 
 echo "== 4/5 上传"
@@ -132,6 +132,10 @@ for(const alias of names){
   fs.symlinkSync(fs.realpathSync(target),link,"dir");
   console.log("   别名:",alias,"->",real);
 }'
+# 模板种子：data/ 不入库，首次部署把示例模板落到 data/templates（已存在则不覆盖）
+if [ ! -d data/templates ] && [ -d data-seed/templates ]; then
+  mkdir -p data && cp -r data-seed/templates data/templates && echo "   模板: 已从 data-seed 落种 $(ls data/templates | wc -l) 条"
+fi
 systemctl start genius
 sleep 8
 echo "   服务: $(systemctl is-active genius)"
