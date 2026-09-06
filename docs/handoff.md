@@ -17,6 +17,8 @@
 
 ## 0. 本轮（2026-09-06 深夜）：阶段 B + 架构第二阶段——作品管理 / 账号自助 / 稳态与索引
 
+
+> **部署记录**：`dc922b4` + `9292199`/续行符修复 已于 2026-09-06 深夜部署生产（`bash scripts/deploy.sh`）；远端自动落种 6 条模板到 `data/templates`，`data/jobs/index.json` 已生成；公网 health 匿名只回 `{ok:true}`、`/api/templates` 需会话、伪造分享 token 404、响应带 `x-request-id`；同机 taiyu 正常。生产 `.env` 未新增变量（`MAX_QUEUED_JOBS_PER_USER`、`SHARE_TTL_HOURS`、`UPSTREAM_POLL_MAX_MS`、`YMAN_TASK_TIMEOUT_MS` 均用默认；`ALERT_WEBHOOK_URL` 未配）。
 方案 `docs/plan-architecture-2026-09.md`（§4 阶段二路线）+ `docs/plan-users-quota.md`（用户系统 / 配额相关延伸）。目标：把阶段一止血之后暴露出的「没有作品管理」「账号只能靠管理员 CLI 兜底」「没有可观测的运维告警」「/api/jobs 系索引全表扫描」几类问题逐项补齐。**工作区未提交改动，叠加在 §0g（阶段 A）之上**，两轮都未提交、无法分别单独回滚。
 
 ### 已实现
