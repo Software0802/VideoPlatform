@@ -1,7 +1,8 @@
 import { dataRetentionDays } from "@/lib/env";
+import { listJobIndex } from "@/lib/jobs/index";
 import { purgeJobArtifacts } from "@/lib/jobs/local-output";
 import { isTerminalStatus, type JobRecord } from "@/lib/jobs/schema";
-import { listJobRecords, tmpDir, updateJob } from "@/lib/jobs/store";
+import { readJob, tmpDir, updateJob } from "@/lib/jobs/store";
 import { mediaStore } from "@/lib/storage/local-fs";
 import { log } from "@/lib/log";
 
@@ -84,8 +85,21 @@ export async function sweepRetention(
 
   const nowMs = opts.nowMs ?? Date.now();
   const stamp = new Date(nowMs).toISOString();
-  const jobs = await listJobRecords();
-  for (const job of jobs) {
+  // 先用索引筛候选（方案 §3.3）：一次 `readdir` + 进程内映射就能判「终态、够老、还没清过」，
+  // 而不是把全站 job.json 读一遍去找那几条过期的。索引里 `status` / `completedAt` /
+  // `updatedAt` / `artifactsPurgedAt` 正好就是 `shouldPurgeArtifacts` 要的全部输入。
+  const candidates = await listJobIndex({ nonTerminal: false });
+  for (const entry of candidates) {
+    if (!shouldPurgeArtifacts(entry, nowMs, retentionDays)) continue;
+    // 落刀之前回读事实源：索引是缓存，可能落后一步，而这一步要删的是用户的成片。
+    // 读不回来的（目录名与记录 id 对不上、半写、被手工删过）算这一轮的失败，
+    // 记一条日志继续走——不能因为一条坏记录停掉整轮清理。
+    const job = await readJob(entry.id);
+    if (!job) {
+      result.failed += 1;
+      log("warn", "retention purge failed", { id: entry.id, msg: "job.json 读不回来" });
+      continue;
+    }
     if (!shouldPurgeArtifacts(job, nowMs, retentionDays)) continue;
     try {
       await purgeJobArtifacts(mediaStore.jobDir(job.id), tmpDir(), job.id);

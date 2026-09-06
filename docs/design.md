@@ -186,6 +186,12 @@ flowchart TB
 
 `POST /api/jobs` 的 `model` 字段(`createJobBodySchema`,可选,≤64 字符)传的是产品 id。指定时 `productForProvider`/`defaultProductFor` 解出 provider 与上游模型名,并按该产品的能力做 400 校验(mode 不支持 / 画幅不在列 / 分辨率向上归一后仍不支持 / 时长超上限 / 首尾帧不支持 / 参考图超 `maxReferenceImages`);未指定时沿用 §2b/§2c/§2e 的 ORDER + 能力路由,选中 provider 后反查第一个匹配该 mode 的产品打标签。`JobRecord`/`JobPublic` 新增 `product`(id)/`productName`,前端与详情卡只显示 `productName`。
 
+## 2g. 分享(2026-09-06 深夜,as-built)
+
+方案 `docs/plan-architecture-2026-09.md` §4 阶段二。`POST /api/jobs/:id/share` 为一条自己的任务签发分享令牌,`src/lib/share/token.ts` 用 HMAC 派生出**独立于会话 Cookie**的签名密钥——分享令牌与登录会话是两套互不信任的域,任何时候都不应该复用同一把密钥或校验函数。令牌有效期 `SHARE_TTL_HOURS`(默认 24 小时,`shareTtlHours()` 下限 1、上限 24×365),到期即失效;**没有主动吊销机制**,也没有「签发过哪些令牌」的账本,收回的唯一手段是等到期。
+
+公开页面 `src/app/s/[token]` 与接口 `GET /api/share/:token`(+`/media`)**不校验会话**,任何持有链接的人都能看;`/media` 响应 `Cache-Control: public, max-age=3600`(与 §9 讲的「谁能读会变」的私有媒体路由刻意不同——分享链接本身就是公开凭证,长缓存不构成越权)。
+
 ## 2d. 余额与计费(2026-09-06 阶段一,as-built)
 
 方案 `docs/plan-architecture-2026-09.md` §3.2、§5(用户 2026-09-06 决策)。定价 × 余额取代日配额成为主闸门:每种任务对用户的**售价**是服务端定值(人民币,与 provider 无关),用户有余额,准入判「余额 − 在途预留 ≥ 本次售价」。`FREE_DAILY_IMAGE_QUOTA`/`FREE_DAILY_FAILURE_LIMIT`(§12.3)降级为防滥用兜底,默认值从 10 抬到 200。
@@ -220,8 +226,9 @@ flowchart TB
 - retry:仅 `failed|expired`,**新建 job** 复制 inputs 与参数,原 job 不变;单片任务若源 job 带 `error.code==="uncertain_submit"` 同样被 `retry-guard` 409 拦截(见下)。
 - boot recover(`instrumentation.register` → `startJobRunner`,幂等,**2026-09-06 阶段一改写单片分支**):`submitting` 且**无** remoteId 不再无条件回 queued——先调 provider 可选的 `lookupByExternalId(jobId)`(可灵已实现,按 `external_task_id` 查)问上游是否已经接过这个请求;查到就把返回的 remoteId 写回 job.json 转 `pending` 续跑,查不到(或 provider 未实现该方法、或查询本身失败)就转 `failed` + `error.code="uncertain_submit"`,由 `retry-guard` 的 `retryBlock()` 拦一键重试(与 harness 分镜级的同名标记共用一套拒绝逻辑与文案模板,§7.2)。`submitting` 有 remoteId → 改 pending 续跑;`pending/persisting` 续跑;超 15min 的 **submitting/pending/persisting/harness 各阶段** 标 expired(这条晚于「uncertain」判定执行,陈旧与「上游是否已接单」是两个互不隶属的问题);`queued` 一律重新入队,不因排队久而失败。harness 阶段的任务由 pump 重新交给 `orchestrator.execute`,它按 job.json 里的 plan / shot 记录续跑(shot 级 recover 见 §7.2)。
 - **上游退避(2026-09-06 阶段一,`runner.ts`)**:`submit` 阶段收到 `rate_limited`/`quota_exhausted`(尚未计费的拒绝)时不直接判失败,而是把任务从 `submitting` 打回 `queued` 并记 `upstreamRetries`/`nextAttemptAt`(15s→30s→60s 指数退避,`pump()` 跳过未到 `nextAttemptAt` 的 `queued` 任务,并用一个到期即唤醒的定时器避免轮询空转),满 3 次仍失败才终态失败(`quota_exhausted` 显示「平台余额不足,请联系管理员」,`rate_limited` 显示「上游繁忙,已重试 3 次仍失败」,上游原文进 `error.detail` 落盘但不下发给浏览器)。这两个码同时被 `quota.ts` 的止损阀排除(连同 `uncertain_submit`),因为它们不是用户的错。
-- 并发 `JOB_CONCURRENCY=2`;活跃(queued+submitting+pending+persisting)≥ `MAX_QUEUED_JOBS=20` 时 `POST /api/jobs` 429。
+- 并发 `JOB_CONCURRENCY=2`;活跃(queued+submitting+pending+persisting)≥ `MAX_QUEUED_JOBS=20` 时 `POST /api/jobs` 429;单账号在途任务数 ≥ `MAX_QUEUED_JOBS_PER_USER`(默认 5)时同样 429(2026-09-06 深夜,防止一个账号占满全站队列)。
 - `sweepTmp`:boot + 每小时(timer `.unref()`),删 24h 前的 tmp 字节与 sidecar。
+- **索引与轮询(2026-09-06 深夜,as-built)**:`data/jobs/index.json` 是从各 `job.json` 派生的缓存,写完某条任务后增量维护、启动时重建、读取前自愈——配额、余额预留、留存清理、首页列表、`GET /api/jobs` 分页、`activeCount` 全部改读这份索引,不再对 `jobs/` 目录做全表扫描;`pump()` 额外维护一份内存待办集合。上游轮询从固定间隔改成阶梯 2s→5s→10s(上限 `UPSTREAM_POLL_MAX_MS`,默认 10000),进度不变时不写盘;单 job 超时改按 provider 各自的 `capabilities().taskTimeoutMs`(新增 `YMAN_TASK_TIMEOUT_MS`)判定,崩溃恢复的陈旧阈值 = provider 超时 + 5 分钟;冷启动 `maintenance()` 延后 30 秒执行;客户端 SSE 连接健康时轮询回退到 10 秒一次。实测 `/api/me` 230ms→20ms、首页 SSR 650ms→150ms。
 
 ## 4. HTTP API(as-built)
 
@@ -231,9 +238,16 @@ flowchart TB
 | --- | --- |
 | `POST /api/uploads` | multipart 流式(@fastify/busboy);`role ∈ start|last|reference|source_video`;图 ≤**6MB**(2026-09-06 阶段一从 12MB 下调,sharp 后覆盖写)、视频 mp4 ≤**24MB**(从 48MB 下调,ffmpeg 探针,产线 2 核/1.8G/`MemoryMax=700M` 下的内存预算,见 §3.3 与 `docs/plan-architecture-2026-09.md` P1);写 `data/tmp/{up_16hex}` + sidecar json;**不**做模式相关校验、不调 Files |
 | `POST /api/jobs` | 幂等 key 24h 重放;队列满 429;按 mode 校验(含 edit ≤8.7s / extend 2–15s);可选 `model`(产品 id,§2f)按产品能力再校验一遍;余额不足 **402 `insufficient_balance`**(§2d);tmp 字节 move 进 `inputs/`;uploadId 必须匹配 `^up_[0-9a-f]{16}$` |
-| `GET /api/jobs` / `GET /api/jobs/:id` | 列表(createdAt 降序)/ 单个 |
+| `GET /api/jobs` | `?before&limit&kind` 游标分页,信封 `{jobs, nextBefore?}`;走 §5 任务索引,同一毫秒的任务不切开;`kind` 可按 mode 分类 |
+| `GET /api/jobs/:id` | 单个 |
+| `PATCH /api/jobs/:id`(2026-09-06 深夜) | 改 `tags`(≤5 个、每个 ≤16 码点),非本人 404 |
+| `DELETE /api/jobs/:id`(2026-09-06 深夜) | 终态 204;进行中 409 `job_active`;删任务目录,**不退款** |
+| `POST /api/jobs/:id/share`(2026-09-06 深夜) | 签发分享令牌 → `/s/<token>`;HMAC 派生密钥独立于会话 Cookie,`SHARE_TTL_HOURS`(默认 24 小时)到期失效,无吊销机制,见 §2g |
 | `POST /api/jobs/:id/cancel|retry` | 见 §3;retry 同样受 402 余额判定 |
 | `GET /api/jobs/:id/events` | SSE,`maxDuration=900`;15s `: ping` 心跳 + abort 时解除订阅 |
+| `GET /api/events`(2026-09-06 深夜) | 全局事件流,驱动前端通知 toast / 铃铛,只在当次连接内有效,不落盘持久化 |
+| `GET /api/templates`(2026-09-06 深夜) | 读 `data/templates/*.json`(`data-seed/templates` 提供六条示例种子);首页模板回填用 |
+| `GET /api/share/:token` / `GET /api/share/:token/media`(2026-09-06 深夜) | 公开接口,不校验会话;`media` 响应 `public, max-age=3600`;见 §2g |
 | `GET /api/models`(2026-09-06 夜,阶段 A) | 需登录;返回 `availableProducts()` 的白名单字段 + `samplePriceCny`(§2f),不含 `provider`/上游模型名 |
 | `POST /api/uploads/from-job`(阶段 A) | `{ jobId, role }`;把调用者自己一条 `succeeded` 且未清理的图片任务产物复制成一次新上传(走与手动上传相同的 `preprocessImage`),`role ∈ start|last|reference`;别人的/不存在的/非图片/已清理的任务分别 404/400 |
 | `GET /api/me/ledger`(阶段 A) | `?before=&limit=&kind=`;读 `data/ledger/<userId>.jsonl` 倒序游标分页,`limit≤200`,坏行跳过 |
@@ -242,7 +256,8 @@ flowchart TB
 | `GET /api/health` | ffmpeg 二进制/字体/dataDir 可写/upstream kind/队列深度;新增 `audioAvailable`(当前视频 provider 会不会真的出音轨,§2d);缺 ffmpeg → `ok:false`(匿名可访问) |
 | `POST /api/auth/register` | 邮箱 + 密码(≥8 位) + 一次性邀请码;成功即写会话 Cookie 并返回 `MePublic` |
 | `POST /api/auth/login` | 邮箱 + 密码;IP+邮箱滑动窗口限流(10 次/分钟) |
-| `POST /api/auth/logout` | 清除会话 Cookie |
+| `POST /api/auth/logout` | 清除会话 Cookie,并递增 `sessionEpoch`(2026-09-06 深夜起,与改密同一套失效机制) |
+| `POST /api/auth/password`(2026-09-06 深夜) | 需校验旧密码;成功后 `sessionEpoch+1`,本机当次会话不掉线,其余会话失效 |
 | `GET /api/me` | 当前用户 email + `balance:{balanceCny,reservedCny,availableCny}` + `prices`(售价表)+ `quota:{limit,used,inFlight,remaining,resetsAt,blocked}`(§2d、§12.3) |
 
 `src/proxy.ts` 对全部 `/api/*`(除 register/login/logout/health)校验 HMAC 签名会话 Cookie,零 I/O 验签,校验通过后网关层再读一次 `user.json` 确认 `disabled` 不为真;未登录访问非 `/api/*` 页面由页面本身(`/`)服务端 307 到 `/login`。旧的 `LUMEN_ACCESS_TOKEN` / `POST/DELETE /api/auth/session` 已删除,详见 §12。
@@ -251,6 +266,9 @@ flowchart TB
 
 ```
 data/
+  jobs/index.json                       # 2026-09-06 深夜:任务索引,从各 job.json 派生的可重建缓存(非事实源);
+                                         # 配额/余额预留/留存清理/首页/分页/activeCount 均改读此文件,写完
+                                         # job.json 后增量维护,启动时重建,读取前自愈
   jobs/{jobId}/
     job.json            # JobRecord(JobPublic + schemaVersion/remoteId/assets/...)
     inputs/  start.jpg last.jpg source.mp4 ref-0..6.jpg
@@ -266,6 +284,8 @@ data/
   invites/<code>.json                   # 一次性邀请码:{ code, createdAt, note?, usedBy?, usedAt? }
   gift-codes/<code>.json                # 2026-09-06 夜(阶段 A):礼品码,{ code, amountCny, createdAt, note?, usedBy?, usedAt?, creditedAt? }
   ledger/<userId>.jsonl                 # 2026-09-06:余额流水,只增;{at,kind,amountCny,balanceAfterCny,jobId?,note?}
+  templates/*.json                      # 2026-09-06 深夜:创作模板,首次部署需 cp -r data-seed/templates data/templates
+                                         # (data-seed/templates 提供六条示例种子,不随代码自动生成)
 ```
 
 `MediaStore` 接口(`storage/types.ts`)由 `LocalFsMediaStore` 实现,id 白名单 `[A-Za-z0-9_-]+`、rel 路径解析后必须落在 jobDir 内;后期 `S3MediaStore` 同接口替换。
@@ -342,6 +362,11 @@ data/
 | 撞库/枚举 | 登录注册按 IP+邮箱滑动窗口限流;邀请码用尽/不存在统一 400 `invite_invalid`,不区分原因 |
 | 审核 | `respect_moderation === false` 视为失败,不进画廊 |
 | AGPL | 禁止拷贝 ArcReel / OpenMontage 源码,只学概念 |
+| 提交/上传刷量(2026-09-06 深夜) | `POST /api/jobs` 10 次/分钟、`POST /api/uploads` 5 次/分钟;`MAX_QUEUED_JOBS_PER_USER`(默认 5)挡单账号占满全站队列(§3) |
+| CSRF/跨站提交(2026-09-06 深夜) | `src/proxy.ts` 对全部非 GET 请求校验 `Origin`/`Referer`;**两者都缺失时放行**——设计取舍,记为已知行为而非遗漏,收紧前先确认是否会挡到合法的非浏览器客户端 |
+| 健康检查信息泄漏(2026-09-06 深夜) | `GET /api/health` 匿名只回 `{ok}`;带会话时才下发 `disk/queue/runner` 等详细信息;磁盘剩余 <5% 判不健康并触发 `ALERT_WEBHOOK_URL` 告警 |
+| 分享令牌信任域(2026-09-06 深夜) | 分享令牌用独立于会话的 HMAC 密钥派生(§2g),即使会话密钥 `LUMEN_SESSION_SECRET` 单独轮换,分享链接不受影响,反之亦然 |
+| 排障与追溯(2026-09-06 深夜) | 每请求生成 `x-request-id`,经 `AsyncLocalStorage` 贯穿日志(`reqId`/`jobId`/`ownerId`),用于跨用户投诉时定位单条请求的完整处理链路 |
 
 ## 10. 部署与运维(Windows 注意项)
 
@@ -428,3 +453,8 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 ### 12.5 登录 / 注册
 
 新路由 `/login`(`src/app/login/`、`src/components/lumen/LoginScreen.tsx`):登录/注册两个 tab,注册多一栏邀请码,视觉复用既有玻璃语言与 `mountDawn` 背景,不引组件库。未登录访问 `/` 由页面服务端 307 到 `/login`;登录成功后整页跳转 `/`(而非客户端路由),保证 SSR 首屏带上新会话。顶栏原「登录」按钮改为账号名 + 「退出」(窄屏 ≤520px 隐藏账号名节省空间)。旧 `AccessTokenPrompt` 弹窗与 `POST/DELETE /api/auth/session` 端点已删除;`src/lib/client/http.ts` 收到 401 时整页跳转登录页而非弹窗。
+
+### 12.6 账号自助与运维 CLI(2026-09-06 深夜,as-built)
+
+- `POST /api/auth/password` 是用户自助改密(此前只能靠管理员用 CLI 重置):要求带旧密码,校验通过后写新哈希并把 `sessionEpoch+1`——发起改密的这台设备当次会话不掉线(靠请求里已验证的会话直接续用),其余设备的旧会话因 `sessionEpoch` 不匹配而失效。退出登录同样递增 `sessionEpoch`。
+- 新增三个管理 CLI(与 `scripts/grant-balance.mjs`/`scripts/mint-invites.mjs` 同一套风格,均走 `scripts/lib/users-store.mjs`):`scripts/reset-password.mjs`(管理员强制重置某账号密码)、`scripts/disable-user.mjs`(封禁/解封账号,写 `disabled`)、`scripts/usage.mjs`(按天/用户/provider 维度统计用量并与流水对账)。`scripts/lib/users-store.mjs` 的 scrypt 参数与哈希逻辑必须与服务端 `src/lib/users/service.ts` 逐字一致,脚本自带自检,改一边要同步改另一边(与既有的 `grant-balance.mjs` 那条约束同源)。

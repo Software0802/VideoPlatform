@@ -1,0 +1,9 @@
+{
+  "id": "ad-product-spin",
+  "name": "产品悬浮环绕",
+  "category": "广告",
+  "prompt": "一件产品悬浮在纯色背景中央，镜头绕它匀速环绕一圈，柔和的顶光沿边缘扫过，背景有极淡的光晕呼吸。画面干净、克制，无文字。",
+  "mode": "text_to_video",
+  "durationSec": 5,
+  "aspectRatio": "1:1"
+}

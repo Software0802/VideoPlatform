@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { computeQuotaUsage, dayWindow, publicQuota, quotaBlock, type QuotaJob } from "./quota";
+import type { JobRecord } from "./schema";
 
 /**
  * Pure side of the daily quota (plan §6.1 / §6.3). Everything here injects
@@ -320,5 +324,135 @@ describe("blameless failure codes stay out of the stop-loss count", () => {
     // occupies its reservation until it settles, and a succeeded one still counts as used.
     const jobs = [job({ status: "pending", error: null }), job({ status: "succeeded" })];
     expect(usage(jobs, LAST_MS)).toMatchObject({ used: 1, inFlight: 1, failures: 0 });
+  });
+});
+
+/**
+ * 方案 §3.3（P2）要求 `activeCount` / 配额 / 余额预留改读 `data/jobs/index.json` 且
+ * "结果与全量扫一致"。`loadQuotaUsage` 现在仍是 `listJobRecordsForUser` 全量扫描
+ * （尚未切到索引），这份测试因此暂时是在拿它跟自己比——但它的价值是**面向未来**的：
+ * 独立于 `store.ts` / `index.ts` 之外，直接读盘构造一份不经过它俩任何一个的「事实源」，
+ * 一旦 `loadQuotaUsage` 换成读索引，这份测试如果还绿，才真正证明了索引口径没有偏离
+ * 全量扫描；如果那时候变红，说明索引没有正确同步（比如某个状态变更没有触发
+ * `upsertJobIndex`）。断言用 `computeQuotaUsage`（已被上面一整个文件的用例钉死）
+ * 而不是重新发明一套判定逻辑。
+ */
+describe("loadQuotaUsage vs. an independent full scan of data/jobs (forward-looking index-consistency guard)", () => {
+  let dataRoot = "";
+  let writeJob: typeof import("./store").writeJob;
+  let updateJob: typeof import("./store").updateJob;
+  let loadQuotaUsage: typeof import("./quota").loadQuotaUsage;
+
+  const OWNER = "usr_00000000000000q1";
+
+  beforeAll(async () => {
+    dataRoot = await mkdtemp(path.join(os.tmpdir(), "lumen-quota-scan-test-"));
+    process.env.DATA_DIR = dataRoot;
+    process.env.FREE_DAILY_IMAGE_QUOTA = "50";
+    process.env.FREE_DAILY_FAILURE_LIMIT = "50";
+    ({ writeJob, updateJob } = await import("./store"));
+    ({ loadQuotaUsage } = await import("./quota"));
+  });
+
+  afterAll(async () => {
+    delete process.env.DATA_DIR;
+    delete process.env.FREE_DAILY_IMAGE_QUOTA;
+    delete process.env.FREE_DAILY_FAILURE_LIMIT;
+    await rm(dataRoot, { recursive: true, force: true });
+  });
+
+  let seq = 0;
+  function imageJob(over: Partial<JobRecord> = {}): JobRecord {
+    seq += 1;
+    const now = new Date().toISOString();
+    return {
+      schemaVersion: 1,
+      id: `job_quota_scan_${seq}`,
+      ownerId: OWNER,
+      status: "succeeded",
+      progress: 100,
+      mode: "text_to_image",
+      model: "grok-imagine-image-2.0",
+      provider: "mock",
+      prompt: "配额扫描一致性",
+      durationSec: 0,
+      aspectRatio: "16:9",
+      resolution: null,
+      imageResolution: "1k",
+      generateAudio: false,
+      lastFrameStored: false,
+      lastFrameLocksOutput: false,
+      harness: { enabled: false },
+      priceCny: 0.5,
+      costUsdEstimate: 0.02,
+      costUsdActual: 0.02,
+      error: null,
+      output: { kind: "image", imageUrl: `/api/media/job_quota_scan_${seq}/image.jpg` },
+      createdAt: now,
+      updatedAt: now,
+      bible: null,
+      shots: null,
+      assets: {},
+      ...over,
+    };
+  }
+
+  /** Ground truth independent of both store.ts and jobs/index.ts: read job.json bytes
+   * straight off disk and feed them through the already-verified pure computeQuotaUsage. */
+  async function independentUsage(ownerId: string, nowMs: number) {
+    const jobsDir = path.join(dataRoot, "jobs");
+    let names: string[];
+    try {
+      names = await readdir(jobsDir);
+    } catch {
+      names = [];
+    }
+    const jobs: QuotaJob[] = [];
+    for (const name of names) {
+      if (name === "index.json") continue;
+      try {
+        const raw = JSON.parse(await readFile(path.join(jobsDir, name, "job.json"), "utf8")) as JobRecord;
+        jobs.push(raw);
+      } catch {
+        // not a job directory
+      }
+    }
+    return computeQuotaUsage(jobs, ownerId, nowMs, { limit: 50, failureLimit: 50 });
+  }
+
+  it("matches an independent scan after a mix of succeeded, pending and failed jobs", async () => {
+    await writeJob(imageJob({ status: "succeeded" }));
+    await writeJob(imageJob({ status: "pending", output: null }));
+    await writeJob(imageJob({ status: "failed", output: null, error: { code: "internal", message: "x" } }));
+    // A different owner's job must not leak into OWNER's numbers on either side.
+    await writeJob(imageJob({ ownerId: "usr_00000000000000q2" }));
+
+    const now = Date.now();
+    const [live, independent] = await Promise.all([loadQuotaUsage(OWNER, now), independentUsage(OWNER, now)]);
+    expect(live).toMatchObject({
+      used: independent.used,
+      inFlight: independent.inFlight,
+      failures: independent.failures,
+    });
+  });
+
+  it("keeps matching after a status change made in place via updateJob (no new job directory)", async () => {
+    const job = await writeJob(imageJob({ status: "pending", output: null }));
+    const now1 = Date.now();
+    const before = await independentUsage(OWNER, now1);
+    expect((await loadQuotaUsage(OWNER, now1)).inFlight).toBe(before.inFlight);
+
+    await updateJob(job.id, (r) => {
+      r.status = "succeeded";
+      r.output = { kind: "image", imageUrl: `/api/media/${job.id}/image.jpg` };
+      return r;
+    });
+
+    const now2 = Date.now();
+    const [live, independent] = await Promise.all([loadQuotaUsage(OWNER, now2), independentUsage(OWNER, now2)]);
+    expect(live).toMatchObject({ used: independent.used, inFlight: independent.inFlight });
+    // The transitioned job must have actually left inFlight and joined used, not just
+    // vanished from both — this is the exact edge a stale, un-synced index would get wrong.
+    expect(independent.inFlight).toBe(before.inFlight - 1);
   });
 });

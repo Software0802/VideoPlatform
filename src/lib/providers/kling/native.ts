@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { klingTaskTimeoutMs } from "@/lib/env";
 import { klingGet, klingPost } from "@/lib/providers/kling/client";
 import { KLING_RESOLUTIONS, mapKlingTask, mapToKlingRequest } from "@/lib/providers/kling/rest-map";
 import type {
@@ -30,6 +31,9 @@ export const klingProvider: VideoProvider = {
       resolutions: [...KLING_RESOLUTIONS],
       // 可灵 2.6 的 t2v / i2v 不收参考图组。
       maxReferenceImages: 0,
+      // 本地等待上限（方案 §2 G6）。`KLING_TASK_TIMEOUT_MS` 从此有了唯一的读取方——
+      // 在此之前 runner 用的是自己那个写死的 15 分钟，这个开关配了也不生效。
+      taskTimeoutMs: klingTaskTimeoutMs(),
     };
   },
   async submit(req: ProviderGenerateRequest): Promise<ProviderHandle> {

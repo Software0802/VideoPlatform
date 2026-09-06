@@ -1,5 +1,4 @@
-import { isTerminalStatus } from "@/lib/jobs/schema";
-import { listJobRecordsForUser } from "@/lib/jobs/store";
+import { listJobIndex } from "@/lib/jobs/index";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { readUser } from "@/lib/users/store";
 
@@ -24,16 +23,24 @@ export type BalanceUsage = {
   availableCny: number;
 };
 
-/** 现算一个用户的余额与在途预留。 */
+/**
+ * 现算一个用户的余额与在途预留。
+ *
+ * 在途预留走 `data/jobs/index.json`（方案 §3.3）：这一步在 `withAdmissionLock` 的临界区
+ * 里，每一次提交都要跑，之前它要把全站每一份 job.json 都读一遍——历史任务越多，下单越
+ * 慢。索引里 `ownerId` / `status` / `priceCny` 三个字段就够算预留，**判定口径一个字没变**。
+ *
+ * 管理员能看到无主的历史任务（`canAccessJob`），但那些任务不属于任何人的余额，所以这里
+ * 按 `ownerId` 精确筛，不用可见性口径——与 `quota.ts` 的 in-flight 完全一致。
+ */
 export async function loadBalanceUsage(userId: string): Promise<BalanceUsage> {
-  const [user, jobs] = await Promise.all([readUser(userId), listJobRecordsForUser(userId)]);
+  const [user, entries] = await Promise.all([
+    readUser(userId),
+    listJobIndex({ ownerId: userId, nonTerminal: true }),
+  ]);
   const balanceCny = user?.balanceCny ?? 0;
   let reservedCny = 0;
-  for (const job of jobs) {
-    // 管理员能看到无主的历史任务（`canAccessJob`），但那些任务不属于任何人的余额，
-    // 口径与 `quota.ts` 的 in-flight 完全一致：只数 ownerId 相等的非终态任务。
-    if (job.ownerId !== userId) continue;
-    if (isTerminalStatus(job.status)) continue;
+  for (const job of entries) {
     const price = typeof job.priceCny === "number" && Number.isFinite(job.priceCny) ? job.priceCny : 0;
     reservedCny += price;
   }

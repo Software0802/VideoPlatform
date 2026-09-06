@@ -109,6 +109,17 @@ export interface VideoProvider {
      * 只喂首页的时长芯片，不参与路由：秒数还允许向上归一（4→5），画幅不允许。
      */
     durations?: number[];
+    /**
+     * 一条任务从提交到出片，本地最多等多久（毫秒）。**省略 = 15 分钟**
+     * （`runner.DEFAULT_TASK_TIMEOUT_MS`，grok / mock 走这条）。
+     *
+     * 它同时是 `pollUntilDone` 的总上限和 `recover` 陈旧判定的基数（再加 5 分钟余量）。
+     * 之所以按 provider 声明而不是全局一个字面量：本地放弃等待并不会让上游停下来，
+     * 一家慢上游被判「过期」时，片子照出、钱照扣，用户只看到「失败」——那是最贵的一种
+     * 误报，所以慢的那家必须能把这个数抬上去（可灵读 `KLING_TASK_TIMEOUT_MS`，
+     * YMan 读 `YMAN_TASK_TIMEOUT_MS`）。
+     */
+    taskTimeoutMs?: number;
   };
   /**
    * 这家上游**自己**的请求约束（可选）。

@@ -10,10 +10,14 @@ import {
   videoDurationsFor,
   videoResolutions,
 } from "@/lib/providers/router";
-import { listJobRecordsForUser, toPublic } from "@/lib/jobs/store";
+import { listJobIndex } from "@/lib/jobs/index";
+import { readJobsByIds, toPublic } from "@/lib/jobs/store";
 import { SESSION_COOKIE, sessionUserFromValue } from "@/lib/users/session";
 
 export const dynamic = "force-dynamic";
+
+/** 首屏下发多少条作品；之后由主页的「加载更多」按 `GET /api/jobs?before=` 续。 */
+const INITIAL_JOBS = 40;
 
 /**
  * 五个视图共用的壳（方案 `docs/plan-ui-genius-app.md` §2）。承接旧 `src/app/page.tsx`
@@ -29,7 +33,10 @@ export default async function ShellLayout({ children }: { children: React.ReactN
   const store = await cookies();
   const user = await sessionUserFromValue(store.get(SESSION_COOKIE)?.value);
   if (!user) redirect("/login");
-  const recs = await listJobRecordsForUser(user.id);
+  // 先用索引拿这一页的 id（方案 §3.3），再只读这 40 份 job.json——从前这里要把用户的
+  // 全部历史任务读一遍才能切出前 40 条，历史越长首屏越慢。多取一条只为回答「还有没有更老的」。
+  const page = await listJobIndex({ forUser: user.id, limit: INITIAL_JOBS + 1 });
+  const recs = await readJobsByIds(page.slice(0, INITIAL_JOBS).map((entry) => entry.id));
   // `uiProviderId` 而不是 `currentProviderId`：全家被判定积分耗尽时后者会 503（提交必须
   // 被拒），但壳不能因此整页 500——用户还得能看见自己的作品。
   const videoProvider = uiProviderId("text_to_video");
@@ -54,7 +61,9 @@ export default async function ShellLayout({ children }: { children: React.ReactN
         imageModel: imageModelName(imageProvider),
         // 出不出声由 provider 能力说了算；不支持时开关标「暂不可用」而不是藏起来。
         audioAvailable: audioAvailableFor(videoProvider),
-        initialJobs: recs.slice(0, 40).map(toPublic),
+        initialJobs: recs.map(toPublic),
+        // 盘上还有更老的：主页据此决定露不露「加载更多」，不必先发一次注定空的请求
+        moreJobs: page.length > INITIAL_JOBS,
         initialEmail: user.email,
       }}
     >

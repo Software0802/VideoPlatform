@@ -213,6 +213,39 @@ export async function register(input: RegisterInput): Promise<MePublic> {
   return parseJson<MePublic>(res, "注册失败");
 }
 
+/**
+ * `POST /api/auth/password { currentPassword, newPassword }`（阶段 B 契约）。
+ *
+ * 401 在这里同样是「旧密码不对」而不是「会话过期」，所以走 `parseJson` 而不是
+ * `parseAuthed`——被 `redirectToLogin` 弹走的话，用户连错在哪都看不到。
+ */
+export async function changePassword(input: { currentPassword: string; newPassword: string }): Promise<void> {
+  const res = await fetch("/api/auth/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  await parseJson<{ ok?: boolean }>(res, "修改密码失败");
+}
+
+const PASSWORD_MESSAGES: Record<string, string> = {
+  invalid_credentials: "当前密码不正确",
+  weak_password: "新密码太简单，请换一个",
+  rate_limited: "操作太频繁，稍后再试",
+};
+
+/** 与 `authErrorMessage` 同一个口径：认得的码钉成固定中文，认不出的回落服务端那句话。 */
+export function passwordErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return error instanceof Error && error.message ? error.message : "网络异常，请稍后再试";
+  }
+  const byCode = error.code ? PASSWORD_MESSAGES[error.code] : undefined;
+  if (byCode) return byCode;
+  if (error.status === 401 || error.status === 403) return "当前密码不正确";
+  if (error.status === 429) return "操作太频繁，稍后再试";
+  return error.message || "修改密码失败，请稍后再试";
+}
+
 /** Idempotent server-side: it only clears the cookie. */
 export async function logout(): Promise<void> {
   const res = await fetch("/api/auth/logout", { method: "POST" });

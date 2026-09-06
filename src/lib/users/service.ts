@@ -104,13 +104,79 @@ function invalidCredentials(): ProviderHttpError {
 /**
  * Password change bumps `sessionEpoch`, which is part of the signed session
  * payload — every cookie issued before the change stops verifying (plan §3).
- * No endpoint exposes this yet; the mechanism belongs with the session design.
+ * `POST /api/auth/password` 走的是下面那层带旧密码校验的壳，这一层不校验任何东西，
+ * 只给管理员 CLI（`scripts/reset-password.mjs` 的服务端等价物）与它复用。
  */
 export async function changeUserPassword(userId: string, newPassword: string): Promise<UserRecord> {
+  // Hash outside the lock: scrypt takes ~100 ms and the lock is process-wide.
   const passwordHash = await hashPassword(newPassword);
   return withUserLock(async () => {
     const user = await readUser(userId);
     if (!user) throw new ProviderHttpError(404, "not_found", "用户不存在");
-    return writeUser({ ...user, passwordHash, sessionEpoch: user.sessionEpoch + 1 });
+    return rotate(user, passwordHash);
+  });
+}
+
+/**
+ * 换密码 + 踢掉所有旧会话，共用的那一次写。**必须在 `withUserLock` 里调用**：`sessionEpoch`
+ * 是读改写，两个并发的改密各读到 1、各写 2，本该失效两次的旧 Cookie 只失效了一次。
+ */
+function rotate(user: UserRecord, passwordHash: string): Promise<UserRecord> {
+  return writeUser({ ...user, passwordHash, sessionEpoch: user.sessionEpoch + 1 });
+}
+
+/**
+ * 自助改密（方案 §3.4）：先验旧密码，再换新的。
+ *
+ * 旧密码是这条路径上唯一的凭据——会话 Cookie 可能是从一台没锁屏的电脑上顺来的，
+ * 而改密会把其它设备全部踢掉，正是攻击者最想按的那个按钮。
+ *
+ * 计时与 `loginUser` 同款：用户不存在时照样烧掉一次 scrypt。这里其实已经有会话、
+ * 账号存在与否不是秘密，但让两条验密路径在时序上一致，比论证「这一条为什么可以不
+ * 一致」便宜，也免得日后被复制到别处。
+ *
+ * 返回改写后的记录（`sessionEpoch` 已 +1），路由据它签一张新 Cookie——本次会话不掉线，
+ * 其它设备立刻掉线。
+ *
+ * 「读 → 验旧密码 → 写新密码」是一个临界区，不能拆成「锁外验、锁内写」：那样两条并发的
+ * 改密会各自拿旧密码验过、再各自写一次，后到的那条把先到的新密码盖掉——攻击者手里的旧
+ * 密码因此还能再改一次，而用户以为自己刚刚已经把号夺回来了。所以验密（包括不存在账号时
+ * 那次防枚举的空烧）整段进锁，代价是改密期间 `withUserLock` 被一次 scrypt 占住 ~100 ms。
+ * `withUserLock` 是进程级串行队列、不可重入，所以这里不能再调 `changeUserPassword`
+ * （它自带一把锁，嵌套即死锁），共用的是锁内的 `rotate`。
+ */
+export async function changeUserPasswordWithCurrent(input: {
+  userId: string;
+  currentPassword: string;
+  newPassword: string;
+}): Promise<UserRecord> {
+  const passwordHash = await hashPassword(input.newPassword);
+  return withUserLock(async () => {
+    const user = await readUser(input.userId);
+    if (!user) {
+      await burnPasswordTiming(input.currentPassword);
+      throw invalidCredentials();
+    }
+    if (!(await verifyPassword(input.currentPassword, user.passwordHash))) {
+      throw invalidCredentials();
+    }
+    return rotate(user, passwordHash);
+  });
+}
+
+/**
+ * 撤销这个账号的**所有**会话：`sessionEpoch` 加一，之前签发的每一张 Cookie 立刻失效
+ * （`sessionUser` 每次请求都拿它与 `user.json` 对一次）。
+ *
+ * 登出走它（方案 §3.2「安全收口」）：只清浏览器里的 Cookie 挡不住已经泄漏出去的那一份，
+ * 而「我在网吧登出了」这句话的意思正是「那张 Cookie 从此不许再用」。
+ *
+ * 用户不存在时返回 null 而不是抛：登出对没有会话的人也必须是成功的。
+ */
+export async function revokeUserSessions(userId: string): Promise<UserRecord | null> {
+  return withUserLock(async () => {
+    const user = await readUser(userId);
+    if (!user) return null;
+    return writeUser({ ...user, sessionEpoch: user.sessionEpoch + 1 });
   });
 }

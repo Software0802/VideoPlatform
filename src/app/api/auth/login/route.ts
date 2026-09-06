@@ -1,4 +1,5 @@
 import { jsonError } from "@/lib/http";
+import { withRequestContext } from "@/lib/request-context";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { authRateKeys, consumeRateLimit } from "@/lib/users/rate-limit";
 import { loginBodySchema, toPublicUser } from "@/lib/users/schema";
@@ -7,7 +8,7 @@ import { loginUser } from "@/lib/users/service";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
+async function handler(request: Request) {
   try {
     const body = loginBodySchema.parse(await request.json());
     const gate = consumeRateLimit(authRateKeys(request, "login", body.email));
@@ -26,3 +27,5 @@ export async function POST(request: Request) {
     return jsonError(e);
   }
 }
+
+export const POST = withRequestContext(handler);

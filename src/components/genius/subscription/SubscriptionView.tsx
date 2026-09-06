@@ -313,13 +313,18 @@ export default function SubscriptionView({ credits }: { credits: number }) {
                     </span>
                     {yearly ? <span className="sub-card__off">{p.off}</span> : null}
                   </div>
+                  {/*
+                    用户可见的价格一律人民币（AGENTS.md：售价是 CNY，¥1 = 100 积分）。
+                    原型这几个数字是 $ 占位，符号换成 ¥ 但数值原样留着——真实档位由用户定，
+                    在这里替他编一个人民币价才是更大的错。
+                  */}
                   <div className="sub-card__price-row">
-                    <span className="sub-card__price">${price}</span>
+                    <span className="sub-card__price">¥{price}</span>
                     <span className="sub-card__unit">/月</span>
-                    {yearly ? <span className="sub-card__was">${p.monthly}</span> : null}
+                    {yearly ? <span className="sub-card__was">¥{p.monthly}</span> : null}
                   </div>
                   <span className="sub-card__total">
-                    {yearly ? `年付费用为 $${price * 12}` : "按月支付，可随时取消"}
+                    {yearly ? `年付费用为 ¥${price * 12}` : "按月支付，可随时取消"}
                   </span>
                 </div>
                 <button

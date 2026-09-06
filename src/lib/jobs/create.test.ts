@@ -725,3 +725,138 @@ describe("createJob — reference image cap is per-provider (契约 A1)", () => 
     await drainToTerminal(job.id);
   });
 });
+
+/**
+ * 方案 §3.2「安全收口」：`MAX_QUEUED_JOBS_PER_USER`（默认 5）是继全站 `MAX_QUEUED_JOBS`
+ * 之后的第二道闸门，挡的是「一个人占满全部执行槽」而不是「实例被压垮」（`create.ts` 的
+ * `assertQueueRoom`：先判全站，再判按人）。用一条手写的 `pending` 记录站住这个用户的
+ * 唯一名额，而不是先真提交一条再等它跑——这样断言不用跟 mock 的完成速度赛跑。
+ */
+describe("createJob — per-user in-flight cap (MAX_QUEUED_JOBS_PER_USER, 契约 G7)", () => {
+  // USER_ID_RE requires usr_ + exactly 16 lowercase-hex chars; "g" (unlike the
+  // "d"/"e"/"f" prefixes the blocks above this one use) is not a hex digit, so the tag
+  // has to be hex-encoded rather than merely zero-padded.
+  function queueOwner(tag: string): string {
+    return `usr_${Buffer.from(tag, "utf8").toString("hex").padStart(16, "0").slice(-16)}`;
+  }
+
+  async function seedQueueBalance(id: string, balanceCny: number) {
+    const { writeUser } = await import("@/lib/users/store");
+    return writeUser({
+      id,
+      email: `${id}@example.com`,
+      passwordHash: "hash",
+      sessionEpoch: 1,
+      plan: "free",
+      balanceCny,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  /** A non-terminal job written straight to job.json, occupying this owner's one slot
+   * without racing the (mocked) runner to completion — mirrors seedPendingImage() above. */
+  async function seedQueuedSlot(id: string, ownerId: string) {
+    const { writeJob } = await import("./store");
+    const now = new Date().toISOString();
+    const rec: JobRecord = {
+      schemaVersion: 1,
+      id,
+      ownerId,
+      status: "pending",
+      progress: 0,
+      mode: "text_to_image",
+      model: "grok-imagine-image-2.0",
+      provider: "mock",
+      prompt: "占着这个用户唯一的执行槽",
+      durationSec: 0,
+      aspectRatio: "16:9",
+      resolution: null,
+      imageResolution: "1k",
+      generateAudio: false,
+      lastFrameStored: false,
+      lastFrameLocksOutput: false,
+      harness: { enabled: false },
+      priceCny: 0,
+      costUsdEstimate: 0.02,
+      costUsdActual: null,
+      error: null,
+      output: null,
+      createdAt: now,
+      updatedAt: now,
+      bible: null,
+      shots: null,
+      assets: {},
+    };
+    return writeJob(rec);
+  }
+
+  it("429s queue_full for a second submission once this user's own cap is reached, even though the global cap has room", async () => {
+    process.env.MAX_QUEUED_JOBS_PER_USER = "1";
+    try {
+      const id = queueOwner("g1");
+      await seedQueueBalance(id, 1000);
+      await seedQueuedSlot("job_queue_cap_g1", id);
+
+      await expect(
+        createJob({ mode: "text_to_image", prompt: "第二条" } as Parameters<typeof createJob>[0], id),
+      ).rejects.toMatchObject({ status: 429, code: "queue_full" });
+    } finally {
+      delete process.env.MAX_QUEUED_JOBS_PER_USER;
+    }
+  });
+
+  it("is scoped per user: a different user is unaffected by the first user's cap", async () => {
+    process.env.MAX_QUEUED_JOBS_PER_USER = "1";
+    try {
+      const busy = queueOwner("g2");
+      const free = queueOwner("g3");
+      await seedQueueBalance(busy, 1000);
+      await seedQueueBalance(free, 1000);
+      await seedQueuedSlot("job_queue_cap_g2", busy);
+
+      await expect(
+        createJob({ mode: "text_to_image", prompt: "占满" } as Parameters<typeof createJob>[0], busy),
+      ).rejects.toMatchObject({ status: 429, code: "queue_full" });
+
+      // A completely different, otherwise-idle user must still be admitted.
+      const { job } = await createJob(
+        { mode: "text_to_image", prompt: "没占用" } as Parameters<typeof createJob>[0],
+        free,
+      );
+      expect((await readJob(job.id))?.ownerId).toBe(free);
+      await drainToTerminal(job.id);
+    } finally {
+      delete process.env.MAX_QUEUED_JOBS_PER_USER;
+    }
+  });
+
+  it("frees the slot once the in-flight job reaches a terminal status", async () => {
+    process.env.MAX_QUEUED_JOBS_PER_USER = "1";
+    try {
+      const id = queueOwner("g4");
+      await seedQueueBalance(id, 1000);
+      const held = await seedQueuedSlot("job_queue_cap_g4", id);
+
+      await expect(
+        createJob({ mode: "text_to_image", prompt: "还占着" } as Parameters<typeof createJob>[0], id),
+      ).rejects.toMatchObject({ status: 429, code: "queue_full" });
+
+      const { updateJob } = await import("./store");
+      await updateJob(held.id, (r) => {
+        r.status = "canceled";
+        r.canceled = true;
+        return r;
+      });
+
+      const { job } = await createJob(
+        { mode: "text_to_image", prompt: "槽位放出来了" } as Parameters<typeof createJob>[0],
+        id,
+      );
+      expect(job.id).not.toBe(held.id);
+      await drainToTerminal(job.id);
+    } finally {
+      delete process.env.MAX_QUEUED_JOBS_PER_USER;
+    }
+  });
+});

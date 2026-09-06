@@ -135,6 +135,19 @@ export const loginBodySchema = z.strictObject({
 });
 export type LoginBody = z.infer<typeof loginBodySchema>;
 
+/**
+ * `POST /api/auth/password`（方案 §3.4「账号闭环」）。
+ *
+ * 旧密码只用 `z.string()` 兜住类型：它是拿去比对的，对它做长度 / 复杂度校验只会
+ * 在密码规则变更前后产生「明明是对的旧密码却被 400」的假失败。新密码走注册那条
+ * 同款规则——两处不一致就会出现「注册得进去、改完密码登不上」。
+ */
+export const changePasswordBodySchema = z.strictObject({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: passwordInputSchema,
+});
+export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
+
 /** `POST /api/me/redeem`. Same normalization as the invite code — see above. */
 export const redeemBodySchema = z.strictObject({ code: inviteInputSchema });
 export type RedeemBody = z.infer<typeof redeemBodySchema>;

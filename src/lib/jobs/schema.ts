@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { HarnessShotRecord } from "@/lib/harness/shot-state";
 import type { HarnessPlan } from "@/lib/harness/types";
+import { tagsSchema } from "@/lib/jobs/tags";
 import { ASPECT_RATIOS, RESOLUTIONS } from "@/lib/providers/grok/mode-matrix";
 
 export const nativeModeSchema = z.enum([
@@ -100,6 +101,12 @@ export const jobPublicSchema = z.object({
    * Nothing stops; the job just no longer counts as cost-compliant. The hard stop stays at ×2. */
   costOverTarget: z.boolean().optional(),
   imageResolution: imageResolutionSchema.nullable(),
+  /**
+   * 用户贴在这条作品上的分类标签（阶段 B）。创建时可带、之后可 `PATCH` 改，服务端不
+   * 解释它的含义。`.default([])`：标签之前的记录里没有这个字段，读出即空数组，界面
+   * 按「未分类」渲染。
+   */
+  tags: z.array(z.string()).default([]),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
   output: z
     .discriminatedUnion("kind", [
@@ -185,6 +192,8 @@ export const createJobBodySchema = z.object({
   referenceUploadIds: z.array(uploadIdSchema).max(9).optional(),
   voiceIds: z.array(z.string()).max(3).optional(),
   sourceVideoUploadId: uploadIdSchema.optional(),
+  /** 创建时就贴好的分类标签（可选）。校验与归一见 `@/lib/jobs/tags`。 */
+  tags: tagsSchema.optional(),
   idempotencyKey: z.string().optional(),
 }).strict();
 
@@ -247,8 +256,16 @@ export type JobAssetVideo = JobAssetImage & {
  * `retryBlocked` is derived from `harnessShots` at `toPublic` time, never stored, so it is
  * omitted here — otherwise every writer of a record would have to carry a computed field.
  */
-export type JobRecord = Omit<JobPublic, "retryBlocked" | "artifactsPurgedAt" | "error"> & {
+export type JobRecord = Omit<
+  JobPublic,
+  "retryBlocked" | "artifactsPurgedAt" | "error" | "tags"
+> & {
   schemaVersion: 1;
+  /**
+   * 作品标签。可选而不是 `string[]`：标签之前写下的每一条 `job.json` 里都没有它，
+   * `toPublic` 读作 `[]`（`tags ?? []`），公开形状上仍是必有的数组。
+   */
+  tags?: string[];
   /**
    * Widened from the public shape by `detail`. When an upstream refusal is shown to the
    * user through a Chinese fallback ("平台余额不足…"), the upstream's own wording still has

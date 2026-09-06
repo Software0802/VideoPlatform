@@ -8,6 +8,11 @@ export async function register() {
   // directories at boot so a crash between the two writes cannot hide an account.
   const { ensureUserIndex } = await import("./lib/users/store");
   await ensureUserIndex();
+  // `data/jobs/index.json` 同理（方案 §3.3）：派生索引，事实源是每个任务目录里的
+  // job.json。启动时按目录重建一次——之后每一次筛选（首页、配额、余额预留、队列读数、
+  // 留存清理）就都不必再全量读盘了。
+  const { ensureJobIndex } = await import("./lib/jobs/index");
+  await ensureJobIndex();
   await tuneSharp();
   const { startJobRunner } = await import("./lib/jobs/runner");
   await startJobRunner();

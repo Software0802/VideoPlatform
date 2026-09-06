@@ -22,6 +22,8 @@ export const DEFAULT_YMAN_IMAGE_MODEL = "gpt-image-2";
 const DEFAULT_YMAN_UNKNOWN_CREDITS = 150;
 const DEFAULT_USD_CNY_RATE = 7.2;
 const DEFAULT_PROVIDER_EXHAUSTED_TTL_MS = 6 * 60 * 60_000;
+/** 分享链接默认 24 小时到期（方案 §1.4）。 */
+const DEFAULT_SHARE_TTL_HOURS = 24;
 
 export function dataDir(): string {
   return path.resolve(/*turbopackIgnore: true*/ process.env.DATA_DIR ?? path.join(process.cwd(), "data"));
@@ -65,6 +67,18 @@ export function dataRetentionDays(): number {
   return intFromEnv(process.env.DATA_RETENTION_DAYS, 30, 0);
 }
 
+/**
+ * 分享链接的有效期（小时，默认 24）。令牌本身就是权限，没有服务端的吊销表，所以
+ * 到期是唯一的收回手段——不接受 0 / 负数 / 非法值（那等于签一条永久链接），一律
+ * 回落默认；上限一年，免得一个手滑的大数变成事实上的永久有效。
+ */
+export function shareTtlHours(): number {
+  const raw = Number(process.env.SHARE_TTL_HOURS ?? DEFAULT_SHARE_TTL_HOURS);
+  if (!Number.isFinite(raw)) return DEFAULT_SHARE_TTL_HOURS;
+  const hours = Math.floor(raw);
+  return hours >= 1 ? Math.min(hours, 24 * 365) : DEFAULT_SHARE_TTL_HOURS;
+}
+
 /** 空串与非法值一律回落默认，避免 `Number("")===0` 把额度悄悄清零。 */
 function intFromEnv(raw: string | undefined, fallback: number, min: number): number {
   const text = raw?.trim();
@@ -82,6 +96,49 @@ export function maxQueuedJobs(): number {
   const n = Number(process.env.MAX_QUEUED_JOBS ?? 20);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 20;
 }
+
+/**
+ * 单个账号能同时在途的任务数（方案 §3.2「安全收口」），默认 5。
+ *
+ * 全站的 `MAX_QUEUED_JOBS` 挡的是「实例被压垮」，挡不住「一个人把 20 个槽全占了」——
+ * 那既是对其他用户的拒绝服务，也是脚本刷单最省事的形态。余额是钱这一侧的闸门，
+ * 这条是并发那一侧的：钱够也不能一口气排 50 条。
+ */
+export function maxQueuedJobsPerUser(): number {
+  const n = Number(process.env.MAX_QUEUED_JOBS_PER_USER ?? 5);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 5;
+}
+
+/**
+ * 运维告警的 webhook（方案 §3.2「可观测性」）。不设 = 不外发，只留日志。
+ *
+ * 必须是 http(s) 的绝对地址：认不出的值当没配，而不是让 `fetch` 在每次告警时抛。
+ */
+export function alertWebhookUrl(): string | undefined {
+  const raw = process.env.ALERT_WEBHOOK_URL?.trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 告警外发的单次超时（毫秒），默认 5 秒、上限 30 秒。挂住的 webhook 不能拖住任务。 */
+export function alertWebhookTimeoutMs(): number {
+  const n = Number(process.env.ALERT_WEBHOOK_TIMEOUT_MS ?? 5_000);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 30_000) : 5_000;
+}
+
+/**
+ * 磁盘剩余低于这个百分比就算不健康（方案 §3.2）。
+ *
+ * 常量而不是环境变量：它是「还能不能写下一个成片」的下限，不是每个实例各有一套的
+ * 偏好。`/api/health` 的 `ok` 纳入它，并在跨过阈值时发一条告警——`DATA_DIR` 写不下
+ * 东西时任务会在 persist 那一步失败，而那时钱已经花出去了。
+ */
+export const DISK_FREE_PCT_FLOOR = 5;
 
 export function grokApiKey(): string | undefined {
   const official = process.env.XAI_API_KEY?.trim();
@@ -383,6 +440,18 @@ export function ymanUnknownCredits(): number {
 }
 
 /**
+ * 单个 YMan 任务从提交到出片的本地等待上限（毫秒），默认 15 分钟，上限 60 分钟。
+ *
+ * 与 `KLING_TASK_TIMEOUT_MS` 同一个用途（方案 §2 G6）：中转渠道排队时长不可控，超时只是
+ * 本地放弃等待——上游任务仍然活着、仍然已经计费，所以这条要留给运维按实测调，而不是让
+ * runner 拿一个写死的 15 分钟把慢任务判成失败。
+ */
+export function ymanTaskTimeoutMs(): number {
+  const n = Number(process.env.YMAN_TASK_TIMEOUT_MS ?? 900_000);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 60 * 60_000) : 900_000;
+}
+
+/**
  * 人民币 → 美元的换算率（1 USD = 多少 CNY），只影响账目显示：YMan 按积分（¥1 = 100 积分）
  * 计费，而 `costUsdEstimate` / `costUsdActual` 的口径是美元。非法值与 0 回落默认 7.2
  * （0 会把换算变成除零 → Infinity，比估错更糟）。
@@ -460,4 +529,17 @@ export function harnessQcVisualThreshold(): number | null {
 export function upstreamRetryBaseMs(): number {
   const n = Number(process.env.UPSTREAM_RETRY_BASE_MS ?? 250);
   return Number.isFinite(n) && n >= 0 ? Math.min(Math.floor(n), 10_000) : 250;
+}
+
+/**
+ * 上游轮询阶梯的**上限**（毫秒），默认 10 秒（方案 §3.3「轮询」）。
+ *
+ * 阶梯本身写在 `jobs/runner.ts` 的 `pollDelayMs`：前 20 秒 2 秒一次（用户还看着），
+ * 20→60 秒线性升到 5 秒，之后就是这条上限。调小它等于回到「一直高频轮询」，调大则更省
+ * 上游配额但成片出现得更晚——真相仍然是轮询，SSE 只是加速。下限 500ms，上限 60s。
+ */
+export function upstreamPollMaxMs(): number {
+  const n = Number(process.env.UPSTREAM_POLL_MAX_MS ?? 10_000);
+  if (!Number.isFinite(n) || n < 500) return 10_000;
+  return Math.min(Math.floor(n), 60_000);
 }

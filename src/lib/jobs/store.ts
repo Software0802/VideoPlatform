@@ -3,6 +3,7 @@ import path from "node:path";
 import { applyBalanceChange } from "@/lib/billing/ledger";
 import { dataDir } from "@/lib/env";
 import { log } from "@/lib/log";
+import { upsertJobIndex } from "@/lib/jobs/index";
 import { writeJsonAtomic } from "@/lib/storage/atomic-json";
 import {
   clampProgress,
@@ -22,7 +23,16 @@ type GlobalLockState = typeof globalThis & {
 const globalLockState = globalThis as GlobalLockState;
 const locks = globalLockState.__lumenJobLocks ?? (globalLockState.__lumenJobLocks = new Map());
 
-async function withLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+/**
+ * 一条任务的串行队列（进程级，键是 jobId，队尾挂在 `globalThis` 上所以 Next dev 把同一份
+ * 文件打进多张图时也仍然串行）。
+ *
+ * 导出是给 `jobs/delete.ts` 用的：删目录必须和 `updateJob` 的「读 → 写盘 → 更索引」互斥，
+ * 否则 rm 落在读与写之间时 `updateJob` 的 `mkdir` 会把刚删掉的目录连同 job.json 一起复活。
+ * 反过来让 `store.ts` 去 import `delete.ts` 会成环（delete 要 `readJob` / `tmpDir`），
+ * 所以共享的是锁，删除的实现只有 `delete.ts` 那一份。
+ */
+export async function withJobLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
   const previous = locks.get(id) ?? Promise.resolve();
   let release: () => void = () => {};
   const current = new Promise<void>((resolve) => {
@@ -65,6 +75,8 @@ export function toPublic(rec: JobRecord): JobPublic {
     costIncomplete: Boolean(rec.costIncomplete),
     costOverTarget: Boolean(rec.costOverTarget),
     imageResolution: rec.imageResolution ?? null,
+    // 标签之前的记录没有这个字段，读出即空数组——公开形状上它恒定是数组。
+    tags: rec.tags ?? [],
     error: rec.error,
     output: coerceOutput(rec.output),
     createdAt: rec.createdAt,
@@ -113,11 +125,13 @@ function coerceOutput(raw: JobRecord["output"] | { videoUrl?: string; posterUrl?
 }
 
 export async function writeJob(rec: JobRecord): Promise<JobRecord> {
-  return withLock(rec.id, async () => {
+  return withJobLock(rec.id, async () => {
     rec.updatedAt = new Date().toISOString();
     const dir = mediaStore.jobDir(rec.id);
     await mkdir(dir, { recursive: true });
     await writeJobJson(dir, rec);
+    // 写序固定：事实源先落盘，派生索引后更新（`jobs/index.ts` 的纪律 2）。
+    await upsertJobIndex(rec);
     return rec;
   });
 }
@@ -135,7 +149,7 @@ export async function updateJob(
   id: string,
   fn: (rec: JobRecord) => JobRecord | Promise<JobRecord>,
 ): Promise<JobRecord> {
-  return withLock(id, async () => {
+  return withJobLock(id, async () => {
     const rec = await readJobUnlocked(id);
     if (!rec) throw new Error("job not found");
     const before = rec.status;
@@ -164,9 +178,16 @@ export async function updateJob(
     const dir = mediaStore.jobDir(id);
     await mkdir(dir, { recursive: true });
     await writeJobJson(dir, next);
+    await upsertJobIndex(next);
     return next;
   });
 }
+
+/**
+ * 删除任务的实现只有一份，在 `@/lib/jobs/delete.ts`（`deleteJobById`）：这里曾经有一个
+ * 不清 `data/tmp/` 暂存文件、也不复核状态的 `deleteJob`，两份实现分头维护正是这条路径
+ * 出问题的原因。它现在通过 `withJobLock` 与本文件的写路径互斥。
+ */
 
 type Charge = { jobId: string; ownerId: string; priceCny: number };
 
@@ -248,6 +269,13 @@ async function readJobUnlocked(id: string): Promise<JobRecord | null> {
   }
 }
 
+/**
+ * 全量读盘：`data/jobs/*​/job.json` 一份不落。
+ *
+ * **新代码不要用它。** 随历史任务数线性恶化正是方案 §3.3 要消灭的东西；筛选走
+ * `listJobIndex()`（一次 `readdir` + 进程内映射），再按 id 读回需要的那几份记录。
+ * 现在只剩启动时的 `recover()` 用它——那一次确实需要每条记录的完整内容，且只跑一次。
+ */
 export async function listJobRecords(): Promise<JobRecord[]> {
   const ids = await mediaStore.listJobs();
   const out: JobRecord[] = [];
@@ -270,10 +298,25 @@ export async function readJobForUser(id: string, userId: string): Promise<JobRec
   return rec && canAccessJob(rec, userId) ? rec : null;
 }
 
-/** The list one user is allowed to see (plan §5.1). */
+/** The list one user is allowed to see (plan §5.1). 同样是全量读盘，见 `listJobRecords`。 */
 export async function listJobRecordsForUser(userId: string): Promise<JobRecord[]> {
   const recs = await listJobRecords();
   return recs.filter((rec) => canAccessJob(rec, userId));
+}
+
+/**
+ * 按 id 读回一页记录（配 `listJobIndex` 用）。读不到的（目录被手工删了、记录半写）
+ * 直接跳过，而不是让整页塌掉——索引是缓存，落后一步是它被允许的状态。
+ *
+ * 顺序照传进来的 id 顺序，调用方已经排过序了。
+ */
+export async function readJobsByIds(ids: readonly string[]): Promise<JobRecord[]> {
+  const out: JobRecord[] = [];
+  for (const id of ids) {
+    const rec = await readJob(id);
+    if (rec) out.push(rec);
+  }
+  return out;
 }
 
 export function tmpDir() {

@@ -1,14 +1,28 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { JobPublic } from "@/lib/jobs/schema";
 import type { AspectRatio, ImageResolution, NativeMode, Resolution } from "@/lib/providers/types";
 import { priceCny } from "@/lib/billing/prices";
 import { HARNESS_DURATIONS } from "@/lib/providers/grok/mode-matrix";
-import { cancelJob, createJob, fetchJob, newIdempotencyKey, retryJob, uploadFile, uploadFromJob } from "@/lib/client/jobs";
+import {
+  cancelJob,
+  createJob,
+  deleteJob,
+  fetchJob,
+  fetchJobsPage,
+  newIdempotencyKey,
+  patchJobTags,
+  retryJob,
+  uploadFile,
+  uploadFromJob,
+  type JobKind,
+} from "@/lib/client/jobs";
 import { fetchMe, logout, type MePublic } from "@/lib/client/auth";
 import { fetchProducts, supportsMode, type Product } from "@/lib/client/models";
+import type { Template } from "@/lib/client/templates";
+import { useEvents } from "@/lib/client/useEvents";
 import { useJobLive } from "@/lib/client/useJobLive";
 import { isActive, isTerminal } from "@/lib/client/labels";
 
@@ -61,6 +75,12 @@ const DEFAULT_RES: Resolution = "720p";
 export const COUNTS = [1, 2, 3, 4] as const;
 export const MAX_COUNT = 4;
 
+/** 「加载更多」一次拉多少条（与 SSR 首屏的 40 同档）。 */
+export const JOBS_PAGE = 40;
+
+/** 通知面板最多留几条（交接：铃铛点开列最近 10 条）。 */
+export const MAX_NOTICES = 10;
+
 export const QUOTA_EXHAUSTED = "今日额度已用完，北京时间 0 点重置";
 export const BALANCE_SHORT = "当前配置，余额可能不够，请充值";
 export const SOON = "即将上线";
@@ -96,6 +116,11 @@ export type ShellCaps = {
   audioAvailable: boolean;
   initialEmail: string;
   initialJobs: JobPublic[];
+  /**
+   * SSR 只下发前 40 条，这个标记说「盘上还有更老的」。没有它前端无从判断首屏之后
+   * 该不该露出「加载更多」——只能先发一次注定空手而归的请求。
+   */
+  moreJobs: boolean;
 };
 
 /** 一个图片槽：本地 / 远端预览 + 上传后的 uploadId（请求体只接受服务端发的 id） */
@@ -105,6 +130,40 @@ export type Frame = { preview: string; uploadId: string | null; state: "busy" | 
 export type SlotTarget = "start" | "last" | "reference";
 
 export type Pop = null | "specs" | "model" | "count" | "buddy" | "picker";
+
+/**
+ * 一条「任务完成」通知。只由账号级事件流（`GET /api/events`）里**观察到的**
+ * 「非终态 → 终态」那一跳产生：页面加载时就已经是终态的任务不算，否则每次刷新都会被
+ * 历史任务的通知糊一脸。
+ */
+export type Notice = {
+  /** jobId + 终态，同一条任务的同一次完成只入队一次 */
+  id: string;
+  jobId: string;
+  ok: boolean;
+  title: string;
+  /** 成功时是提示词摘要，失败时是服务端给的原因 */
+  detail: string;
+  at: string;
+};
+
+/** 一条任务算视频还是图片（与 `GET /api/jobs?kind=` 同口径：看 mode，不看有没有产物）。 */
+export const kindOfJob = (job: JobPublic): JobKind => (job.mode === "text_to_image" ? "image" : "video");
+
+/** 列表恒按 createdAt 倒序；同一毫秒时按 id 兜底，保证顺序稳定（分页不会左右横跳）。 */
+function byNewest(a: JobPublic, b: JobPublic): number {
+  const d = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+  if (d !== 0 && Number.isFinite(d)) return d;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
+/** 追加一页：已在列表里的 id 保持原对象（那份可能正被 SSE / 轮询更新着），其余按时间插入。 */
+function appendJobs(prev: JobPublic[], page: JobPublic[]): JobPublic[] {
+  const known = new Set(prev.map((j) => j.id));
+  const add = page.filter((j) => j && typeof j.id === "string" && !known.has(j.id));
+  if (!add.length) return prev;
+  return [...prev, ...add].sort(byNewest);
+}
 
 type Shell = {
   /* 能力与账号 */
@@ -132,6 +191,20 @@ type Shell = {
   working: boolean;
   cancel: () => void;
   retry: () => void;
+
+  /* 作品列表分页（`GET /api/jobs?before=&limit=&kind=`） */
+  /** 这一类还有更老的没拉过来 */
+  hasMoreJobs: (kind: JobKind) => boolean;
+  loadMoreJobs: (kind: JobKind) => void;
+  jobsLoading: boolean;
+  /** 分页失败时的那句话；再点一次「加载更多」会清掉 */
+  jobsError: string | null;
+
+  /* 作品操作（详情浮层） */
+  /** `PATCH /api/jobs/:id { tags }`，整组替换 */
+  saveTags: (id: string, tags: string[]) => Promise<void>;
+  /** `DELETE /api/jobs/:id`，成功后从列表里移除 */
+  removeJob: (id: string) => Promise<void>;
 
   /* 面板 */
   open: boolean;
@@ -201,10 +274,22 @@ type Shell = {
   submit: () => void;
   /** 「用这条提示词再生成」：回填面板并展开 */
   reuse: (prompt: string, kind: "video" | "image") => void;
+  /** 模板卡片：把预置的提示词与参数回填进面板并展开 */
+  applyTemplate: (template: Template) => void;
 
   /* 置灰项的提示 */
   toast: string | null;
   showToast: (message: string) => void;
+
+  /* 任务完成通知（账号级 SSE） */
+  notices: Notice[];
+  unread: number;
+  markNoticesRead: () => void;
+  /** 点通知：选中那条任务并跳创作页 */
+  openNotice: (notice: Notice) => void;
+  /** 右上角那一条（自动消失）；同时也在通知列表里 */
+  noticeToast: Notice | null;
+  dismissNoticeToast: () => void;
 };
 
 const Ctx = createContext<Shell | null>(null);
@@ -220,6 +305,7 @@ const NO_JOB = { id: "", status: "succeeded" } as const;
 
 export function ShellProvider({ caps, children }: { caps: ShellCaps; children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
 
   const [jobs, setJobs] = useState<JobPublic[]>(caps.initialJobs);
   /*
@@ -261,6 +347,17 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  /* 分页：两类各一个游标与「还有没有」。首屏 40 条是混着的，所以初值都取服务端那个标记。 */
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobsError, setJobsError] = useState<string | null>(null);
+  const [more, setMore] = useState<Record<JobKind, boolean>>({ video: caps.moreJobs, image: caps.moreJobs });
+  const [cursor, setCursor] = useState<Partial<Record<JobKind, string>>>({});
+
+  /* 通知 */
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [noticeToast, setNoticeToast] = useState<Notice | null>(null);
 
   /*
     幂等 key：一次逻辑创作 n 个（数量芯片），第 i 条任务一个（方案 §3 + 阶段 A §5）。
@@ -454,6 +551,134 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     [setCurrentJob, upsert],
   );
   useJobLive(currentJob ?? NO_JOB, onLive);
+
+  /* ── 分页：`GET /api/jobs?before=&limit=&kind=` ── */
+  /*
+    游标从「这一类里最老的那条」算：首屏 40 条是 SSR 混着下发的，服务端没给过游标，
+    所以第一次「加载更多」得自己推。之后一律用服务端回的 `nextBefore`——它在不在，
+    就是「还有没有下一页」的唯一判据（契约）。
+  */
+  // ref 只在事件回调里读（点「加载更多」、收到 SSE），所以在 effect 里同步就够了；
+  // render 期间写 ref 会被 react-hooks/refs 拦下。
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
+  const hasMoreJobs = useCallback((kind: JobKind) => more[kind], [more]);
+
+  const loadMoreJobs = useCallback(
+    (kind: JobKind) => {
+      if (jobsLoading || !more[kind]) return;
+      const before = cursor[kind] ?? jobsRef.current.filter((j) => kindOfJob(j) === kind).at(-1)?.createdAt;
+      setJobsLoading(true);
+      setJobsError(null);
+      void fetchJobsPage({ before, limit: JOBS_PAGE, kind }).then(
+        (page) => {
+          setJobsLoading(false);
+          setJobs((prev) => appendJobs(prev, page.jobs));
+          setCursor((c) => ({ ...c, [kind]: page.nextBefore }));
+          setMore((m) => ({ ...m, [kind]: Boolean(page.nextBefore) }));
+        },
+        (e: unknown) => {
+          setJobsLoading(false);
+          setJobsError(e instanceof Error ? e.message : "读取失败，请稍后再试");
+        },
+      );
+    },
+    [cursor, jobsLoading, more],
+  );
+
+  /* ── 作品操作：标签 / 删除 ── */
+
+  const saveTags = useCallback(
+    async (id: string, tags: string[]) => {
+      const next = await patchJobTags(id, tags);
+      // 服务端回的是整条任务：直接换掉本地那份，标签之外的字段也跟着对齐
+      upsert(next);
+    },
+    [upsert],
+  );
+
+  const removeJob = useCallback(
+    async (id: string) => {
+      await deleteJob(id);
+      setJobs((prev) => prev.filter((j) => j.id !== id));
+      // 删掉的正好是「当前任务」时把它关掉，否则创作页会指着一条不存在的记录
+      setPickedJob((prev) => (prev?.id === id ? null : prev));
+    },
+    [],
+  );
+
+  /* ── 任务完成通知：账号级 SSE ── */
+  /*
+    只对**观察到的**「非终态 → 终态」那一跳发通知：连上时后端会把本人的任务推一遍，
+    页面加载时就已经完成的那些不该再弹一次。所以先把已知状态记进 `seenStatus`
+    （首屏 40 条 + 之后每一条事件），没见过的 id 第一次只记不弹。
+  */
+  const seenStatus = useRef<Map<string, JobPublic["status"]>>(
+    new Map(caps.initialJobs.map((j) => [j.id, j.status])),
+  );
+  /**
+   * 刚建出来的任务先记一笔「非终态」。不记的话，一条快到「第一条事件就是终态」的任务
+   * 会被当成「本来就完成了的历史任务」而不弹通知——本会话亲手提交的那条，恰恰是最该
+   * 通知的一条。
+   */
+  const remember = useCallback((job: JobPublic) => {
+    if (!seenStatus.current.has(job.id)) seenStatus.current.set(job.id, job.status);
+  }, []);
+  // 在 /create 上看着的那条任务转终态时不再弹 toast：页面上已经在放成片了
+  const quietRef = useRef({ path: pathname ?? "/", jobId: "" });
+  const quietPath = pathname ?? "/";
+  const quietJobId = currentJob?.id ?? "";
+  useEffect(() => {
+    quietRef.current = { path: quietPath, jobId: quietJobId };
+  }, [quietPath, quietJobId]);
+
+  const onEventJob = useCallback(
+    (job: JobPublic) => {
+      const prev = seenStatus.current.get(job.id);
+      seenStatus.current.set(job.id, job.status);
+      upsert(job);
+      if (prev === undefined || isTerminal(prev) || !isTerminal(job.status)) return;
+      const ok = job.status === "succeeded";
+      const notice: Notice = {
+        id: `${job.id}:${job.status}`,
+        jobId: job.id,
+        ok,
+        title: ok ? "作品已生成" : job.status === "canceled" ? "任务已取消" : "生成失败",
+        detail: ok
+          ? job.prompt || (kindOfJob(job) === "image" ? "文生图" : "首帧起始")
+          : (job.error?.message ?? "未知原因"),
+        at: job.updatedAt || new Date().toISOString(),
+      };
+      setNotices((list) => (list.some((n) => n.id === notice.id) ? list : [notice, ...list].slice(0, MAX_NOTICES)));
+      setUnread((n) => Math.min(MAX_NOTICES, n + 1));
+      const quiet = quietRef.current.path === "/create" && quietRef.current.jobId === job.id;
+      if (!quiet) setNoticeToast(notice);
+    },
+    [upsert],
+  );
+  useEvents(true, onEventJob);
+
+  /* toast 自动消失（6s）：比「即将上线」那条长，它带的是要读的信息 */
+  useEffect(() => {
+    if (!noticeToast) return;
+    const t = setTimeout(() => setNoticeToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [noticeToast]);
+
+  const markNoticesRead = useCallback(() => setUnread(0), []);
+  const dismissNoticeToast = useCallback(() => setNoticeToast(null), []);
+  const openNotice = useCallback(
+    (notice: Notice) => {
+      setNoticeToast(null);
+      const job = jobsRef.current.find((j) => j.id === notice.jobId);
+      if (job) setCurrentJob(job);
+      router.push("/create");
+    },
+    [router, setCurrentJob],
+  );
 
   /*
     一次提交 n 条时，`useJobLive` 只盯住「当前任务」那一条，另外几条会一直停在提交时的
@@ -890,6 +1115,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
         for (let i = 0; i < n; i += 1) {
           const created = await createJob({ ...base, idempotencyKey: keys.current[i] });
           made.push(created);
+          remember(created);
           upsert(created);
         }
         keys.current = [];
@@ -925,6 +1151,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     ratioUsable,
     refreshMe,
     refs,
+    remember,
     res,
     router,
     setCurrentJob,
@@ -963,6 +1190,8 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     void retryJob(job.id).then(
       (next) => {
         setBusy(false);
+        // 重试建的是一条**新任务**，与提交同理要先记一笔，它出片时才会有通知
+        remember(next);
         onLive(next);
       },
       (e: unknown) => {
@@ -971,7 +1200,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
         refreshMe();
       },
     );
-  }, [busy, currentJob, onLive, refreshMe]);
+  }, [busy, currentJob, onLive, refreshMe, remember]);
 
   const reuse = useCallback(
     (text: string, kind: "video" | "image") => {
@@ -981,6 +1210,28 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       setTab(kind === "image" ? "image" : "video");
       setMode("图文");
       setError(null);
+      setOpen(true);
+      setCollapsed(false);
+      dropKey();
+    },
+    [clearAll, dropKey],
+  );
+
+  /**
+   * 模板卡片 → 面板。`ratio` / `dur` 都是**推导**出来的（见上面那段注释）：模板给的档位
+   * 不在当前产品的能力里时会自动回落，所以这里可以照单填，填不进去也提交不出 400。
+   */
+  const applyTemplate = useCallback(
+    (template: Template) => {
+      clearAll();
+      setPromptState(template.prompt);
+      setTab(template.mode === "text_to_image" ? "image" : "video");
+      // 模板只带提示词与规格，不带素材，所以恒定落在「图文」这条不需要上传的路径上
+      setMode("图文");
+      if (template.aspectRatio) setRatioChoice(template.aspectRatio);
+      if (template.durationSec) setDurChoice(template.durationSec);
+      setError(null);
+      setPop(null);
       setOpen(true);
       setCollapsed(false);
       dropKey();
@@ -1007,6 +1258,12 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     working,
     cancel,
     retry,
+    hasMoreJobs,
+    loadMoreJobs,
+    jobsLoading,
+    jobsError,
+    saveTags,
+    removeJob,
     open,
     openComposer,
     tab,
@@ -1064,8 +1321,15 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     setError,
     submit,
     reuse,
+    applyTemplate,
     toast,
     showToast,
+    notices,
+    unread,
+    markNoticesRead,
+    openNotice,
+    noticeToast,
+    dismissNoticeToast,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

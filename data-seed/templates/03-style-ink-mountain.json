@@ -1,0 +1,8 @@
+{
+  "id": "style-ink-mountain",
+  "name": "水墨群山",
+  "category": "风格艺术",
+  "prompt": "水墨风格的连绵群山，留白极多，墨色由浓到淡渐次晕开，一只孤鸟自右向左掠过。宣纸质感，无文字。",
+  "mode": "text_to_image",
+  "aspectRatio": "3:2"
+}

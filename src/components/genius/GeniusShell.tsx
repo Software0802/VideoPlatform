@@ -25,7 +25,7 @@ export function GeniusShell({ caps, children }: { caps: ShellCaps; children: Rea
 function Frame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const view = viewOfPath(pathname ?? "/");
-  const { toast } = useShell();
+  const { toast, noticeToast, openNotice, dismissNoticeToast, open } = useShell();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -36,8 +36,14 @@ function Frame({ children }: { children: React.ReactNode }) {
   return (
     <div className="shell" data-ready={ready} data-view={view}>
       <Sidebar view={view} />
-      {/* 画布视图自己管滚动（作者坐标 + 缩放），`main` 改 overflow:hidden */}
-      <div className="col" data-view={view}>
+      {/*
+        画布视图自己管滚动（作者坐标 + 缩放），`main` 改 overflow:hidden。
+        `data-composer` 报的是悬浮层此刻有多高（收起态输入条 60px / 展开的面板约 200px），
+        主页据此给自己留出落底空间——不留的话最后一行卡片与「加载更多」压在面板下面点不到
+        （e2e「主页分页」用例就是这么撞出来的：`.bar` 拦住了按钮的点击）。
+        留 padding 的是**视图**不是壳，交接包 §9.1「内容区不预留」说的是后者。
+      */}
+      <div className="col" data-view={view} data-composer={open ? "open" : "bar"}>
         <TopBar view={view} />
         <main className="main">{children}</main>
         <Dock view={view} />
@@ -45,6 +51,21 @@ function Frame({ children }: { children: React.ReactNode }) {
           <p className="toast" role="status">
             {toast}
           </p>
+        ) : null}
+        {/*
+          任务完成通知（阶段 B）：右上角，成功那条可点跳创作页。与 `.toast`（「即将上线」
+          那类一次性提示）分开——这条带的是要读、可能要点的信息，所以不是 pointer-events:none。
+        */}
+        {noticeToast ? (
+          <div className="notice-toast" role="status" data-ok={noticeToast.ok} data-job-id={noticeToast.jobId}>
+            <button type="button" className="notice-toast__hit" onClick={() => openNotice(noticeToast)}>
+              <span className="notice-toast__title">{noticeToast.title}</span>
+              <span className="notice-toast__detail">{noticeToast.detail}</span>
+            </button>
+            <button type="button" className="notice-toast__x" aria-label="关闭通知" onClick={dismissNoticeToast}>
+              ✕
+            </button>
+          </div>
         ) : null}
       </div>
     </div>

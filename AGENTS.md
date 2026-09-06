@@ -9,7 +9,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## 先读什么
 
 - 交接文档 `docs/handoff.md`：当前状态、已完成 / 未完成、下一刀。每次会话从这里开始。
-- 后端真相 `docs/design.md`（as-built）；阶段计划 `docs/plan.md`；UI 规格 `DESIGN.md`；用户系统 / 配额 / 留存清理方案 `docs/plan-users-quota.md`。
+- 后端真相 `docs/design.md`（as-built）；阶段计划 `docs/plan.md`；架构治理路线 `docs/plan-architecture-2026-09.md`（阶段二：作品管理 / 稳态 / 安全）；UI 规格 `DESIGN.md`；用户系统 / 配额 / 留存清理方案 `docs/plan-users-quota.md`。
 - 前端设计交接包 `design_handoff/design_handoff_genius_app/README.md`（规格）+ `Genius App.dc.html`（定稿原型），它们是侧栏 + 五视图换壳的依据；实施记录与 DOM 契约见 `docs/plan-ui-genius-app.md`。
 
 ## 前端约定（2026-09-06 晚起，Genius App 换壳：侧栏 + 五视图 + 悬浮创作面板）
@@ -21,6 +21,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - UI 只暴露三条真实路径：视频页「图文」模式（图片槽为空 → `text_to_video`，放图 → `image_to_video`）与图片页「默认」模式（`text_to_image`）；其余模式行渲染但 `aria-disabled="true"`，点击 toast「即将上线」。`POST /api/jobs` 请求体以 `src/lib/jobs/schema.ts` 的 `createJobBodySchema`（strict）为准，其中可选 `model` = **产品 id**（取值见 `GET /api/models`，该路由按白名单挑字段，不下发 `provider` 与上游 `model`），缺省时由服务端按 mode 路由决定；模型芯片是产品下拉，只露产品名。时长 / 画幅是弹层里的按钮网格（`data-dur`/`data-ratio`/`data-res`），枚举由服务端按 provider 能力下发；`harnessEnabled()` 为真时时长追加 30 / 45 / 60（仅 t2v / i2v），创作页当前任务区按 `job.shots` 显示「生成分镜 n/m」。`reference_to_video / edit_video / extend_video` 仍在 API 与 provider 层，不要从后端删除。
 - 积分口径 **¥1 = 100 积分**，只用于顶栏与创作按钮的显示换算（`ShellContext.creditsOf`），余额模型与后端计费（`priceCny`）不变。
 - 幂等：一次逻辑创作一个 `idempotencyKey`（`ShellContext` 里 `idempotencyKey.current ??= newIdempotencyKey()`），提交成功才清空；用户改了提示词或任一选项就作废重取。
+- 作品管理（2026-09-06 深夜）：主页瀑布流按 `GET /api/jobs?before&limit&kind` 游标分页加载，不再一次拉全量；支持分类筛选、标签编辑（`PATCH /api/jobs/:id`）、删除（`DELETE /api/jobs/:id`）、分享复制链接、模板回填。全局通知（toast + 顶栏铃铛）读 `GET /api/events`（`src/lib/client/useEvents.ts`），只在当前会话内生效，刷新页面不保留历史。
 
 ## 后端约定
 
@@ -36,6 +37,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 用户系统：`src/lib/users/` 是用户存储与会话事实源（`user.json` 为事实源，`index.json` 为可重建缓存），`src/proxy.ts` 对 `/api/*` 做会话校验（register/login/logout/health 放行）。所有任务读写（detail/SSE/media/cancel/retry）、幂等 key、上传 sidecar 都必须带 `ownerId` 校验，非本人一律 404（上传认领因是请求体字段校验、语义就是 400，例外见 `docs/plan-users-quota.md` §5.3）。配额只算 `text_to_image`，判定与落盘必须在同一个 `withAdmissionLock` 临界区内完成（`src/lib/jobs/quota.ts`），`createJob` 与 `retryJob` 共用；新环境变量 `LUMEN_SESSION_SECRET`（必需，缺失即拒绝启动）、`FREE_DAILY_IMAGE_QUOTA`、`FREE_DAILY_FAILURE_LIMIT`、`LUMEN_ADMIN_USER_ID`。数据留存清理（`src/lib/jobs/retention.ts`）只写 `artifactsPurgedAt`，不改 `status`，不碰非终态任务；新环境变量 `DATA_RETENTION_DAYS`（默认 30，0 关闭）。已清理任务禁止一键重试。方案见 `docs/plan-users-quota.md`。
 - 余额（2026-09-06 阶段一，`src/lib/billing/`，方案 `docs/plan-architecture-2026-09.md` §3.2、§5）：定价 × 余额是主闸门，`FREE_DAILY_IMAGE_QUOTA`/`FREE_DAILY_FAILURE_LIMIT` 降级为防滥用兜底。**硬约束**：余额判定（`assertBalance`）必须在 `withAdmissionLock` 临界区内、与 `writeJob` 同一次调用完成，不得挪到锁外；扣款必须在 `store.updateJob` 里、写终态之前完成（先扣后写），不得反过来写终态再扣款——那会开一个「预留已消失、余额还没减」的窗口；扣款按 `jobId` 幂等（`applyBalanceChange` 扫流水去重），任何补扣路径都必须复用这同一个幂等函数，不能自己再实现一遍扣款。详见 `docs/design.md` §2d。
 - 媒体路由（`src/app/api/media/[jobId]/[file]/route.ts`）的 `Cache-Control` 必须是 `private, no-cache`（弱 ETag + 304 做带宽优化），**不得**改成 `max-age`/`immutable`——产物字节不变但「谁能读」会变（同浏览器换账号登录），长缓存会让浏览器跳过下面的 owner 校验直接吃缓存。
+- 作品管理 / 稳态（2026-09-06 深夜，阶段 B + 架构第二阶段）：`data/jobs/index.json` 是**派生缓存**，不是事实源——写完某个 `job.json` 之后增量维护索引，启动时可重建，读取前自愈；配额、余额预留、留存清理、首页列表、`GET /api/jobs` 分页、`activeCount` 一律读索引，不得再对整个 `jobs/` 目录做全表扫描。分页信封 `{jobs, nextBefore?}` 用任务索引保证同一毫秒的任务不会被切开。分享令牌（`src/lib/share/token.ts`）用独立于会话 Cookie 的 HMAC 派生密钥签发，`GET /api/share/:token` 与 `/api/share/:token/media` 是公开接口（不校验会话），**不要**把会话签名密钥或校验逻辑复用到分享令牌上，两套信任域必须分离。`src/proxy.ts` 对非 GET 请求校验 `Origin`/`Referer`，**两者都缺失时放行**——这是明确的设计取舍（非浏览器客户端 / 某些代理场景不带这两个头），不是遗漏，改动前先确认是否要收紧。日志的 `x-request-id`/`reqId`/`jobId`/`ownerId` 追踪走 `AsyncLocalStorage`（按需 `require`/动态 import `node:async_hooks`，不在模块顶层静态 import）——`@/lib/log`、`@/lib/billing/prices`、`@/lib/cost` 这三个模块必须仍然能被客户端组件 import，新增对它们的修改不得引入服务端专属依赖。
 
 ## 验证门禁
 
@@ -57,7 +59,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## 部署
 
-- 生产实例：阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`，反代借用同机 taiyu 的 Caddy 容器。完整步骤（打包内容、服务器装依赖、Turbopack 别名软链的必做步骤、`output: "standalone"` 为何在 Windows→Linux 不可用）见 `docs/handoff.md` §0a.4 与 `docs/design.md` §10.1。
+- 生产实例：阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`，反代借用同机 taiyu 的 Caddy 容器。完整步骤（打包内容、服务器装依赖、Turbopack 别名软链的必做步骤、`output: "standalone"` 为何在 Windows→Linux 不可用）见 `docs/handoff.md` §0a.4 与 `docs/design.md` §10.1。日常运维操作（部署 / 回滚 / key 轮换 / 备份恢复 / 磁盘告警 / provider 耗尽 / 用户禁用与重置密码 / 礼品码）见 `docs/runbook.md`（2026-09-06 深夜新增）。
 - 部署机与构建机跨平台（Windows 构建、Linux 部署）时，`sharp`/`ffmpeg-static` 必须在部署机 `pnpm install --prod`，不能直接拷贝 Windows 的 `node_modules`。
 
 # Skills

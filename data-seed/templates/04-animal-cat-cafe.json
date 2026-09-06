@@ -1,0 +1,9 @@
+{
+  "id": "animal-cat-cafe",
+  "name": "猫店长营业中",
+  "category": "动物剧场",
+  "prompt": "一只橘猫端坐在小咖啡馆的柜台后，前爪搭在收银机上，认真地看着镜头。暖色晨光斜射进来，木质吧台，浅焦。",
+  "mode": "text_to_video",
+  "durationSec": 5,
+  "aspectRatio": "16:9"
+}

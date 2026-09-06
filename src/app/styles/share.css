@@ -1,0 +1,95 @@
+/*
+  公开分享页 `/s/<token>`（方案 §1.4）。
+
+  它是全站唯一一个**给没有账号的人看**的页面，所以刻意不复用壳的任何东西：没有侧栏、
+  没有顶栏、没有客户端状态，一屏一张卡片。颜色直接写死而不是用 `globals.css` 的令牌，
+  是为了让这一页在样式表加载顺序出意外时也还是深色的——链接会被转发到各种环境里。
+
+  `globals.css` 给 `body` 设了 `overflow: hidden`（壳是 100vh 单屏），子元素盖不掉它，
+  所以这一页自己拿一个 100dvh 的滚动容器。
+*/
+
+.share {
+  height: 100dvh;
+  overflow-y: auto;
+  background: #0a0a0b;
+  color: #ededf0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 20px 40px;
+  box-sizing: border-box;
+}
+
+.share__brand {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #f4f4f6;
+  margin-bottom: 20px;
+}
+
+.share__card {
+  width: 100%;
+  max-width: 720px;
+  background: #131316;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.share__media {
+  display: block;
+  width: 100%;
+  max-height: 72dvh;
+  background: #000;
+  object-fit: contain;
+}
+
+.share__body {
+  padding: 16px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.share__prompt {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #d4d4d8;
+  overflow-wrap: anywhere;
+}
+
+.share__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: #9a9aa2;
+}
+
+.share__chip {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  padding: 3px 9px;
+}
+
+.share__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 22px;
+  padding: 11px 24px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(90deg, #ff8a3d, #ff4d8d 60%, #a855f7);
+}
+
+.share__foot {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #74747c;
+}

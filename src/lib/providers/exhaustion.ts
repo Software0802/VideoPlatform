@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { notifyAlert } from "@/lib/alerts";
 import { dataDir, providerExhaustedTtlMs } from "@/lib/env";
 import { log } from "@/lib/log";
 import { writeJsonAtomic } from "@/lib/storage/atomic-json";
@@ -100,6 +101,13 @@ export async function markExhausted(
   kind: ExhaustionKind,
   reason: string,
 ): Promise<void> {
+  // 「一家上游没钱了」是要人去充值的事，不是自愈的事：自动切换只是让当下这批任务
+  // 别卡住，切到最后一家之后就没有下一家了。按 provider × 通道去重，一次耗尽只吵一次。
+  void notifyAlert(
+    "provider_exhausted",
+    { providerId, kind, reason: String(reason ?? "").slice(0, 300) },
+    `provider_exhausted:${providerId}:${kind}`,
+  );
   await withLock("provider-state", async () => {
     const until = new Date(Date.now() + providerExhaustedTtlMs()).toISOString();
     const state = { ...readState() };

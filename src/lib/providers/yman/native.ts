@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { ymanTaskTimeoutMs } from "@/lib/env";
 import { YMAN_IMAGE_CONFIG } from "@/lib/providers/openai-image/config";
 import { makeOpenaiImageProvider } from "@/lib/providers/openai-image/native";
 import { ymanGet, ymanPost } from "@/lib/providers/yman/client";
@@ -48,6 +49,9 @@ export const ymanProvider: VideoProvider = {
       resolutions: ymanVideoResolutions(),
       // 首帧与参考图在上游是同一个 `reference_images`，上限按 i2v/r2v 模型算（默认 9）。
       maxReferenceImages: ymanMaxReferenceImages(),
+      // 本地等待上限（方案 §2 G6）。中转渠道排队时长不可控，所以给一个能调的开关，
+      // 而不是让 runner 拿一个写死的 15 分钟去判「本地失败、上游照常计费」。
+      taskTimeoutMs: ymanTaskTimeoutMs(),
     };
   },
   async submit(req: ProviderGenerateRequest): Promise<ProviderHandle> {

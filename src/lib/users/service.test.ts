@@ -7,7 +7,7 @@ import { createInvite, readInvite } from "./invites";
 import { verifyPassword } from "./password";
 import { INVITE_CODE_RE } from "./schema";
 import { issueSessionValue, sessionUser } from "./session";
-import { changeUserPassword, loginUser, registerUser } from "./service";
+import { changeUserPassword, changeUserPasswordWithCurrent, loginUser, registerUser } from "./service";
 import { findUserByEmail, loadUserIndex, resetUserIndexCache, writeUser } from "./store";
 
 let dataRoot = "";
@@ -204,5 +204,109 @@ describe("password change", () => {
     await expect(
       loginUser({ email: "first@example.com", password: "hunter2-hunter2" }),
     ).rejects.toThrow();
+  });
+
+  it("changeUserPassword 404s not_found for a user id that does not exist", async () => {
+    const reason = await changeUserPassword("usr_ffffffffffffff00", "brand-new-password").catch(
+      (e: unknown) => e,
+    );
+    expect(errorCode(reason)).toBe("not_found");
+    expect((reason as ProviderHttpError).status).toBe(404);
+  });
+
+  describe("changeUserPasswordWithCurrent (POST /api/auth/password's service call)", () => {
+    it("rejects the wrong current password with invalid_credentials, and changes nothing", async () => {
+      const invite = await createInvite();
+      const user = await registerUser({
+        email: "changepw@example.com",
+        password: "original-password-1",
+        inviteCode: invite.code,
+      });
+
+      const reason = await changeUserPasswordWithCurrent({
+        userId: user.id,
+        currentPassword: "not-the-current-password",
+        newPassword: "would-be-new-password",
+      }).catch((e: unknown) => e);
+      expect(errorCode(reason)).toBe("invalid_credentials");
+      expect((reason as ProviderHttpError).status).toBe(401);
+
+      // Untouched: the original password still logs in, and the epoch never moved.
+      const logged = await loginUser({ email: "changepw@example.com", password: "original-password-1" });
+      expect(logged.sessionEpoch).toBe(user.sessionEpoch);
+    });
+
+    it("gives the same invalid_credentials answer for a user id that does not exist", async () => {
+      const reason = await changeUserPasswordWithCurrent({
+        userId: "usr_ffffffffffffff01",
+        currentPassword: "anything",
+        newPassword: "would-be-new-password",
+      }).catch((e: unknown) => e);
+      expect(errorCode(reason)).toBe("invalid_credentials");
+    });
+
+    it("on the right current password, rotates the password and bumps sessionEpoch", async () => {
+      const invite = await createInvite();
+      const user = await registerUser({
+        email: "changepw2@example.com",
+        password: "original-password-2",
+        inviteCode: invite.code,
+      });
+
+      const rotated = await changeUserPasswordWithCurrent({
+        userId: user.id,
+        currentPassword: "original-password-2",
+        newPassword: "shiny-new-password-2",
+      });
+      expect(rotated.sessionEpoch).toBe(user.sessionEpoch + 1);
+      expect(
+        (await loginUser({ email: "changepw2@example.com", password: "shiny-new-password-2" })).id,
+      ).toBe(user.id);
+      await expect(
+        loginUser({ email: "changepw2@example.com", password: "original-password-2" }),
+      ).rejects.toThrow();
+    });
+
+    /**
+     * 「读 → 验旧密码 → 写新密码 + epoch」必须是一个临界区。拆开的话两条并发请求会各自
+     * 拿同一个旧密码验过、再各自写一次，后到的把先到的新密码盖掉——攻击者手里的旧密码
+     * 因此还能再改一次，而受害者以为号已经夺回来了。
+     */
+    it("lets only one of two concurrent changes win; the loser 401s on the now-stale current password", async () => {
+      const invite = await createInvite();
+      const user = await registerUser({
+        email: "changepw-race@example.com",
+        password: "original-password-3",
+        inviteCode: invite.code,
+      });
+
+      const results = await Promise.allSettled(
+        ["winner-password-a", "winner-password-b"].map((newPassword) =>
+          changeUserPasswordWithCurrent({
+            userId: user.id,
+            currentPassword: "original-password-3",
+            newPassword,
+          }),
+        ),
+      );
+
+      const won = results.filter((r) => r.status === "fulfilled");
+      expect(won).toHaveLength(1);
+      for (const lost of results.filter((r) => r.status === "rejected")) {
+        expect(errorCode(lost.reason)).toBe("invalid_credentials");
+        expect((lost.reason as ProviderHttpError).status).toBe(401);
+      }
+
+      // 只发生了一次轮换：epoch 恰好 +1，且盘上的密码就是赢家写的那个。
+      const rotated = (won[0] as PromiseFulfilledResult<{ id: string; sessionEpoch: number }>).value;
+      expect(rotated.sessionEpoch).toBe(user.sessionEpoch + 1);
+      const onDisk = await findUserByEmail("changepw-race@example.com");
+      expect(onDisk!.sessionEpoch).toBe(user.sessionEpoch + 1);
+      expect(await verifyPassword("original-password-3", onDisk!.passwordHash)).toBe(false);
+      const winners = await Promise.all(
+        ["winner-password-a", "winner-password-b"].map((p) => verifyPassword(p, onDisk!.passwordHash)),
+      );
+      expect(winners.filter(Boolean)).toHaveLength(1);
+    });
   });
 });

@@ -93,7 +93,7 @@
 | 阶段 | 目标 | 内容 | 估时 |
 | --- | --- | --- | --- |
 | **一 · 止血**（本周） | 不多花钱、不丢数据、能回滚 | G1 恢复不重提 · G2 **余额模型**（价目表 + 预留结算 + 充值 CLI + UI 提示） · G3 本机备份 + 云快照 · G4 部署回滚 + CI · P1 sharp 限制 · P3 媒体缓存头 · F3 音频标注 · G5 429 退避 | 5–6 天 → **✅ 已完成，`73b88da`（2026-09-06 下午），Codex 审查 BLOCK 四条已修复；未完成项见下 |
-| **二 · 稳态**（下两周） | 随规模不恶化、出问题看得见 | P2 jobs 索引 + 归档 · G6 超时按 provider · G7 安全收口 · G8 日志 reqId + health 扩展 + usage CLI · P4 轮询阶梯 / 冷启动 · F1 改密 + 重置 CLI · F2 管理 CLI · F7 README / runbook / env 清理 | 6–8 天 |
+| **二 · 稳态**（下两周） | 随规模不恶化、出问题看得见 | P2 jobs 索引 + 归档 · G6 超时按 provider · G7 安全收口 · G8 日志 reqId + health 扩展 + usage CLI · P4 轮询阶梯 / 冷启动 · F1 改密 + 重置 CLI · F2 管理 CLI · F7 README / runbook / env 清理 | 6–8 天 → **✅ 大部分已完成（工作区未提交，2026-09-06 深夜）**：P2 索引 ✅、G6 超时按 provider ✅、G8 reqId 日志 + health 扩展 + usage CLI ✅、P4 轮询阶梯/冷启动 ✅、F1 改密 + 重置 CLI ✅、F2 管理 CLI ✅（新增 `reset-password.mjs`/`disable-user.mjs`/`usage.mjs`）；**G7 安全收口部分完成**（限流、`MAX_QUEUED_JOBS_PER_USER`、health 匿名收窄已做，其余项未在本任务书中列出，新会话核对时以代码为准）；**G8 部分未做**（哪些子项未在本任务书中列出，新会话核对时以代码为准）；F7（README/runbook/env 清理）本轮起步：新增 `docs/runbook.md`，`README.md`/`.env.example` 同步新变量与新 CLI；作品分页/标签/删除/分享（原排在「三·外壳」的 F5）已提前随本轮一并交付，详见 `docs/handoff.md` 新 §0 |
 | **三 · 外壳**（之后） | 产品闭环 | F4 六条路径全部露出 UI + 选项芯片 + capability 路由重构 · Provider `validate/cancel/health` 接口迁移 · F5 删除 / 分页 / 分享 · F6 前置审核 + 条款 · 前端拆分与 three 内联 · 注销账号 · 支付网关 | 10–12 天 |
 
 每阶段结束：门禁三绿 + `pnpm e2e` + 部署 + handoff 写回；阶段一、二的 diff 触及 AGENTS.md 列的高风险区（`jobs/`、`proxy.ts`、`api/`），按规则派 Codex 审。

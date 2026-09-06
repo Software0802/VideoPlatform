@@ -1,5 +1,6 @@
 import { freeDailyFailureLimit, freeDailyImageQuota } from "@/lib/env";
-import { listJobRecordsForUser } from "@/lib/jobs/store";
+import { listJobIndex, type JobIndexEntry } from "@/lib/jobs/index";
+import { readJob } from "@/lib/jobs/store";
 import { isTerminalStatus, type JobRecord, type JobStatus } from "@/lib/jobs/schema";
 import { isImageMode } from "@/lib/providers/grok/mode-matrix";
 import { ProviderHttpError } from "@/lib/providers/types";
@@ -247,13 +248,44 @@ export function publicQuota(usage: QuotaUsage): QuotaPublic {
   };
 }
 
-/** Live count for one user, straight from `job.json`. */
+/**
+ * Live count for one user, from `data/jobs/index.json` (方案 §3.3) plus a targeted
+ * re-read of the few records the index cannot answer for.
+ *
+ * 索引里有状态、模式、结算时刻，够算 `used` 与 `inFlight`；**没有** `error.code`，而止损阀
+ * 要靠它区分「用户的失败」和「平台的失败」（`BLAMELESS_FAILURE_CODES`）。所以只对
+ * 「今天失败 / 取消的那几条」回读 job.json——数量被止损阀本身钉在几十条以内，而不是像
+ * 从前那样为了这一个字段把全站历史都读一遍。
+ */
 export async function loadQuotaUsage(ownerId: string, nowMs: number = Date.now()): Promise<QuotaUsage> {
-  const jobs = await listJobRecordsForUser(ownerId);
+  const entries = await listJobIndex({ ownerId });
+  const { startMs, endMs } = dayWindow(nowMs);
+  const jobs: QuotaJob[] = [];
+  for (const entry of entries) {
+    if (!isImageMode(entry.mode)) continue;
+    jobs.push(await quotaJobOf(entry, startMs, endMs));
+  }
   return computeQuotaUsage(jobs, ownerId, nowMs, {
     limit: freeDailyImageQuota(),
     failureLimit: freeDailyFailureLimit(),
   });
+}
+
+/** 索引条目 → 计数用的最小记录；只有可能进止损阀的那几条才多读一次盘拿 `error.code`。 */
+async function quotaJobOf(entry: JobIndexEntry, startMs: number, endMs: number): Promise<QuotaJob> {
+  const base: QuotaJob = {
+    ownerId: entry.ownerId,
+    mode: entry.mode,
+    status: entry.status,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    completedAt: entry.completedAt,
+  };
+  if (entry.status !== "failed" && entry.status !== "canceled") return base;
+  const settled = settledAtMs(base);
+  if (settled === null || settled < startMs || settled >= endMs) return base;
+  const rec = await readJob(entry.id);
+  return rec ? { ...base, error: rec.error ? { code: rec.error.code } : null } : base;
 }
 
 /**

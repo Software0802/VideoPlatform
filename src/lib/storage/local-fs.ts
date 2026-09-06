@@ -4,6 +4,8 @@ import path from "node:path";
 import { dataDir } from "@/lib/env";
 import type { MediaStore } from "@/lib/storage/types";
 
+const SAFE_ID_RE = /^[A-Za-z0-9_-]+$/;
+
 export class LocalFsMediaStore implements MediaStore {
   constructor(private readonly configuredRoot?: string) {}
 
@@ -48,7 +50,9 @@ export class LocalFsMediaStore implements MediaStore {
     const dir = path.join(this.rootDir(), "jobs");
     try {
       const names = await readdir(dir);
-      return names.filter((n) => !n.startsWith("."));
+      // 只留合法的任务 id：挡掉 `index.json`（派生索引，`jobs/index.ts`）、原子写留下的
+      // `.tmp`，以及任何手工放进来的东西——它们都不是任务目录。判据与 `assertSafeId` 同源。
+      return names.filter((n) => SAFE_ID_RE.test(n));
     } catch {
       return [];
     }
@@ -66,7 +70,7 @@ export class LocalFsMediaStore implements MediaStore {
 }
 
 export function assertSafeId(id: string) {
-  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("invalid id");
+  if (!SAFE_ID_RE.test(id)) throw new Error("invalid id");
 }
 
 export const mediaStore = new LocalFsMediaStore();

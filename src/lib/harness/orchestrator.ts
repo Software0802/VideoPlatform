@@ -1,5 +1,6 @@
 import { access, copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
+import { notifyAlert } from "@/lib/alerts";
 import {
   estimateHarnessCostUsd,
   estimateLlmCostUsd,
@@ -102,6 +103,24 @@ const DEFAULT_DEPS: HarnessDeps = {
   shotConcurrency: harnessShotConcurrency,
   budgetMultiplier: 2,
 };
+
+/**
+ * 预算被撞破时外发一条告警（方案 §3.2「可观测性」）。
+ *
+ * 长片是全站最贵的一条路径，而「预算超了」意味着这一单已经花掉了提交预估的两倍、
+ * 后面的调用被硬停——只写一条日志的话，往往是几天后对账才发现。按 jobId 去重：
+ * 一个任务在预算线上会连撞好几次（每个分镜各来一次），吵一次就够。
+ *
+ * 顶层函数而不是 orchestrator 内部闭包：`createHarnessOrchestrator` 每次调用都会
+ * 重建一遍内部函数，而告警与哪个实例无关。
+ */
+function alertBudgetExceeded(jobId: string, label: string, spentUsd: number, capUsd: number): void {
+  void notifyAlert(
+    "budget_exceeded",
+    { jobId, stage: label, spentUsd: roundUsd(spentUsd), capUsd: roundUsd(capUsd) },
+    `budget_exceeded:${jobId}`,
+  );
+}
 
 /** Reservation key → USD promised to a call that has started but not settled yet. */
 type Reservations = Map<string, number>;
@@ -227,9 +246,10 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
    * A plan that cannot fit the cap is rejected before a single shot is submitted — paying
    * for half a film and then stopping at the per-shot gate is the worst of both worlds.
    */
-  function guardPlannedBudget(job: Pick<JobRecord, "costUsdEstimate">, planned: number) {
+  function guardPlannedBudget(job: Pick<JobRecord, "id" | "costUsdEstimate">, planned: number) {
     const cap = budgetCap(job, deps.budgetMultiplier);
     if (planned <= cap) return;
+    alertBudgetExceeded(job.id, "Director 计划", planned, cap);
     throw new HarnessFailure(
       "budget_exceeded",
       `Director 计划预估 $${planned.toFixed(2)} 超过预算上限 $${cap.toFixed(2)}（提交预估 $${job.costUsdEstimate.toFixed(2)} ×${deps.budgetMultiplier}），未提交任何分镜，转人工复核`,
@@ -540,6 +560,7 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
       .filter(([id]) => id !== spec.key)
       .reduce((sum, [, usd]) => sum + usd, 0);
     if (spent + others + spec.amount > cap) {
+      alertBudgetExceeded(spec.jobId, spec.label, spent, cap);
       throw spec.fail(
         `${spec.label}：已支出 $${spent.toFixed(2)} + 在途 $${others.toFixed(2)} + 本次预估 $${spec.amount.toFixed(2)} 超过预算上限 $${cap.toFixed(2)}（提交预估 ×${deps.budgetMultiplier}），停止调用，转人工复核`,
       );
@@ -608,6 +629,7 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
     const spent = job.costUsdActual ?? 0;
     const cap = budgetCap(job, deps.budgetMultiplier);
     if (spent > cap) {
+      alertBudgetExceeded(job.id, "总账复核", spent, cap);
       throw new HarnessFailure("budget_exceeded", `实际成本 $${spent.toFixed(2)} 超过预算上限 $${cap.toFixed(2)}`);
     }
   }
@@ -882,12 +904,25 @@ export function costOverTarget(job: Pick<JobRecord, "costUsdEstimate" | "costUsd
 function markCostOverTarget(r: JobRecord) {
   if (r.costOverTarget || !costOverTarget(r)) return;
   r.costOverTarget = true;
+  const target = roundUsd(r.costUsdEstimate * HARNESS_QC_RETRY_MULTIPLIER);
   log("warn", "harness cost over target", {
     id: r.id,
     actual: r.costUsdActual,
     estimate: r.costUsdEstimate,
-    target: roundUsd(r.costUsdEstimate * HARNESS_QC_RETRY_MULTIPLIER),
+    target,
   });
+  // 软线，任务照跑；但它是「这一单在往贵里走」的第一个信号，比撞到硬上限早一步。
+  // 标志只置一次，所以这里天然只发一次，dedupe 键仍按 jobId 兜住重放。
+  void notifyAlert(
+    "cost_over_target",
+    {
+      jobId: r.id,
+      actualUsd: r.costUsdActual ?? 0,
+      estimateUsd: r.costUsdEstimate,
+      targetUsd: target,
+    },
+    `cost_over_target:${r.id}`,
+  );
 }
 
 async function previousShotOutput(plan: HarnessPlan, jobId: string, shot: Shot): Promise<string> {

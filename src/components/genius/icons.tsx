@@ -216,6 +216,44 @@ export const IconUpload = ({ size = 20, ...p }: IconProps) => (
   </Svg>
 );
 
+/* ── 阶段 B：作品详情操作 / 账户菜单 ── */
+
+export const IconTrash = ({ size = 14, ...p }: IconProps) => (
+  <Svg size={size} {...p}>
+    <g {...stroke}>
+      <path d="M4 7h16M10 7V5h4v2M6 7l1 13h10l1-13" />
+      <path d="M10 11v6M14 11v6" />
+    </g>
+  </Svg>
+);
+
+export const IconShare = ({ size = 14, ...p }: IconProps) => (
+  <Svg size={size} {...p}>
+    <g {...stroke}>
+      <circle cx="18" cy="5.5" r="2.5" />
+      <circle cx="6" cy="12" r="2.5" />
+      <circle cx="18" cy="18.5" r="2.5" />
+      <path d="m8.3 10.8 7.4-4M8.3 13.2l7.4 4" />
+    </g>
+  </Svg>
+);
+
+/** 修改密码（钥匙） */
+export const IconKey = ({ size = 14, ...p }: IconProps) => (
+  <Svg size={size} {...p}>
+    <g {...stroke}>
+      <circle cx="8" cy="8" r="4" />
+      <path d="m11 11 8 8M16 16l-2 2M19 13l-2 2" />
+    </g>
+  </Svg>
+);
+
+export const IconCheck = ({ size = 12, ...p }: IconProps) => (
+  <Svg size={size} {...p}>
+    <path {...stroke} strokeWidth={2.2} d="m5 13 4 4L19 7" />
+  </Svg>
+);
+
 export const IconLogout = ({ size = 14, ...p }: IconProps) => (
   <Svg size={size} {...p}>
     <g {...stroke}>

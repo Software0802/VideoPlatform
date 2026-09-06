@@ -31,9 +31,25 @@ node scripts/grant-balance.mjs <邮箱> 20 --note "内测赠送"
 
 也可以让用户自己充值：管理员用 `node scripts/mint-gift-codes.mjs <数量> <金额> [--note "..."]` 铸礼品码（打印到标准输出，不写日志），用户在订阅页「兑换礼品码」输入即可到账（`POST /api/me/redeem`，详见 `docs/design.md` §5 与 `docs/handoff.md` §0）。
 
+首次启用创作模板前，把示例种子拷进数据目录（不随代码自动生成）：
+
+```bash
+cp -r data-seed/templates data/templates
+```
+
+账号运维新增三个 CLI（`docs/handoff.md` §0）：
+
+```bash
+node scripts/reset-password.mjs <邮箱> <新密码>   # 管理员强制重置某账号密码
+node scripts/disable-user.mjs <邮箱> --disable    # 封禁账号（--enable 解封）
+node scripts/usage.mjs --days 7                   # 按天/用户/provider 统计用量并与流水对账
+```
+
 界面上的「模型」下拉列的是产品名（不露供应商），内置七档见 `src/lib/products/catalog.ts`，可用 `.env.example` 里的 `LUMEN_PRODUCTS`（JSON）按 id 覆盖或追加档位。
 
 可选：设置 `KLING_API_KEY`（可灵直连视频，见下）或 `OPENAI_API_KEY`（文生图走 OpenAI 兼容 provider，见 `.env.example` 的 `OPENAI_*` 段）；都不设时视频 / 图片各自回落 xAI 或模拟模式。`DATA_DIR` 默认 `./data`。
+
+`docs/handoff.md` §0 新增的环境变量：`SHARE_TTL_HOURS`（分享链接有效期，默认 24 小时）、`ALERT_WEBHOOK_URL`/`ALERT_WEBHOOK_TIMEOUT_MS`（运维告警出站地址，不设则不外发）、`UPSTREAM_POLL_MAX_MS`（轮询阶梯上限，默认 10000）、`MAX_QUEUED_JOBS_PER_USER`（单账号同时在途任务数上限，默认 5）、`YMAN_TASK_TIMEOUT_MS`（YMan 任务本地等待上限，默认 900000）。说明见 `.env.example`。
 
 ### 真出片：官方 xAI 或 Sub2API
 

@@ -1,6 +1,8 @@
 import { constants } from "node:fs";
-import { access, mkdir } from "node:fs/promises";
+import { access, mkdir, statfs } from "node:fs/promises";
+import { notifyAlert } from "@/lib/alerts";
 import {
+  DISK_FREE_PCT_FLOOR,
   dataDir,
   grokUpstreamKind,
   harnessEnabled,
@@ -12,7 +14,7 @@ import {
   xaiBase,
 } from "@/lib/env";
 import { assertFfmpeg, ffmpegBinary } from "@/lib/ffmpeg";
-import { activeCount } from "@/lib/jobs/runner";
+import { queueStats, runnerStarted } from "@/lib/jobs/active";
 import { exhaustedList } from "@/lib/providers/exhaustion";
 import { mockHasFont } from "@/lib/providers/mock";
 import {
@@ -23,10 +25,53 @@ import {
   videoDurationsFor,
   videoResolutions,
 } from "@/lib/providers/router";
+import { withRequestContext } from "@/lib/request-context";
+import { sessionUser } from "@/lib/users/session";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+type DiskStatus = {
+  freeBytes: number | null;
+  freePct: number | null;
+};
+
+/**
+ * `DATA_DIR` 所在卷的剩余空间。
+ *
+ * 用 `bavail`（非特权进程真正能用的块）而不是 `bfree`：ext4 默认给 root 留 5%，
+ * 按 `bfree` 算会在服务已经写不下东西时仍然报「还剩 5%」。
+ * 取不到（不支持 statfs 的文件系统 / 目录不存在）时回 null——「不知道」不能被当成
+ * 「磁盘满了」而把整个实例判成不健康。
+ */
+async function diskStatus(dir: string): Promise<DiskStatus> {
+  try {
+    const fs = await statfs(dir);
+    const total = Number(fs.blocks) * Number(fs.bsize);
+    const free = Number(fs.bavail) * Number(fs.bsize);
+    if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(free)) {
+      return { freeBytes: null, freePct: null };
+    }
+    return { freeBytes: Math.round(free), freePct: Math.round((free / total) * 1000) / 10 };
+  } catch {
+    return { freeBytes: null, freePct: null };
+  }
+}
+
+/**
+ * 健康检查（方案 §3.2「安全收口」「可观测性」）。
+ *
+ * **匿名只回 `{ ok }`**：其余字段是一份实例配置清单——用了哪几家上游、哪几家的 key
+ * 在、哪家正被判定耗尽、队列有多深。它对运维有用，对踩点的人同样有用，而
+ * `/api/health` 必须能被不带 Cookie 的监控探到。带会话就给全量，登录本身就是门槛。
+ *
+ * `ok` 的判据是「这台机器现在还能不能把一次任务做完并落盘」：ffmpeg 在、数据目录
+ * 可写、mock 模式下字体在、磁盘还有余量。队列深度与 runner 状态**不**进 `ok`——
+ * 它们是要人看一眼的读数，不是「应该把流量切走」的信号。
+ */
+async function handler(request: Request) {
+  // 会话失效 / 未登录都只是「匿名」，不是错误：健康检查不该因为鉴权抛而变成 500。
+  const viewer = await sessionUser(request).catch(() => null);
+
   let ffmpegPath: string | null = null;
   try {
     await assertFfmpeg();
@@ -36,20 +81,35 @@ export async function GET() {
   }
   const fontOk = await mockHasFont();
   const mock = isMockMode();
+  const dir = dataDir();
   let dataDirWritable = false;
   try {
-    const dir = dataDir();
     await mkdir(dir, { recursive: true });
     await access(dir, constants.W_OK);
     dataDirWritable = true;
   } catch {
     dataDirWritable = false;
   }
-  const queued = await activeCount();
+  const disk = await diskStatus(dir);
+  const diskOk = disk.freePct === null || disk.freePct >= DISK_FREE_PCT_FLOOR;
+  if (!diskOk) {
+    // 去重键固定：磁盘满是一个持续状态，每次探测都发一遍等于把告警变成噪音。
+    void notifyAlert(
+      "disk_low",
+      { dataDir: dir, freeBytes: disk.freeBytes, freePct: disk.freePct, floorPct: DISK_FREE_PCT_FLOOR },
+      "disk_low",
+    );
+  }
+  const queue = await queueStats();
+  const ok = Boolean(ffmpegPath) && dataDirWritable && diskOk && (!mock || fontOk);
+
+  if (!viewer) {
+    return Response.json({ ok }, { status: ok ? 200 : 503 });
+  }
+
   // 与首页同源，且同样用不抛的那个：健康检查在「全家耗尽」时必须还能回话，
   // 那正是最需要看 `exhausted` 这一段的时刻。
   const videoProvider = uiProviderId("text_to_video");
-  const ok = Boolean(ffmpegPath) && dataDirWritable && (!mock || fontOk);
   return Response.json(
     {
       ok,
@@ -58,6 +118,14 @@ export async function GET() {
       ffmpeg: { present: Boolean(ffmpegPath), path: ffmpegPath },
       mockFont: { present: fontOk },
       dataDirWritable,
+      // `DATA_DIR` 所在卷的余量。低于 5% 时 `ok` 为假并发一条告警——成片落盘失败发生在
+      // 钱已经花出去之后，比「服务 500」更贵。
+      disk,
+      // 队列积压：`queued` 是还没被拿起来的，`running` 是正在跑的（含长片各阶段）。
+      // 两个数分开才看得出是并发不够还是上游慢。
+      queue,
+      // runner 的定时器 / 恢复流程有没有起来。false 意味着任务只会堆在 queued 里不动。
+      runner: { started: runnerStarted() },
       // 文生视频这一刻真正会走的 provider（mock 模式下就是 "mock"）。
       videoProvider,
       // 路由的优先级列表（VIDEO_PROVIDER_ORDER 归一后的结果）。上面的 videoProvider
@@ -91,8 +159,11 @@ export async function GET() {
       // 被判定「积分耗尽」而暂时绕开的上游（视频 / 图片分开记，到 until 自动恢复）。
       // 排查「为什么任务突然走了另一家」看这条。
       exhausted: exhaustedList(),
-      queued,
+      // 全站在途任务数，口径与 `MAX_QUEUED_JOBS` 的准入判据一致（= queued + running）。
+      queued: queue.queued + queue.running,
     },
     { status: ok ? 200 : 503 },
   );
 }
+
+export const GET = withRequestContext(handler);

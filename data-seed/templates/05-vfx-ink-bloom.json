@@ -1,0 +1,9 @@
+{
+  "id": "vfx-ink-bloom",
+  "name": "墨滴入水",
+  "category": "特效",
+  "prompt": "一滴浓墨落入清水，在水中缓慢炸开成翻涌的丝状结构。微距、逆光，黑白高对比，速度略慢于真实。",
+  "mode": "text_to_video",
+  "durationSec": 5,
+  "aspectRatio": "9:16"
+}

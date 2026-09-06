@@ -39,6 +39,9 @@ describe("klingProvider.capabilities", () => {
       durations: [5, 10],
       resolutions: ["720p", "1080p"],
       maxReferenceImages: 0,
+      // 本地等待上限（方案 §2 G6）：runner 从此按 provider 读它，不再用写死的 15 分钟。
+      // 默认与 `KLING_TASK_TIMEOUT_MS` 的默认值一致。
+      taskTimeoutMs: 900_000,
     });
   });
 });

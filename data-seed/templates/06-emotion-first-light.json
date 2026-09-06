@@ -1,0 +1,9 @@
+{
+  "id": "emotion-first-light",
+  "name": "晨光里的第一口气",
+  "category": "情绪特写",
+  "prompt": "以这张照片里的人物为主体，镜头极缓慢地推近到面部特写，人物睁眼、深吸一口气，晨光从侧后方打过来。除呼吸与光影外几乎不动。",
+  "mode": "image_to_video",
+  "durationSec": 5,
+  "aspectRatio": "9:16"
+}

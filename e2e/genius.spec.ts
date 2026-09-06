@@ -4,7 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { serverDataDir } from "./invites";
+import { newInviteCode, serverDataDir, writeInvite } from "./invites";
 
 /**
  * Smoke suite for the Genius App shell (docs/plan-ui-genius-app.md §7 DOM contract:
@@ -800,6 +800,318 @@ test("礼品码：兑换到账、重复兑换被拒、账单记录能看到这�
   await expect(ledger).toBeHidden();
 });
 
+// ---------------------------------------------------------------------------
+// 阶段 B：作品分页 / 标签 / 删除 / 分享 / 模板 / 改密
+//
+// 造数据的手法与上面两条「直接写 job.json」的用例一致：`data/jobs/index.json` 是**派生
+// 索引**，`listJobIndex` 每次读之前都会拿目录名集合对一遍，对不上就重建（见
+// `src/lib/jobs/index.ts` 的三条纪律），所以绕过 store 写盘造出来的记录一样能被列表看见。
+// 真跑一遍 mock 出片要十几秒 × 45 条，那是把「分页对不对」的用例变成一次压测。
+// ---------------------------------------------------------------------------
+
+type SeedOpts = {
+  kind?: "video" | "image";
+  prompt?: string;
+  tags?: string[];
+  /** 相对现在往前推多少毫秒，用来排出稳定的先后顺序 */
+  ageMs?: number;
+};
+
+/** 写一条已完成的作品记录，返回它的 id 与目录（调用方负责在 finally 里删掉）。 */
+async function seedJob(userId: string, dataDir: string, opts: SeedOpts = {}) {
+  const kind = opts.kind ?? "video";
+  const id = `job_${randomBytes(6).toString("hex")}`;
+  const dir = path.join(dataDir, "jobs", id);
+  const at = new Date(Date.now() - (opts.ageMs ?? 0)).toISOString();
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    path.join(dir, "job.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      id,
+      ownerId: userId,
+      status: "succeeded",
+      progress: 100,
+      mode: kind === "image" ? "text_to_image" : "text_to_video",
+      model: kind === "image" ? "grok-imagine-image-2.0" : "grok-imagine-video-1.0",
+      provider: "mock",
+      prompt: opts.prompt ?? "阶段 B 造的样本",
+      tags: opts.tags ?? [],
+      durationSec: kind === "image" ? 0 : 5,
+      aspectRatio: "16:9",
+      resolution: kind === "image" ? null : "720p",
+      imageResolution: kind === "image" ? "1k" : null,
+      generateAudio: false,
+      lastFrameStored: false,
+      lastFrameLocksOutput: false,
+      harness: { enabled: false },
+      priceCny: 2,
+      costUsdEstimate: 0.02,
+      costUsdActual: 0.02,
+      error: null,
+      output:
+        kind === "image"
+          ? { kind: "image", imageUrl: `/api/media/${id}/image.jpg` }
+          : { kind: "video", videoUrl: `/api/media/${id}/video.mp4`, posterUrl: `/api/media/${id}/poster.jpg`, durationSec: 5 },
+      createdAt: at,
+      updatedAt: at,
+      completedAt: at,
+      bible: null,
+      shots: null,
+      assets: {},
+    }),
+  );
+  return { id, dir };
+}
+
+async function reloadHome(page: Page) {
+  await page.goto("/");
+  await expect(page.locator(".shell")).toHaveAttribute("data-ready", "true", { timeout: 60_000 });
+}
+
+async function currentUserId(page: Page): Promise<string> {
+  const me = await page.request.get("/api/me");
+  expect(me.ok(), "需要已登录会话").toBeTruthy();
+  return ((await me.json()) as { userId: string }).userId;
+}
+
+const card = (page: Page, jobId: string) => page.locator(`.masonry__item[data-job-id="${jobId}"]`);
+const workDialog = (page: Page) => page.locator('.work[role="dialog"]');
+
+test("主页分页：SSR 首屏 40 条，加载更多按 kind 续页", async ({ page }) => {
+  const userId = await currentUserId(page);
+  const dataDir = await serverDataDir();
+  // 45 条，全部比现有任务新（ageMs 从 0 起往前推 1 秒一条），所以首屏那 40 条一定是它们。
+  const seeds: { id: string; dir: string }[] = [];
+  for (let i = 0; i < 45; i += 1) {
+    seeds.push(await seedJob(userId, dataDir, { prompt: `分页样本 ${i}`, ageMs: i * 1000 }));
+  }
+  const oldest = seeds[seeds.length - 1];
+
+  try {
+    await reloadHome(page);
+    const items = page.locator('.masonry__item[data-kind="video"]');
+    // 首屏正好是 `(shell)/layout.tsx` 的 INITIAL_JOBS，最老的那几条还没下来
+    await expect(items).toHaveCount(40);
+    await expect(card(page, oldest.id)).toHaveCount(0);
+
+    const more = page.getByRole("button", { name: /加载更多/ });
+    await expect(more).toBeVisible();
+
+    /*
+      「加载更多」按钮与触底哨兵触发的是**同一个动作**（`loadMoreJobs(kind)`），而点按钮
+      本身要先把它滚进视口——那一滚往往顺手把哨兵也带进来了。所以：先挂好响应等待再点，
+      点的时候按钮可能已经被自动加载摘掉（这一类没有第三页了），那不是失败。
+      真正要证明的是「第二页确实被拉下来了」，下面三条断言说了算。
+    */
+    const paged = page.waitForResponse(
+      (r) => r.url().includes("/api/jobs?") && r.request().method() === "GET" && r.ok(),
+    );
+    await more.click({ timeout: 10_000 }).catch(() => undefined);
+    const res = await paged;
+    // 视频页签必须带 kind=video：不带的话第二页会混进图片作品，页签就是假的
+    expect(new URL(res.url()).searchParams.get("kind")).toBe("video");
+    const body = (await res.json()) as { jobs: unknown[]; nextBefore?: string };
+    expect(Array.isArray(body.jobs), "GET /api/jobs 应回 { jobs, nextBefore? }").toBeTruthy();
+
+    // 第二页把最老的那条带了下来，卡片数也涨了
+    await expect(card(page, oldest.id)).toHaveCount(1);
+    expect(await items.count()).toBeGreaterThan(40);
+  } finally {
+    for (const s of seeds) await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test("标签：详情浮层改标签写回 PATCH，分类芯片按标签筛选", async ({ page }) => {
+  const userId = await currentUserId(page);
+  const dataDir = await serverDataDir();
+  const tagged = await seedJob(userId, dataDir, { prompt: "要贴标签的那条", ageMs: 0 });
+  const plain = await seedJob(userId, dataDir, { prompt: "不贴标签的那条", ageMs: 1000 });
+
+  try {
+    await reloadHome(page);
+    await card(page, tagged.id).click();
+    const dialog = workDialog(page);
+    await expect(dialog).toBeVisible();
+
+    // 预置芯片多选：点「广告」→ PATCH /api/jobs/:id { tags:["广告"] }
+    const chip = dialog.locator('.work__tag[data-tag="广告"]');
+    await expect(chip).toHaveAttribute("aria-pressed", "false");
+    const patched = page.waitForResponse(
+      (r) => /\/api\/jobs\/[^/?]+$/.test(r.url()) && r.request().method() === "PATCH",
+    );
+    await chip.click();
+    const res = await patched;
+    expect(res.status()).toBe(200);
+    expect(res.request().postDataJSON()).toEqual({ tags: ["广告"] });
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+
+    // 自定义标签：回车即提交，服务端整组覆盖，所以请求体是「广告 + 新的那个」
+    const patched2 = page.waitForResponse(
+      (r) => /\/api\/jobs\/[^/?]+$/.test(r.url()) && r.request().method() === "PATCH",
+    );
+    await dialog.getByLabel("自定义标签").fill("夜景");
+    await dialog.getByLabel("自定义标签").press("Enter");
+    expect((await patched2).request().postDataJSON()).toEqual({ tags: ["广告", "夜景"] });
+
+    await dialog.getByRole("button", { name: "关闭" }).click();
+    await expect(dialog).toBeHidden();
+
+    // 分类芯片真筛选：选「广告」只剩贴了标签的那条，「全部」再放开
+    await expect(card(page, plain.id)).toHaveCount(1);
+    await page.locator('.home__cat[data-cat="广告"]').click();
+    await expect(page.locator('.home__cat[data-cat="广告"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(card(page, tagged.id)).toHaveCount(1);
+    await expect(card(page, plain.id)).toHaveCount(0);
+    await page.locator('.home__cat[data-cat="全部"]').click();
+    await expect(card(page, plain.id)).toHaveCount(1);
+
+    // 刷新之后标签还在（真的落了盘，不只是本地状态）
+    await reloadHome(page);
+    await expect(card(page, tagged.id)).toHaveAttribute("data-tags", "广告,夜景");
+  } finally {
+    await rm(tagged.dir, { recursive: true, force: true });
+    await rm(plain.dir, { recursive: true, force: true });
+  }
+});
+
+test("删除：详情浮层二次确认后 DELETE，卡片从瀑布流消失", async ({ page }) => {
+  const userId = await currentUserId(page);
+  const dataDir = await serverDataDir();
+  const doomed = await seedJob(userId, dataDir, { prompt: "待删除的作品", ageMs: 0 });
+
+  try {
+    await reloadHome(page);
+    await card(page, doomed.id).click();
+    const dialog = workDialog(page);
+    await expect(dialog).toBeVisible();
+
+    // 一次点击只是打开确认条，不发请求
+    await dialog.locator(".work__delete").click();
+    const confirm = dialog.locator(".work__confirm");
+    await expect(confirm).toBeVisible();
+    await confirm.getByRole("button", { name: "取消" }).click();
+    await expect(confirm).toBeHidden();
+
+    await dialog.locator(".work__delete").click();
+    const deleted = page.waitForResponse(
+      (r) => /\/api\/jobs\/[^/?]+$/.test(r.url()) && r.request().method() === "DELETE",
+    );
+    await dialog.getByRole("button", { name: "确认删除" }).click();
+    expect((await deleted).status()).toBe(204);
+
+    await expect(dialog).toBeHidden();
+    await expect(card(page, doomed.id)).toHaveCount(0);
+    // 服务端也真的没了：再读这条是 404
+    expect((await page.request.get(`/api/jobs/${doomed.id}`)).status()).toBe(404);
+  } finally {
+    await rm(doomed.dir, { recursive: true, force: true });
+  }
+});
+
+test("分享：详情浮层出链接，匿名浏览器能打开 /s/<token>", async ({ page, browser }) => {
+  // 这条要真成片：分享页背后是 `/api/share/:token/media`，字节不在盘上就只验了半条链路。
+  const created = await page.request.post("/api/jobs", {
+    data: {
+      mode: "text_to_video",
+      prompt: "分享用样片：湖面清晨的薄雾",
+      durationSec: 5,
+      aspectRatio: "16:9",
+      resolution: "720p",
+      generateAudio: false,
+    },
+  });
+  expect(created.ok(), "创建分享用任务应成功").toBeTruthy();
+  const jobId = ((await created.json()) as { id: string }).id;
+  await expect
+    .poll(async () => ((await (await page.request.get(`/api/jobs/${jobId}`)).json()) as { status: string }).status, {
+      timeout: 150_000,
+      intervals: [1000],
+    })
+    .toBe("succeeded");
+
+  // 剪贴板要显式授权，否则 `navigator.clipboard.writeText` 在无头 Chromium 里会被拒
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await reloadHome(page);
+  await card(page, jobId).click();
+  const dialog = workDialog(page);
+  await expect(dialog).toBeVisible();
+
+  const shared = page.waitForResponse(
+    (r) => /\/api\/jobs\/[^/]+\/share$/.test(r.url()) && r.request().method() === "POST",
+  );
+  await dialog.locator(".work__share").click();
+  expect((await shared).ok()).toBeTruthy();
+
+  const row = dialog.locator(".work__shared");
+  await expect(row).toBeVisible();
+  const url = (await row.getAttribute("data-share-url")) ?? "";
+  expect(url, "分享行应带出完整链接").toMatch(/\/s\/[A-Za-z0-9._~-]+$/);
+  // 提示语（契约：「链接已复制，24 小时有效」）。小时数是从 expiresAt 推的，所以钉成
+  // 正则——实例把 SHARE_TTL_HOURS 调短时这条用例不该假失败。一次断言拿下：`.toast`
+  // 只挂 2.2 秒，拆成两条会在慢机器上擦边。
+  await expect(page.locator(".toast")).toHaveText(/^链接已复制，\d+ 小时有效$/);
+  // 剪贴板里就是这条链接（「复制」这个动作本身是契约的一半）
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(url);
+
+  // 匿名上下文：没有会话 Cookie，令牌本身就是凭据
+  const anon = await browser.newContext();
+  try {
+    const pageRes = await anon.request.get(url);
+    expect(pageRes.status(), "分享页应对匿名访问开放").toBe(200);
+    expect(await pageRes.text()).toContain("湖面清晨的薄雾");
+    const token = url.split("/s/")[1];
+    const media = await anon.request.get(`${new URL(url).origin}/api/share/${token}/media`);
+    expect(media.ok(), "分享的成片字节也该匿名可读").toBeTruthy();
+
+    // 伪造的令牌 404（不是「页面在、视频不在」的半可见状态）
+    const origin = new URL(url).origin;
+    expect((await anon.request.get(`${origin}/s/not-a-real-share-token`)).status()).toBe(404);
+    expect((await anon.request.get(`${origin}/api/share/not-a-real-share-token/media`)).status()).toBe(404);
+  } finally {
+    await anon.close();
+  }
+});
+
+test("模板：卡片回填提示词与规格到创作面板", async ({ page }) => {
+  const dataDir = await serverDataDir();
+  const id = `e2e-${randomBytes(4).toString("hex")}`;
+  const file = path.join(dataDir, "templates", `zzz-${id}.json`);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    JSON.stringify({
+      id,
+      name: "e2e 夜色广告",
+      category: "广告",
+      prompt: "霓虹灯下的城市街道，镜头缓慢横移，广告牌逐一亮起",
+      mode: "text_to_video",
+      durationSec: 10,
+      aspectRatio: "9:16",
+    }),
+  );
+
+  try {
+    await reloadHome(page);
+    await page.getByRole("main").getByRole("tab", { name: "模板" }).click();
+    const tpl = page.locator(`.tpl-card[data-template-id="${id}"]`);
+    await expect(tpl).toBeVisible();
+    await expect(tpl).toContainText("e2e 夜色广告");
+    await expect(tpl).toContainText("广告");
+
+    await tpl.click();
+    // 点一张卡 = 面板展开 + 提示词与规格都填好，用户只要按「创作」
+    await expect(composer(page)).toHaveAttribute("data-open", "true");
+    await expect(composer(page)).toHaveAttribute("data-tab", "video");
+    await expect(promptBox(page)).toHaveValue(/霓虹灯下的城市街道/);
+    const specs = page.locator(".composer__specs");
+    await expect(specs).toContainText("10s");
+    await expect(specs).toContainText("9:16");
+  } finally {
+    await rm(file, { force: true });
+  }
+});
+
 test("手机端 375 宽：五个视图都不横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   for (const p of ["/", "/create", "/agent", "/canvas", "/subscription"]) {
@@ -809,5 +1121,75 @@ test("手机端 375 宽：五个视图都不横向溢出", async ({ page }) => {
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
     expect(overflowing, `${p} 在 375 宽不应横向溢出`).toBe(false);
+  }
+});
+
+/**
+ * 改密。**用一次性账号跑**，不动 `auth.setup.ts` 那个共享会话：改密会把
+ * `sessionEpoch` 加一，共享账号的所有旧 Cookie 立刻失效，而 `storageState` 文件里存的
+ * 正是其中一张——拿共享账号改一次密码，这个文件之后就再也登不进去了（重试与后续用例
+ * 一起垮）。`page` 的上下文是每条用例独立的，所以在这里把它换成一次性账号是安全的。
+ */
+test("改密：旧密码不对被拒、本机不掉线、其它设备的旧密码失效", async ({ page, request }) => {
+  const dataDir = await serverDataDir();
+  const email = `e2e-pwd-${randomBytes(6).toString("hex")}@lumen.test`;
+  const oldPass = randomBytes(18).toString("base64url");
+  const newPass = randomBytes(18).toString("base64url");
+  const code = newInviteCode();
+  const inviteFile = await writeInvite(dataDir, code);
+  let registered = false;
+
+  try {
+    // 注册这一步就把会话 Cookie 写进当前上下文，于是下面的页面就是这个一次性账号
+    const reg = await page.request.post("/api/auth/register", {
+      data: { email, password: oldPass, inviteCode: code },
+    });
+    registered = reg.ok();
+    expect(registered, `注册一次性账号失败：${reg.status()} ${await reg.text()}`).toBeTruthy();
+    await reloadHome(page);
+    await expect(page.locator(".top__who")).toHaveText(email.split("@")[0]);
+
+    // 账户菜单 → 修改密码
+    await page.getByRole("button", { name: "账户" }).click();
+    await page.getByRole("button", { name: "修改密码" }).click();
+    const dialog = page.locator('.pwd[role="dialog"]');
+    await expect(dialog).toBeVisible();
+
+    // 本地校验：两次新密码不一致，请求根本不发出
+    await dialog.getByLabel("当前密码").fill(oldPass);
+    await dialog.getByLabel("新密码", { exact: true }).fill(newPass);
+    await dialog.getByLabel("确认新密码").fill(`${newPass}x`);
+    await dialog.getByRole("button", { name: "确认修改" }).click();
+    await expect(dialog.locator(".pwd__err")).toHaveText("两次输入的新密码不一致");
+
+    // 服务端 401 invalid_credentials → 中文提示，弹窗留在原地
+    await dialog.getByLabel("当前密码").fill(`${oldPass}wrong`);
+    await dialog.getByLabel("确认新密码").fill(newPass);
+    await dialog.getByRole("button", { name: "确认修改" }).click();
+    await expect(dialog.locator(".pwd__err")).toHaveText("当前密码不正确");
+
+    // 真改
+    await dialog.getByLabel("当前密码").fill(oldPass);
+    const changed = page.waitForResponse(
+      (r) => r.url().endsWith("/api/auth/password") && r.request().method() === "POST",
+    );
+    await dialog.getByRole("button", { name: "确认修改" }).click();
+    expect((await changed).status()).toBe(200);
+    await expect(dialog).toBeHidden();
+    await expect(page.locator(".toast")).toHaveText("密码已修改，其它设备已下线");
+
+    // 本机不掉线：服务端改完密码顺手重签了 Cookie（`/api/auth/password` 的注释）
+    const me = await page.request.get("/api/me");
+    expect(me.ok(), "改密后当前设备不该掉线").toBeTruthy();
+    expect(((await me.json()) as { email: string }).email).toBe(email);
+
+    // 其它设备：旧密码登不上，新密码可以（`request` 是另一个上下文，不影响页面）
+    const withOld = await request.post("/api/auth/login", { data: { email, password: oldPass } });
+    expect(withOld.status(), "旧密码应当失效").toBe(401);
+    const withNew = await request.post("/api/auth/login", { data: { email, password: newPass } });
+    expect(withNew.ok(), "新密码应当可登录").toBeTruthy();
+  } finally {
+    // 注册成功时这张码已被标记用过；没用上就收回，别在盘上留一张活码
+    if (!registered) await rm(inviteFile, { force: true });
   }
 });

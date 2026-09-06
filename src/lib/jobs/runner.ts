@@ -2,7 +2,7 @@ import { access, copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { priceCny } from "@/lib/billing/prices";
 import { estimateCostUsd } from "@/lib/cost";
-import { jobConcurrency, upstreamRetryBaseMs } from "@/lib/env";
+import { jobConcurrency, upstreamPollMaxMs, upstreamRetryBaseMs } from "@/lib/env";
 import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
 import { emitJob } from "@/lib/jobs/events";
 import {
@@ -15,6 +15,7 @@ import { recoverDecision } from "@/lib/jobs/recover";
 import { JOB_UNCERTAIN_SUBMIT_MESSAGE, UNCERTAIN_SUBMIT_CODE } from "@/lib/jobs/retry-guard";
 import { sweepRetention } from "@/lib/jobs/retention";
 import { sweepIdempotency, sweepTmp } from "@/lib/jobs/sweep";
+import { listJobIndex } from "@/lib/jobs/index";
 import { listJobRecords, readJob, tmpDir, toPublic, updateJob } from "@/lib/jobs/store";
 import { extractPoster } from "@/lib/media/poster";
 import { probeDurationSec } from "@/lib/ffmpeg";
@@ -31,36 +32,72 @@ import {
   type VideoProvider,
 } from "@/lib/providers/types";
 import { mediaStore } from "@/lib/storage/local-fs";
-import { log } from "@/lib/log";
-import type { JobRecord } from "@/lib/jobs/schema";
+import { enterLogContext, log } from "@/lib/log";
+import { isTerminalStatus, type JobRecord } from "@/lib/jobs/schema";
 import { canTransition } from "@/lib/jobs/state-machine";
 import { cleanupJobArtifacts, commitLocalOutput, resolveLocalOutput } from "./local-output";
 
 type RunnerState = {
   started: boolean;
   inflight: Set<string>;
+  /**
+   * 待办集合：可能还需要跑的任务 id（方案 §3.3）。
+   *
+   * 在它之前 `pump()` 每次被叫醒都要把全站 job.json 读一遍去找那几条待跑的——历史任务
+   * 越多，每次状态推进就越慢，而待跑的从来只有个位数。现在入队时加进来、跑到终态时摘
+   * 掉，`pump` 只读集合里这几条。集合是进程内状态，崩溃后由启动时的索引重新灌满。
+   */
+  todo: Set<string>;
   timer?: NodeJS.Timeout;
   /** Wakes `pump()` when the earliest backed-off job becomes eligible again. */
   backoffTimer?: NodeJS.Timeout;
+  /** 冷启动时延后跑的第一次维护（见 `startJobRunner`）。 */
+  maintenanceTimer?: NodeJS.Timeout;
 };
 
 function state(): RunnerState {
   const g = globalThis as typeof globalThis & { __lumenRunner?: RunnerState };
-  if (!g.__lumenRunner) g.__lumenRunner = { started: false, inflight: new Set() };
+  if (!g.__lumenRunner) {
+    g.__lumenRunner = { started: false, inflight: new Set(), todo: new Set() };
+  }
   return g.__lumenRunner;
 }
+
+/** 冷启动时第一次维护延后多久。 */
+const MAINTENANCE_DELAY_MS = 30_000;
 
 export async function startJobRunner() {
   const s = state();
   if (s.started) return;
   s.started = true;
-  await maintenance();
+  // 冷启动只 await 「恢复」这一件事（方案 §3.3「冷启动」）。维护要扫 data/tmp、
+  // data/idempotency 与全站产物目录，和「这台实例能不能开始服务」无关，却曾经挡在
+  // 第一个请求前面；改成 30 秒后再跑，之后照旧每小时一次。
+  s.maintenanceTimer = setTimeout(() => {
+    s.maintenanceTimer = undefined;
+    void maintenance();
+  }, MAINTENANCE_DELAY_MS);
+  s.maintenanceTimer.unref();
   s.timer = setInterval(() => {
     void maintenance();
   }, 3600_000);
   s.timer.unref();
   await recover();
+  await refillTodo();
   void pump();
+}
+
+/**
+ * 从索引把「还没跑完的任务」灌进待办集合。
+ *
+ * 启动后跑一次（`recover` 已经把崩溃时的中间态推到了该在的状态），此后每小时的维护
+ * 再跑一次兜底——待办集合是进程内状态，任何一条因为异常掉出集合的任务，最迟一小时后
+ * 会被捡回来，而不是永远躺在 `queued` 里等一个不会来的 pump。
+ */
+async function refillTodo(): Promise<void> {
+  const s = state();
+  const entries = await listJobIndex({ nonTerminal: true });
+  for (const entry of entries) s.todo.add(entry.id);
 }
 
 /**
@@ -75,7 +112,7 @@ export async function startJobRunner() {
  * runner from starting.
  */
 async function maintenance() {
-  for (const step of [sweepTmp, sweepIdempotency, sweepRetention]) {
+  for (const step of [sweepTmp, sweepIdempotency, sweepRetention, refillTodo]) {
     try {
       await step();
     } catch (error) {
@@ -85,10 +122,11 @@ async function maintenance() {
       });
     }
   }
+  void pump();
 }
 
 export function enqueue(jobId: string) {
-  void jobId;
+  state().todo.add(jobId);
   void pump();
 }
 
@@ -97,9 +135,13 @@ async function recover() {
   const now = Date.now();
   for (const job of jobs) {
     const age = now - new Date(job.updatedAt).getTime();
-    const decision = recoverDecision(job.status, age, Boolean(job.remoteId));
+    // 陈旧判定跟着这条任务所属 provider 的轮询上限走（方案 §2 G6），再加 5 分钟余量：
+    // 15 分钟曾经是写死的字面量，于是一家慢上游的正常任务在重启后会被判「过期」，
+    // 而它在上游照常出片、照常计费。余量是留给 persist（下载 + 抽帧）的。
+    const staleMs = taskTimeoutMsFor(job.provider) + RECOVER_STALE_MARGIN_MS;
+    const decision = recoverDecision(job.status, age, Boolean(job.remoteId), staleMs);
     if (decision === "expire") {
-      await fail(job.id, "expired", "任务超时");
+      await fail(job.id, "expired", LOCAL_GIVE_UP_MESSAGE);
       continue;
     }
     if (decision === "uncertain") {
@@ -134,6 +176,65 @@ async function recover() {
       });
     }
   }
+}
+
+/**
+ * 一条任务在本地最多等多久（方案 §2 G6）。
+ *
+ * 曾经是 `pollUntilDone` 里的一个 15 分钟字面量，兼当 recover 的陈旧判定，于是
+ * `klingTaskTimeoutMs()` 配了也没人读。现在由 provider 自己声明
+ * （`capabilities().taskTimeoutMs`），没声明的按 15 分钟——grok / mock 就走这条。
+ *
+ * 认不出的 provider id（历史记录里出现过、现在已经删掉的那家）不该让恢复流程整个抛，
+ * 按默认值处理。
+ */
+export const DEFAULT_TASK_TIMEOUT_MS = 15 * 60 * 1000;
+/** recover 的陈旧判定 = provider 超时 + 这个余量（留给下载 / 抽帧的 persist 阶段）。 */
+const RECOVER_STALE_MARGIN_MS = 5 * 60 * 1000;
+
+export function taskTimeoutMsFor(providerId: ProviderId): number {
+  try {
+    return providerForId(providerId).capabilities().taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+  } catch {
+    return DEFAULT_TASK_TIMEOUT_MS;
+  }
+}
+
+/**
+ * 本地放弃等待时说的话。
+ *
+ * 不能只说「超时」：超时的是**我们**，上游那边任务多半还活着，而且提交的那一刻就已经
+ * 计费了。用户据此决定是去上游查收，还是重开一单——「失败」两个字会让他直接重开，
+ * 于是同一条片子付两次钱。
+ */
+export const LOCAL_GIVE_UP_MESSAGE =
+  "等待超时：本地已放弃等待，上游可能仍在出片并已计费，请先确认再决定是否重新生成";
+
+/** 轮询阶梯（方案 §3.3「轮询」）：前 20 秒 2s，20→60 秒线性升到 5s，之后到上限。 */
+const POLL_BASE_MS = 2_000;
+const POLL_MID_MS = 5_000;
+const POLL_RAMP_START_MS = 20_000;
+const POLL_RAMP_END_MS = 60_000;
+
+/**
+ * 距离开始轮询 `elapsedMs` 时，下一次该等多久。
+ *
+ * 固定 2 秒对一条 5 分钟的可灵任务意味着 150 次 HTTP + 150 次写盘 + 150 次 SSE 广播，
+ * 而其中有意义的只有最后一次。阶梯的形状迁就的是「用户还在看着」的那前 20 秒：那时反馈
+ * 要快；之后他多半已经切走了，慢一点没人察觉。上限 `UPSTREAM_POLL_MAX_MS` 可调，调到
+ * 比 2 秒还小时全程按它走（不给一个「最短也要 2 秒」的隐藏下限）。
+ */
+export function pollDelayMs(elapsedMs: number, maxMs: number = upstreamPollMaxMs()): number {
+  let raw: number;
+  if (elapsedMs < POLL_RAMP_START_MS) {
+    raw = POLL_BASE_MS;
+  } else if (elapsedMs < POLL_RAMP_END_MS) {
+    const ratio = (elapsedMs - POLL_RAMP_START_MS) / (POLL_RAMP_END_MS - POLL_RAMP_START_MS);
+    raw = POLL_BASE_MS + (POLL_MID_MS - POLL_BASE_MS) * ratio;
+  } else {
+    raw = maxMs;
+  }
+  return Math.round(Math.min(raw, maxMs));
 }
 
 /**
@@ -354,34 +455,52 @@ function scheduleBackoffPump(s: RunnerState, atMs: number) {
   s.backoffTimer.unref();
 }
 
+/**
+ * 挑出这一轮该跑的任务并发出去。
+ *
+ * 只读待办集合里的那几条记录，不再全量扫盘（方案 §3.3）。集合里跑到终态的、以及记录
+ * 已经不在了的，就地摘掉——这是待办集合唯一的收缩路径，所以每条任务终态之后至少还会
+ * 被 `pump` 看一眼。
+ */
 async function pump() {
   const s = state();
   const cap = jobConcurrency();
   if (s.inflight.size >= cap) return;
-  const jobs = await listJobRecords();
   const now = Date.now();
   let earliestDeferred = Infinity;
-  const queued = jobs.filter((j) => {
-    if (j.status !== "queued" || s.inflight.has(j.id)) return false;
-    const at = j.nextAttemptAt ? Date.parse(j.nextAttemptAt) : NaN;
-    if (Number.isFinite(at) && at > now) {
-      earliestDeferred = Math.min(earliestDeferred, at);
-      return false;
+  // 先跑已经在上游跑着的（pending / persisting / 长片管线），再跑排队的：一条已经
+  // 花过钱的任务比一条还没提交的更该占住并发额度。与全量扫盘时代的顺序一致。
+  const running: string[] = [];
+  const queued: string[] = [];
+  for (const id of [...s.todo]) {
+    if (s.inflight.has(id)) continue;
+    const job = await readJob(id);
+    if (!job || isTerminalStatus(job.status) || job.canceled) {
+      s.todo.delete(id);
+      continue;
     }
-    return true;
-  });
+    if (job.status === "queued") {
+      const at = job.nextAttemptAt ? Date.parse(job.nextAttemptAt) : NaN;
+      if (Number.isFinite(at) && at > now) {
+        earliestDeferred = Math.min(earliestDeferred, at);
+        continue;
+      }
+      queued.push(id);
+      continue;
+    }
+    if (job.status === "pending" || job.status === "persisting" || HARNESS_ACTIVE.has(job.status)) {
+      running.push(id);
+    }
+  }
   scheduleBackoffPump(s, earliestDeferred);
-  const pending = jobs.filter(
-    (j) =>
-      (j.status === "pending" || j.status === "persisting" || HARNESS_ACTIVE.has(j.status)) &&
-      !s.inflight.has(j.id),
-  );
-  const next = [...pending, ...queued];
-  for (const job of next) {
+  for (const id of [...running, ...queued]) {
     if (s.inflight.size >= cap) break;
-    s.inflight.add(job.id);
-    void runOne(job.id).finally(() => {
-      s.inflight.delete(job.id);
+    // 上面每条都 await 过一次读盘，期间另一次 pump 可能已经把这条发出去了；这一层
+    // 同步的复查是「同一条任务被跑两遍」的最后一道闸（下面的 add 与它之间没有 await）。
+    if (s.inflight.has(id)) continue;
+    s.inflight.add(id);
+    void runOne(id).finally(() => {
+      s.inflight.delete(id);
       void pump();
     });
   }
@@ -390,6 +509,11 @@ async function pump() {
 async function runOne(id: string) {
   let job = await readJob(id);
   if (!job) return;
+  // 这条任务往下所有层的 `log()` 自动带上 jobId / ownerId（方案 §3.2「可观测性」）。
+  // `reqId` 显式清掉：`pump()` 常常是被一次 `POST /api/jobs` 叫醒的，于是它这一轮捡起来的
+  // **每一条**排队任务都会继承那次请求的 id——包括别人早就排在那里的任务。一个指向错误
+  // 请求的 id 比没有 id 更糟：排障时会照着它去翻另一个人的请求。
+  enterLogContext({ reqId: undefined, jobId: job.id, ownerId: job.ownerId });
   if (job.canceled || job.status === "canceled") return;
   try {
     if (isHarnessDuration(job.durationSec) && job.status !== "persisting") {
@@ -578,9 +702,14 @@ function pathRef(jobId: string, rel: string): MediaRef {
 }
 
 async function pollUntilDone(id: string) {
+  const first = await readJob(id);
+  if (!first || first.status === "canceled") return;
+  // 总上限按这条任务的 provider 取一次（方案 §2 G6）。中途换家的路径不会走到这儿——
+  // `switchAwayFromExhausted` 把任务打回 `queued`，下一轮重新进这个函数。
+  const timeoutMs = taskTimeoutMsFor(first.provider);
   const started = Date.now();
   let transientRetries = 0;
-  while (Date.now() - started < 15 * 60 * 1000) {
+  while (Date.now() - started < timeoutMs) {
     const job = await readJob(id);
     if (!job || job.status === "canceled") return;
     const provider = providerForId(job.provider);
@@ -619,13 +748,21 @@ async function pollUntilDone(id: string) {
       return;
     }
     if (poll.status === "pending") {
-      await updateJob(id, (r) => {
-        if (r.status === "canceled" || r.canceled) return r;
-        r.progress = Math.max(r.progress, poll.progress);
-        r.status = "pending";
-        return r;
-      }).then(emitRec);
-      await sleep(2000);
+      // 进度没动就不写盘、不广播（方案 §3.3「轮询」）。一条 5 分钟的任务上游多半只报
+      // 几次进度，其余几十次轮询是一模一样的答复，为它们重写 job.json 再走一遍 SSE
+      // 只是在 2 核机上白烧 IO 和事件循环。状态还不是 `pending`（刚从 submitting 过来）
+      // 时仍要写：那一次是真的有变化。
+      const unchanged =
+        again.status === "pending" && Math.max(again.progress, poll.progress) === again.progress;
+      if (!unchanged) {
+        await updateJob(id, (r) => {
+          if (r.status === "canceled" || r.canceled) return r;
+          r.progress = Math.max(r.progress, poll.progress);
+          r.status = "pending";
+          return r;
+        }).then(emitRec);
+      }
+      await sleep(pollDelayMs(Date.now() - started));
       continue;
     }
     if (poll.status === "expired") {
@@ -655,7 +792,7 @@ async function pollUntilDone(id: string) {
     }).then(emitRec);
     return;
   }
-  await fail(id, "timeout", "等待生成超时");
+  await fail(id, "timeout", LOCAL_GIVE_UP_MESSAGE);
 }
 
 const RETRYABLE_POLL_CODES = new Set([
@@ -877,11 +1014,14 @@ const HARNESS_ACTIVE: ReadonlySet<JobRecord["status"]> = new Set([
   "stitching",
 ]);
 
+/**
+ * 全站在途任务数（`MAX_QUEUED_JOBS` 的判据，`/api/health` 的队列读数）。
+ *
+ * 走索引（方案 §3.3）：它在每一次提交的准入路径上，从前却要把全站 job.json 读一遍。
+ * 「在途」= 非终态，与旧的「queued / submitting / pending / persisting + 长片管线中间态」
+ * 是同一个集合（`state-machine.ts` 里终态没有出边）。
+ */
 export async function activeCount(): Promise<number> {
-  const jobs = await listJobRecords();
-  return jobs.filter(
-    (j) =>
-      ["queued", "submitting", "pending", "persisting"].includes(j.status) ||
-      HARNESS_ACTIVE.has(j.status),
-  ).length;
+  const entries = await listJobIndex({ nonTerminal: true });
+  return entries.length;
 }

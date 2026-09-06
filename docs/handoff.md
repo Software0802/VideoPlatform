@@ -2,16 +2,90 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 更新日期 | 2026-09-06 夜（阶段 A「面板补全 + 礼品码」：产品目录 / 模型下拉 / 分辨率尊重用户 / 首尾帧 / 参考生视频 / 数量 / 素材复用 / 礼品码 / 积分流水，**工作区改动，叠加在下方 0e 的 UI 换壳改动之上，均未提交/部署**）；再上一条已提交历史见下「YMan 中转 provider」行（现 §0f） |
-| 基线 | `main` @ `9280c459`（父提交 `73b88da` 阶段一止血）+ 工作区未提交的 UI 换壳改动（§0e）+ 工作区未提交的阶段 A 改动（§0，方案 `docs/plan-frontend-backend-adaptation.md`）。此前一轮可灵直连视频详见 §0c；用户系统 / 配额 / 留存清理详见 §0b |
+| 更新日期 | 2026-09-06 深夜（阶段 B + 架构第二阶段：作品分页/标签/删除/分享/模板/事件流、账号自助改密与运维 CLI、安全限流与请求追踪、稳态索引与轮询阶梯——**工作区未提交改动，叠加在下方 §0g 阶段 A 改动之上**，详见新 §0） |
+| 基线 | `main` @ `ffa29b8` + 本轮工作区未提交改动（§0，架构方案 `docs/plan-architecture-2026-09.md` 阶段二 / 用户方案 `docs/plan-users-quota.md`）。阶段 A「面板补全 + 礼品码」详见 §0g；UI 换壳详见 §0e；此前可灵直连视频详见 §0c；用户系统 / 配额 / 留存清理详见 §0b |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | 本轮（阶段 A，工作区未提交）：由 code-reviewer 子智能体审查（Codex 额度受限），13 条 findings，必修 3 条与顺手 9 条均已修复，详见 §0；`tsc`/`eslint`/`pnpm test`/`pnpm e2e` 的具体数字本任务书未给出，新会话接手前请自行跑一遍三项门禁 + `pnpm e2e`（新增 e2e 用例 15 条）确认绿。上一轮（UI 换壳，工作区未提交）：`tsc --noEmit` 绿、`eslint src` 绿、`pnpm test` 71 文件 / 681 通过、1 条 skip、`pnpm e2e` 12/12 通过。再上一提交 `9280c45`（YMan）门禁：`pnpm test` 681 通过（同一数字，无冲突）；Codex 跨厂商审查状态见 §0f「审查修复」小节。再上一提交 `73b88da`（阶段一止血）：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 63 文件 / 530 通过、1 条 skip；`pnpm e2e` 隔离模式 10/10 通过；Codex 审 diff 给出 BLOCK 四条，均已处理 |
-| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新账号余额为 0，提交前需管理员用 `node scripts/grant-balance.mjs <邮箱> <金额> --note "..."` 充值（见下 §0d.一） |
-| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。**本轮尚未部署**，服务器仍是可灵版 `bcad123`（§0c）；`scripts/deploy.sh` 已加回滚判定，`scripts/backup.sh` 待首次在服务器手动跑通并加入 cron。步骤见 §0a.4 |
+| 门禁状态 | 本轮（§0，工作区未提交）：`pnpm exec tsc --noEmit` 绿、`pnpm exec eslint src` 绿、`pnpm test` 929 通过、`pnpm e2e` 21/21 通过；Codex 跨厂商审查进行中，结论未在任务书中给出，新会话接手前先向主代理确认审查状态。上一轮（阶段 A，§0g）：由 code-reviewer 子智能体审查（Codex 额度受限），13 条 findings，必修 3 条与顺手 9 条均已修复。再上一轮（UI 换壳，§0e）：`tsc --noEmit` 绿、`eslint src` 绿、`pnpm test` 71 文件 / 681 通过、1 条 skip、`pnpm e2e` 12/12 通过 |
+| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新账号余额为 0，提交前需管理员用 `node scripts/grant-balance.mjs <邮箱> <金额> --note "..."` 充值（见下 §0d.一）。首次部署 / 首次跑本轮改动前需 `cp -r data-seed/templates data/templates`（模板 seed，见新 §0「上线检查清单」） |
+| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。**本轮尚未部署**；`scripts/deploy.sh` 已加回滚判定，`scripts/backup.sh` 待首次在服务器手动跑通并加入 cron。步骤见 §0a.4 |
 
 架构综合审查与治理路线见 `docs/plan-architecture-2026-09.md`（2026-09-06，三维度审查收敛，阶段一已完成，§5 用户已拍板）。
 
 新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，新增 §2d 余额与计费）、`docs/plan-architecture-2026-09.md`（本轮方案与阶段路线）、`DESIGN.md`（UI 规格）。
+
+---
+
+## 0. 本轮（2026-09-06 深夜）：阶段 B + 架构第二阶段——作品管理 / 账号自助 / 稳态与索引
+
+方案 `docs/plan-architecture-2026-09.md`（§4 阶段二路线）+ `docs/plan-users-quota.md`（用户系统 / 配额相关延伸）。目标：把阶段一止血之后暴露出的「没有作品管理」「账号只能靠管理员 CLI 兜底」「没有可观测的运维告警」「/api/jobs 系索引全表扫描」几类问题逐项补齐。**工作区未提交改动，叠加在 §0g（阶段 A）之上**，两轮都未提交、无法分别单独回滚。
+
+### 已实现
+
+**作品管理**
+
+- `GET /api/jobs?before&limit&kind` 分页信封 `{jobs, nextBefore?}`（同一毫秒的任务不切开，走任务索引，不再全表扫描）。
+- `JobRecord.tags`（≤5 个、每个 ≤16 码点）+ `PATCH /api/jobs/:id` 改标签。
+- `DELETE /api/jobs/:id`：终态 204、进行中 409 `job_active`；删的是任务目录，不退款。
+- 分享：`POST /api/jobs/:id/share` → `/s/<token>`（HMAC 派生密钥，`SHARE_TTL_HOURS` 默认 24 小时）；公开接口 `GET /api/share/:token`（+`/media`，`public, max-age=3600`）；公开分享页 `src/app/s/[token]`。
+- 模板：`data/templates/*.json`（`data-seed/templates` 提供六条示例，首次部署需 `cp -r data-seed/templates data/templates`）+ `GET /api/templates`。
+- 全局事件流 `GET /api/events`（通知 / toast 与铃铛的数据源）。
+
+**账号 / 管理**
+
+- `POST /api/auth/password`：需校验旧密码，成功后 `sessionEpoch+1`（本机当次会话不掉线，其余会话失效）。
+- 登出同样递增 `sessionEpoch`。
+- 新增管理 CLI：`scripts/reset-password.mjs`、`scripts/disable-user.mjs`、`scripts/usage.mjs`（按天 / 用户 / provider 统计用量，含流水对账）；`scripts/lib/users-store.mjs` 与服务端 scrypt 参数逐字一致并带自检。
+
+**安全**
+
+- 限流：`POST /api/jobs` 10 次/分钟、`POST /api/uploads` 5 次/分钟；`MAX_QUEUED_JOBS_PER_USER`（默认 5）挡单账号占满全站队列。
+- `/api/health` 匿名只回 `{ok}`，带会话时才含 `disk / queue / runner`；磁盘剩余 <5% 判不健康并触发告警。
+- `src/proxy.ts` 对非 GET 请求校验 `Origin`/`Referer`——两者都没有时放行（设计取舍，见下「设计取舍」，已写进 AGENTS.md 后端约定）。
+- 每请求 `x-request-id` 头，日志统一带 `reqId / jobId / ownerId`（`AsyncLocalStorage`，按需加载 `node:async_hooks`，因此 `@/lib/log`、`@/lib/billing/prices`、`@/lib/cost` 必须仍能被客户端 import，这是一条新硬约束，已写进 AGENTS.md）。
+- `ALERT_WEBHOOK_URL` 配置后向外发运维告警（沿用阶段一已有的 `budget_exceeded`/`cost_over_target`/`provider_exhausted`/`disk_low` 四类事件，本轮补上磁盘低于 5% 的触发点）。
+
+**稳态**
+
+- `data/jobs/index.json` 是派生索引：写完 `job.json` 后增量维护，启动时重建，读取前自愈；配额、余额预留、留存清理、首页列表、分页、`activeCount` 全部改成读索引而不是扫全部 `job.json`。
+- `pump` 内部维护一份内存待办集合，避免每轮都重新扫描任务目录。
+- 上游轮询阶梯 2s→5s→10s（上限 `UPSTREAM_POLL_MAX_MS`），进度不变时不写盘。
+- 超时判定按 provider 各自的 `capabilities().taskTimeoutMs`（新增 `YMAN_TASK_TIMEOUT_MS`）；崩溃恢复的陈旧判定 = provider 超时 + 5 分钟。
+- 冷启动的 `maintenance()` 延后 30 秒执行；客户端 SSE 连接健康时，轮询回退到 10 秒一次。
+- 实测：`/api/me` 230ms → 20ms，首页 SSR 650ms → 150ms。
+
+**前端**
+
+- 主页新增分页、分类筛选、标签编辑、删除、分享复制、模板回填、通知 toast 与铃铛、改密弹窗。
+- 价格符号统一为 ¥。
+- 新增 e2e 用例 21 条覆盖以上功能。
+
+### 已知未做 / 待处理
+
+- 删除失败任务会让止损阀（`FREE_DAILY_FAILURE_LIMIT`）计数相应减少，余额与预留不受影响——是否符合预期待用户确认。
+- 通知只在当前会话内有效，刷新页面不保留。
+- 模板 cover 图目前是占位图，未接入真实缩略。
+- 订阅页价格数字仍是原型美元占位值，未与人民币计费对齐。
+- `ClothVeil.tsx` 与 `src/shaders/` 已确认无任何组件引用，待清理，本轮未删。
+
+### 设计取舍
+
+| 项 | 取舍 | 原因（本任务书给出） |
+| --- | --- | --- |
+| Origin/Referer 校验 | 非 GET 请求两个头都缺失时放行，而非拒绝 | 记为明确的设计取舍，已写入 AGENTS.md 后端约定，供后续审查参照 |
+| 索引 vs 全表扫描 | `data/jobs/index.json` 作为可从 `job.json` 重建的派生缓存，不作为事实源 | 配额 / 分页 / 首页等高频读路径不能继续对着整个 `jobs/` 目录做 IO，事实源仍是各任务自己的 `job.json` |
+
+### 门禁
+
+`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 929 通过；`pnpm e2e` 21/21 通过。Codex 跨厂商审查进行中，结论未在本任务书中给出，新会话接手前请向主代理确认审查状态，不要假设已通过。
+
+### 上线检查清单（部署前必须过一遍）
+
+- 服务器 `.env` 补齐本轮新增变量：`SHARE_TTL_HOURS`（分享令牌有效期，默认 24）、`ALERT_WEBHOOK_URL` / `ALERT_WEBHOOK_TIMEOUT_MS`（运维告警，不设则不外发）、`UPSTREAM_POLL_MAX_MS`（轮询阶梯上限，默认 10000）、`MAX_QUEUED_JOBS_PER_USER`（默认 5）、`YMAN_TASK_TIMEOUT_MS`（默认 900000）。
+- 首次部署本轮改动前，服务器执行 `cp -r data-seed/templates data/templates`（模板 seed 目录不随代码自动生成）。
+- `scripts/backup.sh` 的白名单已含 `gift-codes/`，尚未验证是否也需要补 `templates/`——新会话部署前核对一遍备份清单是否覆盖新目录。
+- crontab：`scripts/backup.sh` 仍未在生产加入定时任务（阶段一遗留待办，本轮未处理）。
+- 阿里云 ECS 自动快照策略仍未验证是否已开启（阶段一遗留待办，本轮未处理）。
+- 礼品码 CLI `scripts/mint-gift-codes.mjs <数量> <金额> [--note]` 仍是唯一发码方式，部署后如需向内测用户发码，走这条命令。
 
 ---
 
@@ -51,7 +125,7 @@
 
 ---
 
-## 0. 本轮（2026-09-06 夜）：阶段 A「面板补全 + 礼品码」
+## 0g. 此前一轮（2026-09-06 夜，已合入本轮基线）：阶段 A「面板补全 + 礼品码」
 
 > 提交 `c9b61e5`，已于 2026-09-06 夜部署生产（`bash scripts/deploy.sh`），公网 health：`videoResolutions: [720p, 1080p]`、`/api/models` 匿名 401。生产 `.env` 无需新增变量（`LUMEN_PRODUCTS` 未设即默认目录；`IMAGE_PROVIDER_ORDER=openai,yman` 已在）。
 

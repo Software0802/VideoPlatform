@@ -1,0 +1,9 @@
+{
+  "id": "cinema-rain-window",
+  "name": "雨夜车窗独白",
+  "category": "电影叙事",
+  "prompt": "雨夜，一个人靠在车窗边，霓虹的光斑顺着雨水在脸上滑过。镜头从车外缓慢推近到半身，浅景深，冷调，胶片颗粒感。",
+  "mode": "text_to_video",
+  "durationSec": 10,
+  "aspectRatio": "16:9"
+}

@@ -5,7 +5,7 @@ import { estimateCostUsd, estimateHarnessCostUsd, type ImagePricingHint } from "
 import { assertBalance } from "@/lib/billing/admission";
 import { priceCny } from "@/lib/billing/prices";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
-import { harnessEnabled, maxQueuedJobs } from "@/lib/env";
+import { harnessEnabled, maxQueuedJobs, maxQueuedJobsPerUser } from "@/lib/env";
 import {
   modelForProvider,
   providerSettingsFor,
@@ -19,6 +19,7 @@ import {
   type UploadSidecar,
 } from "@/lib/jobs/schema";
 import { ProviderHttpError } from "@/lib/providers/types";
+import { activeCountForUser } from "@/lib/jobs/active";
 import { withAdmissionLock } from "@/lib/jobs/admission";
 import { lookupIdempotency, saveIdempotency } from "@/lib/jobs/idempotency";
 import { assertQuota } from "@/lib/jobs/quota";
@@ -46,6 +47,29 @@ export async function createJob(body: CreateJobBody, ownerId: string) {
   return withAdmissionLock(() => createJobUnlocked(body, ownerId));
 }
 
+/**
+ * 队列准入：先全站、再按人（方案 §3.2「安全收口」）。
+ *
+ * 两条上限管的是两件事。全站的 `MAX_QUEUED_JOBS` 是实例的承载力；按人的
+ * `MAX_QUEUED_JOBS_PER_USER` 是公平与防刷——没有它，一个账号可以把 20 个槽全占满，
+ * 其他人只会看到「队列已满」，而余额那条闸门对此无能为力（他钱够）。
+ *
+ * 顺序是先全站后按人：实例本来就满了的时候，说「你有 3 条在跑」是误导。
+ *
+ * 必须在 `withAdmissionLock` 里调用（`createJob` / `retryJob` 都已在锁内）：在途数是
+ * 从 job.json 现算的，出了锁，五个并发请求会读到同一份「还差一条到上限」。
+ */
+async function assertQueueRoom(ownerId: string): Promise<void> {
+  const n = await activeCount();
+  if (n >= maxQueuedJobs()) {
+    throw new ProviderHttpError(429, "queue_full", "队列已满，请等待进行中的任务完成");
+  }
+  const mine = await activeCountForUser(ownerId);
+  if (mine >= maxQueuedJobsPerUser()) {
+    throw new ProviderHttpError(429, "queue_full", `你有 ${mine} 条任务进行中，请等待完成`);
+  }
+}
+
 async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
   if (body.idempotencyKey) {
     const existing = await lookupIdempotency(ownerId, body.idempotencyKey);
@@ -60,10 +84,7 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
 
   assertCreateJobFields(body);
 
-  const n = await activeCount();
-  if (n >= maxQueuedJobs()) {
-    throw new ProviderHttpError(429, "queue_full", "队列已满，请等待进行中的任务完成");
-  }
+  await assertQueueRoom(ownerId);
   // Same critical section as the `writeJob` below (plan §6.2). The reservation this
   // admits only becomes visible to the next caller once that write lands, so the
   // check and the write must not be separated — otherwise five concurrent requests
@@ -223,6 +244,8 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     resolution,
     imageResolution,
     generateAudio,
+    // 请求体里的标签已由 `tagsSchema` trim / 去重 / 判过上限，这里原样落盘。
+    tags: body.tags,
     lastFrameStored: Boolean(last),
     // 真的把尾帧发给了上游、成片最后一帧真会是它，才算「锁住尾帧」：当前只有可灵这条
     // 通道会发（其余 provider 只落盘，grok 的 rest-map 甚至会拒绝带尾帧的请求体），
@@ -300,10 +323,7 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
   if (block) {
     throw new ProviderHttpError(409, "retry_blocked", block.message);
   }
-  const n = await activeCount();
-  if (n >= maxQueuedJobs()) {
-    throw new ProviderHttpError(429, "queue_full", "队列已满，请等待进行中的任务完成");
-  }
+  await assertQueueRoom(ownerId);
   // A retry issues a brand-new billable upstream request, so it spends a slot exactly like a
   // first submission — same judge, same lock (plan §6.2).
   await assertQuota(ownerId, source.mode);
@@ -377,6 +397,8 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     resolution,
     imageResolution,
     generateAudio,
+    // 重试出来的还是「同一件作品的另一次尝试」，源任务的标签跟着走，不用重新贴。
+    tags: source.tags,
     lastFrameStored: source.lastFrameStored,
     // 同 `createJob`：重试可能换了 provider，锁没锁尾帧要按**这次**的落点算。
     lastFrameLocksOutput: provider === "kling" && Boolean(source.assets.last),

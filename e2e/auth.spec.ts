@@ -20,8 +20,8 @@ import { newInviteCode, serverDataDir, writeInvite } from "./invites";
  *     "基础版"，不含用户名（README §2："个人"是芯片的静态填充文案，不是账号名）。
  *   - 余额展示从 CNY 文案 `.composer__quota` 改成 `.top__credits` 的 ⚡ 积分（¥1=100 积分）。
  *   - 「最近成片」`.recent__item` 换成按 kind 分标签页的瀑布流 `.masonry__item`；新账号
- *     "没有任何任务"这条断言额外加了一次 `GET /api/jobs` 返回空数组，比数格子数更直接地
- *     证明账号隔离（不会看见别人的作品）。
+ *     "没有任何任务"这条断言额外加了一次 `GET /api/jobs`（阶段 B 起回分页信封
+ *     `{ jobs: [] }`），比数格子数更直接地证明账号隔离（不会看见别人的作品）。
  */
 
 test.use({ storageState: { cookies: [], origins: [] } });
@@ -91,8 +91,11 @@ test("未登录被送到登录页；注册后进首页、头像菜单显示账�
     // 7. 新账号没有任何任务：瀑布流是空的，且服务端也确实没有任务记录
     //    （不串到别人的成片——这条比数格子数更直接地证明账号隔离）。
     await expect(page.getByRole("main").locator(".masonry__item")).toHaveCount(0);
+    // 阶段 B 起 `GET /api/jobs` 回的是分页信封 `{ jobs, nextBefore? }` 而不是裸数组
+    // （主页「加载更多」要靠 `nextBefore` 在不在判断还有没有下一页）。新账号一条都没有，
+    // 所以 `jobs` 是空的，也不该带游标。
     const jobsRes = await page.request.get("/api/jobs");
-    expect(await jobsRes.json()).toEqual([]);
+    expect(await jobsRes.json()).toEqual({ jobs: [] });
 
     // 8. 顶栏积分：`/api/me` 给了 balance 就换算成 ⚡ 积分显示（¥1=100 积分，AGENTS.md
     //    硬约束）。新账号余额是 0，这里同时验证「不够就禁用提交」，UI 与后端各查一遍。
