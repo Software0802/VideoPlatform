@@ -7,9 +7,9 @@ import { estimateHarnessCostUsd } from "@/lib/cost";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { HARNESS_DURATIONS, isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
 import { cancelJob, createJob, newIdempotencyKey, retryJob, uploadFile } from "@/lib/client/jobs";
+import { fetchMe, logout, type MePublic } from "@/lib/client/auth";
 import { useJobLive } from "@/lib/client/useJobLive";
 import { formatElapsed, isActive, isFailed, isTerminal } from "@/lib/client/labels";
-import { AccessTokenPrompt } from "@/components/shell/AccessTokenPrompt";
 import { SceneHost } from "@/components/scene/SceneHost";
 import { mountDawn, mountRingDark, type DawnHandle, type RingHandle } from "@/lib/scene/lumen-three";
 
@@ -196,13 +196,28 @@ const reducedMotion = () => typeof matchMedia !== "undefined" && matchMedia("(pr
 // useJobLive 需要一个 job；没有任务时给它一个终态哑对象，effect 直接跳过
 const NO_JOB = { id: "", status: "succeeded" } as const;
 
+/** 顶栏只放 @ 前的部分；完整邮箱留在 title / aria-label 里 */
+const shortName = (email: string) => email.split("@")[0] || email;
+const QUOTA_EXHAUSTED = "今日额度已用完，北京时间 0 点重置";
+
 const Chevron = () => (
   <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="m6 9 6 6 6-6" />
   </svg>
 );
 
-export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs: JobPublic[]; mock: boolean; harness?: boolean }) {
+export function LumenHome({
+  initialJobs,
+  mock,
+  harness = false,
+  initialEmail,
+}: {
+  initialJobs: JobPublic[];
+  mock: boolean;
+  harness?: boolean;
+  /** SSR 已经解析过会话，先用它渲染顶栏，避免首帧右上角空着 */
+  initialEmail: string;
+}) {
   const [jobs, setJobs] = useState<JobPublic[]>(initialJobs);
   const [view, setView] = useState<"home" | "works">("home");
   const [studio, setStudio] = useState(false);
@@ -216,7 +231,9 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState<number | null>(null);
-  const [authRequired, setAuthRequired] = useState(false);
+  const [me, setMe] = useState<MePublic | null>(null);
+  const [meTick, setMeTick] = useState(0);
+  const [signingOut, setSigningOut] = useState(false);
   const [kind, setKind] = useState<Kind>("video");
   const [sel, setSel] = useState(0);
   const [hov, setHov] = useState(-1);
@@ -250,8 +267,29 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
     };
   }, []);
 
+  /* ── 账号与配额：/api/me 是唯一来源，quota 由配额批次补上，缺失就整行不渲染 ── */
+  // 事件处理里手动补一次读取（提交被拒时任务 id 不变，光靠下面的依赖触发不了）
+  const refreshMe = useCallback(() => setMeTick((n) => n + 1), []);
+
+  const email = me?.email ?? initialEmail;
+  const quota = me?.quota;
+  const quotaExhausted = !!quota && quota.remaining <= 0;
+
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await logout();
+      // 整页跳转而不是 router.push：会话没了，客户端缓存里的任务数据也该一起丢掉
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign("/login");
+    } catch (e) {
+      setSigningOut(false);
+      setError(e instanceof Error ? e.message : "退出失败");
+    }
+  }
+
   /* ── 任务跟踪 ── */
-  const onUnauthorized = useCallback(() => setAuthRequired(true), []);
   const upsert = useCallback((j: JobPublic) => {
     setJobs((prev) => (prev.some((x) => x.id === j.id) ? prev.map((x) => (x.id === j.id ? j : x)) : [j, ...prev]));
   }, []);
@@ -262,10 +300,31 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
     },
     [upsert],
   );
-  useJobLive(job ?? NO_JOB, onLive, onUnauthorized);
+  useJobLive(job ?? NO_JOB, onLive);
 
   const active = !!job && isActive(job.status);
   const working = busy || active;
+  /*
+    配额随任务变化：新任务占一个预留，终态成功转「已用」、失败 / 取消释放预留
+    （方案 §6.1）。挂载、任务 id 变化、任务转终态、以及 meTick 被事件处理推进时
+    各读一次 /api/me。setState 只发生在 then 回调里，effect 体内不同步改状态。
+  */
+  const jobId = job?.id ?? "";
+  const jobTerminal = !!job && isTerminal(job.status);
+  useEffect(() => {
+    let alive = true;
+    void fetchMe().then(
+      (next) => {
+        if (alive) setMe(next);
+      },
+      () => {
+        // 401 已由 client 层跳登录页；其它错误不该打断正在进行的出图
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [jobId, jobTerminal, meTick]);
   useEffect(() => {
     if (!active) return;
     const t0 = window.setTimeout(() => setNow(Date.now()), 0);
@@ -366,7 +425,7 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
     if (mode === "t2v") setMode("i2v");
     setError(null);
     try {
-      const up = await uploadFile(file, "start", onUnauthorized);
+      const up = await uploadFile(file, "start");
       setFirst({ preview, uploadId: up.uploadId, state: "ready" });
     } catch (e) {
       setFirst({ preview, uploadId: null, state: "error", message: e instanceof Error ? e.message : "上传失败" });
@@ -391,6 +450,7 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
     if (working) return;
     setError(null);
     try {
+      if (quotaExhausted) throw new Error(QUOTA_EXHAUSTED);
       if (mode !== "i2v" && !prompt.trim()) throw new Error("这条路径需要提示词");
       if (mode === "i2v" && first?.state !== "ready") throw new Error(first?.state === "busy" ? "首帧还在上传，请稍候" : "图生视频需要先选一张首帧");
       setBusy(true);
@@ -409,12 +469,14 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
         body.generateAudio = true;
         if (mode === "i2v") body.startUploadId = first!.uploadId;
       }
-      const created = await createJob(body, onUnauthorized);
+      const created = await createJob(body);
       idempotencyKey.current = null;
       setJob(created);
       upsert(created);
     } catch (e) {
+      // 429 quota_exceeded / failure_limit_reached：服务端消息原样展示
       setError(e instanceof Error ? e.message : String(e));
+      refreshMe();
     } finally {
       setBusy(false);
     }
@@ -426,7 +488,7 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
     setError(null);
     setBusy(true);
     try {
-      onLive(await cancelJob(job.id, onUnauthorized));
+      onLive(await cancelJob(job.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -440,9 +502,11 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
     setError(null);
     setBusy(true);
     try {
-      onLive(await retryJob(job.id, onUnauthorized));
+      // 重试也向上游发新的计费请求，同样走配额（方案 §6.2）
+      onLive(await retryJob(job.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      refreshMe();
     } finally {
       setBusy(false);
     }
@@ -501,6 +565,7 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
   const exhibitBottom = 236 + (rows - 3) * 23;
   const angleLabel = `${String(angle).padStart(3, "0")}°`;
   const retryLabel = job?.shots?.length ? "重做失败分镜" : "重新生成";
+  const quotaResetHint = quota ? `今日已用 ${quota.used}/${quota.limit}，北京时间 0 点重置` : undefined;
 
   return (
     <div className="app" data-enter={entering} data-ready={ready} data-view={view}>
@@ -569,9 +634,14 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
               我的
             </button>
           </nav>
-          <button type="button" className="login" onClick={() => setAuthRequired(true)}>
-            登录
-          </button>
+          <div className="account">
+            <span className="account__name" title={email} aria-label={`当前账号 ${email}`}>
+              {shortName(email)}
+            </span>
+            <button type="button" className="login" disabled={signingOut} onClick={() => void signOut()}>
+              {signingOut ? "退出中" : "退出"}
+            </button>
+          </div>
         </header>
 
         {view === "home" ? (
@@ -730,6 +800,12 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
                       {ratio}
                       <Chevron />
                     </button>
+                    {/* 配额由 /api/me 提供；字段缺失（尚未上线）时整行不渲染 */}
+                    {quota ? (
+                      <span className="composer__quota" data-empty={quotaExhausted} title={quotaResetHint}>
+                        今日剩余 {Math.max(0, quota.remaining)}/{quota.limit}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="composer__cluster">
                     <span className="composer__model">{modelName}</span>
@@ -746,7 +822,15 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
                         <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                       </svg>
                     </button>
-                    <button type="submit" className="composer__send" aria-label={working ? `生成中 ${pct}%` : "生成"} data-busy={working} disabled={working} style={{ "--p": `${pct}%` } as React.CSSProperties}>
+                    <button
+                      type="submit"
+                      className="composer__send"
+                      aria-label={working ? `生成中 ${pct}%` : quotaExhausted ? QUOTA_EXHAUSTED : "生成"}
+                      title={quotaExhausted ? QUOTA_EXHAUSTED : undefined}
+                      data-busy={working}
+                      disabled={working || quotaExhausted}
+                      style={{ "--p": `${pct}%` } as React.CSSProperties}
+                    >
                       {working ? (
                         <span className="composer__send-pct">{pct}%</span>
                       ) : (
@@ -762,6 +846,8 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
                   <p className="composer__error" role="alert">
                     {error}
                   </p>
+                ) : quotaExhausted ? (
+                  <p className="composer__error composer__error--quota">{QUOTA_EXHAUSTED}</p>
                 ) : null}
               </form>
             </div>
@@ -828,8 +914,6 @@ export function LumenHome({ initialJobs, mock, harness = false }: { initialJobs:
           e.target.value = "";
         }}
       />
-
-      {authRequired ? <AccessTokenPrompt onAuthorized={() => setAuthRequired(false)} /> : null}
     </div>
   );
 }
