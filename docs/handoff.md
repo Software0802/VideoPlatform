@@ -9,6 +9,8 @@
 | 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新增可灵相关 env 见下方 §0.3 |
 | 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。可灵版 `bcad123` 已于 2026-09-06 部署（`bash scripts/deploy.sh`，服务器 `.env` 追加 KLING_* 七项、备份 `.env.bak.2026-09-06`），公网 `/api/health` 返回 `videoProvider: kling`；丝绸幕布实验随本次部署一并上线。步骤见 §0a.4 |
 
+架构综合审查与治理路线见 `docs/plan-architecture-2026-09.md`（2026-09-06，三维度审查收敛，§5 待用户拍板）。
+
 新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，新增 §2c 可灵路由）、`docs/plan-kling-video.md`（本轮方案）、`DESIGN.md`（UI 规格）。
 
 ---
