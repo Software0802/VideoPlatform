@@ -15,27 +15,27 @@
 
 ## 2. 问题总表（按严重度，去重后）
 
-| # | 维度 | 问题 | 证据 | 影响 | 工作量 |
-| --- | --- | --- | --- | --- | --- |
-| G1 | 治理 · 钱 | 单片任务崩溃恢复：`submitting` 且无 `remoteId` 时无条件重排队，再发一次计费 POST | `recover.ts:28`、`runner.ts:92-98,144` | 一次 OOM / 重启即可能双倍付费；与 harness 侧 `uncertain_submit` 原则自相矛盾 | 0.5 天 |
-| G2 | 治理 · 钱 | 视频完全没有配额，只有全站 `MAX_QUEUED_JOBS=20` | `quota.ts:255`、`create.ts:70` | 单账号一晚可烧数十美元；`/api/me` 的「今日剩余 n/10」在做视频时纹丝不动，误导 | 1–1.5 天 |
-| G3 | 治理 · 数据 | `data/`（用户、邀请码、任务、成片）无任何备份，是唯一事实源 | `deploy.sh:12`、`scripts/` 目录 | 盘坏或误删即全量丢失，RPO 为无穷 | 0.5 天 |
-| G4 | 治理 · 发布 | 部署无回滚判定、无 CI；health 非 200 不触发 `.next.prev` 回滚 | `deploy.sh:45-69` | 坏构建 = 持续 500 直到人工发现 | 回滚 2h，CI 0.5 天 |
-| P1 | 性能 · 内存 | `sharp` 解码无像素上限，12MB 合法 JPEG 可解出 430MB；质量回退循环最多重解码 5 次；上传不受 `JOB_CONCURRENCY` 保护 | `upload.ts:13,87-91,175`、`preprocess.ts:12,22-35` | 两个用户同时传大图即 OOM（systemd `MemoryMax=700M`） | 0.5 天 |
-| P2 | 性能 · IO | 首页 SSR、配额准入（在全局锁内）、runner 每次 pump、`activeCount`、retention 都全量串行读所有 `job.json` | `store.ts:180-189` 及六处调用 | 随历史任务数线性恶化，几千条后提交吞吐被拖垮；`retention` 不删 `job.json`，只增不减 | 索引 1–1.5 天 |
-| P3 | 性能 · 带宽 | `/api/media` 无 `Cache-Control` / `ETag`；作品环一次拉 40 张全量穿透 Node | `media/route.ts:67-87`、`lumen-three.ts:205` | 2 核机事件循环被 40 路流挤满 | 2h |
-| G5 | 治理 · 上游 | 可灵 `1303` 并发超限 / `1102` 余额不足映射为 429 后在 submit 阶段直接 fail，并计入止损阀；poll 阶段 429 又会被重试 | `kling/client.ts:70-73`、`runner.ts:159-173,387` | 用户看到「失败」而非「排队」；余额不足时无谓重打上游 | 0.5 天 |
-| G6 | 治理 · 超时 | 15 分钟轮询上限是字面量，兼作 recover 的陈旧判定；`klingTaskTimeoutMs()` 无调用方 | `runner.ts:300`、`recover.ts:3`、`env.ts:215` | 上游慢于 15 分钟时本地判失败但上游照常出片计费：「付了钱丢了货」 | 0.5 天 |
-| G7 | 治理 · 安全 | 登出不递增 `sessionEpoch`，30 天 Cookie 登出后仍有效；提交 / 上传无限流；`/api/health` 匿名回显上游选型；CSRF 只靠 SameSite | `logout/route.ts:6-10`、`rate-limit.ts` 引用面、`proxy.ts:23` | 中低；内测阶段可接受但应在开放前修 | 合计 0.5 天 |
-| G8 | 治理 · 观测 | 日志无 request id；无指标 / 告警；成本无按天 / 用户 / provider 汇总；health 缺磁盘水位、队列积压、上游可达 | `log.ts`、`health/route.ts:19-59` | 出问题只能翻 journalctl；花了多少钱要手算 | 1.5 天 |
-| F1 | 功能 · 账号 | 无改密、找回、注销；`changeUserPassword` 只有测试在调 | `api/auth/` 目录、`service.ts:105` | 忘密码 = 账号永久失联（邀请码已消费） | 改密 0.5 天，重置 CLI 0.3 天 |
-| F2 | 功能 · 管理 | 管理员唯一特权是看无主任务；禁用用户、看用量、发码都要 SSH | `ownership.ts:12`、`schema.ts:28 disabled` 无写入 | 滥用只能改 `.env` 重启 | CLI 1 天 |
-| F3 | 功能 · 诚实 | UI 固定发 `generateAudio: true`，可灵实例实际静音，界面从不说明；成本一律打 `$`，ccgoai 生图实为人民币 | `LumenHome.tsx:490,187`、`.env.example:34-36` | 「为什么没声音」「账目差 7 倍」 | 各 0.5h / 0.5 天 |
-| F4 | 功能 · 能力面 | r2v / edit / extend 前端不可达；2K 出图、1080p、7 画幅 UI 写死；`labels.ts` 大半死代码；Harness 生产关闭且被钉在 grok | `LumenHome.tsx:26-36,485-490`、`router.ts:56` | 后端一半能力零曝光 | 决策为主 |
-| F5 | 功能 · 生命周期 | 无删除单条、无分享链接、作品只显示 40 条无分页、无搜索 | `api/jobs/[id]/` 目录、`page.tsx:33` | 40 条以后老作品看不到只能等清理 | 各 0.5–1 天 |
-| F6 | 功能 · 内容安全 | 无前置审核；moderation 失败只显示上游原文、不说明是否计费；无举报 / 封禁 | `runner.ts:230`、`upload.ts` | 上游封号风险；客服成本 | 0.7 天 |
-| F7 | 功能 · 文档 | README 仍写已删除的 `LUMEN_ACCESS_TOKEN`；`.env.example` 有两个无人读的开关；无 runbook | `README.md`、`.env.example:147-148` | 新人按 README 起不来 | 0.5 天 |
-| P4 | 性能 · 其他 | 上游轮询固定 2s 无退避且每次写盘发 SSE；客户端 SSE + 2s 轮询双通道；冷启动 await 两次全扫；iframe 从 jsdelivr 拉第二份 three；两个 WebGL 常驻 | 见附录 | 中低，累积性 | 合计 1 天 |
+| # | 维度 | 问题 | 证据 | 影响 | 工作量 | 阶段一处理（2026-09-06） |
+| --- | --- | --- | --- | --- | --- | --- |
+| G1 | 治理 · 钱 | 单片任务崩溃恢复：`submitting` 且无 `remoteId` 时无条件重排队，再发一次计费 POST | `recover.ts:28`、`runner.ts:92-98,144` | 一次 OOM / 重启即可能双倍付费；与 harness 侧 `uncertain_submit` 原则自相矛盾 | 0.5 天 | **已修**（`73b88da`：先 `lookupByExternalId` 找回，找不到判 `uncertain_submit` 拒绝重试） |
+| G2 | 治理 · 钱 | 视频完全没有配额，只有全站 `MAX_QUEUED_JOBS=20` | `quota.ts:255`、`create.ts:70` | 单账号一晚可烧数十美元；`/api/me` 的「今日剩余 n/10」在做视频时纹丝不动，误导 | 1–1.5 天 | **已修**（`73b88da`：余额模型覆盖全部 mode，取代日配额成为主闸门，见 §2d） |
+| G3 | 治理 · 数据 | `data/`（用户、邀请码、任务、成片）无任何备份，是唯一事实源 | `deploy.sh:12`、`scripts/` 目录 | 盘坏或误删即全量丢失，RPO 为无穷 | 0.5 天 | **已修**（`73b88da`：`scripts/backup.sh` 本机备份；阿里云自动快照需用户在控制台配，未验证已开启） |
+| G4 | 治理 · 发布 | 部署无回滚判定、无 CI；health 非 200 不触发 `.next.prev` 回滚 | `deploy.sh:45-69` | 坏构建 = 持续 500 直到人工发现 | 回滚 2h，CI 0.5 天 | **已修**（`73b88da`：`deploy.sh` health 失败自动回滚；`.github/workflows/ci.yml` 三门禁） |
+| P1 | 性能 · 内存 | `sharp` 解码无像素上限，12MB 合法 JPEG 可解出 430MB；质量回退循环最多重解码 5 次；上传不受 `JOB_CONCURRENCY` 保护 | `upload.ts:13,87-91,175`、`preprocess.ts:12,22-35` | 两个用户同时传大图即 OOM（systemd `MemoryMax=700M`） | 0.5 天 | **已修**（`73b88da`：`limitInputPixels` 40MP、质量回退只重压已缩放中间结果、`sharp.concurrency(1)`、`MAX_IMAGE`/`MAX_VIDEO` 下调） |
+| P2 | 性能 · IO | 首页 SSR、配额准入（在全局锁内）、runner 每次 pump、`activeCount`、retention 都全量串行读所有 `job.json` | `store.ts:180-189` 及六处调用 | 随历史任务数线性恶化，几千条后提交吞吐被拖垮；`retention` 不删 `job.json`，只增不减 | 索引 1–1.5 天 | |
+| P3 | 性能 · 带宽 | `/api/media` 无 `Cache-Control` / `ETag`；作品环一次拉 40 张全量穿透 Node | `media/route.ts:67-87`、`lumen-three.ts:205` | 2 核机事件循环被 40 路流挤满 | 2h | **部分已修**（`73b88da`：媒体路由加 `no-cache` + 弱 ETag + 304；作品环 40 张全量拉取与 Caddy 直出静态资源仍未做） |
+| G5 | 治理 · 上游 | 可灵 `1303` 并发超限 / `1102` 余额不足映射为 429 后在 submit 阶段直接 fail，并计入止损阀；poll 阶段 429 又会被重试 | `kling/client.ts:70-73`、`runner.ts:159-173,387` | 用户看到「失败」而非「排队」；余额不足时无谓重打上游 | 0.5 天 | **部分已修**（`73b88da`：submit 阶段 `rate_limited`/`quota_exhausted` 退避重排 3 次且止损阀排除；poll 阶段是否仍会重试未在本轮验证） |
+| G6 | 治理 · 超时 | 15 分钟轮询上限是字面量，兼作 recover 的陈旧判定；`klingTaskTimeoutMs()` 无调用方 | `runner.ts:300`、`recover.ts:3`、`env.ts:215` | 上游慢于 15 分钟时本地判失败但上游照常出片计费：「付了钱丢了货」 | 0.5 天 | |
+| G7 | 治理 · 安全 | 登出不递增 `sessionEpoch`，30 天 Cookie 登出后仍有效；提交 / 上传无限流；`/api/health` 匿名回显上游选型；CSRF 只靠 SameSite | `logout/route.ts:6-10`、`rate-limit.ts` 引用面、`proxy.ts:23` | 中低；内测阶段可接受但应在开放前修 | 合计 0.5 天 | |
+| G8 | 治理 · 观测 | 日志无 request id；无指标 / 告警；成本无按天 / 用户 / provider 汇总；health 缺磁盘水位、队列积压、上游可达 | `log.ts`、`health/route.ts:19-59` | 出问题只能翻 journalctl；花了多少钱要手算 | 1.5 天 | |
+| F1 | 功能 · 账号 | 无改密、找回、注销；`changeUserPassword` 只有测试在调 | `api/auth/` 目录、`service.ts:105` | 忘密码 = 账号永久失联（邀请码已消费） | 改密 0.5 天，重置 CLI 0.3 天 | |
+| F2 | 功能 · 管理 | 管理员唯一特权是看无主任务；禁用用户、看用量、发码都要 SSH | `ownership.ts:12`、`schema.ts:28 disabled` 无写入 | 滥用只能改 `.env` 重启 | CLI 1 天 | |
+| F3 | 功能 · 诚实 | UI 固定发 `generateAudio: true`，可灵实例实际静音，界面从不说明；成本一律打 `$`，ccgoai 生图实为人民币 | `LumenHome.tsx:490,187`、`.env.example:34-36` | 「为什么没声音」「账目差 7 倍」 | 各 0.5h / 0.5 天 | **已修**（`73b88da`：有声/无声芯片 + provider 能力判定「暂不可用」；卡片显示人民币售价 `priceCny` 而非美元成本） |
+| F4 | 功能 · 能力面 | r2v / edit / extend 前端不可达；2K 出图、1080p、7 画幅 UI 写死；`labels.ts` 大半死代码；Harness 生产关闭且被钉在 grok | `LumenHome.tsx:26-36,485-490`、`router.ts:56` | 后端一半能力零曝光 | 决策为主 | |
+| F5 | 功能 · 生命周期 | 无删除单条、无分享链接、作品只显示 40 条无分页、无搜索 | `api/jobs/[id]/` 目录、`page.tsx:33` | 40 条以后老作品看不到只能等清理 | 各 0.5–1 天 | |
+| F6 | 功能 · 内容安全 | 无前置审核；moderation 失败只显示上游原文、不说明是否计费；无举报 / 封禁 | `runner.ts:230`、`upload.ts` | 上游封号风险；客服成本 | 0.7 天 | |
+| F7 | 功能 · 文档 | README 仍写已删除的 `LUMEN_ACCESS_TOKEN`；`.env.example` 有两个无人读的开关；无 runbook | `README.md`、`.env.example:147-148` | 新人按 README 起不来 | 0.5 天 | |
+| P4 | 性能 · 其他 | 上游轮询固定 2s 无退避且每次写盘发 SSE；客户端 SSE + 2s 轮询双通道；冷启动 await 两次全扫；iframe 从 jsdelivr 拉第二份 three；两个 WebGL 常驻 | 见附录 | 中低，累积性 | 合计 1 天 | |
 
 ## 3. 目标架构（治理 · 性能 · 完整度三条线）
 
@@ -66,7 +66,7 @@
 
 **IO**：`data/jobs/index.json`（`id, ownerId, status, mode, createdAt, completedAt, artifactsPurgedAt, costUsdEstimate/Actual`），由 `writeJob / updateJob` 增量维护，启动重建（照 `users/index.json` 的模式）。首页、`/api/jobs`、配额、`activeCount`、retention 全部改读索引；`pump()` 改为内存待办集合。超过 3× 留存期的记录归档到 `data/archive/`。`DATA_RETENTION_DAYS` 保持 30（用户决策），目录数增长靠索引与归档吸收。
 
-**带宽**：`/api/media` 加 `Cache-Control: private, max-age=31536000, immutable` + 弱 ETag + 304；Caddy 直出 `/_next/static/*` 与 `/lumina/*`。
+**带宽**：`/api/media` 加 `Cache-Control: private, no-cache` + 弱 ETag + 304（**Codex P0 修订**：原提案的 `max-age=31536000, immutable` 会让同一浏览器切换账号登录后跳过 owner 校验直接吃缓存，`no-cache` 强制每次都过一遍鉴权，revalidation 命中时仍回 304 省带宽）；Caddy 直出 `/_next/static/*` 与 `/lumina/*`（阶段一未做）。
 
 **轮询**：上游 2s → 5s → 10s 阶梯；`progress` 无变化不写盘不发 SSE；客户端 SSE 健康时轮询退到 10s；冷启动 `maintenance()` 延后 30s。
 
@@ -90,11 +90,13 @@
 
 | 阶段 | 目标 | 内容 | 估时 |
 | --- | --- | --- | --- |
-| **一 · 止血**（本周） | 不多花钱、不丢数据、能回滚 | G1 恢复不重提 · G2 **余额模型**（价目表 + 预留结算 + 充值 CLI + UI 提示） · G3 本机备份 + 云快照 · G4 部署回滚 + CI · P1 sharp 限制 · P3 媒体缓存头 · F3 音频标注 · G5 429 退避 | 5–6 天 |
+| **一 · 止血**（本周） | 不多花钱、不丢数据、能回滚 | G1 恢复不重提 · G2 **余额模型**（价目表 + 预留结算 + 充值 CLI + UI 提示） · G3 本机备份 + 云快照 · G4 部署回滚 + CI · P1 sharp 限制 · P3 媒体缓存头 · F3 音频标注 · G5 429 退避 | 5–6 天 → **✅ 已完成，`73b88da`（2026-09-06 下午），Codex 审查 BLOCK 四条已修复；未完成项见下 |
 | **二 · 稳态**（下两周） | 随规模不恶化、出问题看得见 | P2 jobs 索引 + 归档 · G6 超时按 provider · G7 安全收口 · G8 日志 reqId + health 扩展 + usage CLI · P4 轮询阶梯 / 冷启动 · F1 改密 + 重置 CLI · F2 管理 CLI · F7 README / runbook / env 清理 | 6–8 天 |
 | **三 · 外壳**（之后） | 产品闭环 | F4 六条路径全部露出 UI + 选项芯片 + capability 路由重构 · Provider `validate/cancel/health` 接口迁移 · F5 删除 / 分页 / 分享 · F6 前置审核 + 条款 · 前端拆分与 three 内联 · 注销账号 · 支付网关 | 10–12 天 |
 
 每阶段结束：门禁三绿 + `pnpm e2e` + 部署 + handoff 写回；阶段一、二的 diff 触及 AGENTS.md 列的高风险区（`jobs/`、`proxy.ts`、`api/`），按规则派 Codex 审。
+
+**阶段一收尾状态（2026-09-06）**：门禁三绿（`tsc`/`eslint`/`pnpm test` 63 文件 530 通过 1 跳过）、`pnpm e2e` 隔离模式 10/10 通过；Codex 对 diff 的 BLOCK 四条（媒体缓存跨账号、结算窗口崩溃语义、部署清单遗漏、充值 CLI 并发）已全部处理或记为已知限制（充值 CLI 无跨进程锁，见 `scripts/grant-balance.mjs` 头部注释）；**未部署到生产**，服务器仍是可灵版 `bcad123`。阶段一范围内未做：Caddy 直出静态资源（P3 的一部分）、`error.detail` 不下发浏览器（诚实性小差距，用户看不到上游原文，只有中文兜底）、补扣依赖后续任意一次 `updateJob` 触发（若任务此后再无写入，扣款失败会一直挂着不补，需要人工按日志核对）。
 
 ## 5. 用户决策记录（2026-09-06）
 

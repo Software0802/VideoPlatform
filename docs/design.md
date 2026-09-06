@@ -107,7 +107,7 @@ flowchart TB
 
 ## 2c. 视频 provider 路由(可灵,2026-09-06,as-built)
 
-方案 `docs/plan-kling-video.md`。文生视频 / 图生视频在满足条件时改走可灵开放平台新系统 API,其余视频模式(参考生 / 编辑 / 延长 / harness 长片)不受影响,仍固定在 xAI。已作为 `bcad123` 提交并于 2026-09-06 部署到生产(`api-singapore` 域名),详见 `docs/handoff.md` §0。
+方案 `docs/plan-kling-video.md`。文生视频 / 图生视频在满足条件时改走可灵开放平台新系统 API,其余视频模式(参考生 / 编辑 / 延长 / harness 长片)不受影响,仍固定在 xAI。已作为 `bcad123` 提交并于 2026-09-06 部署到生产(`api-singapore` 域名),详见 `docs/handoff.md` §0c。
 
 | 优先级 | 条件 | provider |
 | --- | --- | --- |
@@ -126,7 +126,7 @@ flowchart TB
 ### 时长归一(5/10)与画幅/分辨率/音频
 
 - 可灵 `duration` 接口枚举**只有 5 与 10**(官方能力地图写 3–10s 是营销口径)。`create.ts` 在 provider 真选中 kling 时,把任意 `durationSec` 归一为 `≤5→5`、`>5→10` 并**写回 `job.durationSec`**——4 秒请求被上游按 5 秒计费,账目与详情卡必须如实;`retryJob` 同步重新归一与重新估价。首页时长芯片同源判据(`videoProvider==="kling"`)换成 `[5,10]`。
-- 分辨率由 `KLING_VIDEO_RESOLUTION`(默认 720p)覆盖并写回 `job.resolution`;`generateAudio` 由 `KLING_VIDEO_AUDIO`(默认 off)决定,UI 传的值被忽略——设为 `native` 时分辨率被 rest-map 强制抬到 1080p(上游硬约束:有声只支持 1080p)。
+- 分辨率由 `KLING_VIDEO_RESOLUTION`(默认 720p)覆盖并写回 `job.resolution`。`generateAudio` **2026-09-06 阶段一起尊重用户选择**:`resolveKlingSettings` 只在「实例允许有声(`KLING_VIDEO_AUDIO=native`)且用户没有选无声(`req.generateAudio !== false`)」时才出声,设为 `native` 才把分辨率抬到 1080p(上游硬约束:有声只支持 1080p);用户选无声时分辨率回到实例默认档,不再被强抬多收 1080p 的钱。实例不允许有声时,UI 的「有声」芯片显示「暂不可用」(见 §2d 与 `docs/handoff.md` §0.一)。
 - 画幅:t2v 直传 UI 仅有的 16:9/9:16/1:1(i2v 不发画幅,随首帧)。若绕过 UI 直接调 API 发送其他画幅,是在 provider `submit` 阶段被上游 400 拒绝、任务落 `failed`。
 
 ### 计价与 billing
@@ -137,7 +137,31 @@ flowchart TB
 
 ### 已知限制(非缺陷,记录在案)
 
-不调用可灵取消接口(本地取消后上游仍出片计费,文档未见取消端点);`external_task_id=jobId` 目前只发不用,POST 超时后按 `external_task_ids` 查找回填是 v1.1;`klingTaskTimeoutMs()` 已导出但暂无调用方读取,轮询上限仍是 runner 自身的 15 分钟;成片 URL 上游 30 天后清理,与本项目 `persisting` 即落盘的时机无冲突。
+不调用可灵取消接口(本地取消后上游仍出片计费,文档未见取消端点);`klingTaskTimeoutMs()` 已导出但暂无调用方读取,轮询上限仍是 runner 自身的 15 分钟;成片 URL 上游 30 天后清理,与本项目 `persisting` 即落盘的时机无冲突。`external_task_id=jobId` 已在 2026-09-06 阶段一接入崩溃恢复(`native.ts` 的 `lookupByExternalId`),见 §3。
+
+## 2d. 余额与计费(2026-09-06 阶段一,as-built)
+
+方案 `docs/plan-architecture-2026-09.md` §3.2、§5(用户 2026-09-06 决策)。定价 × 余额取代日配额成为主闸门:每种任务对用户的**售价**是服务端定值(人民币,与 provider 无关),用户有余额,准入判「余额 − 在途预留 ≥ 本次售价」。`FREE_DAILY_IMAGE_QUOTA`/`FREE_DAILY_FAILURE_LIMIT`(§12.3)降级为防滥用兜底,默认值从 10 抬到 200。
+
+**售价表** `src/lib/billing/prices.ts`(可被浏览器 import,不碰 `node:*`):
+
+```
+{ video: { "5": 2, "10": 4, hd: 1.5, audio: 1 }, extend: 3, edit: 4, image: { "1k": 0.5, "2k": 1 } }
+```
+
+`priceCny(input)` 按 mode 取值:视频 ≤5s/更长两档基价,1080p 乘 `hd`,有声再加 `audio`;30/45/60 秒 harness 长片按 5 秒段数 × `"5"` 计(30s=12 元);`extend_video`/`edit_video` 是定值;`text_to_image` 按 `imageResolution` 取 `1k`/`2k` 档。`LUMEN_PRICE_TABLE`(JSON,可只写要改的几项)覆盖默认表,坏 JSON 记一条 warn 并回落默认,不挡提交。`createJob`/`retryJob` 按**归一后**的参数(可灵把 4 秒请求归一为 5 秒那一档)算 `priceCny` 并写入 `job.priceCny`,提交后永不改写——它同时是在途预留额和成功后扣款额。
+
+**准入**(`src/lib/billing/admission.ts`):`loadBalanceUsage(userId)` 现算 `balanceCny`(`user.json`)与 `reservedCny`(该用户所有非终态任务 `priceCny` 之和,从 job.json 现算不落盘),`availableCny = balance − reserved`。`assertBalance(userId, priceCny)` 在 `availableCny < priceCny` 时抛 `ProviderHttpError(402, "insufficient_balance")`。判定必须在 `withAdmissionLock` 临界区内、`writeJob` 之前完成(与配额同一把锁),`createJob`/`retryJob` 共用同一个判官。
+
+**结算**(`src/lib/jobs/store.ts` 的 `updateJob`):在同一次写盘里,「非终态 → succeeded」且 `priceCny > 0` 且未结算(`billing.chargedAt` 为空)时,**先扣款、扣成功才盖 `chargedAt`**,再落盘。顺序保证任一时刻要么任务仍非终态(预留占着钱),要么余额已经减了,不留「预留已消失、余额还没减」的窗口。若扣款抛错,任务仍照常落终态(不能卡成「明明出片却显示进行中」),只是不盖 `chargedAt`;后续任意一次 `updateJob` 命中「succeeded 且无 chargedAt」会自动补扣。失败 / 取消 / 过期不扣钱,预留随终态消失。
+
+**幂等与流水**(`src/lib/billing/ledger.ts`):`applyBalanceChange(userId, delta, entry)` 在 `withUserLock`(与改密同一把进程内串行锁)里读改写 `user.json` 再追加一行 `data/ledger/<userId>.jsonl`。带 `jobId` 的 `charge` 幂等:锁内先扫一遍该用户流水,同一 `jobId` 已扣过就原样返回,不改余额、不追加流水——这是补扣不会变成重复扣款的唯一保障(判据放流水而非任务记录,因为流水只增、任务 json 可能还没落盘)。`hasChargeFor` 全量扫一遍 `.jsonl`,坏行跳过不抛错。
+
+**充值** `scripts/grant-balance.mjs <邮箱> <金额> [--note "..."]`:管理员 CLI,读改写 `user.json`(原子 rename)+ 追加同格式流水行,金额可为负(纠正)。⚠️ **已知限制:与线上服务无跨进程锁**——CLI 与 `withUserLock` 各自串行,互不感知,若充值与该用户的扣款/改密在同一瞬间发生,后写的会覆盖先写的整份 `user.json`(流水两行都在,不会丢);缓解办法是操作前后核对 `data/ledger/<userId>.jsonl` 与 `balanceCny` 是否一致,内测规模下不值得为它引入文件锁。
+
+**API 面**:`GET /api/me` 新增 `balance:{balanceCny,reservedCny,availableCny}` 与 `prices`(整张售价表,供前端本地算「本次约 ¥x」而不必二次请求)。`POST /api/jobs`/`retry` 余额不足返回 `402 insufficient_balance`。
+
+**UI**:顶栏账号名旁显示「余额 ¥x」(≤520px 与账号名一起隐藏);提交面板显示「本次约 ¥x · 余额 ¥y」,当前配置超出可用余额时提示「当前配置,余额可能不够,请充值」并禁用发送;卡片(作品环 / 最近成片 / 工作室详情)显示售价(元)与「有声/无声」标签而不是美元成本(`costUsdActual` 只留管理员对账用)。视频 provider 是否真的支持音轨由 `/api/health` 与 `page.tsx` 下发的 `audioAvailable` 判定(可灵读 `KLING_VIDEO_AUDIO`,grok/mock 恒真);实例不支持时「有声」芯片锁死在无声并标「暂不可用」,不隐藏入口。
 
 ## 3. Job 生命周期
 
@@ -146,8 +170,9 @@ flowchart TB
 - 每次状态转换先写 `data/jobs/{id}/job.json` 再发 SSE 事件;**轮询 `GET /api/jobs/:id` 是真相,SSE 尽力而为**。
 - 轮询间隔 2s;单 job 15min 超时;`service_unavailable/internal_error` 指数退避重试 ≤2 次,`invalid_argument` 不重试。
 - cancel:queued 直接终态;submitting/pending/persisting 标记后停 poll;取消后即使上游 done 也不得写 `outputs/`(下载进 tmp,确认状态后 rename);已有 `xaiFileId` 则尽力 DELETE。
-- retry:仅 `failed|expired`,**新建 job** 复制 inputs 与参数,原 job 不变。
-- boot recover(`instrumentation.register` → `startJobRunner`,幂等):`submitting` 无 remoteId → 回 queued;`submitting` 有 remoteId → 改 pending 续跑;`pending/persisting` 续跑;超 15min 的 **submitting/pending/persisting/harness 各阶段** 标 expired;`queued` 一律重新入队,不因排队久而失败。harness 阶段的任务由 pump 重新交给 `orchestrator.execute`,它按 job.json 里的 plan / shot 记录续跑(shot 级 recover 见 §7.2)。
+- retry:仅 `failed|expired`,**新建 job** 复制 inputs 与参数,原 job 不变;单片任务若源 job 带 `error.code==="uncertain_submit"` 同样被 `retry-guard` 409 拦截(见下)。
+- boot recover(`instrumentation.register` → `startJobRunner`,幂等,**2026-09-06 阶段一改写单片分支**):`submitting` 且**无** remoteId 不再无条件回 queued——先调 provider 可选的 `lookupByExternalId(jobId)`(可灵已实现,按 `external_task_id` 查)问上游是否已经接过这个请求;查到就把返回的 remoteId 写回 job.json 转 `pending` 续跑,查不到(或 provider 未实现该方法、或查询本身失败)就转 `failed` + `error.code="uncertain_submit"`,由 `retry-guard` 的 `retryBlock()` 拦一键重试(与 harness 分镜级的同名标记共用一套拒绝逻辑与文案模板,§7.2)。`submitting` 有 remoteId → 改 pending 续跑;`pending/persisting` 续跑;超 15min 的 **submitting/pending/persisting/harness 各阶段** 标 expired(这条晚于「uncertain」判定执行,陈旧与「上游是否已接单」是两个互不隶属的问题);`queued` 一律重新入队,不因排队久而失败。harness 阶段的任务由 pump 重新交给 `orchestrator.execute`,它按 job.json 里的 plan / shot 记录续跑(shot 级 recover 见 §7.2)。
+- **上游退避(2026-09-06 阶段一,`runner.ts`)**:`submit` 阶段收到 `rate_limited`/`quota_exhausted`(尚未计费的拒绝)时不直接判失败,而是把任务从 `submitting` 打回 `queued` 并记 `upstreamRetries`/`nextAttemptAt`(15s→30s→60s 指数退避,`pump()` 跳过未到 `nextAttemptAt` 的 `queued` 任务,并用一个到期即唤醒的定时器避免轮询空转),满 3 次仍失败才终态失败(`quota_exhausted` 显示「平台余额不足,请联系管理员」,`rate_limited` 显示「上游繁忙,已重试 3 次仍失败」,上游原文进 `error.detail` 落盘但不下发给浏览器)。这两个码同时被 `quota.ts` 的止损阀排除(连同 `uncertain_submit`),因为它们不是用户的错。
 - 并发 `JOB_CONCURRENCY=2`;活跃(queued+submitting+pending+persisting)≥ `MAX_QUEUED_JOBS=20` 时 `POST /api/jobs` 429。
 - `sweepTmp`:boot + 每小时(timer `.unref()`),删 24h 前的 tmp 字节与 sidecar。
 
@@ -157,17 +182,17 @@ flowchart TB
 
 | 端点 | 说明 |
 | --- | --- |
-| `POST /api/uploads` | multipart 流式(@fastify/busboy);`role ∈ start|last|reference|source_video`;图 ≤12MB(sharp 后覆盖写)、视频 mp4 ≤48MB(ffmpeg 探针);写 `data/tmp/{up_16hex}` + sidecar json;**不**做模式相关校验、不调 Files |
-| `POST /api/jobs` | 幂等 key 24h 重放;队列满 429;按 mode 校验(含 edit ≤8.7s / extend 2–15s);tmp 字节 move 进 `inputs/`;uploadId 必须匹配 `^up_[0-9a-f]{16}$` |
+| `POST /api/uploads` | multipart 流式(@fastify/busboy);`role ∈ start|last|reference|source_video`;图 ≤**6MB**(2026-09-06 阶段一从 12MB 下调,sharp 后覆盖写)、视频 mp4 ≤**24MB**(从 48MB 下调,ffmpeg 探针,产线 2 核/1.8G/`MemoryMax=700M` 下的内存预算,见 §3.3 与 `docs/plan-architecture-2026-09.md` P1);写 `data/tmp/{up_16hex}` + sidecar json;**不**做模式相关校验、不调 Files |
+| `POST /api/jobs` | 幂等 key 24h 重放;队列满 429;按 mode 校验(含 edit ≤8.7s / extend 2–15s);余额不足 **402 `insufficient_balance`**(§2d);tmp 字节 move 进 `inputs/`;uploadId 必须匹配 `^up_[0-9a-f]{16}$` |
 | `GET /api/jobs` / `GET /api/jobs/:id` | 列表(createdAt 降序)/ 单个 |
-| `POST /api/jobs/:id/cancel|retry` | 见 §3 |
+| `POST /api/jobs/:id/cancel|retry` | 见 §3;retry 同样受 402 余额判定 |
 | `GET /api/jobs/:id/events` | SSE,`maxDuration=900`;15s `: ping` 心跳 + abort 时解除订阅 |
-| `GET /api/media/:jobId/:file` | 白名单 `video.mp4|poster.jpg|image.jpg`;`jobId` 经 `assertSafeId`;Range/206;支持 suffix range `bytes=-N`,416 带 `Content-Range: bytes */size`;`?download=1` 加 attachment |
-| `GET /api/health` | ffmpeg 二进制/字体/dataDir 可写/upstream kind/队列深度;缺 ffmpeg → `ok:false`(匿名可访问) |
+| `GET /api/media/:jobId/:file` | 白名单 `video.mp4|poster.jpg|image.jpg`;`jobId` 经 `assertSafeId`;先做 owner 校验(§12.2)再看缓存头;`Cache-Control: private, no-cache` + 弱 ETag(size+mtime)+ `Last-Modified`,`If-None-Match` 命中在 owner 校验**之后**评估、回 304(§9);Range/206;支持 suffix range `bytes=-N`,416 带 `Content-Range: bytes */size`;`?download=1` 加 attachment |
+| `GET /api/health` | ffmpeg 二进制/字体/dataDir 可写/upstream kind/队列深度;新增 `audioAvailable`(当前视频 provider 会不会真的出音轨,§2d);缺 ffmpeg → `ok:false`(匿名可访问) |
 | `POST /api/auth/register` | 邮箱 + 密码(≥8 位) + 一次性邀请码;成功即写会话 Cookie 并返回 `MePublic` |
 | `POST /api/auth/login` | 邮箱 + 密码;IP+邮箱滑动窗口限流(10 次/分钟) |
 | `POST /api/auth/logout` | 清除会话 Cookie |
-| `GET /api/me` | 当前用户 email + `quota:{limit,used,inFlight,remaining,resetsAt,blocked}` |
+| `GET /api/me` | 当前用户 email + `balance:{balanceCny,reservedCny,availableCny}` + `prices`(售价表)+ `quota:{limit,used,inFlight,remaining,resetsAt,blocked}`(§2d、§12.3) |
 
 `src/proxy.ts` 对全部 `/api/*`(除 register/login/logout/health)校验 HMAC 签名会话 Cookie,零 I/O 验签,校验通过后网关层再读一次 `user.json` 确认 `disabled` 不为真;未登录访问非 `/api/*` 页面由页面本身(`/`)服务端 307 到 `/login`。旧的 `LUMEN_ACCESS_TOKEN` / `POST/DELETE /api/auth/session` 已删除,详见 §12。
 
@@ -186,11 +211,14 @@ data/
   idempotency/{ownerId,clientKey 的 sha256}.json
   users/
     index.json                         # email → usr_xxx,派生缓存,可从下方目录重建
-    usr_xxx/user.json                   # 事实源:email、密码哈希、disabled、sessionEpoch
+    usr_xxx/user.json                   # 事实源:email、密码哈希、disabled、sessionEpoch、balanceCny(2026-09-06)
   invites/<code>.json                   # 一次性邀请码:{ code, createdAt, note?, usedBy?, usedAt? }
+  ledger/<userId>.jsonl                 # 2026-09-06:余额流水,只增;{at,kind,amountCny,balanceAfterCny,jobId?,note?}
 ```
 
 `MediaStore` 接口(`storage/types.ts`)由 `LocalFsMediaStore` 实现,id 白名单 `[A-Za-z0-9_-]+`、rel 路径解析后必须落在 jobDir 内;后期 `S3MediaStore` 同接口替换。
+
+生产实例(阿里云)另有 `/opt/genius/backups/genius-data-<时间戳>.tgz`(`scripts/backup.sh`,每份只含 `users/ invites/ ledger/ jobs/*/job.json` 白名单,不含产物,保留最近 14 份,`chmod 600`)与阿里云 ECS 控制台配置的整盘自动快照(每日一份、保留 7 天),两层数据安全见 §10.2。
 
 ## 6. 前端与场景层(2026-09-05 晚按 Genius 交接包重建为深色单屏)
 
@@ -256,6 +284,7 @@ data/
 | SSRF | 不接受用户任意 URL 转发上游;只送 data URI / file_id |
 | 额度燃烧 | 并发/队列深度限制;按用户每日出图配额(§12.3);止损阀 `FREE_DAILY_FAILURE_LIMIT`;Sub2API 场景务必不暴露公网 |
 | 越权访问他人任务 | `ownerId` 覆盖任务读写/幂等/上传四条路径,非本人一律 404(§12.2) |
+| 媒体跨账号泄漏(2026-09-06) | `/api/media` 用 `private, no-cache` 而非长 `max-age`/`immutable`:字节本身不可变,但「谁能读」会变(同浏览器切账号登录),长缓存会让共享缓存或 304 跳过 owner 校验;`no-cache` 强制每次都过一遍 `readJobForUser`,revalidation 命中时才回 304,带宽仍省 |
 | 会话伪造/重放 | HMAC 签名 Cookie,`timingSafeEqual` 校验,每请求读一次 `disabled`;改密写 `sessionEpoch` 使旧会话失效 |
 | 撞库/枚举 | 登录注册按 IP+邮箱滑动窗口限流;邀请码用尽/不存在统一 400 `invite_invalid`,不区分原因 |
 | 审核 | `respect_moderation === false` 视为失败,不进画廊 |
@@ -281,6 +310,12 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 6. 健康检查:`curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/api/health`。
 
 详细操作步骤见 `docs/handoff.md` §0a.4;DNS/HTTPS 尚未完成,3000 端口不对外(安全组只开 22/80/443)。
+
+### 10.2 部署回滚与 CI(2026-09-06 阶段一,as-built)
+
+- `scripts/deploy.sh`:上传前本地跑 `pnpm exec tsc --noEmit`(`--skip-check` 可跳过);服务器侧把旧 `.next` 先 `mv` 成 `.next.prev` 再解压新包,`systemctl start` 后轮询 `/api/health`(`HEALTH_TRIES=10 × HEALTH_GAP=6s`,要求 HTTP 200 且 body `ok:true`);health 不达标就 `systemctl stop` → 用 `.next.prev` 换回 `.next` → 重启 → 再验一次 → 脚本以非零退出告知本地「已回滚」还是「回滚也没救」。首次部署没有 `.next.prev` 时明确打印警告并保留当前构建重启。
+- `scripts/backup.sh`:见 §5,cron 每日在服务器本机跑;`--data-dir`/`--backup-dir`/`--keep` 可覆盖,退出码非 0 表示这次没产出可用包。
+- `.github/workflows/ci.yml`:push `main` 与所有 PR 触发,`pnpm exec tsc --noEmit` → `pnpm exec eslint src` → `pnpm test`(与 `AGENTS.md` 验证门禁前三条逐字一致),Ubuntu runner 上装依赖顺带验证 `sharp`/`ffmpeg-static` 的 Linux 原生二进制能装上;不跑 `pnpm e2e`(需要浏览器 + `next build`,留到后续单独 workflow)。同分支连续 push 只保留最后一次运行。
 
 ## 11. 与 rev 3 的差异清单
 
@@ -322,9 +357,10 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 
 ### 12.3 配额:预留 + 结算
 
-只对 `text_to_image` 计数,口径见 `src/lib/jobs/quota.ts`:
+只对 `text_to_image` 计数,口径见 `src/lib/jobs/quota.ts`。**2026-09-06 阶段一起降级为防滥用兜底**——主闸门是 §2d 的余额模型,`FREE_DAILY_IMAGE_QUOTA` 默认值同时从 10 抬到 200(正常付费用户碰不到,脚本刷图仍会被挡):
 
-- 今日已用 = 今日「成功落盘」的生图任务数(按 `completedAt` 归日,`store.updateJob` 在非终态→终态边上盖章且永不覆盖);今日在途 = 该用户当前处于非终态的生图任务数;准入条件 = 已用 + 在途 < `FREE_DAILY_IMAGE_QUOTA`(默认 10)。
+- 今日已用 = 今日「成功落盘」的生图任务数(按 `completedAt` 归日,`store.updateJob` 在非终态→终态边上盖章且永不覆盖);今日在途 = 该用户当前处于非终态的生图任务数;准入条件 = 已用 + 在途 < `FREE_DAILY_IMAGE_QUOTA`(默认 200)。
+- 止损阀与配额都**不**把 `rate_limited`/`quota_exhausted`/`uncertain_submit` 计入失败次数(§3):上游拒绝或提交结果未知不是用户的错。
 - 判定与落盘必须在同一个 `withAdmissionLock` 临界区内完成,且在幂等回放判定之后、`writeJob` 之前;`createJob` 与 `retryJob` 共用同一段检查(重试同样会向上游发新的计费请求)。
 - 上游 5xx/超时/内容审核拒绝、用户取消:任务转终态,预留自动释放,不占额度(实测上游 `charged:false`/`charge_status:"pending_delivery"` 直到取回 result 才结算,与「不扣额度」语义一致)。
 - 独立止损阀 `FREE_DAILY_FAILURE_LIMIT`(默认 30):账号每日失败/取消次数超限即拒绝新提交,防止有人靠反复失败消耗上游余额;它的优先级高于配额判定。

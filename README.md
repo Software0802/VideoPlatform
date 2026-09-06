@@ -8,13 +8,28 @@
 
 ```bash
 cp .env.example .env.local
-# 没有密钥时走模拟模式（ffmpeg 水印片）
+# 必须设置 LUMEN_SESSION_SECRET（任意长随机串），缺失服务会拒绝启动——会话 Cookie 靠它签名
+# 没有任何生图/视频 key 时走模拟模式（ffmpeg 水印片）
 pnpm install
 pnpm test
 pnpm dev
 ```
 
-打开 http://localhost:3000
+打开 http://localhost:3000 会被 307 到 `/login`：这是多用户实例，注册需要一次性邀请码。
+
+```bash
+# 生成 N 个一次性邀请码（打印到标准输出，不写日志）
+node scripts/mint-invites.mjs 5 --note "内测第一批"
+# 用其中一个码在 /login 的注册 tab 建号，登录后即可提交任务
+```
+
+新账号余额为 0（2026-09-06 起定价 × 余额是提交的主闸门，见 `docs/design.md` §2d），管理员用下面的 CLI 充值：
+
+```bash
+node scripts/grant-balance.mjs <邮箱> 20 --note "内测赠送"
+```
+
+可选：设置 `KLING_API_KEY`（可灵直连视频，见下）或 `OPENAI_API_KEY`（文生图走 OpenAI 兼容 provider，见 `.env.example` 的 `OPENAI_*` 段）；都不设时视频 / 图片各自回落 xAI 或模拟模式。`DATA_DIR` 默认 `./data`。
 
 ### 真出片：官方 xAI 或 Sub2API
 
@@ -40,7 +55,7 @@ UPSTREAM_RETRY_BASE_MS=250
 
 只填 `SUB2API_API_KEY`、不填 `XAI_BASE_URL` 时，默认打本地 `http://127.0.0.1:8080/v1`。同时填了 `XAI_API_KEY` 时优先走官方 key。
 
-**可选：可灵（Kling）直连视频**（工作区改动，详见 `docs/plan-kling-video.md` 与 `docs/handoff.md` §0）——设置 `KLING_API_KEY` 与 `VIDEO_PROVIDER=kling` 后，文生视频 / 图生视频改走可灵开放平台，价格约为 xAI 的三分之一；参考生视频 / 编辑 / 延长与长片仍固定在 xAI。变量说明见 `.env.example`。
+**可选：可灵（Kling）直连视频**（详见 `docs/plan-kling-video.md` 与 `docs/handoff.md` §0c）——设置 `KLING_API_KEY` 与 `VIDEO_PROVIDER=kling` 后，文生视频 / 图生视频改走可灵开放平台，价格约为 xAI 的三分之一；参考生视频 / 编辑 / 延长与长片仍固定在 xAI。变量说明见 `.env.example`。
 
 Sub2API 的 Grok 媒体路由与 xAI 字段兼容；OAuth 订阅号需要付费权益探测通过才会接图/视频，否则上游返回 `503 grok_media_no_eligible_account`。
 
@@ -68,11 +83,9 @@ pnpm run smoke:live
 
 `smoke:live` 会先拒绝模拟模式，不会在上游不可用时静默生成假片；完成后报告每个 job 的状态、预估/实际成本和 Range 读取结果。没有订阅或只想验证本地 ffmpeg 时，可运行 `pnpm run smoke:mock`。
 
-### 最小鉴权
+### CI
 
-设置 `LUMEN_ACCESS_TOKEN` 后，全部 `/api/*` 需要 `Authorization: Bearer <token>` 或 Cookie `lumen_token`。工作室打开时若收到 401，会提示输入令牌并写入 HttpOnly Cookie。未设置该变量时视为本地单用户。
-
-**不要把开发端口暴露到公网。** 未设令牌时，排队任务会直接消耗上游额度。
+`.github/workflows/ci.yml` 在 push `main` 与所有 PR 上跑 `tsc --noEmit` → `eslint src` → `pnpm test`（与本地门禁一致），不跑 `pnpm e2e`。
 
 ## 文档
 

@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 状态 | 已实施并上线（`bcad123`，2026-09-06）；Codex 方案审查未做（额度）；`pnpm e2e` 未跑。真实冒烟已跑通两条，详见 `docs/handoff.md` §0 |
+| 状态 | 已实施并上线（`bcad123`，2026-09-06）；Codex 方案审查未做（额度）；`pnpm e2e` 未跑。真实冒烟已跑通两条，详见 `docs/handoff.md` §0c |
 | 日期 | 2026-09-06 |
 | 前置 | `main` @ `c5e92ed`（用户系统 / 配额 / 留存清理已上线） |
 | 影响面 | `src/lib/providers/`（新目录 `kling/`）、`src/lib/providers/router.ts`、`src/lib/jobs/create.ts`、`src/lib/jobs/schema.ts`、`src/lib/cost.ts`、`src/lib/env.ts`、`/api/health`、`LumenHome.tsx` 时长芯片；**不改** `src/lib/jobs/runner.ts` 状态机与 `src/lib/harness/` |
@@ -106,7 +106,7 @@ UI 时长芯片是 4 / 6 / 8 / 10，可灵只收 5 / 10。两层处理：
 
 1. `env.ts` + `cost.ts` + `types.ts` / `schema.ts` 枚举（无行为变化，门禁绿）。✅ 已完成。
 2. `providers/kling/` 三文件 + 单测。✅ 已完成（`client.test.ts` / `native.test.ts` / `rest-map.test.ts`）。
-3. `router.ts` / `create.ts`（含 retry 与时长归一）/ `health` / `LumenHome` 芯片接线 + 测试。✅ 已完成，`tsc`/`eslint`/`pnpm test`（57 文件/456 通过）绿；`pnpm e2e` **未跑**（3000 端口被占用，见 `docs/handoff.md` §0）。
+3. `router.ts` / `create.ts`（含 retry 与时长归一）/ `health` / `LumenHome` 芯片接线 + 测试。✅ 已完成，`tsc`/`eslint`/`pnpm test`（57 文件/456 通过）绿；`pnpm e2e` **未跑**（3000 端口被占用，见 `docs/handoff.md` §0c）。
 4. `.env.example`、`docs/design.md` §2c、`AGENTS.md` 后端约定一行、`docs/handoff.md`。✅ 已完成（本轮）。
 5. 真实冒烟两条，对账，写回 handoff。✅ 已完成：文生视频 4s→5s/720p/无声/`$0.15`，图生视频 5s/`$0.15`，与可灵控制台账单一致；首跑因国际版 key 走错域名（`api-beijing`→`1002`）排查后改用 `api-singapore` 修复。
 

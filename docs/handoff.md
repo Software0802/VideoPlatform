@@ -2,24 +2,76 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 更新日期 | 2026-09-06（可灵直连视频 provider，分支 `chore/agent-config`，**工作区未提交**） |
-| 基线 | `chore/agent-config` @ `a01ffa6`（main 基线 `c5e92ed` + 本轮工作区改动，详见下方 §0）。`main` 最新是 `d7bba27`。方案 `docs/plan-kling-video.md`。此前一轮用户系统 / 配额 / 留存清理已上线，详见 §0b |
+| 更新日期 | 2026-09-06 下午（阶段一止血：余额模型、恢复不重提、429 退避、sharp 上限、媒体缓存、备份与回滚、CI，分支 `main`，**已提交**） |
+| 基线 | `main` @ `73b88da`。方案 `docs/plan-architecture-2026-09.md`。此前一轮可灵直连视频已上线，详见 §0c；用户系统 / 配额 / 留存清理详见 §0b |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | `tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 57 文件 / 456 通过、1 条 skip。`pnpm e2e` **未跑**——3000 端口被另一会话的 `next dev`（带真实 key）占用，Next 16 不允许同目录起第二个 dev server，停它的操作被权限拦下，待处理 |
-| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新增可灵相关 env 见下方 §0.3 |
-| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。可灵版 `bcad123` 已于 2026-09-06 部署（`bash scripts/deploy.sh`，服务器 `.env` 追加 KLING_* 七项、备份 `.env.bak.2026-09-06`），公网 `/api/health` 返回 `videoProvider: kling`；丝绸幕布实验随本次部署一并上线。步骤见 §0a.4 |
+| 门禁状态 | `tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 63 文件 / 530 通过、1 条 skip；`pnpm e2e` 隔离模式 10/10 通过；Codex 审 diff 给出 BLOCK 四条，均已处理（媒体缓存跨账号、结算窗口崩溃语义、部署清单遗漏、充值 CLI 无跨进程锁记为已知限制） |
+| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新账号余额为 0，提交前需管理员用 `node scripts/grant-balance.mjs <邮箱> <金额> --note "..."` 充值（见下 §0.一） |
+| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。**本轮尚未部署**，服务器仍是可灵版 `bcad123`（§0c）；`scripts/deploy.sh` 已加回滚判定，`scripts/backup.sh` 待首次在服务器手动跑通并加入 cron。步骤见 §0a.4 |
 
-架构综合审查与治理路线见 `docs/plan-architecture-2026-09.md`（2026-09-06，三维度审查收敛，§5 待用户拍板）。
+架构综合审查与治理路线见 `docs/plan-architecture-2026-09.md`（2026-09-06，三维度审查收敛，阶段一已完成，§5 用户已拍板）。
 
-新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，新增 §2c 可灵路由）、`docs/plan-kling-video.md`（本轮方案）、`DESIGN.md`（UI 规格）。
+新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，新增 §2d 余额与计费）、`docs/plan-architecture-2026-09.md`（本轮方案与阶段路线）、`DESIGN.md`（UI 规格）。
 
 ---
 
-## 0. 本轮（2026-09-06）：接入可灵（Kling）直连视频 provider
+## 0. 本轮（2026-09-06 下午）：阶段一止血
 
-方案见 `docs/plan-kling-video.md`。目标：文生视频 / 图生视频在 `VIDEO_PROVIDER=kling` 且配了 `KLING_API_KEY` 时改走可灵开放平台新系统 API（默认 Kling 2.6 · 720p · 无声，$0.03/秒，约为现有 xAI Grok $0.08/秒的 37%）。**工作区改动尚未提交**，Codex 方案审查未做（额度限制）。
+方案 `docs/plan-architecture-2026-09.md`（阶段一，§4 路线图、§5 用户 2026-09-06 决策）。提交 `73b88da`。目标：治理三个会花冤枉钱 / 丢数据的洞（单片崩溃恢复重复计费、视频完全没有用量控制、无备份无回滚）与两个性能护栏（sharp 内存上限、媒体缓存头），顺带补齐诚实性（有声/无声标注、人民币售价）。Codex 已审 diff，BLOCK 四条全部处理（见下「Codex 审查处理记录」）。
 
-### 0.1 已实现
+### 0.一 已实现：定价 × 余额取代日配额（主闸门）
+
+- **售价表** `src/lib/billing/prices.ts`（可被浏览器 import）：`priceCny(input, table?)` 按 mode 算人民币售价——视频 ≤5s/更长两档基价（默认 ¥2 / ¥4）、1080p 乘 `hd`（默认 1.5）、有声加 `audio`（默认 ¥1，30/45/60 秒 harness 长片按 5 秒段数折算）；`extend_video` ¥3、`edit_video` ¥4 定值；`text_to_image` 按 `1k`/`2k` 取 ¥0.5/¥1。默认表：`{"video":{"5":2,"10":4,"hd":1.5,"audio":1},"extend":3,"edit":4,"image":{"1k":0.5,"2k":1}}`。`LUMEN_PRICE_TABLE`（JSON，可只写要改的几项）覆盖；坏 JSON 记一条 warn 并回落默认表，不挡提交。`createJob`/`retryJob` 按**归一后**的参数（可灵把 4 秒请求归一成 5 秒那一档）算 `priceCny` 并写进 `job.priceCny`，提交后永不改写——它同时是在途预留额和成功后扣款额。
+- **准入** `src/lib/billing/admission.ts`：`loadBalanceUsage(userId)` 现算 `balanceCny`（`user.json`）与 `reservedCny`（该用户所有非终态任务 `priceCny` 之和，不落盘，从 job.json 现算）；`assertBalance` 在 `availableCny < priceCny` 时抛 `402 insufficient_balance`。判定必须在 `withAdmissionLock` 临界区内、`writeJob` 之前完成（与配额同一把锁），`createJob`/`retryJob` 共用。
+- **结算与幂等扣款**（`src/lib/jobs/store.ts` 的 `updateJob`）：同一次写盘里，「非终态 → succeeded」且有价且未结算时**先扣款、扣成功才盖 `billing.chargedAt`**，再落盘——顺序保证任一时刻要么任务仍非终态（预留占钱），要么余额已经减了，不留「预留消失、余额没减」的窗口。崩溃语义：扣款抛错时任务仍照常落终态（不能卡成「出片了却显示进行中」），只是不盖 `chargedAt`；后续任意一次 `updateJob` 命中「succeeded 且无 chargedAt」会自动补扣——**已知限制：如果这条任务此后再无任何写入，补扣就永远不会发生，需要人工按日志与 `data/ledger/` 核对**。失败/取消/过期不扣钱，预留随终态消失。
+- **幂等与流水** `src/lib/billing/ledger.ts`：`applyBalanceChange` 在 `withUserLock`（与改密同一把进程内串行锁）里读改写 `user.json` 再追加一行 `data/ledger/<userId>.jsonl`；带 `jobId` 的 `charge` 幂等——锁内先扫一遍该用户流水，同 `jobId` 已扣过就原样返回，不改余额不追加流水（`hasChargeFor` 全量扫 `.jsonl`，坏行跳过，未建索引）。
+- **充值** `scripts/grant-balance.mjs <邮箱> <金额（元，可负）> [--note "..."]`：管理员 CLI，落盘逻辑与 `ledger.ts` 逐字一致（.mjs 不能 import TS，改一边要同步改另一边）。**已知限制：与线上服务无跨进程锁**——CLI 与 `withUserLock` 互不感知，若充值恰好与该用户的扣款/改密同时发生，后写的会覆盖先写的整份 `user.json`（流水两行都在不会丢）；缓解办法是操作前后核对 `data/ledger/<userId>.jsonl` 最后几行与 `balanceCny` 是否一致，内测规模不值得为它加文件锁。
+- **API**：`GET /api/me` 新增 `balance:{balanceCny,reservedCny,availableCny}` 与 `prices`（整张售价表，前端本地算「本次约 ¥x」不用二次请求）；`POST /api/jobs`/`retry` 余额不足返回 `402 insufficient_balance`。
+- **配额降级为兜底**：`FREE_DAILY_IMAGE_QUOTA` 默认值从 10 抬到 200（正常付费用户碰不到，脚本刷图仍会被挡）；止损阀与配额都不把 `rate_limited`/`quota_exhausted`/`uncertain_submit` 计入失败次数（上游拒绝或提交结果未知不是用户的错）。
+- **UI**：顶栏账号名旁「余额 ¥x」（≤520px 隐藏）；提交面板「本次约 ¥x · 余额 ¥y」，超出可用余额时提示「当前配置，余额可能不够，请充值」并禁用发送；有声/无声芯片（视频路径，默认有声，加价项）——当前 provider 不支持音轨时（`audioAvailable=false`，由 `/api/health` 与 `page.tsx` 下发）芯片锁死无声并标「暂不可用」，不隐藏入口；卡片（作品环/最近成片/详情）显示人民币售价与有声/无声标签，不再显示美元估算成本。
+- **可灵尊重无声选择**：`resolveKlingSettings` 只在「实例允许有声且用户没选无声」时才出声、才把分辨率抬到 1080p；用户选无声时分辨率回到实例默认档，不再被强抬多收 1080p 的钱（此前恒按用户请求体的值出声，界面又恒发 `generateAudio:true`，等于用户的芯片选择被忽略）。
+
+### 0.二 已实现：崩溃恢复不重提 · 429/quota 退避
+
+- **单片任务崩溃恢复**（`recover.ts`/`runner.ts`）：`submitting` 且无 `remoteId` 不再无条件回 `queued`（会重发一次计费 POST），改为先调 provider 可选的 `lookupByExternalId(jobId)` 问上游是否已经接过这个请求——可灵已实现（按 `external_task_id` 查 `GET /tasks`），grok 未实现该方法（永远走「查不到」分支）。查到就把 remoteId 写回转 `pending` 续跑；查不到（含 provider 未实现、查询本身失败）就转 `failed` + `error.code="uncertain_submit"`，由既有的 `retry-guard` 拦一键重试（现在同时支持 harness 分镜级与单片 job 级两种标记，共用同一套拒绝文案模板）。
+- **上游退避**：`submit` 阶段收到 `rate_limited`/`quota_exhausted`（未计费的拒绝）时打回 `queued` 并记 `upstreamRetries`/`nextAttemptAt`（15s→30s→60s，`pump()` 跳过未到期的任务并用到期唤醒的定时器避免空转轮询），满 3 次才终态失败；上游原文进 `error.detail` 落盘但**不下发给浏览器**（用户只看到中文兜底文案，已知的诚实性小差距）。
+
+### 0.三 已实现：sharp 内存上限 · 媒体缓存头 · 备份与部署回滚 · CI
+
+- **sharp**：`limitInputPixels` 40MP（超限 400 `invalid_argument`「图片像素过大」而非无提示 OOM）、`sequentialRead: true`、启动时 `sharp.concurrency(1)`/`sharp.cache(false)`；质量回退循环从「每次都重解码原图」改为只重压已缩放到 1280px 的中间结果；`MAX_IMAGE` 12→6MB、`MAX_VIDEO` 48→24MB（产线 2 核/1.8G/`MemoryMax=700M` 的内存预算，`docs/plan-architecture-2026-09.md` P1）。
+- **媒体缓存**：`GET /api/media/:jobId/:file` 加 `Cache-Control: private, no-cache` + 弱 ETag（size+mtime）+ `Last-Modified`，`If-None-Match` 命中在 owner 校验**之后**评估回 304——**不用长 `max-age`/`immutable`**（Codex P0：字节不变但「谁能读」会变，同浏览器切账号会跳过 owner 校验直接吃缓存）；跨账号的 `If-None-Match` 仍走 owner 校验先拒 404，不泄漏「文件是否存在」。
+- **备份**：`scripts/backup.sh`（服务器本机跑，方案 §3.2）白名单打包 `users/ invites/ ledger/ jobs/*/job.json`（不含产物），保留最近 14 份，用 `find` 白名单 + tar 复核而非 `--exclude`；**尚未在生产服务器实跑或加入 cron**，是本轮遗留待办（见下「运维待办」）。阿里云 ECS 自动快照策略需用户在控制台配置，代码侧无动作，**未验证是否已开启**。
+- **部署回滚**：`scripts/deploy.sh` 上传前本地 `tsc --noEmit` 门禁（`--skip-check` 可跳过），服务器侧起服务后轮询 `/api/health`（10 次 × 6s），非 200/`ok:true` 就自动把 `.next.prev` 换回 `.next`、重启、再验一次、脚本非零退出。
+- **CI**：`.github/workflows/ci.yml`，push `main` 与所有 PR 触发，`tsc --noEmit` → `eslint src` → `pnpm test`，Ubuntu runner 上顺带验证 `sharp`/`ffmpeg-static` 的 Linux 原生依赖能装上；不跑 `pnpm e2e`。同分支连推只留最后一次。
+
+### 0.四 Codex 审查处理记录
+
+Codex 对本轮 diff 给出 BLOCK 四条，均已处理：① 媒体缓存 `immutable` 会让同浏览器切账号跳过鉴权——改为 `private, no-cache`（见上 0.三）；② 结算窗口崩溃语义（先扣款后写盘 vs 先写盘后扣款的竞态）——采用「先扣后写」并配幂等补扣（见上 0.一「结算与幂等扣款」）；③ 部署打包清单遗漏 `scripts/backup.sh`/`scripts/grant-balance.mjs`——已补进 `deploy.sh` 的 tar 清单；④ 充值 CLI 无跨进程锁——判定为内测规模下可接受的已知限制，写进脚本头部注释与本节，不引入文件锁。
+
+### 0.五 已知未做
+
+- 补扣依赖「后续任意一次 `updateJob` 再命中」，若任务此后再无写入会一直挂着，需人工按日志与 `data/ledger/` 核对（无自动兜底任务）。
+- 余额为负时 UI 无特殊提示（`availableCny` 可能是负数，只影响后续准入判定，当前展示不特别标红）。
+- `hasChargeFor` 全量扫 `.jsonl`，未建索引；内测规模（每人流水几十行）无感，量大后需要优化。
+- `error.detail`（上游拒绝原文）落盘但不下发浏览器，用户只看到中文兜底，管理员需要看 `job.json` 或日志才能看到原文。
+- grok provider 未实现 `lookupByExternalId`，所以 grok 路径的「submitting 无 remoteId」崩溃恢复恒走「查不到」分支，直接判 `uncertain_submit`（可灵路径才能真的找回）。
+- 展览区/详情的长片（30/45/60s harness）仍按美元 `costUsdEstimate` 展示成本，未接入人民币售价（harness 目前生产关闭，不阻塞）。
+- 作品环一次拉 40 张全量穿透 Node、Caddy 未直出 `/_next/static/*` 与 `/lumina/*`（`docs/plan-architecture-2026-09.md` P3 的剩余部分，阶段二再做）。
+
+### 0.六 运维待办
+
+- 服务器手动跑一次 `bash scripts/backup.sh` 验证白名单打包与复核逻辑，再把它加进 crontab（如每日 03:00）。
+- 确认阿里云 ECS 控制台的自动快照策略已开启（整盘每日一份、保留 7 天，约 ¥1–3/月）——这是用户决策要走控制台配置，不是代码改动，当前**未验证**是否已经配置。
+- 在 GitHub 仓库设置里把 `CI / tsc · eslint · test` 设为 required check（阻止不过门禁的 PR 合并到 main）——workflow 文件已就绪，分支保护规则本轮未配置。
+- 部署 `73b88da` 到生产（当前服务器仍是可灵版 `bcad123`），部署后核对 `.env` 是否需要补 `LUMEN_PRICE_TABLE` 或留空用默认表，并给已注册的内测用户跑一遍 `grant-balance.mjs` 充值。
+
+---
+
+## 0c. 此前一轮（2026-09-06，已合入本轮基线）：接入可灵（Kling）直连视频 provider
+
+方案见 `docs/plan-kling-video.md`。目标：文生视频 / 图生视频在 `VIDEO_PROVIDER=kling` 且配了 `KLING_API_KEY` 时改走可灵开放平台新系统 API（默认 Kling 2.6 · 720p · 无声，$0.03/秒，约为现有 xAI Grok $0.08/秒的 37%）。已作为 `bcad123` 提交并部署到生产，Codex 方案审查未做（额度限制）。
+
+### 0c.1 已实现
 
 - **新 provider** `src/lib/providers/kling/{client,rest-map,native}.ts` + 三份对应 `*.test.ts`：`client.ts` 用 `Authorization: Bearer`，创建任务固定 `maxAttempts:1`（已计费不能重发），`code !== 0` 转 `ProviderHttpError`（`1301` → moderation，`1302/1303/5000-5002` → retryable）；`rest-map.ts` 的 `resolveKlingSettings` 把 UI 任意时长归一为 5/10、分辨率 / 音频按环境变量覆盖（有声强制抬 1080p）、`mapTask` 解析四态并从 `billing` 算 `costUsdActual`；`native.ts` 是 `klingProvider: VideoProvider`（`id:"kling"`），`submit`/`poll` 接入 runner 现有的 `persistRemote` 落盘流程。
 - **`env.ts`** 新增 8 个访问器：`klingApiKey` / `hasKlingKey` / `klingBase`（不补 `/v1`）/ `videoProvider`（`grok|kling`，非法值回落 grok）/ `klingVideoModel` / `klingVideoResolution` / `klingVideoAudio` / `klingUsdPerUnit` / `klingTaskTimeoutMs`。`isMockMode()` 改为三把 key（xAI / OpenAI / Kling）都没有才算 mock。
@@ -31,17 +83,17 @@
 - **`LumenHome.tsx`**：`videoProvider==="kling"` 时时长芯片枚举从 `[4,6,8,10]` 换成 `[5,10]`（`KLING_DURS`），初值落到 5（8 不在枚举里）；工作室读数用传入的 `videoModel` 而非写死的 `grok-imagine-video`。
 - **`.env.example`** 新增可灵段：`KLING_API_KEY`、`KLING_BASE_URL`（附国内 api-beijing / 国际 api-singapore 说明）、`VIDEO_PROVIDER`、`KLING_VIDEO_MODEL`、`KLING_VIDEO_RESOLUTION`、`KLING_VIDEO_AUDIO`、`KLING_USD_PER_UNIT`、`KLING_TASK_TIMEOUT_MS`。
 
-### 0.2 真实冒烟（2026-09-06，dev server 3000，账号 kling-smoke@example.test）
+### 0c.2 真实冒烟（2026-09-06，dev server 3000，账号 kling-smoke@example.test）
 
 - 文生视频：请求 4 秒 → 归一为 5s / 720p / 无声 → `succeeded`，`costUsdActual` 0.15（上游 billing 1.5 积分 × 单价 0.10）。
 - 图生视频（webp 首帧）：5 秒 → `succeeded`，0.15。两条合计 3 积分 = $0.30，与可灵控制台账单口径一致。
 - 首跑失败排查：用户的 key 是可灵**国际版**，只在 `https://api-singapore.klingai.com` 有效，发到 `api-beijing` 回 `1002`「api key not found」——已确认是账号类型问题而非代码 bug。`.env.local` 已改用 singapore 域名，`.env.example` 已加对应说明。
 
-### 0.3 上游事实与已知限制
+### 0c.3 上游事实与已知限制
 
 - 新系统鉴权是 Bearer 单串 key（非旧版 AK/SK JWT）；`duration` 接口枚举只有 5/10（能力地图写 3–10s 是营销口径）；有声只支持 1080p；首尾帧只支持 1080p 且本项目永不发 `last_frame`；查询接口返回 `billing`，是三家 provider 里唯一给出真实扣费的；成片 URL 30 天后清理；并发按资源包计，超限返回 `1303`。
-- **不做**（记录在案，非缺陷）：不调用可灵取消接口（本地取消后上游仍会出片计费，文档未见取消端点）；`external_task_id=jobId` 目前只发不用（POST 超时后按 `external_task_ids` 查找回填是 v1.1）；API 直接发送非 16:9/9:16/1:1 画幅到可灵实例时，是在 provider `submit` 阶段被上游 400 拒绝、任务落 `failed`（UI 只提供三种画幅，触发不到，纯 API 调用方要注意）；`klingTaskTimeoutMs()` 已导出但暂无调用方读取（轮询上限仍是 runner 自身的 15 分钟）。
-- 门禁未覆盖：`pnpm e2e` 因端口占用未跑（见文首「门禁状态」），因此本轮 UI 改动（时长芯片枚举、读数文案）**没有 e2e 回归确认**，只做过上面的真实冒烟与人工核对。
+- **不做**（记录在案，非缺陷）：不调用可灵取消接口（本地取消后上游仍会出片计费，文档未见取消端点）；API 直接发送非 16:9/9:16/1:1 画幅到可灵实例时，是在 provider `submit` 阶段被上游 400 拒绝、任务落 `failed`（UI 只提供三种画幅，触发不到，纯 API 调用方要注意）；`klingTaskTimeoutMs()` 已导出但暂无调用方读取（轮询上限仍是 runner 自身的 15 分钟）。**2026-09-06 下午更新**：`external_task_id=jobId` 已在阶段一接入崩溃恢复（`native.ts` 的 `lookupByExternalId`，见 §0.二），不再是「只发不用」。
+- 门禁历史：`pnpm e2e` 当时因端口占用未跑，本节记录的 UI 改动（时长芯片枚举、读数文案）**未经 e2e 回归确认**；阶段一（§0）已跑通 `pnpm e2e` 隔离模式 10/10，但覆盖的是阶段一自己的改动，不补跑本节的可灵 UI 回归。
 
 ---
 
