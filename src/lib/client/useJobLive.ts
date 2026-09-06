@@ -3,18 +3,14 @@
 import { useEffect } from "react";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { isTerminal } from "@/lib/client/labels";
-import { ApiError, fetchJob } from "./jobs";
+import { fetchJob } from "./jobs";
 
 /**
  * Keeps one job fresh until it reaches a terminal state.
  * SSE gives fast feedback; 2s polling is the source of truth and the
  * reconnect fallback (see docs/design.md §3).
  */
-export function useJobLive(
-  job: Pick<JobPublic, "id" | "status">,
-  onUpdate: (job: JobPublic) => void,
-  onUnauthorized?: () => void,
-) {
+export function useJobLive(job: Pick<JobPublic, "id" | "status">, onUpdate: (job: JobPublic) => void) {
   const { id } = job;
   // Only re-subscribe when the job flips to terminal, not on every status hop.
   const terminal = isTerminal(job.status);
@@ -40,8 +36,8 @@ export function useJobLive(
       try {
         const data = await fetchJob(id);
         if (data) apply(data);
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 401) onUnauthorized?.();
+      } catch {
+        // A 401 already sent the browser to /login; anything else is transient.
       }
       if (!stopped && !finished) timer = setTimeout(tick, 2000);
     };
@@ -67,5 +63,5 @@ export function useJobLive(
       stopped = true;
       stop();
     };
-  }, [id, terminal, onUpdate, onUnauthorized]);
+  }, [id, terminal, onUpdate]);
 }
