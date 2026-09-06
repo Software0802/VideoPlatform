@@ -4,6 +4,10 @@ export const OFFICIAL_XAI_BASE = "https://api.x.ai/v1";
 export const DEFAULT_SUB2API_BASE = "http://127.0.0.1:8080/v1";
 export const OFFICIAL_OPENAI_BASE = "https://api.openai.com/v1";
 export const DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-1";
+/** 可灵新系统域名。路径不带 `/v1`，所以这里也不补。 */
+export const OFFICIAL_KLING_BASE = "https://api-beijing.klingai.com";
+export const DEFAULT_KLING_VIDEO_MODEL = "kling-2.6";
+const DEFAULT_KLING_USD_PER_UNIT = 0.1;
 
 export function dataDir(): string {
   return path.resolve(/*turbopackIgnore: true*/ process.env.DATA_DIR ?? path.join(process.cwd(), "data"));
@@ -155,12 +159,70 @@ export function openaiImageTaskTimeoutMs(): number {
   return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 60 * 60_000) : 600_000;
 }
 
+/** 可灵开放平台新系统的单串 API Key。缺失时可灵完全不参与路由。 */
+export function klingApiKey(): string | undefined {
+  return process.env.KLING_API_KEY?.trim() || undefined;
+}
+
+export function hasKlingKey(): boolean {
+  return Boolean(klingApiKey());
+}
+
 /**
- * Mock 模式 = 没有任何可用的上游 key。文生图可以只靠 OpenAI key 跑真实上游，
- * 所以一把 OpenAI key 也足以让实例脱离 mock（视频路径仍会各自按 key 回落到 mock）。
+ * 可灵 REST root，**不带** `/v1`：接口路径本身就是 `/text-to-video/<model>`、`/tasks`，
+ * 补 `/v1` 会 404。只去掉尾部斜杠，其余原样。
+ */
+export function klingBase(): string {
+  const raw = process.env.KLING_BASE_URL?.trim().replace(/\/+$/, "");
+  return raw || OFFICIAL_KLING_BASE;
+}
+
+export type VideoProviderChoice = "grok" | "kling";
+
+/**
+ * 视频路由的显式开关（方案 §3）。xAI key 会一直存在（r2v / edit / extend / harness 靠它），
+ * 所以可灵不能凭「有没有 key」抢路由，必须由这条环境变量点名。非法值回落 grok。
+ */
+export function videoProvider(): VideoProviderChoice {
+  return process.env.VIDEO_PROVIDER?.trim().toLowerCase() === "kling" ? "kling" : "grok";
+}
+
+/** 可灵视频模型，同时是 URL 路径段（`/text-to-video/kling-2.6`）。 */
+export function klingVideoModel(): string {
+  return process.env.KLING_VIDEO_MODEL?.trim() || DEFAULT_KLING_VIDEO_MODEL;
+}
+
+/** 覆盖 UI 固定发的 720p。有声时会被 rest-map 强制抬到 1080p（上游硬约束）。 */
+export function klingVideoResolution(): "720p" | "1080p" {
+  return process.env.KLING_VIDEO_RESOLUTION?.trim() === "1080p" ? "1080p" : "720p";
+}
+
+/** 有声只在 1080p 出片，且单价 1.0 积分/秒（无声 720p 的 3.3 倍），所以默认关。 */
+export function klingVideoAudio(): "off" | "native" {
+  return process.env.KLING_VIDEO_AUDIO?.trim().toLowerCase() === "native" ? "native" : "off";
+}
+
+/**
+ * 积分 → USD 的换算率，只影响账目显示。默认 0.10（$10 = 100 积分的充值比例）。
+ * 非法值与负数回落默认，免得把真实扣费记成 0。
+ */
+export function klingUsdPerUnit(): number {
+  const n = Number(process.env.KLING_USD_PER_UNIT ?? DEFAULT_KLING_USD_PER_UNIT);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_KLING_USD_PER_UNIT;
+}
+
+/** 单个可灵任务从提交到出片的总时长上限（毫秒），与 runner 的 15 分钟轮询上限同口径。 */
+export function klingTaskTimeoutMs(): number {
+  const n = Number(process.env.KLING_TASK_TIMEOUT_MS ?? 900_000);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 60 * 60_000) : 900_000;
+}
+
+/**
+ * Mock 模式 = 没有任何可用的上游 key。文生图可以只靠 OpenAI key、视频可以只靠可灵 key
+ * 跑真实上游，所以任意一把 key 都足以让实例脱离 mock（其余路径仍各自按 key 回落到 mock）。
  */
 export function isMockMode(): boolean {
-  return forceMock() || (!hasXaiKey() && !hasOpenaiKey());
+  return forceMock() || (!hasXaiKey() && !hasOpenaiKey() && !hasKlingKey());
 }
 
 export type GrokUpstreamKind = "xai" | "sub2api";

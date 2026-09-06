@@ -40,6 +40,8 @@ UPSTREAM_RETRY_BASE_MS=250
 
 只填 `SUB2API_API_KEY`、不填 `XAI_BASE_URL` 时，默认打本地 `http://127.0.0.1:8080/v1`。同时填了 `XAI_API_KEY` 时优先走官方 key。
 
+**可选：可灵（Kling）直连视频**（工作区改动，详见 `docs/plan-kling-video.md` 与 `docs/handoff.md` §0）——设置 `KLING_API_KEY` 与 `VIDEO_PROVIDER=kling` 后，文生视频 / 图生视频改走可灵开放平台，价格约为 xAI 的三分之一；参考生视频 / 编辑 / 延长与长片仍固定在 xAI。变量说明见 `.env.example`。
+
 Sub2API 的 Grok 媒体路由与 xAI 字段兼容；OAuth 订阅号需要付费权益探测通过才会接图/视频，否则上游返回 `503 grok_media_no_eligible_account`。
 
 ### 视频链路冒烟

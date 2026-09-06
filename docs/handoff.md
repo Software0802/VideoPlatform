@@ -2,22 +2,52 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 更新日期 | 2026-09-06（用户系统 · 日配额 · 数据留存清理，分支 `integrate/users2`） |
-| 基线 | `integrate/users2` @ `ea3aed2`（`9211324` 代码 + 本轮文档，工作区干净）。**`main` 落后于此分支**，`main` 最新是 `4ad5d60`（登录版已部署，缺第五批留存清理与 shots 清理），详见 §0.5「未完成 / 已知」。`integrate/users2` 自 `3bf9f15`（生图 provider + 生产部署基线）起的提交链：`b4ff99b`（第一批存储/会话/邀请码/注册登录 API）→ `fb6e6f7`（第二批会话网关 + ownerId 五路隔离）→ `3e68717`（e2e 随机凭据 + 上传认领 400 例外）→ `3bf9f15`（第三批配额：预留+结算）→ `fa93200`（配额三条修复）→ `fe44d3d`（第四批登录页）→ `83d4312`（第五批留存清理）→ `9211324`（shots/ 纳入清理） |
-| 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom\.claude\worktrees\integrate2`（worktree，分支 `integrate/users2`），Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | `integrate/users2` @ `9211324`：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 53 文件 / 396+2 用例通过、1 条 skip；`pnpm e2e` 10 例通过；`pnpm run evals:check` 仍红（缺 `character-en.jpg` / `character-zh.jpg` 两张人物素材，历史遗留，与本轮无关） |
-| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式。本机 `.env.local`（不入库）需设 `LUMEN_SESSION_SECRET` 才能起服务 |
-| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`，登录版已上线（部署 `4ad5d60`），留存清理版（`9211324`）待部署，详见 §0.4 |
+| 更新日期 | 2026-09-06（可灵直连视频 provider，分支 `chore/agent-config`，**工作区未提交**） |
+| 基线 | `chore/agent-config` @ `a01ffa6`（main 基线 `c5e92ed` + 本轮工作区改动，详见下方 §0）。`main` 最新是 `d7bba27`。方案 `docs/plan-kling-video.md`。此前一轮用户系统 / 配额 / 留存清理已上线，详见 §0b |
+| 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
+| 门禁状态 | `tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 57 文件 / 456 通过、1 条 skip。`pnpm e2e` **未跑**——3000 端口被另一会话的 `next dev`（带真实 key）占用，Next 16 不允许同目录起第二个 dev server，停它的操作被权限拦下，待处理 |
+| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新增可灵相关 env 见下方 §0.3 |
+| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。本轮改动**未部署**，详见 §0a.4（此前一轮的部署记录） |
 
-新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，新增用户/配额/留存小节）、`DESIGN.md`（UI 规格，含登录页）、`docs/plan-users-quota.md`（本轮方案，§9 为实施顺序）。
+新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，新增 §2c 可灵路由）、`docs/plan-kling-video.md`（本轮方案）、`DESIGN.md`（UI 规格）。
 
 ---
 
-## 0. 本轮（2026-09-06）：用户系统 · 日配额 · 数据留存清理
+## 0. 本轮（2026-09-06）：接入可灵（Kling）直连视频 provider
+
+方案见 `docs/plan-kling-video.md`。目标：文生视频 / 图生视频在 `VIDEO_PROVIDER=kling` 且配了 `KLING_API_KEY` 时改走可灵开放平台新系统 API（默认 Kling 2.6 · 720p · 无声，$0.03/秒，约为现有 xAI Grok $0.08/秒的 37%）。**工作区改动尚未提交**，Codex 方案审查未做（额度限制）。
+
+### 0.1 已实现
+
+- **新 provider** `src/lib/providers/kling/{client,rest-map,native}.ts` + 三份对应 `*.test.ts`：`client.ts` 用 `Authorization: Bearer`，创建任务固定 `maxAttempts:1`（已计费不能重发），`code !== 0` 转 `ProviderHttpError`（`1301` → moderation，`1302/1303/5000-5002` → retryable）；`rest-map.ts` 的 `resolveKlingSettings` 把 UI 任意时长归一为 5/10、分辨率 / 音频按环境变量覆盖（有声强制抬 1080p）、`mapTask` 解析四态并从 `billing` 算 `costUsdActual`；`native.ts` 是 `klingProvider: VideoProvider`（`id:"kling"`），`submit`/`poll` 接入 runner 现有的 `persistRemote` 落盘流程。
+- **`env.ts`** 新增 8 个访问器：`klingApiKey` / `hasKlingKey` / `klingBase`（不补 `/v1`）/ `videoProvider`（`grok|kling`，非法值回落 grok）/ `klingVideoModel` / `klingVideoResolution` / `klingVideoAudio` / `klingUsdPerUnit` / `klingTaskTimeoutMs`。`isMockMode()` 改为三把 key（xAI / OpenAI / Kling）都没有才算 mock。
+- **`cost.ts`** 新增 `KLING_UNITS_PER_SEC`（积分/秒表，`${model}:${resolution}:${audio}` 为键）、`klingUnitsToUsd`；`estimateCostUsd` 加第四参 `video?: VideoPricingHint`，可灵模型走积分计价分支，表里查不到时取该模型最贵档、模型都不认识时取全表最贵档（宁可高估）。
+- **`types.ts` / `schema.ts`** provider 枚举加 `"kling"`。
+- **`router.ts`**：新增 `usesKling(mode, harness)`（mode 必须是 t2v/i2v、非 harness、`videoProvider()==="kling"` 且有 key）；`currentProviderId(mode, { harness })` 加第二参，harness（30/45/60）永远留在 grok（extend shot 依赖 xAI Files API，可灵接不了）。
+- **`create.ts`**：`klingSettingsFor` 在 provider 真选中 kling 且 mode 是 t2v/i2v 时归一 durationSec/resolution/generateAudio 并**写回 job 记录**，估价用归一后的值（`videoPricingOf`）；`retryJob` 同步走一遍归一与重新估价，非 kling 任务估价逻辑不变。
+- **`/api/health`** 新增 `videoProvider`（`currentProviderId("text_to_video")`）与 `klingKeyPresent`；`page.tsx` 把 `videoProvider` / `videoModel`（kling 时为 `klingVideoModel()`，否则 `grok-imagine-video`）传给 `LumenHome`。
+- **`LumenHome.tsx`**：`videoProvider==="kling"` 时时长芯片枚举从 `[4,6,8,10]` 换成 `[5,10]`（`KLING_DURS`），初值落到 5（8 不在枚举里）；工作室读数用传入的 `videoModel` 而非写死的 `grok-imagine-video`。
+- **`.env.example`** 新增可灵段：`KLING_API_KEY`、`KLING_BASE_URL`（附国内 api-beijing / 国际 api-singapore 说明）、`VIDEO_PROVIDER`、`KLING_VIDEO_MODEL`、`KLING_VIDEO_RESOLUTION`、`KLING_VIDEO_AUDIO`、`KLING_USD_PER_UNIT`、`KLING_TASK_TIMEOUT_MS`。
+
+### 0.2 真实冒烟（2026-09-06，dev server 3000，账号 kling-smoke@example.test）
+
+- 文生视频：请求 4 秒 → 归一为 5s / 720p / 无声 → `succeeded`，`costUsdActual` 0.15（上游 billing 1.5 积分 × 单价 0.10）。
+- 图生视频（webp 首帧）：5 秒 → `succeeded`，0.15。两条合计 3 积分 = $0.30，与可灵控制台账单口径一致。
+- 首跑失败排查：用户的 key 是可灵**国际版**，只在 `https://api-singapore.klingai.com` 有效，发到 `api-beijing` 回 `1002`「api key not found」——已确认是账号类型问题而非代码 bug。`.env.local` 已改用 singapore 域名，`.env.example` 已加对应说明。
+
+### 0.3 上游事实与已知限制
+
+- 新系统鉴权是 Bearer 单串 key（非旧版 AK/SK JWT）；`duration` 接口枚举只有 5/10（能力地图写 3–10s 是营销口径）；有声只支持 1080p；首尾帧只支持 1080p 且本项目永不发 `last_frame`；查询接口返回 `billing`，是三家 provider 里唯一给出真实扣费的；成片 URL 30 天后清理；并发按资源包计，超限返回 `1303`。
+- **不做**（记录在案，非缺陷）：不调用可灵取消接口（本地取消后上游仍会出片计费，文档未见取消端点）；`external_task_id=jobId` 目前只发不用（POST 超时后按 `external_task_ids` 查找回填是 v1.1）；API 直接发送非 16:9/9:16/1:1 画幅到可灵实例时，是在 provider `submit` 阶段被上游 400 拒绝、任务落 `failed`（UI 只提供三种画幅，触发不到，纯 API 调用方要注意）；`klingTaskTimeoutMs()` 已导出但暂无调用方读取（轮询上限仍是 runner 自身的 15 分钟）。
+- 门禁未覆盖：`pnpm e2e` 因端口占用未跑（见文首「门禁状态」），因此本轮 UI 改动（时长芯片枚举、读数文案）**没有 e2e 回归确认**，只做过上面的真实冒烟与人工核对。
+
+---
+
+## 0b. 此前一轮（2026-09-06，已合入本轮基线）：用户系统 · 日配额 · 数据留存清理
 
 方案见 `docs/plan-users-quota.md`（v2，已按 Codex 评审修订）。目标：把「全站一个共享口令」的单用户实例，变成可发给一批认识的人使用的多用户实例，每人每天最多出 10 张图。方案 §9 的五步实施顺序**已全部完成**。
 
-### 0.1 已实现（按方案 §2–§8）
+### 0b.1 已实现（按方案 §2–§8）
 
 - **用户存储** `src/lib/users/`：`user.json` 事实源 + `index.json` 派生缓存（启动重建）；scrypt 密码（自描述参数、防篡改撑爆内存、`burnPasswordTiming` 防枚举）；HMAC 签名 Cookie（`session-token.ts` 纯函数给 proxy，`session.ts` 带 `disabled`/`sessionEpoch` 校验）；一次性邀请码 `data/invites/<code>.json`（`scripts/mint-invites.mjs N --note`）；登录注册按 IP+邮箱限流。
 - **会话网关** `src/proxy.ts`：`/api/*` 会话校验（零 I/O 验签），放行 register/login/logout/health；旧 `LUMEN_ACCESS_TOKEN` 与 `lib/auth.ts`、`/api/auth/session` 已删除。
@@ -27,22 +57,22 @@
 - **登录页** `/login`（`src/app/login/`、`LoginScreen.tsx`）：两 tab，注册带邀请码；未登录 `/` → 307 `/login`；顶栏账号名 + 退出（≤520px 隐藏账号名）；配额行「今日剩余 n/N」，用完禁用提交；`AccessTokenPrompt` 删除；`client/http.ts` 401 → 整页跳登录。e2e：`auth.setup.ts` 真实注册登录注入 storageState（随机凭据），`auth.spec.ts` 新用例，`invites.ts` 铸码助手。
 - **留存清理** `src/lib/jobs/retention.ts`：终态且 `completedAt ?? updatedAt` 超 `DATA_RETENTION_DAYS`(30，0 关闭) → 删 `outputs/ inputs/ shots/` → 同一次 `updateJob` 先给无 `completedAt` 的老记录补章再写 `artifactsPurgedAt`；不改 status；runner 每小时 `maintenance()`（tmp → idempotency 24h → retention）；已清理任务 retry 返回 409 `artifacts_purged`；UI 占位卡「作品已过期清理」，不请求已删 media；取消的 `job failed` 日志降为 info。
 
-### 0.2 评审
+### 0b.2 评审
 
 方案经 Codex 两轮（v1 BLOCK 6×P1+1×P2 → v3）；第二批 diff PASS_WITH_NOTES（2×P2 已处理）；第三批 diff BLOCK 3 条（全部修复见 `fa93200`）；第五批 diff **未审**（Codex 用量上限），由主代理自审删除路径（非终态不碰、时间异常不删、`rm` 不跟随符号链接、先删后盖章幂等）。
 
-### 0.3 新增环境变量
+### 0b.3 新增环境变量
 
 `LUMEN_SESSION_SECRET`（必需，未设置服务启动即报错）、`FREE_DAILY_IMAGE_QUOTA`(默认 10)、`FREE_DAILY_FAILURE_LIMIT`(默认 30)、`DATA_RETENTION_DAYS`(默认 30，0 关闭清理)、`LUMEN_ADMIN_USER_ID`（未设置则无人是管理员）。`LUMEN_ACCESS_TOKEN` 已废弃删除。
 
-### 0.4 生产状态（阿里云，https://genius.homeaistack.online）
+### 0b.4 生产状态（阿里云，https://genius.homeaistack.online）
 
 - 登录版已上线（部署 `4ad5d60`），留存清理版（`9211324`）已部署。`/` 307→`/login`，`/api/health` 匿名 200，其余 `/api/*` 401。
 - `.env` 已有 `LUMEN_SESSION_SECRET`、`FREE_DAILY_IMAGE_QUOTA=10`、`FREE_DAILY_FAILURE_LIMIT=30`、`DATA_RETENTION_DAYS=30`、`LUMEN_ADMIN_USER_ID=usr_c8ce213e3155795b`（管理员已用首个邀请码注册）；`LUMEN_ACCESS_TOKEN` 已删。
 - 部署命令 `bash scripts/deploy.sh`（含 Turbopack external 别名软链步骤）。**部署 worktree 时 `node_modules` 不能用软链，Turbopack 会 panic，必须 `pnpm install`**。
 - 方案 §4 切换顺序已完成；后续给内测用户：服务器 `DATA_DIR=/opt/genius/data node scripts/mint-invites.mjs N --note "..."`。
 
-### 0.5 未完成 / 已知
+### 0b.5 未完成 / 已知
 
 - `main` 已合并 `integrate/users2`（本提交）。用户的 ThreeUI 丝绸幕布实验已由其自行提交（`e45f527`）并随合并进入 `main`，**生产部署的仍是不含实验的 `integrate/users2` 代码**；实验何时上线由用户决定。
 - `scripts/smoke-lumen.mjs` / `smoke-cancel.mjs` 已改为会话登录：共用 `scripts/lib/smoke-session.mjs`，凭据取 `LUMEN_SMOKE_EMAIL` / `LUMEN_SMOKE_PASSWORD`（可选 `LUMEN_SMOKE_INVITE` 自动注册），默认目标 `http://localhost:3000`。已对隔离 mock 实例实测：注册 → 登录 → 取消用例与 6 条生成用例全过。

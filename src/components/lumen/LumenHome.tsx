@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JobPublic } from "@/lib/jobs/schema";
-import type { NativeMode } from "@/lib/providers/types";
+import type { NativeMode, ProviderId } from "@/lib/providers/types";
 import { estimateHarnessCostUsd } from "@/lib/cost";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { HARNESS_DURATIONS, isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
@@ -32,6 +32,9 @@ const UI_MODE_OF: Partial<Record<NativeMode, UiMode>> = { text_to_video: "t2v", 
 const RATIOS = ["16:9", "9:16", "1:1"] as const;
 type Ratio = (typeof RATIOS)[number];
 const DURS = [4, 6, 8, 10] as const;
+/** 可灵的 duration 枚举只有 5 / 10，别的值上游会按这两档计费，所以芯片直接跟着换 */
+const KLING_DURS = [5, 10] as const;
+const DEFAULT_DUR = 8;
 
 type GroupId = "filter" | "skin" | "color" | "cam";
 type Option = { id: string; label: string; text: string };
@@ -219,11 +222,17 @@ export function LumenHome({
   initialJobs,
   mock,
   harness = false,
+  videoProvider = "grok",
+  videoModel = "grok-imagine-video",
   initialEmail,
 }: {
   initialJobs: JobPublic[];
   mock: boolean;
   harness?: boolean;
+  /** 服务端解析的当前视频 provider（与 /api/health 的 videoProvider 同源），决定时长芯片 */
+  videoProvider?: ProviderId;
+  /** 服务端解析的视频模型名，只用于工作室读数（可灵实例显示 kling-2.6 而不是 grok） */
+  videoModel?: string;
   /** SSR 已经解析过会话，先用它渲染顶栏，避免首帧右上角空着 */
   initialEmail: string;
 }) {
@@ -233,7 +242,10 @@ export function LumenHome({
   const [prompt, setPrompt] = useState("");
   const [opts, setOpts] = useState<Opts>({});
   const [mode, setMode] = useState<UiMode>("t2v");
-  const [dur, setDur] = useState<number>(8);
+  // 可灵的时长枚举是 5 / 10，默认的 8 不在里面，所以初值直接落到第一档（5）；
+  // 芯片上永远只出现「会被上游计费的那个时长」（方案 §4）。
+  const baseDurs: readonly number[] = videoProvider === "kling" ? KLING_DURS : DURS;
+  const [dur, setDur] = useState<number>(baseDurs.includes(DEFAULT_DUR) ? DEFAULT_DUR : baseDurs[0]);
   const [ratio, setRatio] = useState<Ratio>("16:9");
   const [first, setFirst] = useState<Frame | null>(null);
   const [job, setJob] = useState<JobPublic | null>(null);
@@ -450,7 +462,7 @@ export function LumenHome({
   }
 
   /* ── 时长 / 画幅：点击循环；开启 harness 时时长多出 30 / 45 / 60（仅视频） ── */
-  const durOptions: readonly number[] = harness ? [...DURS, ...HARNESS_DURATIONS] : DURS;
+  const durOptions: readonly number[] = harness ? [...baseDurs, ...HARNESS_DURATIONS] : baseDurs;
   const cycleDur = () => setDur((d) => durOptions[(durOptions.indexOf(d) + 1) % durOptions.length]);
   const cycleRatio = () => setRatio((r) => RATIOS[(RATIOS.indexOf(r) + 1) % RATIOS.length]);
 
@@ -568,7 +580,7 @@ export function LumenHome({
   const exhibitState: "idle" | "busy" | "done" | "failed" = working ? "busy" : done ? "done" : failed ? "failed" : "idle";
   const longForm = isVideo && isHarnessDuration(dur);
   const longCost = longForm ? estimateHarnessCostUsd(packHarnessDuration(dur)) : 0;
-  const modelName = `${isVideo ? "grok-imagine-video" : "grok-imagine-image"}${longForm ? ` · ≈ $${longCost.toFixed(2)}` : ""}${mock ? " · 模拟" : ""}`;
+  const modelName = `${isVideo ? videoModel : "grok-imagine-image"}${longForm ? ` · ≈ $${longCost.toFixed(2)}` : ""}${mock ? " · 模拟" : ""}`;
   const placeholder = mode === "i2v" ? "已选首帧，提示词可选" : mode === "t2i" ? "清晨山谷薄雾，一束光落在湖面" : "清晨山谷薄雾，镜头缓慢推进…";
   const rows = studio ? Math.min(7, Math.max(3, prompt.split("\n").length)) : 2;
   const exhibitBottom = 236 + (rows - 3) * 23;

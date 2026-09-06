@@ -1,10 +1,42 @@
-import { openaiImagePriceTableRaw } from "@/lib/env";
+import { klingUsdPerUnit, openaiImagePriceTableRaw } from "@/lib/env";
 import { log } from "@/lib/log";
 
 export const RATE_USD_PER_SEC = {
   "grok-imagine-video-1.5": 0.08,
   "grok-imagine-video": 0.05,
 } as const;
+
+/**
+ * 可灵按「积分 / 秒」计价，键是 `${model}:${resolution}:${audio}`——同一个模型的单价
+ * 由分辨率与是否出声决定，模型名单独看不出来。有声只有 1080p 一档（上游硬约束）。
+ * 未经真实账单核实的列表价占位（2026-09-06 官方定价页），实付以 poll 回来的 billing 为准。
+ */
+export const KLING_UNITS_PER_SEC: Record<string, number> = {
+  "kling-2.6:720p:off": 0.3,
+  "kling-2.6:1080p:off": 0.5,
+  "kling-2.6:1080p:native": 1.0,
+  "kling-2.5-turbo:720p:off": 0.3,
+  "kling-2.5-turbo:1080p:off": 0.5,
+};
+
+/** 积分 → USD。单价低到 $0.03/秒，分单位取整会把一条 5 秒片记成 0，所以留微分。 */
+export function klingUnitsToUsd(units: number): number {
+  const n = Number.isFinite(units) ? units : 0;
+  return roundMicro(n * klingUsdPerUnit());
+}
+
+/**
+ * 提交时的可灵单价。表里没有这个组合（换了模型、或上游加了新档）就取该模型最贵的一档，
+ * 整个模型都不认识时取全表最贵的一档——宁可高估，也不把一次调用记得比它可能的花费便宜。
+ */
+function klingUnitsPerSec(model: string, video?: VideoPricingHint): number {
+  const direct = video ? KLING_UNITS_PER_SEC[`${model}:${video.resolution}:${video.audio}`] : undefined;
+  if (direct != null) return direct;
+  const sameModel = Object.entries(KLING_UNITS_PER_SEC)
+    .filter(([key]) => key.startsWith(`${model}:`))
+    .map(([, rate]) => rate);
+  return Math.max(...(sameModel.length ? sameModel : Object.values(KLING_UNITS_PER_SEC)));
+}
 
 export const RATE_USD_PER_IMAGE = {
   "grok-imagine-image-2.0": 0.02,
@@ -204,19 +236,33 @@ const TICKS_PER_USD = 10_000_000_000;
 export type ImagePricingHint = { size: string; quality: string };
 
 /**
+ * 提交时已知的视频请求形状。可灵的单价随分辨率与音频档变化，模型名看不出来；
+ * xAI 视频不看它（按模型名的每秒单价计）。
+ */
+export type VideoPricingHint = { resolution: string; audio: "off" | "native" };
+
+/**
  * 没有 hint 时的兜底判据：一个不在 `RATE_USD_PER_IMAGE` 里的图片模型（`gpt-image-2` 之类的
  * 中转模型）否则会掉进按秒的视频分支，被 durationSec=0 记成 0。
  * 视频模型名不含 "image"（`grok-imagine-*` 是 imagine，不匹配）。
  */
 const IMAGE_MODEL_RE = /image/i;
 
+/** 可灵模型名一律 `kling-` 打头（`kling-2.6`、`kling-2.5-turbo`），且不含 "image"。 */
+const KLING_MODEL_RE = /^kling-/i;
+
 export function estimateCostUsd(
   model: string,
   durationSec: number,
   image?: ImagePricingHint,
+  video?: VideoPricingHint,
 ): number {
   if (image || model in RATE_USD_PER_IMAGE || IMAGE_MODEL_RE.test(model)) {
     return estimateImageSubmitCostUsd(model, image);
+  }
+  // 可灵按积分计价，且同模型的单价由 resolution × audio 决定，与 xAI 的按模型单价不是一套。
+  if (KLING_MODEL_RE.test(model)) {
+    return klingUnitsToUsd(klingUnitsPerSec(model, video) * durationSec);
   }
   const rate =
     model in RATE_USD_PER_SEC

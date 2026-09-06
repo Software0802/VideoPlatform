@@ -1,9 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { access, cp, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { estimateCostUsd, estimateHarnessCostUsd, type ImagePricingHint } from "@/lib/cost";
+import {
+  estimateCostUsd,
+  estimateHarnessCostUsd,
+  type ImagePricingHint,
+  type VideoPricingHint,
+} from "@/lib/cost";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
-import { harnessEnabled, maxQueuedJobs, openaiImageModel } from "@/lib/env";
+import { harnessEnabled, klingVideoModel, maxQueuedJobs, openaiImageModel } from "@/lib/env";
 import {
   UPLOAD_ID_RE,
   type CreateJobBody,
@@ -22,6 +27,7 @@ import { purgedBlock, retryBlock } from "@/lib/jobs/retry-guard";
 import { readJob, tmpDir, toPublic, writeJob } from "@/lib/jobs/store";
 import { isHarnessDuration, isImageMode, modelForMode } from "@/lib/providers/grok/mode-matrix";
 import { assertModeConstraints } from "@/lib/providers/grok/rest-map";
+import { resolveKlingSettings, type KlingSettings } from "@/lib/providers/kling/rest-map";
 import {
   mapAspectToSize as mapOpenaiImageSize,
   mapQuality as mapOpenaiImageQuality,
@@ -98,8 +104,11 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     }
   }
 
-  const provider = currentProviderId(mode);
+  const provider = currentProviderId(mode, { harness });
   const model = modelForProvider(provider, mode);
+  // 可灵只收 5 / 10 秒，分辨率与音频档由环境变量说了算。归一后的值要写回记录：
+  // 4 秒的请求上游按 5 秒计费，账目与详情卡都得是「会被计费的那个值」（方案 §4）。
+  const kling = klingSettingsFor(provider, mode, durationSec, body.prompt, model);
   assertModeConstraints({
     jobId: "preview",
     mode,
@@ -120,7 +129,13 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
 
   const id = `job_${randomBytes(6).toString("hex")}`;
   const now = new Date().toISOString();
-  const dur = image ? 0 : mode === "edit_video" ? (source?.durationSec ?? 0) : (durationSec ?? 8);
+  const dur = image
+    ? 0
+    : kling
+      ? kling.durationSec
+      : mode === "edit_video"
+        ? (source?.durationSec ?? 0)
+        : (durationSec ?? 8);
   // 图片单价看模型名是看不出来的（中转模型不在任何本地表里，会被估成 0）。这里预演一次
   // provider 待会真正会发的 size / quality，把它交给计价器；grok / mock 图片仍按模型单价。
   const imagePricing: ImagePricingHint | undefined =
@@ -144,15 +159,17 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     aspectRatio:
       mode === "edit_video" || mode === "extend_video" ? null : (body.aspectRatio ?? "16:9"),
     resolution:
-      mode === "edit_video" || mode === "extend_video" || image ? null : (body.resolution ?? "720p"),
+      mode === "edit_video" || mode === "extend_video" || image
+        ? null
+        : (kling?.resolution ?? body.resolution ?? "720p"),
     imageResolution: image ? (body.imageResolution ?? "1k") : null,
-    generateAudio: image ? false : (body.generateAudio ?? true),
+    generateAudio: image ? false : kling ? kling.audio === "native" : (body.generateAudio ?? true),
     lastFrameStored: Boolean(last),
     lastFrameLocksOutput: false,
     harness: { enabled: harness },
     costUsdEstimate: harness
       ? estimateHarnessCostUsd(packHarnessDuration(dur as 30 | 45 | 60))
-      : estimateCostUsd(model, dur, imagePricing),
+      : estimateCostUsd(model, dur, imagePricing, videoPricingOf(kling)),
     costUsdActual: null,
     error: null,
     output: null,
@@ -189,11 +206,34 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
 }
 
 /**
- * Model名与 provider 必须同源：OpenAI 生图用 OPENAI_IMAGE_MODEL，其余仍按 mode 走 Grok 矩阵。
- * 对既有的 grok / mock 任务，本函数与 `modelForMode` 结果完全一致。
+ * Model名与 provider 必须同源：OpenAI 生图用 OPENAI_IMAGE_MODEL、可灵视频用 KLING_VIDEO_MODEL，
+ * 其余仍按 mode 走 Grok 矩阵。对既有的 grok / mock 任务，本函数与 `modelForMode` 结果完全一致。
  */
 function modelForProvider(provider: ProviderId, mode: NativeMode): string {
-  return provider === "openai" ? openaiImageModel() : modelForMode(mode);
+  if (provider === "openai") return openaiImageModel();
+  if (provider === "kling") return klingVideoModel();
+  return modelForMode(mode);
+}
+
+/**
+ * 可灵接得下这个任务时给出归一后的三个参数，否则 null（调用方按原逻辑走）。
+ * 只有 provider 真的选中可灵、且是它支持的两种视频模式时才归一——别的 provider
+ * 的记录不能被可灵的枚举改写。
+ */
+function klingSettingsFor(
+  provider: ProviderId,
+  mode: NativeMode,
+  durationSec: number | undefined,
+  prompt: string,
+  model: string,
+): KlingSettings | null {
+  if (provider !== "kling") return null;
+  if (mode !== "text_to_video" && mode !== "image_to_video") return null;
+  return resolveKlingSettings({ jobId: "preview", mode, prompt, model, durationSec, generateAudio: false });
+}
+
+function videoPricingOf(kling: KlingSettings | null): VideoPricingHint | undefined {
+  return kling ? { resolution: kling.resolution, audio: kling.audio } : undefined;
 }
 
 /**
@@ -235,7 +275,12 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
   const now = new Date().toISOString();
   // Re-resolving both together keeps a retry from pairing a stale model name with a provider
   // the current environment would now pick (e.g. an OpenAI key added since the first attempt).
-  const provider = currentProviderId(source.mode);
+  const harness = Boolean(source.harness?.enabled);
+  const provider = currentProviderId(source.mode, { harness });
+  const model = modelForProvider(provider, source.mode);
+  // 源任务可能是 grok 时代的 6 秒片：换到可灵后同样要归一，否则重试会照着一个上游
+  // 根本不收的时长下单，账目也还是旧 provider 的估价。
+  const kling = klingSettingsFor(provider, source.mode, source.durationSec, source.prompt, model);
   const rec: JobRecord = {
     schemaVersion: 1,
     id,
@@ -243,18 +288,20 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     status: "queued",
     progress: 0,
     mode: source.mode,
-    model: modelForProvider(provider, source.mode),
+    model,
     provider,
     prompt: source.prompt,
-    durationSec: source.durationSec,
+    durationSec: kling?.durationSec ?? source.durationSec,
     aspectRatio: source.aspectRatio,
-    resolution: source.resolution,
+    resolution: kling?.resolution ?? source.resolution,
     imageResolution: source.imageResolution ?? null,
-    generateAudio: source.generateAudio,
+    generateAudio: kling ? kling.audio === "native" : source.generateAudio,
     lastFrameStored: source.lastFrameStored,
     lastFrameLocksOutput: false,
-    harness: { enabled: Boolean(source.harness?.enabled) },
-    costUsdEstimate: source.costUsdEstimate,
+    harness: { enabled: harness },
+    costUsdEstimate: kling
+      ? estimateCostUsd(model, kling.durationSec, undefined, videoPricingOf(kling))
+      : source.costUsdEstimate,
     costUsdPlanned: source.costUsdPlanned ?? null,
     costUsdActual: null,
     error: null,

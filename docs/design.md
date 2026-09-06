@@ -52,6 +52,7 @@ flowchart TB
 | `XAI_API_KEY` | 优先使用,base 默认 `https://api.x.ai/v1` |
 | 仅 `SUB2API_API_KEY` | base 默认 `http://127.0.0.1:8080/v1` |
 | `XAI_BASE_URL` | 覆盖 base(自动补 `/v1`) |
+| `KLING_API_KEY` + `VIDEO_PROVIDER=kling` | 文生视频 / 图生视频改走可灵新系统 API(非 harness),见 §2c |
 | 都没有 / `LUMEN_FORCE_MOCK=1` | MockProvider |
 
 视频与图片走同一套 REST(`/videos/generations|edits|extensions`、`/videos/{id}`、`/images/generations`),Sub2API 与官方字段兼容。**禁止** `openai.videos.*`(Sora 协议,非 xAI)。
@@ -103,6 +104,40 @@ flowchart TB
 - `OPENAI_IMAGE_FLEXIBLE_SIZES=1`(仅接受任意尺寸的兼容中转,如 ccgoai)时 7 个画幅 × 1k/2k 全部原生出图、零裁切(尺寸均为 16 的倍数);未开启时走官方三档尺寸 + `crop.ts`(sharp)居中裁切。官方 `gpt-image-1` 不接受任意尺寸,不要对官方开启此项。
 - `OPENAI_IMAGE_QUALITY`(low/medium/high/auto,默认 `high`)必须显式带进请求——漏传被上游按 medium 计费。
 - `OPENAI_IMAGE_PRICE_TABLE`(JSON,quality × {1K,2K,4K},`src/lib/cost.ts` 的 `openaiImagePriceTable`/`estimateCostUsd`)配置后按档计价,忽略 token;⚠️ 单位随上游而定——ccgoai 的 `pricing_currency` 是 `CNY`,配表后 `costUsdEstimate`/`costUsdActual` 实际是人民币额度,未做汇率换算。未配表回落 `output_tokens × $40/M`。
+
+## 2c. 视频 provider 路由(可灵,2026-09-06,as-built)
+
+方案 `docs/plan-kling-video.md`。文生视频 / 图生视频在满足条件时改走可灵开放平台新系统 API,其余视频模式(参考生 / 编辑 / 延长 / harness 长片)不受影响,仍固定在 xAI。**本节所述改动尚未提交、未部署**,详见 `docs/handoff.md` §0。
+
+| 优先级 | 条件 | provider |
+| --- | --- | --- |
+| 1 | mode 是 `text_to_video`/`image_to_video`,`VIDEO_PROVIDER=kling` 且 `KLING_API_KEY` 已设置,且非 harness(30/45/60) | `klingProvider`(`src/lib/providers/kling/`) |
+| 2 | 其余(含 harness、`reference_to_video`/`edit_video`/`extend_video`) | 沿用 §1 的 xAI 路由(`XAI_API_KEY`/`SUB2API_API_KEY` → mock) |
+
+`usesKling(mode, harness)`(`src/lib/providers/router.ts`)是唯一判据;`currentProviderId(mode, { harness })` 与 `selectProvider` 都过这一关。harness 永远留在 grok,因为 30/45/60 的 extend shot 依赖 xAI 的 Files API,可灵接不了。`isMockMode()` 改为「xAI / OpenAI / 可灵三把 key 都没有才算 mock」。
+
+### 请求 / 查询形状
+
+- 鉴权:`Authorization: Bearer <KLING_API_KEY>`,域名 `KLING_BASE_URL`(默认 `https://api-beijing.klingai.com`,国际版账号须换成 `https://api-singapore.klingai.com`,否则鉴权报 `1002`),路径**不带** `/v1`。
+- 创建:`POST /text-to-video/<model>` 或 `/image-to-video/<model>`(`rest-map.ts` 的 `mapToKlingRequest`);首帧走 `contents[].first_frame.url`(data URI 直接发,与 grok 一致),`last_frame` 永不填。创建请求固定 `maxAttempts:1`——任务一旦 `submitted` 就占并发并计费,重发 POST 是第二条任务。
+- 查询:`GET /tasks?task_ids=<id>`,`mapTask` 把 `submitted/processing/succeeded/failed` 映射到内部 pending/done/failed,`succeeded` 时取 `outputs[0].url` 交给 runner 现有的 `persistRemote` 落盘(URL 公网可下,不带 xAI 的下载头)。
+- 错误:`code !== 0` 转 `ProviderHttpError`;`1301` 归 `moderation`(复用 runner「未通过安全审核」路径);`1302`/`1303`(限速/并发超包)与 `5000–5002` 归 retryable,走 runner 既有指数退避。
+
+### 时长归一(5/10)与画幅/分辨率/音频
+
+- 可灵 `duration` 接口枚举**只有 5 与 10**(官方能力地图写 3–10s 是营销口径)。`create.ts` 在 provider 真选中 kling 时,把任意 `durationSec` 归一为 `≤5→5`、`>5→10` 并**写回 `job.durationSec`**——4 秒请求被上游按 5 秒计费,账目与详情卡必须如实;`retryJob` 同步重新归一与重新估价。首页时长芯片同源判据(`videoProvider==="kling"`)换成 `[5,10]`。
+- 分辨率由 `KLING_VIDEO_RESOLUTION`(默认 720p)覆盖并写回 `job.resolution`;`generateAudio` 由 `KLING_VIDEO_AUDIO`(默认 off)决定,UI 传的值被忽略——设为 `native` 时分辨率被 rest-map 强制抬到 1080p(上游硬约束:有声只支持 1080p)。
+- 画幅:t2v 直传 UI 仅有的 16:9/9:16/1:1(i2v 不发画幅,随首帧)。若绕过 UI 直接调 API 发送其他画幅,是在 provider `submit` 阶段被上游 400 拒绝、任务落 `failed`。
+
+### 计价与 billing
+
+- 提交估价:`src/lib/cost.ts` 的 `KLING_UNITS_PER_SEC`(积分/秒表,键为 `${model}:${resolution}:${audio}`,如 `kling-2.6:720p:off`=0.3)乘时长,再经 `klingUnitsToUsd` 按 `KLING_USD_PER_UNIT`(默认 0.10,即 $10=100 积分)换成 USD;表里查不到该模型/规格组合时取该模型最贵档,模型完全不认识时取全表最贵档,宁可高估。`estimateCostUsd` 新增第四参 `video?: { resolution, audio }` 承载这个判据。
+- 实付:poll 到 `succeeded` 时,`billing[].charge_type==="unit"` 的 `amount`(积分数)覆盖 `costUsdActual`——可灵是三家 provider 里**唯一**给出真实扣费的,账目最准(grok 是 usage ticks 换算,openai 兼容中转可能是人民币额度且未换汇率)。
+- 真实冒烟(2026-09-06):文生视频 4s 请求归一为 5s/720p/无声,`succeeded`,`costUsdActual` 0.15(1.5 积分×0.10);图生视频 5s 同样 0.15。
+
+### 已知限制(非缺陷,记录在案)
+
+不调用可灵取消接口(本地取消后上游仍出片计费,文档未见取消端点);`external_task_id=jobId` 目前只发不用,POST 超时后按 `external_task_ids` 查找回填是 v1.1;`klingTaskTimeoutMs()` 已导出但暂无调用方读取,轮询上限仍是 runner 自身的 15 分钟;成片 URL 上游 30 天后清理,与本项目 `persisting` 即落盘的时机无冲突。
 
 ## 3. Job 生命周期
 

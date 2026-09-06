@@ -5,6 +5,8 @@ import {
   estimateCostUsd,
   estimateOpenaiImageCostUsd,
   imageSizeTier,
+  KLING_UNITS_PER_SEC,
+  klingUnitsToUsd,
   openaiImagePriceTable,
   ticksToUsd,
   UNKNOWN_IMAGE_ESTIMATE_USD,
@@ -19,6 +21,7 @@ const CCGOAI_TABLE = JSON.stringify({
 
 afterEach(() => {
   delete process.env.OPENAI_IMAGE_PRICE_TABLE;
+  delete process.env.KLING_USD_PER_UNIT;
   vi.restoreAllMocks();
 });
 
@@ -159,5 +162,68 @@ describe("estimateCostUsd for image models", () => {
   it("leaves the video path untouched", () => {
     expect(estimateCostUsd("grok-imagine-video-1.5", 8)).toBe(0.64);
     expect(estimateCostUsd("grok-imagine-video", 8)).toBe(0.4);
+  });
+});
+
+describe("Kling pricing table", () => {
+  it("matches the documented units-per-second table", () => {
+    expect(KLING_UNITS_PER_SEC).toEqual({
+      "kling-2.6:720p:off": 0.3,
+      "kling-2.6:1080p:off": 0.5,
+      "kling-2.6:1080p:native": 1,
+      "kling-2.5-turbo:720p:off": 0.3,
+      "kling-2.5-turbo:1080p:off": 0.5,
+    });
+  });
+
+  it("converts units to USD at the default $0.10/unit", () => {
+    expect(klingUnitsToUsd(1.5)).toBeCloseTo(0.15, 6);
+    expect(klingUnitsToUsd(0)).toBe(0);
+  });
+
+  it("respects a KLING_USD_PER_UNIT override", () => {
+    process.env.KLING_USD_PER_UNIT = "0.08";
+    expect(klingUnitsToUsd(1.5)).toBeCloseTo(0.12, 6);
+  });
+});
+
+describe("estimateCostUsd for Kling video models", () => {
+  it("prices kling-2.6 by resolution/audio tier (0.3 / 0.5 / 1.0 units per second)", () => {
+    expect(estimateCostUsd("kling-2.6", 5, undefined, { resolution: "720p", audio: "off" })).toBeCloseTo(0.15, 6);
+    expect(estimateCostUsd("kling-2.6", 5, undefined, { resolution: "1080p", audio: "off" })).toBeCloseTo(0.25, 6);
+    expect(estimateCostUsd("kling-2.6", 5, undefined, { resolution: "1080p", audio: "native" })).toBeCloseTo(0.5, 6);
+  });
+
+  it("prices kling-2.5-turbo by its own tiers (no 1080p:native row exists for it)", () => {
+    expect(estimateCostUsd("kling-2.5-turbo", 10, undefined, { resolution: "720p", audio: "off" })).toBeCloseTo(
+      0.3,
+      6,
+    );
+    expect(estimateCostUsd("kling-2.5-turbo", 10, undefined, { resolution: "1080p", audio: "off" })).toBeCloseTo(
+      0.5,
+      6,
+    );
+  });
+
+  it("books an undefined resolution/audio combo at that model's own priciest known tier", () => {
+    // kling-2.5-turbo has no 1080p:native row; its most expensive row is 1080p:off at 0.5/s.
+    expect(estimateCostUsd("kling-2.5-turbo", 5, undefined, { resolution: "1080p", audio: "native" })).toBeCloseTo(
+      0.25,
+      6,
+    );
+  });
+
+  it("books a missing video hint at the model's priciest tier rather than at zero", () => {
+    // kling-2.6's most expensive row is 1080p:native at 1.0/s.
+    expect(estimateCostUsd("kling-2.6", 5)).toBeCloseTo(0.5, 6);
+  });
+
+  it("books a wholly unrecognized kling- model at the global priciest tier instead of crashing", () => {
+    expect(estimateCostUsd("kling-9000", 5, undefined, { resolution: "1080p", audio: "native" })).toBeCloseTo(0.5, 6);
+  });
+
+  it("leaves Grok and OpenAI estimates untouched", () => {
+    expect(estimateCostUsd("grok-imagine-video-1.5", 8)).toBe(0.64);
+    expect(estimateCostUsd("gpt-image-1", 0)).toBe(0.011);
   });
 });
