@@ -52,8 +52,11 @@ flowchart TB
 | `XAI_API_KEY` | 优先使用,base 默认 `https://api.x.ai/v1` |
 | 仅 `SUB2API_API_KEY` | base 默认 `http://127.0.0.1:8080/v1` |
 | `XAI_BASE_URL` | 覆盖 base(自动补 `/v1`) |
-| `KLING_API_KEY` + `VIDEO_PROVIDER=kling` | 文生视频 / 图生视频改走可灵新系统 API(非 harness),见 §2c |
+| `KLING_API_KEY` + `VIDEO_PROVIDER=kling`(或 `VIDEO_PROVIDER_ORDER` 含 `kling`) | 文生视频 / 图生视频改走可灵新系统 API(非 harness),见 §2c |
+| `YMAN_API_KEY` | 中转渠道 YMan,视频/生图共用一把 key,见 §2e |
 | 都没有 / `LUMEN_FORCE_MOCK=1` | MockProvider |
+
+**2026-09-06 晚起**:视频与生图路由都已从「按 key 存在性 + 单点开关」改成「按能力 + 优先级列表」(`VIDEO_PROVIDER_ORDER` 默认 `kling,grok`,`IMAGE_PROVIDER_ORDER` 默认 `openai,grok`),详见 §2e。上表仍列出各 provider 需要哪把 key,但**谁被选中**由 §2e 的路由规则决定,不再是「点名开关」。
 
 视频与图片走同一套 REST(`/videos/generations|edits|extensions`、`/videos/{id}`、`/images/generations`),Sub2API 与官方字段兼容。**禁止** `openai.videos.*`(Sora 协议,非 xAI)。
 
@@ -138,6 +141,41 @@ flowchart TB
 ### 已知限制(非缺陷,记录在案)
 
 不调用可灵取消接口(本地取消后上游仍出片计费,文档未见取消端点);`klingTaskTimeoutMs()` 已导出但暂无调用方读取,轮询上限仍是 runner 自身的 15 分钟;成片 URL 上游 30 天后清理,与本项目 `persisting` 即落盘的时机无冲突。`external_task_id=jobId` 已在 2026-09-06 阶段一接入崩溃恢复(`native.ts` 的 `lookupByExternalId`),见 §3。
+
+## 2e. YMan 中转 provider · 能力路由 · 积分耗尽切换(2026-09-06 晚,as-built)
+
+方案 `docs/plan-architecture-2026-09.md` §3.4「功能先于供应商」。目标:接入第三家上游 YMan,并把路由从「按 key 存在性 + 单点开关」改成「按能力 + 优先级列表」,为后续再加供应商铺路。
+
+### 路由规则
+
+`src/lib/providers/router.ts` 的 `pickVideoProvider`/`pickImageProvider` 按 `VIDEO_PROVIDER_ORDER`(默认 `kling,grok`,兼容旧 `VIDEO_PROVIDER`:`=kling` 视为 `kling,grok`,其余视为只有 `grok`)/`IMAGE_PROVIDER_ORDER`(默认 `openai,grok`,即加 YMan 前那条硬编码阶梯)的次序,取第一个「有 key、未被 `src/lib/providers/exhaustion.ts` 判定耗尽、`capabilities().modes` 声明支持该模式、(视频)`capabilities().aspectRatios` 接得下请求画幅」的 provider。`edit_video`/`extend_video`(只有 grok 声明支持,依赖 xAI Files API)与 harness 长片(30/45/60)恒定回落 grok,不需要每种模式单独配置。模式接得住但画幅接不住时抛 400,不再静默把画幅换成另一家的默认值。`capabilities()` 新增 `aspectRatios`(不声明 = 不限)与 `durations`(上游按档计费的枚举,不声明 = 连续,默认 `[4,6,8,10]`)。`isMockMode()` 改为「xAI / OpenAI / 可灵 / YMan 四把 key 都没有才算 mock」。
+
+### YMan provider
+
+`src/lib/providers/yman/`:`client.ts` 走 OpenAI 兼容 REST(`https://vip.yman.cc/v1`,Bearer 鉴权);视频三步 `POST /videos`(创建,固定 `maxAttempts:1`,已计费不重发)→ `GET /videos/{id}`(轮询,`not_ready` 判为 pending)→ `GET /videos/{id}/content`(下载,**带 Bearer**,不是匿名 CDN 直链);`native.ts` 是 `ymanProvider`(`id:"yman"`,支持 t2v/i2v/r2v/t2i),生图委托给 `openai-image` 工厂(同一把 key,`YMAN_IMAGE_CONFIG` 通道配置,默认模型 `gpt-image-2`)。
+
+模型目录 `catalog.ts`:模型 ID 必须用上游 `GET /v1/models` 的**展示名**(如 `minimax-H3 文字`、`minimax-h3-933-图文`),旧内部名(如 `minimax_h3_t2v`)作别名识别;`YMAN_MODEL_CATALOG`(JSON)可逐字段合并追加/覆盖模型的档位与积分价目。默认 t2v 模型 `minimax-H3 文字`(纯文生,不收参考图),i2v 模型 `minimax-h3-933-图文`(收参考图 ≤9 张)。
+
+计价:按积分预扣(¥1 = 100 积分,失败自动退),**不与时长成正比**(如 minimax_h3_* 的 5/10/15 秒是 40/90/140 积分);服务端把请求时长向上取到该模型最近一档并写回 `job.durationSec`,首页时长芯片跟着换档;目录里没有的模型按 `YMAN_UNKNOWN_CREDITS`(默认 150)估价,绝不为 0。新增 `usdCnyRate()`(默认 7.2,`USD_CNY_RATE` 覆盖)把人民币积分换算成美元口径的 `costUsdEstimate`/`costUsdActual`(与 §2d 的人民币 `priceCny` 售价是两套独立口径,售价不受此影响)。
+
+音频:YMan 建任务接口没有音频参数,`audioAvailableFor("yman")` 恒为 `false`——是「不可控」而非「一定无声」,不向用户收有声加价,UI 芯片显示「无声 · 暂不可用」。
+
+下载鉴权:`src/lib/media/download-headers.ts` 的 `downloadHeadersFor(url)` 只在目标 origin 命中「自己配置的某个上游 base」时才带对应那家的 key(xAI CDN 直链不需要、Sub2API 落盘 URL 需要、YMan `/videos/{id}/content` 需要),认不出 origin 就不带任何 key——无条件带 key 会把凭据发给上游返回字符串里的任意地址。
+
+### 积分耗尽自动切换
+
+`src/lib/providers/exhaustion.ts`:provider 返回上游「积分不足」(`quota_exhausted`)时,标记该 provider × 通道(视频/图片分开记,`data/provider-state.json`)耗尽 `PROVIDER_EXHAUSTED_TTL_MS`(默认 6 小时,环境变量覆盖),期间路由跳过它改走下一家;到点自动放回去重试——没有主动的「余额恢复了」信号,靠 TTL 兜底。被拒的提交从未被计费,换家不是重复付费,`priceCny`(用户报价)不变,只有 `costUsdEstimate`(我方成本口径)按新 provider 重算。`/api/health` 新增 `exhausted` 列表(谁被绕开、到什么时候、上游原话)。
+
+### 真实冒烟(2026-09-06 16:50,隔离实例,ORDER=yman)
+
+文生视频(5s,`minimax-H3 文字`)、图生视频(5s,`minimax-h3-933-图文`)、文生图(`gpt-image-2`)各一条,全部 `succeeded`;YMan 账户余额 20 → 15.5。价目:minimax 5s 约 50 积分 ≈ ¥0.50、10s ¥1.00;gpt-image-2 约 4–8 积分。
+
+### 已知限制
+
+- `sd-2.5-30秒` 这个模型名的 30 秒档与 harness 的 30 秒长片档撞车,当前不可达。
+- `retryJob` 对图片任务仍沿用旧的估价逻辑,未针对换家场景重新验证。
+- Codex 跨厂商审查进行中,结论未在提交时给出。
+- 本轮未部署到生产(见 `docs/handoff.md` 顶部表)。
 
 ## 2d. 余额与计费(2026-09-06 阶段一,as-built)
 
@@ -224,7 +262,8 @@ data/
 
 - 结构:`app/page.tsx`(server,读 `listJobRecords` 前 40 条)→ `components/lumen/LumenHome.tsx`(client,唯一状态所有者)。整站一个 100vh 单屏,三个视图:首页(标题 + 输入卡 + 最近 6 张成片缩略)→ 工作室(textarea 首次非空或点发送即转场:左「操作台」四组提示词芯片、右「展览区」进度 / 成片、输入卡落到右下)→ 作品(`mountRingDark` 环形画廊,视频 / 图片分栏,底部元信息 + 「用这条提示词再生成」「下载」)。
 - 设计来源:`design_handoff/design_handoff_genius_home/`(README 为像素级规格,`Lumen v2.dc.html` 为定稿原型);落地摘要与有意偏离见根目录 `DESIGN.md`。视觉语言:页面 `#0a0d12`、卡片 `rgba(28,30,36,.92)`、描边 `rgba(214,228,255,.12)`、强调 `#DDE1E8`,圆角 26 / 22 / 12 / 9,Manrope + Noto Sans SC。品牌名 Genius,文案全中文。
-- 路径收窄:UI 只暴露 `text_to_video / image_to_video / text_to_image`(内部 `t2v / i2v / t2i`)。请求体沿用 §4 契约:视频固定 `resolution: 720p`、`generateAudio: true`,时长 4/6/8/10(开启 harness 时循环追加 30/45/60),画幅 16:9 / 9:16 / 1:1;文生图固定 `imageResolution: 1k`;首帧 `startUploadId`(回形针上传,自动切图生视频)。尾帧入口已从 UI 移除(API 的 `lastUploadId` 仍在)。`reference_to_video / edit_video / extend_video` 仍保留在 API 与 provider 层。
+- 路径收窄:UI 只暴露 `text_to_video / image_to_video / text_to_image`(内部 `t2v / i2v / t2i`)。首帧 `startUploadId`(回形针上传,自动切图生视频)。尾帧入口已从 UI 移除(API 的 `lastUploadId` 仍在)。`reference_to_video / edit_video / extend_video` 仍保留在 API 与 provider 层。
+- **时长 / 画幅 / 音频芯片由服务端按 provider 能力下发**(2026-09-06 晚起,见 §2e):`router.ts` 的 `videoDurationsFor(providerId)`(读 `capabilities().durations`,不声明则默认 `[4,6,8,10]`,开启 harness 时追加 30/45/60)、`videoAspectRatios()`(`VIDEO_PROVIDER_ORDER` 里所有有 key 的 provider 支持画幅的并集,不声明画幅的 provider 直接给全集 16:9/9:16/1:1)、`audioAvailableFor(providerId)`(可灵读 `KLING_VIDEO_AUDIO`,YMan 恒 `false`——建任务接口无音频参数,不可控而非一定无声,grok/mock 恒真)经 `/api/health` 与 `page.tsx` 解析一次下发给 `LumenHome`;前端不再写死档位或按 provider 名特判。
 - API 边界不变:`lib/client/jobs.ts`(upload / create / cancel / retry / 幂等 key)、`lib/client/useJobLive.ts`(SSE + 2s 轮询)、`lib/client/labels.ts`(终态判断 / 计时)。401 由 `LumenHome` 弹 `components/shell/AccessTokenPrompt`,顶栏「登录」也打开它。
 - 场景层:`lib/scene/lumen-three.ts` 是纯 three.js(无 R3F)的两个 mount 函数——`mountDawn`(全屏 quad shader 黎明河面,pixelRatio ≤ 1.5,`setEnergy` 随任务进行提亮)、`mountRingDark`(真图 + 倒影的环,`R = max(2.6, n×0.58)`,平面原色不透明、悬停放大 1.04,拖拽 `setScroll` + 0.003 圈/秒自动慢转,raycast hover / click,`onTurn` 回报角度)。`components/scene/SceneHost.tsx` 在 `useEffect` 中挂载并 dispose;mount 抛错时静默留白。
 - 成片来源:作品环与缩略直接用 `JobPublic.output`(视频取 `posterUrl`,图片取 `imageUrl`),按 `output.kind` 分视频 / 图片;无成片时回落 `public/lumina/*.webp` 八张样片。展览区成片用 `<video controls>` / `<img>`,`object-fit: contain`。

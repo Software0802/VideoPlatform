@@ -2,11 +2,11 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 更新日期 | 2026-09-06 下午（阶段一止血：余额模型、恢复不重提、429 退避、sharp 上限、媒体缓存、备份与回滚、CI，分支 `main`，**已提交**） |
-| 基线 | `main` @ `73b88da`。方案 `docs/plan-architecture-2026-09.md`。此前一轮可灵直连视频已上线，详见 §0c；用户系统 / 配额 / 留存清理详见 §0b |
+| 更新日期 | 2026-09-06 晚（YMan 中转 provider + 按能力路由 + 积分耗尽自动切换，分支 `main`，**已提交** `9280c45`） |
+| 基线 | `main` @ `9280c459`（父提交 `73b88da` 阶段一止血）。方案 `docs/plan-architecture-2026-09.md` §3.4「功能先于供应商」。此前一轮可灵直连视频详见 §0c；用户系统 / 配额 / 留存清理详见 §0b |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | `tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 63 文件 / 530 通过、1 条 skip；`pnpm e2e` 隔离模式 10/10 通过；Codex 审 diff 给出 BLOCK 四条，均已处理（媒体缓存跨账号、结算窗口崩溃语义、部署清单遗漏、充值 CLI 无跨进程锁记为已知限制） |
-| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新账号余额为 0，提交前需管理员用 `node scripts/grant-balance.mjs <邮箱> <金额> --note "..."` 充值（见下 §0.一） |
+| 门禁状态 | 上一提交 `73b88da`（阶段一止血）：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 63 文件 / 530 通过、1 条 skip；`pnpm e2e` 隔离模式 10/10 通过；Codex 审 diff 给出 BLOCK 四条，均已处理（媒体缓存跨账号、结算窗口崩溃语义、部署清单遗漏、充值 CLI 无跨进程锁记为已知限制）。本轮 `9280c45`（YMan）：门禁数字未在任务书中给出，Codex 审查进行中，结论由主代理另补，新会话接手前先确认 |
+| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新账号余额为 0，提交前需管理员用 `node scripts/grant-balance.mjs <邮箱> <金额> --note "..."` 充值（见下 §0d.一） |
 | 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。**本轮尚未部署**，服务器仍是可灵版 `bcad123`（§0c）；`scripts/deploy.sh` 已加回滚判定，`scripts/backup.sh` 待首次在服务器手动跑通并加入 cron。步骤见 §0a.4 |
 
 架构综合审查与治理路线见 `docs/plan-architecture-2026-09.md`（2026-09-06，三维度审查收敛，阶段一已完成，§5 用户已拍板）。
@@ -15,7 +15,44 @@
 
 ---
 
-## 0. 本轮（2026-09-06 下午）：阶段一止血
+## 0. 本轮（2026-09-06 晚）：YMan 中转 provider · 按能力路由 · 积分耗尽自动切换
+
+提交 `9280c45`（父提交 `73b88da`）。方案 `docs/plan-architecture-2026-09.md` §3.4「功能先于供应商」。目标：接入第三家视频/图片上游 YMan（中转渠道），并把此前「按 key 存在性 + 单点开关」的路由改成「按能力 + 优先级列表」，为后续再加供应商铺路；同时补上「一家上游积分用完自动换下一家」的止损。
+
+### 0.一 已实现：YMan provider
+
+- **新 provider** `src/lib/providers/yman/`：`client.ts` 走 OpenAI 兼容 REST（`https://vip.yman.cc/v1`，Bearer 鉴权）；视频三步 `POST /videos`（创建，固定 `maxAttempts:1`，已计费不重发）→ `GET /videos/{id}`（轮询）→ `GET /videos/{id}/content`（下载，**带 Bearer**，非匿名 CDN 直链）；`native.ts` 是 `ymanProvider: VideoProvider`（`id:"yman"`），生图委托给 `openai-image` 工厂（同一把 key，走 YMan 通道配置 `YMAN_IMAGE_CONFIG`，默认模型 `gpt-image-2`）。
+- **模型目录** `src/lib/providers/yman/catalog.ts`：模型 ID 必须用上游 `GET /v1/models` 的**展示名**（如 `minimax-H3 文字`、`minimax-h3-933-图文`、`grok-video-1.5`），旧的内部名（如 `minimax_h3_t2v`）作为别名被识别，`YMAN_MODEL_CATALOG` 环境变量可逐字段合并追加/覆盖模型的档位与积分价目。默认文生视频模型 `minimax-H3 文字`（纯文生）、图生/参考生视频模型 `minimax-h3-933-图文`（收参考图 ≤9 张）。
+- **计费**：按积分预扣（¥1 = 100 积分，失败自动退），**不与时长成正比**（如 minimax_h3_* 的 5/10/15 秒是 40/90/140 积分）；服务端把请求时长向上取到该模型最近一档并写回 `job.durationSec`，首页时长芯片跟着换档；目录里没有的模型按 `YMAN_UNKNOWN_CREDITS`（默认 150）估价，绝不为 0（避免账目完全看不见这次调用）；`costUsdEstimate`/`costUsdActual` 用新增的 `usdCnyRate()`（默认 7.2，`USD_CNY_RATE` 覆盖）把人民币积分换算成美元口径。
+- **下载鉴权按 origin 分发**：新增 `src/lib/media/download-headers.ts` 的 `downloadHeadersFor(url)`，只在目标 origin 命中「自己配置的某个上游 base」时才带对应那家的 key（xAI CDN 直链不需要、Sub2API 落盘 URL 需要、YMan `/videos/{id}/content` 需要），无条件带 key 会把凭据发给上游返回的任意地址。
+
+### 0.二 已实现：路由从「key 存在性」改成「能力 + 优先级」
+
+- **新环境变量** `VIDEO_PROVIDER_ORDER`（默认 `kling,grok`，兼容旧 `VIDEO_PROVIDER`：`=kling` 视为 `kling,grok`，其余视为只有 `grok`）、`IMAGE_PROVIDER_ORDER`（默认 `openai,grok`，即加 YMan 前那条硬编码阶梯，旧实例不改配置行为不变）。
+- **路由规则**（`src/lib/providers/router.ts`）：`pickVideoProvider`/`pickImageProvider` 按 ORDER 次序取第一个「有 key、未被判定耗尽（见下）、`capabilities().modes` 声明支持该模式、（视频）接得下请求画幅」的 provider；`edit_video`/`extend_video`（只有 grok 声明支持）与 harness 长片（30/45/60，依赖 xAI Files API）自动落回 grok，不需要每种模式单独配置。模式接得住但**画幅**接不住时返回 400，不再静默把画幅换成另一家的默认值。
+- **`capabilities()` 新增两个字段**：`aspectRatios`（不声明 = 不限，xAI/mock）、`durations`（上游按档计费的枚举，不声明 = 连续，用默认 `[4,6,8,10]`）。首页时长 / 画幅芯片改由服务端下发（`videoDurationsFor`/`videoAspectRatios`/`audioAvailableFor`，见 §6 as-built），前端不再写死或按 provider 名特判。
+- **YMan 有声不可控**：它的建任务接口没有音频参数，`audioAvailableFor("yman")` 恒为 `false`——是「不可控」而非「一定无声」，不向用户收有声加价，UI 芯片显示「无声 · 暂不可用」。
+
+### 0.三 已实现：积分耗尽自动切换
+
+- **`src/lib/providers/exhaustion.ts`**：provider 返回上游「积分不足」（`quota_exhausted`）时，标记该 provider × 通道（视频/图片分开记，同一 provider 两个额度池不互相拉黑）在 `data/provider-state.json` 里耗尽 `PROVIDER_EXHAUSTED_TTL_MS`（默认 6 小时，环境变量覆盖），期间路由跳过它改走下一家；到点自动放回去重试——没有主动的「余额恢复了」信号，靠 TTL 兜底。被拒的提交从未被计费，换家不是重复付费，`priceCny`（用户报价）不变，只有 `costUsdEstimate`（我方成本口径）按新 provider 重算。
+- **`/api/health`** 新增 `exhausted` 列表，能看到当前被绕开的是谁、到什么时候、上游原话。
+
+### 0.四 真实冒烟（2026-09-06 16:50，隔离实例，`VIDEO_PROVIDER_ORDER=yman`/`IMAGE_PROVIDER_ORDER=yman`）
+
+文生视频（5s，`minimax-H3 文字`）、图生视频（5s，`minimax-h3-933-图文`）、文生图（`gpt-image-2`）各一条，全部 `succeeded`；YMan 账户余额 20 → 15.5（minimax 5s 约 50 积分 ≈ ¥0.50、10s ¥1.00；gpt-image-2 约 4–8 积分）。用户当前实际策略：图片先 ccgoai、视频先可灵，用完自动切 YMan 作为第三家，稳定后再删旧配置。
+
+### 0.五 已知限制 / 未做
+
+- `sd-2.5-30秒` 这个模型名的 30 秒档与 harness 的 30 秒长片档撞车，当前不可达（会被 harness 判定逻辑拦截，非缺陷但需要注意，未提供绕过路径）。
+- `retryJob` 对图片任务仍沿用旧的估价逻辑，未针对换家场景重新验证。
+- 「模式无人接」的情形（`edit_video`/`extend_video` 只有 grok 声明支持）仍固定回落 grok/mock，未扩展到 YMan/可灵（它们本来就不支持这两个模式，非本轮范围）。
+- Codex 跨厂商审查进行中，结论（含是否 BLOCK）未在本任务书中给出，新会话接手前先向主代理确认审查状态，不要假设已通过。
+- 本轮尚未部署到生产（见顶部表「生产部署」行），服务器仍是阶段一止血版本。
+
+---
+
+## 0d. 本轮（2026-09-06 下午）：阶段一止血
 
 方案 `docs/plan-architecture-2026-09.md`（阶段一，§4 路线图、§5 用户 2026-09-06 决策）。提交 `73b88da`。目标：治理三个会花冤枉钱 / 丢数据的洞（单片崩溃恢复重复计费、视频完全没有用量控制、无备份无回滚）与两个性能护栏（sharp 内存上限、媒体缓存头），顺带补齐诚实性（有声/无声标注、人民币售价）。Codex 已审 diff，BLOCK 四条全部处理（见下「Codex 审查处理记录」）。
 
@@ -92,8 +129,8 @@ Codex 对本轮 diff 给出 BLOCK 四条，均已处理：① 媒体缓存 `immu
 ### 0c.3 上游事实与已知限制
 
 - 新系统鉴权是 Bearer 单串 key（非旧版 AK/SK JWT）；`duration` 接口枚举只有 5/10（能力地图写 3–10s 是营销口径）；有声只支持 1080p；首尾帧只支持 1080p 且本项目永不发 `last_frame`；查询接口返回 `billing`，是三家 provider 里唯一给出真实扣费的；成片 URL 30 天后清理；并发按资源包计，超限返回 `1303`。
-- **不做**（记录在案，非缺陷）：不调用可灵取消接口（本地取消后上游仍会出片计费，文档未见取消端点）；API 直接发送非 16:9/9:16/1:1 画幅到可灵实例时，是在 provider `submit` 阶段被上游 400 拒绝、任务落 `failed`（UI 只提供三种画幅，触发不到，纯 API 调用方要注意）；`klingTaskTimeoutMs()` 已导出但暂无调用方读取（轮询上限仍是 runner 自身的 15 分钟）。**2026-09-06 下午更新**：`external_task_id=jobId` 已在阶段一接入崩溃恢复（`native.ts` 的 `lookupByExternalId`，见 §0.二），不再是「只发不用」。
-- 门禁历史：`pnpm e2e` 当时因端口占用未跑，本节记录的 UI 改动（时长芯片枚举、读数文案）**未经 e2e 回归确认**；阶段一（§0）已跑通 `pnpm e2e` 隔离模式 10/10，但覆盖的是阶段一自己的改动，不补跑本节的可灵 UI 回归。
+- **不做**（记录在案，非缺陷）：不调用可灵取消接口（本地取消后上游仍会出片计费，文档未见取消端点）；API 直接发送非 16:9/9:16/1:1 画幅到可灵实例时，是在 provider `submit` 阶段被上游 400 拒绝、任务落 `failed`（UI 只提供三种画幅，触发不到，纯 API 调用方要注意）；`klingTaskTimeoutMs()` 已导出但暂无调用方读取（轮询上限仍是 runner 自身的 15 分钟）。**2026-09-06 下午更新**：`external_task_id=jobId` 已在阶段一接入崩溃恢复（`native.ts` 的 `lookupByExternalId`，见 §0d.二），不再是「只发不用」。
+- 门禁历史：`pnpm e2e` 当时因端口占用未跑，本节记录的 UI 改动（时长芯片枚举、读数文案）**未经 e2e 回归确认**；阶段一（§0d）已跑通 `pnpm e2e` 隔离模式 10/10，但覆盖的是阶段一自己的改动，不补跑本节的可灵 UI 回归。
 
 ---
 

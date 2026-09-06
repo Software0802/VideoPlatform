@@ -84,6 +84,8 @@
 
 **能力面：功能先于供应商**（用户 2026-09-06 决策）。前端交付的是功能，不随后端供应商变化：文生视频、图生视频、参考生视频、编辑视频、延长视频、文生图六条路径全部露出 UI，分辨率 / 画幅 / 时长 / 音频作为选项芯片露出。供应商差异在 provider 层吸收：每个 provider 声明 `capabilities()`（模式、时长枚举、分辨率、画幅、音频、尾帧）；router 按「功能 → 能支持它的 provider 列表 → 优先级（成本）」路由，而不是按 key 存在性；某功能当前没有任何已配置的 provider 支持时，UI 显示「暂不可用」而不是隐藏入口。第四家（如 fal.ai）只增一个目录与一行优先级。Harness 长片继续关闭，README 标「实验」，等可灵路径跑稳再议。
 
+**2026-09-06 晚已实现**（提交 `9280c45`，详见 `docs/design.md` §2e、`docs/handoff.md` 本轮小节）：`capabilities()` 补齐 `aspectRatios`/`durations`；`router.ts` 改为按 `VIDEO_PROVIDER_ORDER`/`IMAGE_PROVIDER_ORDER` 的「能力 + 优先级」路由，不再按 key 存在性或单点开关；接入第三家 provider YMan（第四家验证了「只增一个目录与一行优先级」这条设计假设成立）；首页时长 / 画幅 / 音频芯片改由服务端按 provider 能力下发；新增积分耗尽自动切换（`src/lib/providers/exhaustion.ts`）。未做部分：`DELETE /api/jobs/:id`、管理闭环、账号闭环、内容安全黑名单等本节其余条目仍未动。
+
 **内容安全**：本地关键词黑名单前置（提示词）；服务条款页；moderation 失败文案说明计费情况；`invitedBy` 作为追溯抓手。
 
 ## 4. 路线图
