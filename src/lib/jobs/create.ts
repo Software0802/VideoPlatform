@@ -18,7 +18,7 @@ import { assertQuota } from "@/lib/jobs/quota";
 import { activeCount, enqueue } from "@/lib/jobs/runner";
 import { assertCreateJobFields } from "@/lib/jobs/request-validation";
 import { resolveLocalOutput } from "@/lib/jobs/local-output";
-import { retryBlock } from "@/lib/jobs/retry-guard";
+import { purgedBlock, retryBlock } from "@/lib/jobs/retry-guard";
 import { readJob, tmpDir, toPublic, writeJob } from "@/lib/jobs/store";
 import { isHarnessDuration, isImageMode, modelForMode } from "@/lib/providers/grok/mode-matrix";
 import { assertModeConstraints } from "@/lib/providers/grok/rest-map";
@@ -207,6 +207,13 @@ export async function retryJob(source: JobRecord, ownerId: string): Promise<JobP
 }
 
 async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<JobPublic> {
+  // Before the status check: a purged job is usually `succeeded`, and answering
+  // "仅失败或过期任务可重试" would send the caller looking for a status problem
+  // when the real reason is that its inputs were deleted (plan §8).
+  const purged = purgedBlock(source);
+  if (purged) {
+    throw new ProviderHttpError(409, purged.code, purged.message);
+  }
   if (source.status !== "failed" && source.status !== "expired") {
     throw new ProviderHttpError(409, "conflict", "仅失败或过期任务可重试");
   }

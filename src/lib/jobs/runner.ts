@@ -4,7 +4,8 @@ import { jobConcurrency, upstreamRetryBaseMs } from "@/lib/env";
 import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
 import { emitJob } from "@/lib/jobs/events";
 import { recoverDecision } from "@/lib/jobs/recover";
-import { sweepTmp } from "@/lib/jobs/sweep";
+import { sweepRetention } from "@/lib/jobs/retention";
+import { sweepIdempotency, sweepTmp } from "@/lib/jobs/sweep";
 import { listJobRecords, readJob, tmpDir, toPublic, updateJob } from "@/lib/jobs/store";
 import { extractPoster } from "@/lib/media/poster";
 import { probeDurationSec } from "@/lib/ffmpeg";
@@ -40,13 +41,37 @@ export async function startJobRunner() {
   const s = state();
   if (s.started) return;
   s.started = true;
-  await sweepTmp();
+  await maintenance();
   s.timer = setInterval(() => {
-    void sweepTmp();
+    void maintenance();
   }, 3600_000);
   s.timer.unref();
   await recover();
   void pump();
+}
+
+/**
+ * Housekeeping on the runner's own hourly timer (plan §8): staging files and
+ * idempotency replays older than a day, then the artifact retention sweep.
+ *
+ * Deliberately in the runner process rather than a separate cron: retention
+ * rewrites `job.json` through `store.updateJob`, and doing that from a second
+ * process would race the writer that owns those files.
+ *
+ * Each step keeps its own failures to itself, so a broken sweep cannot stop the
+ * runner from starting.
+ */
+async function maintenance() {
+  for (const step of [sweepTmp, sweepIdempotency, sweepRetention]) {
+    try {
+      await step();
+    } catch (error) {
+      log("warn", "maintenance step failed", {
+        step: step.name,
+        msg: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 }
 
 export function enqueue(jobId: string) {
@@ -132,7 +157,10 @@ async function runOne(id: string) {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    log("error", "job failed", { id, msg });
+    // A user pressing 取消 makes the in-flight provider call throw; that is the
+    // feature working, not an incident, so it must not show up in the error log.
+    const canceledByUser = e instanceof ProviderHttpError && e.code === "canceled";
+    log(canceledByUser ? "info" : "error", "job failed", { id, msg });
     if (msg === "HARNESS_NOT_ENABLED") {
       await fail(id, "harness", "一致性管线尚未开放");
       return;

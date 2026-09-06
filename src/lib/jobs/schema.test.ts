@@ -83,6 +83,18 @@ describe("JobPublic", () => {
     ).toThrow();
   });
 
+  it("exposes artifactsPurgedAt so the works ring can show a placeholder", () => {
+    // Absent on every job that still has its bytes — the DTO says so with null,
+    // never by omitting the field (the browser must not have to guess).
+    expect(toPublic(rec()).artifactsPurgedAt).toBeNull();
+
+    const purged = rec({ artifactsPurgedAt: "2026-09-06T04:00:00.000Z" });
+    const pub = toPublic(purged);
+    expect(pub.artifactsPurgedAt).toBe("2026-09-06T04:00:00.000Z");
+    // Retention is a second axis: the execution status is untouched (plan §8).
+    expect(pub.status).toBe("succeeded");
+  });
+
   it("coerces legacy video output without kind", () => {
     const legacy = rec({
       output: {

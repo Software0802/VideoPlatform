@@ -1,5 +1,8 @@
+import { randomBytes } from "node:crypto";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { serverDataDir } from "./invites";
 
 /**
  * Smoke for the single-screen studio (Genius) in mock mode:
@@ -244,6 +247,95 @@ test("长片：30s 走一致性管线，分镜读数推进到成片", async ({ p
   expect(json.shots.map((s) => s.status)).toEqual(["succeeded", "succeeded"]);
   expect(json.output.durationSec).toBeGreaterThan(29.5);
   expect(json.output.durationSec).toBeLessThan(30.6);
+});
+
+/**
+ * 留存清理（方案 §8）后的作品。清理由 runner 的每小时定时器按 DATA_RETENTION_DAYS
+ * 触发，没有「立刻清理」的接口，所以这里直接写一条已清理的记录进服务器的 data 目录——
+ * 天数边界由 `src/lib/jobs/retention.test.ts` 钉住，这条只验 UI 与重试出口。
+ * createdAt 取当下，好让它稳定排在作品列表最前，不依赖前面用例留下了几条作品。
+ */
+test("已清理作品：环上是占位卡、无成片请求、重试被拒", async ({ page }) => {
+  const me = await page.request.get("/api/me");
+  expect(me.ok(), "需要已登录会话").toBeTruthy();
+  const { userId } = (await me.json()) as { userId: string };
+
+  const jobId = `job_${randomBytes(6).toString("hex")}`;
+  const jobDir = path.join(await serverDataDir(), "jobs", jobId);
+  const now = new Date().toISOString();
+  await mkdir(jobDir, { recursive: true });
+  await writeFile(
+    path.join(jobDir, "job.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      id: jobId,
+      ownerId: userId,
+      // 清理只写 artifactsPurgedAt，status 仍是 succeeded：终态没有出边。
+      status: "succeeded",
+      artifactsPurgedAt: now,
+      progress: 100,
+      mode: "text_to_image",
+      model: "grok-imagine-image-2.0",
+      provider: "mock",
+      prompt: "被清理的旧作品，海边的灯塔",
+      durationSec: 0,
+      aspectRatio: "16:9",
+      resolution: null,
+      imageResolution: "1k",
+      generateAudio: false,
+      lastFrameStored: false,
+      lastFrameLocksOutput: false,
+      harness: { enabled: false },
+      costUsdEstimate: 0.02,
+      costUsdActual: 0.02,
+      error: null,
+      // outputs/ 已被删，URL 还在记录里——UI 必须靠 artifactsPurgedAt 而不是靠 404 才知道。
+      output: { kind: "image", imageUrl: `/api/media/${jobId}/image.jpg` },
+      createdAt: now,
+      updatedAt: now,
+      completedAt: now,
+      bible: null,
+      shots: null,
+      assets: {},
+    }),
+  );
+
+  try {
+    const mediaHits: string[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes(`/api/media/${jobId}`)) mediaHits.push(r.url());
+    });
+    await page.reload();
+    await expect(page.locator(".app")).toHaveAttribute("data-ready", "true", { timeout: 60_000 });
+
+    // 首页最近成片：占位态，且背景图不是被删掉的成片
+    const purgedTile = page.locator('.recent__item[data-purged="true"]');
+    await expect(purgedTile).toHaveCount(1);
+    await expect(purgedTile).toHaveCSS("background-image", /purged\.svg/);
+
+    await purgedTile.click();
+    await expect(page.locator(".works__canvas")).toBeVisible();
+    await expect(page.locator(".works__purged")).toContainText("作品已过期清理");
+    await expect(page.locator(".works__prompt")).toContainText("海边的灯塔");
+    // 没有播放 / 下载入口；「用这条提示词再生成」留着
+    await expect(page.getByRole("link", { name: "下载" })).toHaveCount(0);
+    await expect(page.locator('img[src^="/api/media/"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "用这条提示词再生成" })).toBeEnabled();
+    expect(mediaHits, "已清理作品不该再去请求成片").toEqual([]);
+
+    // 一键重试被服务端拒绝（方案 §8：输入已删，只能重新提交）
+    const retry = await page.request.post(`/api/jobs/${jobId}/retry`);
+    expect(retry.status()).toBe(409);
+    expect(await retry.json()).toMatchObject({
+      error: { code: "artifacts_purged", message: "作品已过期清理，请用这条提示词重新生成" },
+    });
+
+    await page.getByRole("button", { name: "用这条提示词再生成" }).click();
+    await expect(promptBox(page)).toHaveValue(/海边的灯塔/);
+  } finally {
+    // 复用开发服务器时这条记录会落在真实 data/ 里，跑完带走。
+    await rm(jobDir, { recursive: true, force: true });
+  }
 });
 
 test("手机端：文生图成片在输入卡上方，页面不横向溢出", async ({ page }) => {

@@ -42,6 +42,36 @@ export async function cleanupJobArtifacts(
   );
 }
 
+/**
+ * Directories the retention sweep empties (plan §8). `outputs/` holds the delivered
+ * film or image, `inputs/` the uploaded first frame / references / source video — a
+ * retention rule that kept the uploads would free almost nothing on a job that was
+ * image-to-video.
+ *
+ * `job.json` itself is deliberately not touched: the record stays as history and is
+ * what carries `artifactsPurgedAt`.
+ */
+const PURGED_DIRS = ["outputs", "inputs"] as const;
+
+/**
+ * Delete one job's artifact directories, keeping the record. Used only by the
+ * retention sweep; the paths still go through `resolveLocalOutput` so this cannot
+ * become an `rm -rf` on something outside the job directory if a caller ever passes
+ * a computed name.
+ */
+export async function purgeJobArtifacts(
+  jobDir: string,
+  tempDir: string,
+  jobId: string,
+): Promise<void> {
+  // The per-file cleanup first: it also removes the global staging files under
+  // `data/tmp/`, which live outside the job directory.
+  await cleanupJobArtifacts(jobDir, tempDir, jobId);
+  for (const rel of PURGED_DIRS) {
+    await rm(resolveLocalOutput(jobDir, rel), { recursive: true, force: true });
+  }
+}
+
 export async function commitLocalOutput(
   source: string,
   destination: string,
