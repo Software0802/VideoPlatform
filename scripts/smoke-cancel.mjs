@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 
+import { loginForSmoke } from "./lib/smoke-session.mjs";
+
 const args = new Set(process.argv.slice(2));
 const valueFor = (name) => {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
 };
-const baseUrl = (valueFor("--base-url") ?? process.env.LUMEN_URL ?? "http://127.0.0.1:3000").replace(/\/$/, "");
-const token = process.env.LUMEN_ACCESS_TOKEN;
+// `localhost`, not 127.0.0.1: Next 16 dev answers 403 to the latter (AGENTS.md).
+const baseUrl = (valueFor("--base-url") ?? process.env.LUMEN_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const delayMs = Number(process.env.SMOKE_CANCEL_DELAY_MS ?? 100);
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 30_000);
+/** `lumen_session=…`, obtained in run() before the first API call. */
+let sessionCookie = "";
 
 const headers = (extra = {}) => ({
-  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  ...(sessionCookie ? { Cookie: sessionCookie } : {}),
   ...extra,
 });
 
@@ -31,6 +35,7 @@ async function json(route, init = {}) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function run() {
+  sessionCookie = await loginForSmoke(baseUrl);
   const health = await json("/api/health");
   if (!health.ok) throw new Error("健康检查未通过");
   if (!health.mockMode && !args.has("--allow-live")) {

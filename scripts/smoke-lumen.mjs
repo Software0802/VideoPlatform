@@ -1,22 +1,26 @@
 #!/usr/bin/env node
 
+import { loginForSmoke } from "./lib/smoke-session.mjs";
+
 const args = new Set(process.argv.slice(2));
 const valueFor = (name) => {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
 };
 
-const baseUrl = (valueFor("--base-url") ?? process.env.LUMEN_URL ?? "http://127.0.0.1:3000").replace(/\/$/, "");
+// `localhost`, not 127.0.0.1: Next 16 dev answers 403 to the latter (AGENTS.md).
+const baseUrl = (valueFor("--base-url") ?? process.env.LUMEN_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const requireLive = args.has("--require-live");
 const requireMock = args.has("--require-mock");
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 15 * 60 * 1000);
 const pollMs = Number(process.env.SMOKE_POLL_MS ?? 1000);
-const authToken = process.env.LUMEN_ACCESS_TOKEN;
 const results = [];
+/** `lumen_session=…`, obtained in run() before the first API call. */
+let sessionCookie = "";
 
 function requestHeaders(extra = {}) {
   return {
-    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...(sessionCookie ? { Cookie: sessionCookie } : {}),
     ...extra,
   };
 }
@@ -101,6 +105,7 @@ async function assertRange(url) {
 }
 
 async function run() {
+  sessionCookie = await loginForSmoke(baseUrl);
   const health = await jsonRequest("/api/health");
   if (requireLive && health.mockMode) throw new Error("要求 live，但服务仍处于 mock 模式");
   if (requireMock && !health.mockMode) throw new Error("要求 mock，但服务已连接上游");
