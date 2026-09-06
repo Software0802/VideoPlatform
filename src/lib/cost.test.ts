@@ -22,6 +22,7 @@ const CCGOAI_TABLE = JSON.stringify({
 afterEach(() => {
   delete process.env.OPENAI_IMAGE_PRICE_TABLE;
   delete process.env.KLING_USD_PER_UNIT;
+  delete process.env.USD_CNY_RATE;
   vi.restoreAllMocks();
 });
 
@@ -225,5 +226,57 @@ describe("estimateCostUsd for Kling video models", () => {
   it("leaves Grok and OpenAI estimates untouched", () => {
     expect(estimateCostUsd("grok-imagine-video-1.5", 8)).toBe(0.64);
     expect(estimateCostUsd("gpt-image-1", 0)).toBe(0.011);
+  });
+});
+
+describe("estimateCostUsd for YMan video models", () => {
+  it("prices a recognized YMan model by credits (resolution + duration), not by a per-second rate", () => {
+    // minimax_h3_t2v @ 5s/720p = 50 credits; 50 / 100 / 7.2 (default USD_CNY_RATE) ≈ 0.069444.
+    expect(estimateCostUsd("minimax_h3_t2v", 5, undefined, { resolution: "720p", audio: "off" })).toBeCloseTo(
+      0.069444,
+      6,
+    );
+    // seedance2.0 @ 10s/720p = 450 credits; 450 / 100 / 7.2 ≈ 0.625.
+    expect(estimateCostUsd("seedance2.0", 10, undefined, { resolution: "720p", audio: "off" })).toBeCloseTo(
+      0.625,
+      6,
+    );
+    // sd2.5 @ its single 30s/720p tier = 200 credits; 200 / 100 / 7.2 ≈ 0.277778.
+    expect(estimateCostUsd("sd2.5", 30, undefined, { resolution: "720p", audio: "off" })).toBeCloseTo(
+      0.277778,
+      6,
+    );
+  });
+
+  it("recognizes a catalog model by name alone, with no video pricing hint at all", () => {
+    expect(estimateCostUsd("sd2.5", 30)).toBeCloseTo(0.277778, 6);
+  });
+
+  it("routes an unrecognized model name to the YMan branch via video.provider, booking it at YMAN_UNKNOWN_CREDITS", () => {
+    // Router picked YMan for a custom/unlisted model name (e.g. a user-supplied YMAN_T2V_MODEL);
+    // isYmanModel() alone can't see that, so the provider hint carries the decision.
+    // 150 (default YMAN_UNKNOWN_CREDITS) / 100 / 7.2 ≈ 0.208333.
+    expect(
+      estimateCostUsd("some-custom-relay-model", 10, undefined, {
+        resolution: "720p",
+        audio: "off",
+        provider: "yman",
+      }),
+    ).toBeCloseTo(0.208333, 6);
+  });
+
+  it("never books a YMan submit at 0, even for an unrecognized model with no hint", () => {
+    expect(
+      estimateCostUsd("some-custom-relay-model", 10, undefined, { resolution: "720p", audio: "off", provider: "yman" }),
+    ).toBeGreaterThan(0);
+  });
+
+  it("respects a USD_CNY_RATE override", () => {
+    process.env.USD_CNY_RATE = "8";
+    // seedance2.0 @ 10s/720p = 450 credits; 450 / 100 / 8 = 0.5625.
+    expect(estimateCostUsd("seedance2.0", 10, undefined, { resolution: "720p", audio: "off" })).toBeCloseTo(
+      0.5625,
+      6,
+    );
   });
 });

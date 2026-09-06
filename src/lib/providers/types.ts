@@ -9,7 +9,7 @@ export type NativeMode =
 export type AspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "3:2" | "2:3";
 export type Resolution = "480p" | "720p" | "1080p";
 export type ImageResolution = "1k" | "2k";
-export type ProviderId = "grok" | "mock" | "jimeng" | "openai" | "kling";
+export type ProviderId = "grok" | "mock" | "jimeng" | "openai" | "kling" | "yman";
 
 export type MediaRef =
   | { kind: "path"; path: string }
@@ -78,6 +78,18 @@ export interface VideoProvider {
     maxDurationSec: number;
     supportsLastFrameLock: boolean;
     maxResolution: Resolution;
+    /**
+     * 视频侧接得下的画幅。**省略 = 不限**（xAI / mock 那样什么都收）。
+     *
+     * 路由拿它当硬条件：一个不声明 1:1 的 provider 不会被派去做 1:1 的任务，而不是
+     * 让它把画幅悄悄换成自己的第一档——用户选的画幅是需求，不是建议。
+     */
+    aspectRatios?: AspectRatio[];
+    /**
+     * 上游按档计费的时长枚举。**省略 = 连续**（1..maxDurationSec 都收）。
+     * 只喂首页的时长芯片，不参与路由：秒数还允许向上归一（4→5），画幅不允许。
+     */
+    durations?: number[];
   };
   submit(req: ProviderGenerateRequest): Promise<ProviderHandle>;
   poll(handle: ProviderHandle): Promise<ProviderPoll>;

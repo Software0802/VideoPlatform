@@ -26,6 +26,9 @@ export const grokNativeProvider: VideoProvider = {
       maxDurationSec: 15,
       supportsLastFrameLock: false,
       maxResolution: "1080p",
+      // 七种画幅全收（`mode-matrix` 的 ASPECT_RATIOS 是同一份事实）；能力最全，
+      // 所以它也是路由的最后兜底。durations 故意不写：秒数是连续的，不是档位。
+      aspectRatios: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
     };
   },
   async submit(req: ProviderGenerateRequest): Promise<ProviderHandle> {

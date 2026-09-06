@@ -1,7 +1,7 @@
 import { access, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import type { JobRecord } from "./schema";
 
@@ -249,5 +249,175 @@ describe("createJob balance admission gate", () => {
         id,
       ),
     ).rejects.toMatchObject({ status: 402, code: "insufficient_balance" });
+  });
+});
+
+/**
+ * These need a real (non-mock) provider selection, so each test flips `LUMEN_FORCE_MOCK`
+ * off and points VIDEO_PROVIDER_ORDER at YMan for its own duration. `enqueue()` inside
+ * `createJob` fires the real background runner (`pump()`), which would otherwise place a
+ * real HTTP call against `https://vip.yman.cc` with a fake key — `global.fetch` is stubbed
+ * for the same window so that never happens, and each test drains the job to a terminal
+ * status before restoring it (the stub always resolves the poll as "failed" so that happens
+ * in one pass, no multi-second polling loop).
+ */
+describe("createJob provider selection — YMan", () => {
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    delete process.env.VIDEO_PROVIDER_ORDER;
+    delete process.env.YMAN_API_KEY;
+    delete process.env.XAI_API_KEY;
+    process.env.LUMEN_FORCE_MOCK = "1";
+  });
+
+  // Owner ids must match USER_ID_RE (usr_ + 16 lowercase-hex chars), so the tag has to be
+  // hex-safe — mirrors billingOwner() above, with an "e" prefix so these ids can't collide
+  // with that describe block's "d"-prefixed owners in the same shared data dir.
+  function ymanOwner(tag: string): string {
+    return `usr_${tag.padStart(16, "0")}`;
+  }
+
+  async function seedBalance(id: string, balanceCny: number) {
+    const { writeUser } = await import("@/lib/users/store");
+    return writeUser({
+      id,
+      email: `${id}@example.com`,
+      passwordHash: "hash",
+      sessionEpoch: 1,
+      plan: "free",
+      balanceCny,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  /** Stubs fetch to accept the submit POST, then resolve the first poll GET as terminal. */
+  function stubYmanUpstream() {
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const body =
+        method === "POST"
+          ? { id: "vid_stub", status: "queued" }
+          : { id: "vid_stub", status: "failed", error: { message: "stub: no real upstream call" } };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  }
+
+  /** Polls the job to a terminal status so the background runner has finished with `global.fetch`. */
+  async function drain(id: string) {
+    for (let i = 0; i < 20; i += 1) {
+      const current = await readJob(id);
+      if (current && ["succeeded", "failed", "expired"].includes(current.status)) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  it("records provider yman, the upstream t2v model, a normalized duration and no audio", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    stubYmanUpstream();
+    const owner = ymanOwner("e1");
+    await seedBalance(owner, 1000);
+
+    const { job } = await createJob(
+      { mode: "text_to_video", prompt: "海上日出，长镜头", durationSec: 4 } as Parameters<typeof createJob>[0],
+      owner,
+    );
+
+    expect(job.provider).toBe("yman");
+    expect(job.model).toBe("minimax-H3 文字"); // /v1/models display name — see yman/catalog.test.ts
+    expect(job.durationSec).toBe(5); // 4s rounds up to the 5s tier (catalog.normalizeYmanDuration)
+    expect(job.generateAudio).toBe(false);
+    expect(job.aspectRatio).toBe("16:9"); // default ratio when the request names none
+    expect(job.priceCny).toBeGreaterThan(0);
+
+    await drain(job.id);
+  });
+
+  it("switches to the i2v/r2v model and its own duration ladder, keeping a supported explicit ratio", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    stubYmanUpstream();
+    const owner = ymanOwner("e2");
+    await seedBalance(owner, 1000);
+
+    const uploadId = `up_${"e2".padStart(16, "0")}`; // UPLOAD_ID_RE: up_ + 16 lowercase-hex chars
+    const tmp = path.join(dataRoot, "tmp");
+    await mkdir(tmp, { recursive: true });
+    const jpeg = await sharp({
+      create: { width: 2, height: 2, channels: 3, background: { r: 4, g: 5, b: 6 } },
+    })
+      .jpeg()
+      .toBuffer();
+    await writeFile(path.join(tmp, uploadId), jpeg);
+    await writeFile(
+      path.join(tmp, `${uploadId}.json`),
+      JSON.stringify({
+        uploadId,
+        ownerId: owner,
+        role: "start",
+        width: 2,
+        height: 2,
+        bytes: jpeg.length,
+        mimeType: "image/jpeg",
+        durationSec: null,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+
+    const { job } = await createJob(
+      {
+        mode: "image_to_video",
+        prompt: "让画面动起来",
+        durationSec: 6,
+        aspectRatio: "9:16",
+        startUploadId: uploadId,
+      } as Parameters<typeof createJob>[0],
+      owner,
+    );
+
+    expect(job.provider).toBe("yman");
+    expect(job.model).toBe("minimax-h3-933-图文"); // /v1/models display name — see yman/catalog.test.ts
+    expect(job.durationSec).toBe(10); // 6s rounds up to the 10s tier on the ref2v ladder
+    expect(job.generateAudio).toBe(false);
+    expect(job.aspectRatio).toBe("9:16"); // 9:16 is supported, so it passes through unchanged
+
+    await drain(job.id);
+  });
+
+  /**
+   * Boundary case: 4:3 isn't in YMan's default t2v/i2v models' ratio list. router.ts's
+   * `pickVideoProvider` treats an unsupported ratio as a hard filter (types.ts: "用户选的
+   * 画幅是需求，不是建议") rather than something to silently swap out — when YMan is the
+   * only configured video provider and it can't serve 4:3, `currentProviderId` throws
+   * before a job record (and a price) is ever created.
+   */
+  it("refuses to create a job for a ratio the only configured provider (YMan) doesn't support", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    stubYmanUpstream();
+    const owner = ymanOwner("e3");
+    await seedBalance(owner, 1000);
+    const before = await readdir(path.join(dataRoot, "jobs")).catch(() => [] as string[]);
+
+    await expect(
+      createJob(
+        {
+          mode: "text_to_video",
+          prompt: "竖版试验",
+          durationSec: 5,
+          aspectRatio: "4:3",
+        } as Parameters<typeof createJob>[0],
+        owner,
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_argument" });
+
+    // Refused before any job directory (and thus any priced/billed record) is written.
+    const after = await readdir(path.join(dataRoot, "jobs")).catch(() => [] as string[]);
+    expect(after).toEqual(before);
   });
 });

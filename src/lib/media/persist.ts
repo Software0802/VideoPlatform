@@ -2,7 +2,8 @@ import { createWriteStream } from "node:fs";
 import { access, rm } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
-import { downloadHeadersFor, fetchUpstream, downloadXaiFile } from "@/lib/providers/grok/client";
+import { downloadHeadersFor } from "@/lib/media/download-headers";
+import { fetchUpstream, downloadXaiFile } from "@/lib/providers/grok/client";
 import { log } from "@/lib/log";
 
 export async function downloadToFile(url: string, dest: string) {

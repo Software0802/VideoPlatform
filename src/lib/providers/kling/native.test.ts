@@ -35,6 +35,8 @@ describe("klingProvider.capabilities", () => {
       maxDurationSec: 10,
       supportsLastFrameLock: false,
       maxResolution: "1080p",
+      aspectRatios: ["16:9", "9:16", "1:1"],
+      durations: [5, 10],
     });
   });
 });

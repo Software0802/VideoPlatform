@@ -1,16 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { access, cp, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import {
-  estimateCostUsd,
-  estimateHarnessCostUsd,
-  type ImagePricingHint,
-  type VideoPricingHint,
-} from "@/lib/cost";
+import { estimateCostUsd, estimateHarnessCostUsd, type ImagePricingHint } from "@/lib/cost";
 import { assertBalance } from "@/lib/billing/admission";
 import { priceCny } from "@/lib/billing/prices";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
-import { harnessEnabled, klingVideoModel, maxQueuedJobs, openaiImageModel } from "@/lib/env";
+import { harnessEnabled, maxQueuedJobs } from "@/lib/env";
+import {
+  modelForProvider,
+  providerSettingsFor,
+  videoPricingOf,
+} from "@/lib/jobs/provider-settings";
 import {
   UPLOAD_ID_RE,
   type CreateJobBody,
@@ -18,7 +18,7 @@ import {
   type JobRecord,
   type UploadSidecar,
 } from "@/lib/jobs/schema";
-import { ProviderHttpError, type NativeMode, type ProviderId } from "@/lib/providers/types";
+import { ProviderHttpError } from "@/lib/providers/types";
 import { withAdmissionLock } from "@/lib/jobs/admission";
 import { lookupIdempotency, saveIdempotency } from "@/lib/jobs/idempotency";
 import { assertQuota } from "@/lib/jobs/quota";
@@ -27,9 +27,9 @@ import { assertCreateJobFields } from "@/lib/jobs/request-validation";
 import { resolveLocalOutput } from "@/lib/jobs/local-output";
 import { purgedBlock, retryBlock } from "@/lib/jobs/retry-guard";
 import { readJob, tmpDir, toPublic, writeJob } from "@/lib/jobs/store";
-import { isHarnessDuration, isImageMode, modelForMode } from "@/lib/providers/grok/mode-matrix";
+import { isHarnessDuration, isImageMode } from "@/lib/providers/grok/mode-matrix";
 import { assertModeConstraints } from "@/lib/providers/grok/rest-map";
-import { resolveKlingSettings, type KlingSettings } from "@/lib/providers/kling/rest-map";
+import { imageConfigFor } from "@/lib/providers/openai-image/config";
 import {
   mapAspectToSize as mapOpenaiImageSize,
   mapQuality as mapOpenaiImageQuality,
@@ -106,11 +106,14 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     }
   }
 
-  const provider = currentProviderId(mode, { harness });
+  // 画幅一起交给路由：接不下这个画幅的 provider 不该被选中（选中了只会把竖屏悄悄
+  // 换成横屏，或者被上游 400）。没有一家接得下时 `currentProviderId` 自己抛 400。
+  const provider = currentProviderId(mode, { harness, aspectRatio: body.aspectRatio });
   const model = modelForProvider(provider, mode);
-  // 可灵只收 5 / 10 秒，分辨率与音频档由环境变量说了算。归一后的值要写回记录：
-  // 4 秒的请求上游按 5 秒计费，账目与详情卡都得是「会被计费的那个值」（方案 §4）。
-  const kling = klingSettingsFor(provider, mode, durationSec, body.prompt, model, body.generateAudio ?? true);
+  // 每家上游各有各的枚举（可灵只收 5 / 10 秒；YMan 按模型有 5/10/15 或 10/15 的档）。
+  // 归一后的值要写回记录：4 秒的请求上游按 5 秒计费，账目与详情卡都得是「会被计费的
+  // 那个值」（方案 §4）。
+  const settings = providerSettingsFor(provider, mode, durationSec, body, model);
   assertModeConstraints({
     jobId: "preview",
     mode,
@@ -133,27 +136,34 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
   const now = new Date().toISOString();
   const dur = image
     ? 0
-    : kling
-      ? kling.durationSec
+    : settings
+      ? settings.durationSec
       : mode === "edit_video"
         ? (source?.durationSec ?? 0)
         : (durationSec ?? 8);
   // 图片单价看模型名是看不出来的（中转模型不在任何本地表里，会被估成 0）。这里预演一次
   // provider 待会真正会发的 size / quality，把它交给计价器；grok / mock 图片仍按模型单价。
-  const imagePricing: ImagePricingHint | undefined =
-    image && provider === "openai"
-      ? {
-          size: mapOpenaiImageSize(body.aspectRatio, body.imageResolution ?? "1k").size,
-          quality: mapOpenaiImageQuality(body.imageResolution ?? "1k"),
-        }
-      : undefined;
-  // 售价按**归一后**的三个参数定：可灵把 4 秒的请求按 5 秒下单，用户看到并被扣的就该是
+  // 两条兼容通道（openai / yman）各有各的 size 映射与价目表，所以形状要按通道取。
+  const imageConfig = image ? imageConfigFor(provider) : undefined;
+  const imagePricing: ImagePricingHint | undefined = imageConfig
+    ? {
+        size: mapOpenaiImageSize(body.aspectRatio, body.imageResolution ?? "1k", imageConfig.shape())
+          .size,
+        quality: mapOpenaiImageQuality(body.imageResolution ?? "1k", imageConfig.shape()),
+        provider,
+      }
+    : undefined;
+  // 售价按**归一后**的参数定：可灵把 4 秒的请求按 5 秒下单，用户看到并被扣的就该是
   // 5 秒那一档，否则界面上的「本次约 ¥x」与账单永远差一档（方案 §3.2）。
   const resolution =
     mode === "edit_video" || mode === "extend_video" || image
       ? null
-      : (kling?.resolution ?? body.resolution ?? "720p");
-  const generateAudio = image ? false : kling ? kling.audio === "native" : (body.generateAudio ?? true);
+      : (settings?.resolution ?? body.resolution ?? "720p");
+  const generateAudio = image
+    ? false
+    : settings
+      ? settings.audio === "native"
+      : (body.generateAudio ?? true);
   const imageResolution = image ? (body.imageResolution ?? "1k") : null;
   const rec: JobRecord = {
     schemaVersion: 1,
@@ -167,7 +177,9 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     prompt: body.prompt,
     durationSec: dur,
     aspectRatio:
-      mode === "edit_video" || mode === "extend_video" ? null : (body.aspectRatio ?? "16:9"),
+      mode === "edit_video" || mode === "extend_video"
+        ? null
+        : (settings?.ratio ?? body.aspectRatio ?? "16:9"),
     resolution,
     imageResolution,
     generateAudio,
@@ -177,7 +189,7 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     priceCny: priceCny({ mode, durationSec: dur, resolution, generateAudio, imageResolution }),
     costUsdEstimate: harness
       ? estimateHarnessCostUsd(packHarnessDuration(dur as 30 | 45 | 60))
-      : estimateCostUsd(model, dur, imagePricing, videoPricingOf(kling)),
+      : estimateCostUsd(model, dur, imagePricing, videoPricingOf(settings, provider)),
     costUsdActual: null,
     error: null,
     output: null,
@@ -216,38 +228,6 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
   if (body.idempotencyKey) await saveIdempotency(ownerId, body.idempotencyKey, id);
   enqueue(id);
   return { job: toPublic(rec), replay: false };
-}
-
-/**
- * Model名与 provider 必须同源：OpenAI 生图用 OPENAI_IMAGE_MODEL、可灵视频用 KLING_VIDEO_MODEL，
- * 其余仍按 mode 走 Grok 矩阵。对既有的 grok / mock 任务，本函数与 `modelForMode` 结果完全一致。
- */
-function modelForProvider(provider: ProviderId, mode: NativeMode): string {
-  if (provider === "openai") return openaiImageModel();
-  if (provider === "kling") return klingVideoModel();
-  return modelForMode(mode);
-}
-
-/**
- * 可灵接得下这个任务时给出归一后的三个参数，否则 null（调用方按原逻辑走）。
- * 只有 provider 真的选中可灵、且是它支持的两种视频模式时才归一——别的 provider
- * 的记录不能被可灵的枚举改写。
- */
-function klingSettingsFor(
-  provider: ProviderId,
-  mode: NativeMode,
-  durationSec: number | undefined,
-  prompt: string,
-  model: string,
-  generateAudio: boolean,
-): KlingSettings | null {
-  if (provider !== "kling") return null;
-  if (mode !== "text_to_video" && mode !== "image_to_video") return null;
-  return resolveKlingSettings({ jobId: "preview", mode, prompt, model, durationSec, generateAudio });
-}
-
-function videoPricingOf(kling: KlingSettings | null): VideoPricingHint | undefined {
-  return kling ? { resolution: kling.resolution, audio: kling.audio } : undefined;
 }
 
 /**
@@ -290,16 +270,26 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
   // Re-resolving both together keeps a retry from pairing a stale model name with a provider
   // the current environment would now pick (e.g. an OpenAI key added since the first attempt).
   const harness = Boolean(source.harness?.enabled);
-  const provider = currentProviderId(source.mode, { harness });
+  // 画幅同样参与路由：重试不该把源任务的竖屏悄悄换成另一家的默认横屏。没有一家接得下
+  // 时抛 400——这条路径上它的意思是「这个画幅现在没人做了」，比出一个别的画幅诚实。
+  const provider = currentProviderId(source.mode, {
+    harness,
+    aspectRatio: source.aspectRatio ?? undefined,
+  });
   const model = modelForProvider(provider, source.mode);
-  // 源任务可能是 grok 时代的 6 秒片：换到可灵后同样要归一，否则重试会照着一个上游
+  // 源任务可能是 grok 时代的 6 秒片：换了 provider 后同样要归一，否则重试会照着一个上游
   // 根本不收的时长下单，账目也还是旧 provider 的估价。
-  const kling = klingSettingsFor(provider, source.mode, source.durationSec, source.prompt, model, source.generateAudio);
+  const settings = providerSettingsFor(provider, source.mode, source.durationSec, {
+    prompt: source.prompt,
+    aspectRatio: source.aspectRatio ?? undefined,
+    resolution: source.resolution ?? undefined,
+    generateAudio: source.generateAudio,
+  }, model);
   // 重试是一次全新的、要计费的上游请求，所以按**当下**的参数重新定价，而不是抄源任务的
   // `priceCny`：源任务可能是换 provider 之前的 6 秒片，归一后时长档都变了。
-  const durationSec = kling?.durationSec ?? source.durationSec;
-  const resolution = kling?.resolution ?? source.resolution;
-  const generateAudio = kling ? kling.audio === "native" : source.generateAudio;
+  const durationSec = settings?.durationSec ?? source.durationSec;
+  const resolution = settings?.resolution ?? source.resolution;
+  const generateAudio = settings ? settings.audio === "native" : source.generateAudio;
   const imageResolution = source.imageResolution ?? null;
   const rec: JobRecord = {
     schemaVersion: 1,
@@ -312,7 +302,7 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     provider,
     prompt: source.prompt,
     durationSec,
-    aspectRatio: source.aspectRatio,
+    aspectRatio: settings?.ratio ?? source.aspectRatio,
     resolution,
     imageResolution,
     generateAudio,
@@ -320,8 +310,8 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     lastFrameLocksOutput: false,
     harness: { enabled: harness },
     priceCny: priceCny({ mode: source.mode, durationSec, resolution, generateAudio, imageResolution }),
-    costUsdEstimate: kling
-      ? estimateCostUsd(model, kling.durationSec, undefined, videoPricingOf(kling))
+    costUsdEstimate: settings
+      ? estimateCostUsd(model, settings.durationSec, undefined, videoPricingOf(settings, provider))
       : source.costUsdEstimate,
     costUsdPlanned: source.costUsdPlanned ?? null,
     costUsdActual: null,

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JobPublic } from "@/lib/jobs/schema";
-import type { NativeMode, ProviderId } from "@/lib/providers/types";
+import type { NativeMode } from "@/lib/providers/types";
 import { estimateHarnessCostUsd } from "@/lib/cost";
 import { formatCny, priceCny } from "@/lib/billing/prices";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
@@ -30,11 +30,11 @@ const MODES: { id: UiMode; label: string; native: NativeMode }[] = [
   { id: "t2i", label: "文生图", native: "text_to_image" },
 ];
 const UI_MODE_OF: Partial<Record<NativeMode, UiMode>> = { text_to_video: "t2v", image_to_video: "i2v", text_to_image: "t2i" };
+/** 服务端没下发 videoAspectRatios 时的兜底（三家都接得下的那几个） */
 const RATIOS = ["16:9", "9:16", "1:1"] as const;
 type Ratio = (typeof RATIOS)[number];
+/** 服务端没下发 videoDurations 时的兜底（grok / mock 的档位） */
 const DURS = [4, 6, 8, 10] as const;
-/** 可灵的 duration 枚举只有 5 / 10，别的值上游会按这两档计费，所以芯片直接跟着换 */
-const KLING_DURS = [5, 10] as const;
 const DEFAULT_DUR = 8;
 
 type GroupId = "filter" | "skin" | "color" | "cam";
@@ -236,7 +236,8 @@ export function LumenHome({
   initialJobs,
   mock,
   harness = false,
-  videoProvider = "grok",
+  videoDurations,
+  videoAspectRatios,
   videoModel = "grok-imagine-video",
   audioAvailable = true,
   initialEmail,
@@ -244,8 +245,17 @@ export function LumenHome({
   initialJobs: JobPublic[];
   mock: boolean;
   harness?: boolean;
-  /** 服务端解析的当前视频 provider（与 /api/health 的 videoProvider 同源），决定时长芯片 */
-  videoProvider?: ProviderId;
+  /**
+   * 服务端按当前 provider 能力解析出的时长档（与 /api/health 的 videoDurations 同源）。
+   * 上游按档计费，芯片上只能出现「会被计费的那个时长」；具体是哪一档由 provider 决定，
+   * 浏览器不需要知道是哪一家——功能先于供应商（方案 §3.4）。
+   */
+  videoDurations?: number[];
+  /**
+   * 服务端按 provider 能力解析出的画幅（与 /api/health 的 videoAspectRatios 同源）。
+   * 一家都接不下的画幅不出现在芯片上——露出来只会让用户选一个提交必被拒的东西。
+   */
+  videoAspectRatios?: string[];
   /** 服务端解析的视频模型名，只用于工作室读数（可灵实例显示 kling-2.6 而不是 grok） */
   videoModel?: string;
   /**
@@ -263,11 +273,18 @@ export function LumenHome({
   const [prompt, setPrompt] = useState("");
   const [opts, setOpts] = useState<Opts>({});
   const [mode, setMode] = useState<UiMode>("t2v");
-  // 可灵的时长枚举是 5 / 10，默认的 8 不在里面，所以初值直接落到第一档（5）；
+  // 默认的 8 不一定在当前 provider 的档位里（可灵是 5 / 10），不在就落到第一档；
   // 芯片上永远只出现「会被上游计费的那个时长」（方案 §4）。
-  const baseDurs: readonly number[] = videoProvider === "kling" ? KLING_DURS : DURS;
+  const baseDurs: readonly number[] = videoDurations?.length ? videoDurations : DURS;
   const [dur, setDur] = useState<number>(baseDurs.includes(DEFAULT_DUR) ? DEFAULT_DUR : baseDurs[0]);
-  const [ratio, setRatio] = useState<Ratio>("16:9");
+  // 同理：默认的 16:9 不一定在当前实例接得下的画幅里，不在就落到第一个能接的。
+  const ratios: readonly Ratio[] = useMemo(() => {
+    const usable = (videoAspectRatios ?? []).filter((r): r is Ratio =>
+      (RATIOS as readonly string[]).includes(r),
+    );
+    return usable.length ? usable : RATIOS;
+  }, [videoAspectRatios]);
+  const [ratio, setRatio] = useState<Ratio>(ratios.includes("16:9") ? "16:9" : ratios[0]);
   // 有声是加价项（价目表里 +¥1），默认开——这是绝大多数人想要的，也是改动前的行为。
   const [audio, setAudio] = useState(true);
   const [first, setFirst] = useState<Frame | null>(null);
@@ -508,7 +525,11 @@ export function LumenHome({
   /* ── 时长 / 画幅：点击循环；开启 harness 时时长多出 30 / 45 / 60（仅视频） ── */
   const durOptions: readonly number[] = harness ? [...baseDurs, ...HARNESS_DURATIONS] : baseDurs;
   const cycleDur = () => setDur((d) => durOptions[(durOptions.indexOf(d) + 1) % durOptions.length]);
-  const cycleRatio = () => setRatio((r) => RATIOS[(RATIOS.indexOf(r) + 1) % RATIOS.length]);
+  const cycleRatio = () =>
+    setRatio((r) => {
+      const i = ratios.indexOf(r);
+      return ratios[(i < 0 ? 0 : i + 1) % ratios.length];
+    });
   /** 实例不支持音轨时芯片是死的：点了也不改状态，免得估价与成片再次分叉 */
   const cycleAudio = () => {
     if (!audioAvailable) return;

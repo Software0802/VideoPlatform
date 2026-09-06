@@ -55,7 +55,7 @@ export const jobPublicSchema = z.object({
   progress: z.number().finite().min(0).max(100),
   mode: nativeModeSchema,
   model: z.string(),
-  provider: z.enum(["grok", "mock", "jimeng", "openai", "kling"]),
+  provider: z.enum(["grok", "mock", "jimeng", "openai", "kling", "yman"]),
   prompt: z.string(),
   durationSec: z.number(),
   aspectRatio: aspectRatioSchema.nullable(),

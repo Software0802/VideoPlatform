@@ -8,6 +8,20 @@ export const DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-1";
 export const OFFICIAL_KLING_BASE = "https://api-beijing.klingai.com";
 export const DEFAULT_KLING_VIDEO_MODEL = "kling-2.6";
 const DEFAULT_KLING_USD_PER_UNIT = 0.1;
+/** YMan（中转渠道）的 OpenAI 兼容 REST root，**带** `/v1`（路径是 `/videos`、`/models`）。 */
+export const OFFICIAL_YMAN_BASE = "https://vip.yman.cc/v1";
+/**
+ * 默认模型名用 `GET /v1/models` 的**展示名**——上游文档明确要求 `model` 用这一串，
+ * 后台内部名（`minimax_h3_t2v` / `minimax_h3_ref2v`）只作为别名被认出来，见
+ * `@/lib/providers/yman/catalog`。
+ */
+export const DEFAULT_YMAN_T2V_MODEL = "minimax-H3 文字";
+export const DEFAULT_YMAN_I2V_MODEL = "minimax-h3-933-图文";
+/** YMan 也兼容 OpenAI Images API；生图默认走它的 gpt-image-2。 */
+export const DEFAULT_YMAN_IMAGE_MODEL = "gpt-image-2";
+const DEFAULT_YMAN_UNKNOWN_CREDITS = 150;
+const DEFAULT_USD_CNY_RATE = 7.2;
+const DEFAULT_PROVIDER_EXHAUSTED_TTL_MS = 6 * 60 * 60_000;
 
 export function dataDir(): string {
   return path.resolve(/*turbopackIgnore: true*/ process.env.DATA_DIR ?? path.join(process.cwd(), "data"));
@@ -189,14 +203,77 @@ export function klingBase(): string {
   return raw || OFFICIAL_KLING_BASE;
 }
 
-export type VideoProviderChoice = "grok" | "kling";
+export type VideoProviderChoice = "grok" | "kling" | "yman";
+
+/** 能接视频任务的 provider（按能力路由，不含只出图的 openai 与占位的 jimeng）。 */
+export const VIDEO_PROVIDER_IDS: readonly VideoProviderChoice[] = ["kling", "yman", "grok"];
+
+/** 没有任何显式配置时的优先级：先试可灵，接不了的模式落回 xAI。 */
+const DEFAULT_VIDEO_PROVIDER_ORDER: readonly VideoProviderChoice[] = ["kling", "grok"];
 
 /**
- * 视频路由的显式开关（方案 §3）。xAI key 会一直存在（r2v / edit / extend / harness 靠它），
- * 所以可灵不能凭「有没有 key」抢路由，必须由这条环境变量点名。非法值回落 grok。
+ * 视频路由的优先级列表（方案 §3.4「功能先于供应商」）。router 按「模式 → 声明支持它且
+ * 配了 key 的第一个 provider」路由，所以这条只表达**偏好次序**，不表达能力——某个
+ * provider 接不了这个模式时会自动跳到下一个，不需要在这里为每种模式各写一份。
+ *
+ * 兼容旧的单一开关 `VIDEO_PROVIDER`：`=kling` 视为 `kling,grok`，`=grok`（以及任何
+ * 非法值）视为只有 `grok`——旧配置的语义就是「除非点名，否则别让可灵抢路由」。
+ * 未设 ORDER 也未设 VIDEO_PROVIDER 时用默认次序。列表里认不出的名字直接丢掉，
+ * 全丢光了就当没设过（回到兼容分支），免得一个拼错的名字把视频功能整个关掉。
  */
-export function videoProvider(): VideoProviderChoice {
-  return process.env.VIDEO_PROVIDER?.trim().toLowerCase() === "kling" ? "kling" : "grok";
+export function videoProviderOrder(): VideoProviderChoice[] {
+  const raw = process.env.VIDEO_PROVIDER_ORDER?.trim();
+  if (raw) {
+    const parsed = raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter((s): s is VideoProviderChoice =>
+        (VIDEO_PROVIDER_IDS as readonly string[]).includes(s),
+      );
+    const deduped = [...new Set(parsed)];
+    if (deduped.length) return deduped;
+  }
+  const legacy = process.env.VIDEO_PROVIDER?.trim().toLowerCase();
+  if (!legacy) return [...DEFAULT_VIDEO_PROVIDER_ORDER];
+  return legacy === "kling" ? ["kling", "grok"] : ["grok"];
+}
+
+export type ImageProviderChoice = "openai" | "yman" | "grok";
+
+/** 能接文生图的 provider（可灵只做视频，不在其中）。 */
+export const IMAGE_PROVIDER_IDS: readonly ImageProviderChoice[] = ["openai", "yman", "grok"];
+
+/**
+ * 文生图的优先级列表，默认 `openai,grok`——正是加 YMan 之前那条硬编码的阶梯
+ * （有 OPENAI_API_KEY 走 openai，否则 xAI，都没有才 mock），所以旧实例不改配置行为不变。
+ *
+ * 与 `VIDEO_PROVIDER_ORDER` 同一套规则：只表达偏好次序，能力由各 provider 的
+ * `capabilities().modes` 说了算；认不出的名字丢掉，全丢光就回落默认。
+ */
+export function imageProviderOrder(): ImageProviderChoice[] {
+  const raw = process.env.IMAGE_PROVIDER_ORDER?.trim();
+  if (raw) {
+    const parsed = raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter((s): s is ImageProviderChoice =>
+        (IMAGE_PROVIDER_IDS as readonly string[]).includes(s),
+      );
+    const deduped = [...new Set(parsed)];
+    if (deduped.length) return deduped;
+  }
+  return ["openai", "grok"];
+}
+
+/**
+ * 一家上游被判定「积分耗尽」后要绕开多久（毫秒），默认 6 小时。
+ *
+ * 有 TTL 而不是永久拉黑：充值是常事，而我们没有任何主动的「余额恢复了」信号，
+ * 到点自动放回去重试一次，比让运维记得手工清状态文件靠谱。0 或非法值回落默认。
+ */
+export function providerExhaustedTtlMs(): number {
+  const n = Number(process.env.PROVIDER_EXHAUSTED_TTL_MS ?? DEFAULT_PROVIDER_EXHAUSTED_TTL_MS);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_PROVIDER_EXHAUSTED_TTL_MS;
 }
 
 /** 可灵视频模型，同时是 URL 路径段（`/text-to-video/kling-2.6`）。 */
@@ -229,12 +306,81 @@ export function klingTaskTimeoutMs(): number {
   return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 60 * 60_000) : 900_000;
 }
 
+/** YMan 中转渠道的 key。缺失时 yman 不参与路由（即便它出现在 VIDEO_PROVIDER_ORDER 里）。 */
+export function ymanApiKey(): string | undefined {
+  return process.env.YMAN_API_KEY?.trim() || undefined;
+}
+
+export function hasYmanKey(): boolean {
+  return Boolean(ymanApiKey());
+}
+
+/** OpenAI 兼容，路径是 `/videos`，所以 base **带** `/v1`；缺 `/v1` 时补上。 */
+export function ymanBase(): string {
+  const raw = process.env.YMAN_BASE_URL?.trim();
+  if (!raw) return OFFICIAL_YMAN_BASE;
+  return normalizeApiBase(raw, OFFICIAL_YMAN_BASE);
+}
+
+/** 文生视频的上游模型名。默认 minimax_h3_t2v（纯文生，不收参考图）。 */
+export function ymanT2vModel(): string {
+  return process.env.YMAN_T2V_MODEL?.trim() || DEFAULT_YMAN_T2V_MODEL;
+}
+
+/** 图生 / 参考生视频的上游模型名。默认 minimax_h3_ref2v（同价档但收参考图）。 */
+export function ymanI2vModel(): string {
+  return process.env.YMAN_I2V_MODEL?.trim() || DEFAULT_YMAN_I2V_MODEL;
+}
+
+/** YMan 生图用的模型名（它兼容 OpenAI Images API）。默认 gpt-image-2。 */
+export function ymanImageModel(): string {
+  return process.env.YMAN_IMAGE_MODEL?.trim() || DEFAULT_YMAN_IMAGE_MODEL;
+}
+
 /**
- * Mock 模式 = 没有任何可用的上游 key。文生图可以只靠 OpenAI key、视频可以只靠可灵 key
- * 跑真实上游，所以任意一把 key 都足以让实例脱离 mock（其余路径仍各自按 key 回落到 mock）。
+ * YMan 生图的档位价目表 JSON 原文，与 `OPENAI_IMAGE_PRICE_TABLE` 同款语义（quality × 尺寸档）。
+ * 单位是**人民币额度**（上游按人民币扣），解析与坏 JSON 的回落都在 `@/lib/cost`。
+ */
+export function ymanImagePriceTableRaw(): string | undefined {
+  return process.env.YMAN_IMAGE_PRICE_TABLE?.trim() || undefined;
+}
+
+/**
+ * 覆盖 / 追加模型能力与价目的 JSON 原文。上游随时会上新模型，仓库里的静态表跟不上，
+ * 所以留一条不改代码就能加模型的路。解析与坏 JSON 的回落在
+ * `@/lib/providers/yman/catalog`，这里只取原文。
+ */
+export function ymanModelCatalogRaw(): string | undefined {
+  return process.env.YMAN_MODEL_CATALOG?.trim() || undefined;
+}
+
+/**
+ * 目录里没有的模型（用户自己填的模型名）按多少积分估价。绝不为 0——`costUsdEstimate === 0`
+ * 会让账目完全看不见这次调用；宁可高估。默认 150 积分（¥1.5），比表里最贵的一档低，
+ * 但足够让一次未知调用在账上留下痕迹。
+ */
+export function ymanUnknownCredits(): number {
+  const n = Number(process.env.YMAN_UNKNOWN_CREDITS ?? DEFAULT_YMAN_UNKNOWN_CREDITS);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_YMAN_UNKNOWN_CREDITS;
+}
+
+/**
+ * 人民币 → 美元的换算率（1 USD = 多少 CNY），只影响账目显示：YMan 按积分（¥1 = 100 积分）
+ * 计费，而 `costUsdEstimate` / `costUsdActual` 的口径是美元。非法值与 0 回落默认 7.2
+ * （0 会把换算变成除零 → Infinity，比估错更糟）。
+ */
+export function usdCnyRate(): number {
+  const n = Number(process.env.USD_CNY_RATE ?? DEFAULT_USD_CNY_RATE);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_USD_CNY_RATE;
+}
+
+/**
+ * Mock 模式 = 没有任何可用的上游 key。文生图可以只靠 OpenAI key、视频可以只靠可灵 /
+ * YMan key 跑真实上游，所以任意一把 key 都足以让实例脱离 mock（其余路径仍各自按 key
+ * 回落到 mock）。
  */
 export function isMockMode(): boolean {
-  return forceMock() || (!hasXaiKey() && !hasOpenaiKey() && !hasKlingKey());
+  return forceMock() || (!hasXaiKey() && !hasOpenaiKey() && !hasKlingKey() && !hasYmanKey());
 }
 
 export type GrokUpstreamKind = "xai" | "sub2api";

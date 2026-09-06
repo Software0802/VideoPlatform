@@ -1,14 +1,22 @@
-import { openaiApiKey, openaiBase, openaiImageTimeoutMs } from "@/lib/env";
 // The transport (timeout, abort, transient-status retry) is provider-agnostic and already
 // hardened for the xAI client; only the base URL and headers differ here.
 import { fetchUpstream, upstreamError } from "@/lib/providers/grok/client";
+import {
+  OPENAI_IMAGE_CONFIG,
+  type OpenaiImageConfig,
+} from "@/lib/providers/openai-image/config";
 import { ProviderHttpError } from "@/lib/providers/types";
 
-/** The key never appears in a return value, a log line or an error message. */
-export function openaiHeaders(json = true): Record<string, string> {
-  const key = openaiApiKey();
+/**
+ * The key never appears in a return value, a log line or an error message.
+ *
+ * `cfg` defaults to the OpenAI channel, so every existing call site keeps reading
+ * `OPENAI_API_KEY` / `OPENAI_BASE_URL` exactly as before; the YMan channel passes its own.
+ */
+export function openaiHeaders(json = true, cfg: OpenaiImageConfig = OPENAI_IMAGE_CONFIG): Record<string, string> {
+  const key = cfg.apiKey();
   if (!key) {
-    throw new ProviderHttpError(500, "missing_api_key", "缺少 OPENAI_API_KEY");
+    throw new ProviderHttpError(500, "missing_api_key", `缺少 ${cfg.keyEnvName}`);
   }
   const headers: Record<string, string> = { Authorization: `Bearer ${key}` };
   if (json) headers["Content-Type"] = "application/json";
@@ -39,19 +47,20 @@ function mimeOf(contentType: string | null | undefined): string {
 export async function openaiPost(
   pathSuffix: string,
   body: unknown,
+  cfg: OpenaiImageConfig = OPENAI_IMAGE_CONFIG,
 ): Promise<OpenaiResponseBody> {
   const res = await fetchUpstream(
-    `${openaiBase()}${pathSuffix}`,
+    `${cfg.base()}${pathSuffix}`,
     {
       method: "POST",
-      headers: openaiHeaders(true),
+      headers: openaiHeaders(true, cfg),
       body: JSON.stringify(body),
     },
     // One attempt only, on a timeout long enough for gpt-image-1: every accepted request is
     // billed, so a retry after a timeout or a 5xx pays twice for one image. Let it fail and
     // let the user decide whether to resubmit. (A 202 handle is *not* a retry case either —
     // it is polled, never resubmitted.)
-    { timeoutMs: openaiImageTimeoutMs(), maxAttempts: 1 },
+    { timeoutMs: cfg.timeoutMs(), maxAttempts: 1 },
   );
   return readUpstreamBody(res);
 }
@@ -60,10 +69,13 @@ export async function openaiPost(
  * Task-status GET. Free and side-effect-free upstream (only fetching the *result* settles the
  * charge), so the generic transient-status retry stays on — unlike the billed POST above.
  */
-export async function openaiGetJson(pathSuffix: string): Promise<Record<string, unknown>> {
-  const res = await fetchUpstream(`${openaiBase()}${pathSuffix}`, {
+export async function openaiGetJson(
+  pathSuffix: string,
+  cfg: OpenaiImageConfig = OPENAI_IMAGE_CONFIG,
+): Promise<Record<string, unknown>> {
+  const res = await fetchUpstream(`${cfg.base()}${pathSuffix}`, {
     method: "GET",
-    headers: openaiHeaders(false),
+    headers: openaiHeaders(false, cfg),
   });
   const body = await readUpstreamBody(res);
   if (body.kind !== "json") {
@@ -81,11 +93,14 @@ export async function openaiGetJson(pathSuffix: string): Promise<Record<string, 
  * absolute-path `result_url` that must not be pasted onto the `/v1` base a second time — see
  * `resolveTaskResultUrl`). Kept on the long image timeout: the body is megabytes.
  */
-export async function openaiGetBody(url: string): Promise<OpenaiResponseBody> {
+export async function openaiGetBody(
+  url: string,
+  cfg: OpenaiImageConfig = OPENAI_IMAGE_CONFIG,
+): Promise<OpenaiResponseBody> {
   const res = await fetchUpstream(
     url,
-    { method: "GET", headers: openaiHeaders(false) },
-    { timeoutMs: openaiImageTimeoutMs() },
+    { method: "GET", headers: openaiHeaders(false, cfg) },
+    { timeoutMs: cfg.timeoutMs() },
   );
   return readUpstreamBody(res);
 }

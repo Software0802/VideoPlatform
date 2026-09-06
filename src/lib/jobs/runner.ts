@@ -1,8 +1,14 @@
 import { access, copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { estimateCostUsd } from "@/lib/cost";
 import { jobConcurrency, upstreamRetryBaseMs } from "@/lib/env";
 import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
 import { emitJob } from "@/lib/jobs/events";
+import {
+  modelForProvider,
+  providerSettingsFor,
+  videoPricingOf,
+} from "@/lib/jobs/provider-settings";
 import { recoverDecision } from "@/lib/jobs/recover";
 import { JOB_UNCERTAIN_SUBMIT_MESSAGE, UNCERTAIN_SUBMIT_CODE } from "@/lib/jobs/retry-guard";
 import { sweepRetention } from "@/lib/jobs/retention";
@@ -12,12 +18,14 @@ import { extractPoster } from "@/lib/media/poster";
 import { probeDurationSec } from "@/lib/ffmpeg";
 import { persistRemote } from "@/lib/media/persist";
 import { deleteXaiFile, uploadXaiFile } from "@/lib/providers/grok/client";
+import { markExhausted } from "@/lib/providers/exhaustion";
 import { isHarnessDuration, isImageMode } from "@/lib/providers/grok/mode-matrix";
-import { needsSourceFileUpload, providerForId } from "@/lib/providers/router";
+import { currentProviderId, needsSourceFileUpload, providerForId } from "@/lib/providers/router";
 import {
   ProviderHttpError,
   type MediaRef,
   type ProviderGenerateRequest,
+  type ProviderId,
   type VideoProvider,
 } from "@/lib/providers/types";
 import { mediaStore } from "@/lib/storage/local-fs";
@@ -196,6 +204,78 @@ async function backoffRequeue(id: string, error: unknown): Promise<boolean> {
   return true;
 }
 
+/**
+ * 一家上游说「积分不足」时，把这次任务改交给下一家接得下的 provider。
+ *
+ * 被拒的 submit 从来没有被计费，所以换家不是「再买一次」，而是同一次任务换个门；
+ * 相比 `backoffRequeue` 的等 15/30/60 秒再撞同一堵墙，充值之前那堵墙不会自己消失。
+ *
+ * 换家会重算 model 与上游档位（新家的时长 / 分辨率枚举不一样），但**不动 `priceCny`**：
+ * 那是我们向用户的报价，用户没做任何事，不能因为我们内部换了供应商就改价。
+ * `upstreamRetries` 也不加——退避重试的预算是留给「同一家暂时忙」的。
+ *
+ * 返回 true 表示这次失败已经被处理掉（换家或任务已取消），`runOne` 直接返回。
+ */
+async function switchAwayFromExhausted(id: string, error: unknown): Promise<boolean> {
+  if (!(error instanceof ProviderHttpError) || error.code !== "quota_exhausted") return false;
+  const rec = await readJob(id);
+  if (!rec) return false;
+  if (rec.canceled || rec.status === "canceled") return false;
+  const kind = isImageMode(rec.mode) ? "image" : "video";
+  await markExhausted(rec.provider, kind, error.message);
+
+  let next: ProviderId;
+  try {
+    next = currentProviderId(rec.mode, {
+      harness: Boolean(rec.harness?.enabled),
+      aspectRatio: rec.aspectRatio ?? undefined,
+      durationSec: rec.durationSec,
+    });
+  } catch {
+    // 没有一家接得下这个画幅了（`currentProviderId` 的 400）：交回退避路径，
+    // 让它按既有规则重试或失败，而不是在这里编一个新的错误码。
+    return false;
+  }
+  // 换到 mock 就是拿一段水印片冒充成片。宁可让任务照常失败，也不交付一个假成片。
+  if (next === rec.provider || next === "mock") return false;
+
+  const model = modelForProvider(next, rec.mode);
+  const settings = providerSettingsFor(next, rec.mode, rec.durationSec, {
+    prompt: rec.prompt,
+    aspectRatio: rec.aspectRatio ?? undefined,
+    resolution: rec.resolution ?? undefined,
+    generateAudio: rec.generateAudio,
+  }, model);
+  const from = rec.provider;
+  const updated = await updateJob(id, (r) => {
+    if (r.canceled || r.status === "canceled") return r;
+    r.provider = next;
+    r.model = model;
+    if (settings) {
+      r.durationSec = settings.durationSec;
+      r.resolution = settings.resolution;
+      r.generateAudio = settings.audio === "native";
+    }
+    r.costUsdEstimate = isImageMode(r.mode)
+      ? r.costUsdEstimate
+      : estimateCostUsd(model, r.durationSec, undefined, videoPricingOf(settings, next));
+    r.status = "queued";
+    // 上一家的退避时间戳不该拖住新家：这是另一个门，不用等。
+    delete r.nextAttemptAt;
+    return r;
+  });
+  if (updated.provider !== next) return false;
+  emitRec(updated);
+  log("info", `provider ${from} 积分耗尽，任务改走 ${next}`, {
+    id,
+    from,
+    to: next,
+    model,
+    detail: error.message,
+  });
+  return true;
+}
+
 /** User-facing wording for a refusal that survived every retry; upstream text goes to `detail`. */
 function upstreamFailure(error: ProviderHttpError): { message: string; detail: string } {
   const message =
@@ -277,6 +357,8 @@ async function runOne(id: string) {
       try {
         await submit(job);
       } catch (error) {
+        // 积分耗尽先试换家：等下去只会撞同一堵墙，而被拒的 submit 没有被计费。
+        if (await switchAwayFromExhausted(id, error)) return;
         // A refused submit was never billed, so it may be re-sent. Handled here rather
         // than in the catch below so "已重试 3 次" can only be said once that is true.
         if (await backoffRequeue(id, error)) return;

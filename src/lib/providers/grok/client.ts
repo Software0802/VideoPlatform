@@ -11,23 +11,12 @@ export function xaiHeaders(json = true): Record<string, string> {
   return h;
 }
 
-function originOf(url: string): string | null {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
-  }
-}
-
-/** Auth only when fetching our configured upstream (Sub2API 落盘 URL 需要带 key). */
-export function downloadHeadersFor(url: string): Record<string, string> {
-  const key = grokApiKey();
-  if (!key) return {};
-  const target = originOf(url);
-  const home = originOf(xaiBase());
-  if (!target || !home || target !== home) return {};
-  return { Authorization: `Bearer ${key}` };
-}
+/**
+ * 落盘下载的鉴权头。实现搬到了 `@/lib/media/download-headers`（下载不再只有 xAI 一个
+ * 上游，YMan 的 `/videos/{id}/content` 同样要带 Bearer），这里保留同名再导出，
+ * 既有的调用方与测试不用改。
+ */
+export { downloadHeadersFor } from "@/lib/media/download-headers";
 
 export async function grokPost(pathSuffix: string, body: unknown): Promise<Record<string, unknown>> {
   const res = await fetchUpstream(`${xaiBase()}${pathSuffix}`, {

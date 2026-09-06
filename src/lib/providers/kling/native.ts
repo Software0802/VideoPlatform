@@ -21,6 +21,10 @@ export const klingProvider: VideoProvider = {
       maxDurationSec: 10,
       supportsLastFrameLock: false,
       maxResolution: "1080p",
+      // 上游 aspect_ratio 只收这三种。
+      aspectRatios: ["16:9", "9:16", "1:1"],
+      // duration 是枚举，不是区间（`normalizeKlingDuration` 是同一份事实）。
+      durations: [5, 10],
     };
   },
   async submit(req: ProviderGenerateRequest): Promise<ProviderHandle> {

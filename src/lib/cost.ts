@@ -1,5 +1,12 @@
-import { klingUsdPerUnit, openaiImagePriceTableRaw } from "@/lib/env";
+import {
+  klingUsdPerUnit,
+  openaiImagePriceTableRaw,
+  usdCnyRate,
+  ymanImagePriceTableRaw,
+} from "@/lib/env";
 import { log } from "@/lib/log";
+import { creditsFor, isYmanModel, type YmanResolution } from "@/lib/providers/yman/catalog";
+import type { ProviderId } from "@/lib/providers/types";
 
 export const RATE_USD_PER_SEC = {
   "grok-imagine-video-1.5": 0.08,
@@ -23,6 +30,20 @@ export const KLING_UNITS_PER_SEC: Record<string, number> = {
 export function klingUnitsToUsd(units: number): number {
   const n = Number.isFinite(units) ? units : 0;
   return roundMicro(n * klingUsdPerUnit());
+}
+
+/**
+ * YMan 积分 → USD：¥1 = 100 积分，再按 `USD_CNY_RATE` 折美元。与可灵的积分不是一回事
+ * （那边是充值比例，这边是人民币面值），所以各有各的换算函数。同样留微分。
+ */
+export function ymanCreditsToUsd(credits: number): number {
+  const n = Number.isFinite(credits) ? credits : 0;
+  return roundMicro(n / 100 / usdCnyRate());
+}
+
+/** `VideoPricingHint.resolution` 是自由字符串；YMan 只有两档，认不出按 720p 记。 */
+function ymanResolution(resolution: string | undefined): YmanResolution {
+  return resolution === "1080p" ? "1080p" : "720p";
 }
 
 /**
@@ -100,21 +121,29 @@ export function imageSizeTier(size: string): ImageSizeTier {
  * `costUsdEstimate` / `costUsdActual` 里的数字就是「上游额度」而非 USD——做配额时别当美元读。
  */
 export function openaiImagePriceTable(): ImagePriceTable | null {
-  const raw = openaiImagePriceTableRaw();
+  return imagePriceTable(openaiImagePriceTableRaw(), "OPENAI_IMAGE_PRICE_TABLE");
+}
+
+/** 同款语义的 YMan 生图价目表（单位是人民币额度，见上面的告警）。 */
+export function ymanImagePriceTable(): ImagePriceTable | null {
+  return imagePriceTable(ymanImagePriceTableRaw(), "YMAN_IMAGE_PRICE_TABLE");
+}
+
+/** 每张表各自缓存一份：两条生图通道的原文互不相干，共用一个槽会互相踢掉。 */
+const priceTableCaches = new Map<string, { raw: string; table: ImagePriceTable | null }>();
+
+function imagePriceTable(raw: string | undefined, envName: string): ImagePriceTable | null {
   if (!raw) return null;
-  if (priceTableCache?.raw === raw) return priceTableCache.table;
+  const cached = priceTableCaches.get(envName);
+  if (cached?.raw === raw) return cached.table;
   const table = parsePriceTable(raw);
   if (!table) {
     // 一张坏 JSON 不能打挂生图：记一条并回落到 token 口径。
-    log("warn", "OPENAI_IMAGE_PRICE_TABLE 无法解析，图片计价回落到 token 口径", {
-      length: raw.length,
-    });
+    log("warn", `${envName} 无法解析，图片计价回落到 token 口径`, { length: raw.length });
   }
-  priceTableCache = { raw, table };
+  priceTableCaches.set(envName, { raw, table });
   return table;
 }
-
-let priceTableCache: { raw: string; table: ImagePriceTable | null } | null = null;
 
 function parsePriceTable(raw: string): ImagePriceTable | null {
   let parsed: unknown;
@@ -161,12 +190,15 @@ function priceFromTable(table: ImagePriceTable, quality: string, tier: ImageSize
  * 中转站根本不按 token 计费，`usage` 只是它转发的形状。未配置时保持官方口径：
  * `outputTokens` 优先，其次列表价表，未知尺寸落到该画质最贵的一档。
  */
-export function estimateOpenaiImageCostUsd(opts: {
-  size: string;
-  quality: string;
-  outputTokens?: number;
-}): number {
-  const table = openaiImagePriceTable();
+export function estimateOpenaiImageCostUsd(
+  opts: {
+    size: string;
+    quality: string;
+    outputTokens?: number;
+  },
+  /** 这条通道自己的价目表（第二条兼容通道用 YMan 的那张）；不传就是官方那张。 */
+  table: ImagePriceTable | null = openaiImagePriceTable(),
+): number {
   if (table) {
     const tiered = priceFromTable(table, opts.quality, imageSizeTier(opts.size));
     if (tiered != null) return roundMicro(tiered);
@@ -233,13 +265,28 @@ const TICKS_PER_USD = 10_000_000_000;
  * 提交时已知的图片请求形状。模型名单独看不出单价（`gpt-image-2` 之类的中转模型根本不在
  * 任何本地表里），把即将发出的 size / quality 一起带上，估算才不会退化成 0。
  */
-export type ImagePricingHint = { size: string; quality: string };
+export type ImagePricingHint = {
+  size: string;
+  quality: string;
+  /**
+   * 这次生图会走哪条兼容通道。两条通道各有各的价目表（`OPENAI_IMAGE_PRICE_TABLE` /
+   * `YMAN_IMAGE_PRICE_TABLE`），光看模型名分不出来——两边都可能叫 `gpt-image-2`。
+   */
+  provider?: ProviderId;
+};
 
 /**
- * 提交时已知的视频请求形状。可灵的单价随分辨率与音频档变化，模型名看不出来；
- * xAI 视频不看它（按模型名的每秒单价计）。
+ * 提交时已知的视频请求形状。可灵的单价随分辨率与音频档变化，YMan 的随分辨率与时长档
+ * 变化，模型名单独都看不出来；xAI 视频不看它（按模型名的每秒单价计）。
+ *
+ * `provider` 让路由已经选定的那家说了算：YMan 允许用户自己填模型名，那种名字不在
+ * 本地目录里，光看名字会掉进按秒的 xAI 分支被估成一个毫不相干的数。
  */
-export type VideoPricingHint = { resolution: string; audio: "off" | "native" };
+export type VideoPricingHint = {
+  resolution: string;
+  audio: "off" | "native";
+  provider?: ProviderId;
+};
 
 /**
  * 没有 hint 时的兜底判据：一个不在 `RATE_USD_PER_IMAGE` 里的图片模型（`gpt-image-2` 之类的
@@ -260,6 +307,11 @@ export function estimateCostUsd(
   if (image || model in RATE_USD_PER_IMAGE || IMAGE_MODEL_RE.test(model)) {
     return estimateImageSubmitCostUsd(model, image);
   }
+  // YMan 按「分辨率价 + 时长价」的积分计价，与时长不成正比（10 秒与 15 秒常同价），
+  // 所以既不能按秒也不能按模型单价；目录认得的模型、或路由已经点名 yman 时都走这条。
+  if (video?.provider === "yman" || isYmanModel(model)) {
+    return ymanCreditsToUsd(creditsFor(model, durationSec, ymanResolution(video?.resolution)));
+  }
   // 可灵按积分计价，且同模型的单价由 resolution × audio 决定，与 xAI 的按模型单价不是一套。
   if (KLING_MODEL_RE.test(model)) {
     return klingUnitsToUsd(klingUnitsPerSec(model, video) * durationSec);
@@ -278,7 +330,7 @@ export function estimateCostUsd(
  */
 function estimateImageSubmitCostUsd(model: string, image?: ImagePricingHint): number {
   if (image) {
-    const table = openaiImagePriceTable();
+    const table = image.provider === "yman" ? ymanImagePriceTable() : openaiImagePriceTable();
     const tiered = table ? priceFromTable(table, image.quality, imageSizeTier(image.size)) : null;
     if (tiered != null) return roundMicro(tiered);
   }

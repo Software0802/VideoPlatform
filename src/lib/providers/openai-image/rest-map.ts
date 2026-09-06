@@ -18,6 +18,23 @@ export type OpenAiSize = OpenAiOfficialSize | `${number}x${number}`;
 
 export type OpenAiQuality = OpenaiImageQuality;
 
+/**
+ * 这条生图通道的两个形状开关。原先它们直接读 `OPENAI_IMAGE_*` 环境变量；接第二条
+ * 兼容通道（YMan）后必须能按通道分别给，所以提成参数——不传就还是读环境变量，
+ * 官方 / ccgoai 那条路径逐字不变。
+ */
+export type OpenaiImageShape = {
+  /** 上游是否接受任意 16 的倍数尺寸（官方 gpt-image-1 只有三档固定尺寸）。 */
+  flexibleSizes: boolean;
+  /** flexible 路径下显式发出的画质档；官方路径不看它（1k→low / 2k→high）。 */
+  quality: OpenaiImageQuality;
+};
+
+/** 默认形状：`OPENAI_IMAGE_FLEXIBLE_SIZES` / `OPENAI_IMAGE_QUALITY`。 */
+export function envImageShape(): OpenaiImageShape {
+  return { flexibleSizes: openaiImageFlexibleSizes(), quality: openaiImageQuality() };
+}
+
 /** Pixel box to centre-crop the returned PNG into; `null` means ship it as-is. */
 export type CropTarget = { w: number; h: number } | null;
 
@@ -64,8 +81,9 @@ const DEFAULT_FLEXIBLE_ASPECT: AspectRatio = "1:1";
 export function mapAspectToSize(
   aspectRatio?: AspectRatio,
   imageResolution?: ImageResolution,
+  shape: OpenaiImageShape = envImageShape(),
 ): { size: OpenAiSize; crop: CropTarget } {
-  if (openaiImageFlexibleSizes()) {
+  if (shape.flexibleSizes) {
     const row = (aspectRatio && FLEXIBLE_ASPECT_MAP[aspectRatio]) || FLEXIBLE_ASPECT_MAP[DEFAULT_FLEXIBLE_ASPECT];
     return { size: row[imageResolution === "2k" ? "2k" : "1k"], crop: null };
   }
@@ -83,8 +101,11 @@ export function mapAspectToSize(
  * Flexible path: the chip already bought the pixels, so quality is a separate operator dial
  * (`OPENAI_IMAGE_QUALITY`, default `high`).
  */
-export function mapQuality(imageResolution?: ImageResolution): OpenAiQuality {
-  if (openaiImageFlexibleSizes()) return openaiImageQuality();
+export function mapQuality(
+  imageResolution?: ImageResolution,
+  shape: OpenaiImageShape = envImageShape(),
+): OpenAiQuality {
+  if (shape.flexibleSizes) return shape.quality;
   return imageResolution === "2k" ? "high" : "low";
 }
 
@@ -94,13 +115,16 @@ export function mapQuality(imageResolution?: ImageResolution): OpenAiQuality {
  * `output_format: png` keeps the upstream frame lossless; the JPEG conversion happens locally
  * after cropping. `quality` is always sent explicitly: an omitted field is billed as `medium`.
  */
-export function buildImageRequest(req: ProviderGenerateRequest): Record<string, unknown> {
-  const { size } = mapAspectToSize(req.aspectRatio, req.imageResolution);
+export function buildImageRequest(
+  req: ProviderGenerateRequest,
+  shape: OpenaiImageShape = envImageShape(),
+): Record<string, unknown> {
+  const { size } = mapAspectToSize(req.aspectRatio, req.imageResolution, shape);
   return {
     model: req.model,
     prompt: req.prompt,
     size,
-    quality: mapQuality(req.imageResolution),
+    quality: mapQuality(req.imageResolution, shape),
     n: 1,
     output_format: "png",
   };
