@@ -31,8 +31,18 @@ export const mockProvider: VideoProvider = {
         "extend_video",
       ],
       maxDurationSec: 15,
-      supportsLastFrameLock: false,
+      /*
+        mock 是**所有** provider 的替身：一台没配任何真 key 的实例（本地开发、e2e）拿它
+        回答一切，包括本该落到可灵的首尾帧任务。声明 false 会让那条路径在 mock 上直接
+        400（`create.ts` 的「当前模型不支持首尾帧」），于是首尾帧成了唯一一条开发机上
+        走不通的路径。submit 拿到 `lastImage` 也只是忽略——mock 出的本来就是占位片，
+        而记录里的 `lastFrameLocksOutput` 由 provider 是不是可灵决定，不会因此说谎。
+      */
+      supportsLastFrameLock: true,
       maxResolution: "1080p",
+      // 三档全出得了（与 grok 同一份判据），参考图按最宽的那家（YMan 的 9 张）收。
+      resolutions: ["480p", "720p", "1080p"],
+      maxReferenceImages: 9,
     };
   },
   async submit(req: ProviderGenerateRequest): Promise<ProviderHandle> {

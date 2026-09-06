@@ -1,6 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  fetchLedger,
+  redeemErrorMessage,
+  redeemGiftCode,
+  type LedgerEntry,
+} from "@/lib/client/auth";
+import { creditsOf, useShell } from "@/components/genius/ShellContext";
 
 type Plan = {
   name: string;
@@ -110,14 +117,46 @@ function CheckIcon() {
   );
 }
 
+/** 流水条目的 `kind` → 中文（`src/lib/billing/ledger.ts` 的三种）。认不出的码原样显示。 */
+const LEDGER_KIND: Record<string, string> = {
+  grant: "充值 / 兑换",
+  charge: "任务扣款",
+  adjust: "人工调整",
+};
+
+function clock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 抽屉的两种口径：全部流水（积分使用详情）/ 只看充值（账单记录）。 */
+type Drawer = null | { title: string; kind?: string };
+
 /**
  * 订阅视图（交接包 §7，原型图 16-subscription）。
- * 我的方案卡的 ⚡ 读真实积分；订阅相关按钮全部只弹「即将上线」轻提示，不发请求。
+ * 我的方案卡的 ⚡ 读真实积分；「兑换礼品码」「积分使用详情」「账单记录」接真后端
+ * （阶段 A §7），四档订阅卡仍是占位，按钮只弹「即将上线」。
  */
 export default function SubscriptionView({ credits }: { credits: number }) {
+  const { refreshMe } = useShell();
   const [yearly, setYearly] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* 兑换礼品码 */
+  const [redeemOpen, setRedeemOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemErr, setRedeemErr] = useState<string | null>(null);
+
+  /* 流水抽屉 */
+  const [drawer, setDrawer] = useState<Drawer>(null);
+  const [entries, setEntries] = useState<LedgerEntry[]>([]);
+  const [nextBefore, setNextBefore] = useState<string | undefined>(undefined);
+  const [loading, setLoading] = useState(false);
+  const [ledgerErr, setLedgerErr] = useState<string | null>(null);
 
   useEffect(
     () => () => {
@@ -132,6 +171,55 @@ export default function SubscriptionView({ credits }: { credits: number }) {
     timer.current = setTimeout(() => setToast(null), 2200);
   }, []);
 
+  /** 拉一页流水。`before` 为空是第一页（换口径时要把上一次的结果丢掉）。 */
+  const loadLedger = useCallback((next: Drawer, before?: string) => {
+    if (!next) return;
+    setLoading(true);
+    setLedgerErr(null);
+    void fetchLedger({ before, limit: 20, kind: next.kind }).then(
+      (page) => {
+        setLoading(false);
+        setEntries((prev) => (before ? [...prev, ...page.entries] : page.entries));
+        setNextBefore(page.nextBefore);
+      },
+      (e: unknown) => {
+        setLoading(false);
+        setLedgerErr(e instanceof Error ? e.message : "读取失败，请稍后再试");
+      },
+    );
+  }, []);
+
+  const openDrawer = useCallback(
+    (next: NonNullable<Drawer>) => {
+      setDrawer(next);
+      setEntries([]);
+      setNextBefore(undefined);
+      loadLedger(next);
+    },
+    [loadLedger],
+  );
+
+  const redeem = useCallback(() => {
+    const value = code.trim();
+    if (!value || redeeming) return;
+    setRedeeming(true);
+    setRedeemErr(null);
+    void redeemGiftCode(value).then(
+      (result) => {
+        setRedeeming(false);
+        setRedeemOpen(false);
+        setCode("");
+        // 余额是壳的 `/api/me` 说了算：兑换回执只用来报数，真读数等重拉回来
+        refreshMe();
+        notify(`兑换成功，到账 ⚡${creditsOf(result.amountCny)}`);
+      },
+      (e: unknown) => {
+        setRedeeming(false);
+        setRedeemErr(redeemErrorMessage(e));
+      },
+    );
+  }, [code, notify, redeeming, refreshMe]);
+
   return (
     <div className="sub-view">
       {/* 内容单独包一层承载入场动画：动画会让 .sub-view 成为 fixed 的包含块，轻提示就飘不到视口底部了 */}
@@ -139,13 +227,18 @@ export default function SubscriptionView({ credits }: { credits: number }) {
         <section className="sub-mine">
           <div className="sub-mine__head">
             <span className="sub-mine__title">我的方案</span>
-            <button type="button" className="sub-mine__link" onClick={() => notify("积分使用详情即将上线")}>
+            <button
+              type="button"
+              className="sub-mine__link"
+              onClick={() => openDrawer({ title: "积分使用详情" })}
+            >
               积分使用详情
             </button>
             <button
               type="button"
               className="sub-mine__link sub-mine__link--end"
-              onClick={() => notify("账单记录即将上线")}
+              // 账单只看充值 / 兑换那一类（消费明细在「积分使用详情」里）
+              onClick={() => openDrawer({ title: "账单记录", kind: "grant" })}
             >
               账单记录
             </button>
@@ -170,7 +263,14 @@ export default function SubscriptionView({ credits }: { credits: number }) {
               </div>
             </div>
           </div>
-          <button type="button" className="sub-mine__redeem" onClick={() => notify("兑换礼品码即将上线")}>
+          <button
+            type="button"
+            className="sub-mine__redeem"
+            onClick={() => {
+              setRedeemErr(null);
+              setRedeemOpen(true);
+            }}
+          >
             兑换礼品码
           </button>
         </section>
@@ -242,6 +342,100 @@ export default function SubscriptionView({ credits }: { credits: number }) {
           })}
         </div>
       </div>
+
+      {redeemOpen ? (
+        <div
+          className="redeem"
+          role="dialog"
+          aria-modal="true"
+          aria-label="兑换礼品码"
+          onClick={() => setRedeemOpen(false)}
+        >
+          <div className="redeem__panel" onClick={(e) => e.stopPropagation()}>
+            <span className="redeem__title">兑换礼品码</span>
+            <p className="redeem__hint">输入礼品码，积分立即到账（¥1 = 100 积分）。</p>
+            <input
+              className="redeem__input"
+              aria-label="礼品码"
+              placeholder="例如 GIFT-XXXX-XXXX"
+              value={code}
+              autoFocus
+              maxLength={64}
+              onChange={(e) => setCode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  redeem();
+                }
+              }}
+            />
+            {redeemErr ? (
+              <p className="redeem__err" role="alert">
+                {redeemErr}
+              </p>
+            ) : null}
+            <div className="redeem__actions">
+              <button type="button" className="redeem__btn" onClick={() => setRedeemOpen(false)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="redeem__btn redeem__btn--go"
+                disabled={redeeming || !code.trim()}
+                onClick={redeem}
+              >
+                {redeeming ? "兑换中…" : "兑换"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {drawer ? (
+        <div className="ledger" role="dialog" aria-modal="true" aria-label={drawer.title} onClick={() => setDrawer(null)}>
+          <div className="ledger__panel" onClick={(e) => e.stopPropagation()}>
+            <div className="ledger__head">
+              <span className="ledger__title">{drawer.title}</span>
+              <button type="button" className="ledger__close" aria-label="关闭" onClick={() => setDrawer(null)}>
+                ✕
+              </button>
+            </div>
+            <div className="ledger__body">
+              {entries.length ? (
+                <ul className="ledger__list">
+                  {entries.map((e, i) => {
+                    const n = creditsOf(e.amountCny);
+                    return (
+                      <li className="ledger__item" key={`${e.at}-${i}`} data-kind={e.kind}>
+                        <span className="ledger__when">{clock(e.at)}</span>
+                        <span className="ledger__kind">{LEDGER_KIND[e.kind] ?? e.kind}</span>
+                        <span className="ledger__note">{e.note ?? e.jobId ?? ""}</span>
+                        <span className="ledger__amount" data-sign={n >= 0 ? "plus" : "minus"}>
+                          {n >= 0 ? `+${n}` : n}
+                        </span>
+                        <span className="ledger__after">余 {creditsOf(e.balanceAfterCny)}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : loading ? null : (
+                <p className="ledger__empty">还没有记录。</p>
+              )}
+              {ledgerErr ? (
+                <p className="ledger__err" role="alert">
+                  {ledgerErr}
+                </p>
+              ) : null}
+              {loading ? <p className="ledger__empty">读取中…</p> : null}
+              {nextBefore && !loading ? (
+                <button type="button" className="ledger__more" onClick={() => loadLedger(drawer, nextBefore)}>
+                  加载更多
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="sub-toast" role="status" aria-live="polite">
         {toast ? <span className="sub-toast__pill">{toast}</span> : null}

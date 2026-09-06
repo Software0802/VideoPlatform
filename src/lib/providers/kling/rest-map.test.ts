@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mapKlingTask, mapToKlingRequest, normalizeKlingDuration, resolveKlingSettings } from "./rest-map";
-import type { ProviderGenerateRequest } from "@/lib/providers/types";
+import type { MediaRef, ProviderGenerateRequest } from "@/lib/providers/types";
 import { ProviderHttpError } from "@/lib/providers/types";
 
 afterEach(() => {
@@ -283,5 +283,134 @@ describe("mapKlingTask billing", () => {
   it("leaves usage unset when the task carries no billing at all", () => {
     const poll = mapKlingTask(succeededWith());
     expect(poll.usage).toBeUndefined();
+  });
+});
+
+/**
+ * 契约 A1：产品目录取代环境变量成为「用户没选时」的默认档，`resolveKlingSettings`
+ * 的第二参 `defaults` 就是产品传进来的那一份。`req.resolution` 仍然优先于它——
+ * 「先看用户」是这次改动的核心，产品默认只在用户没选时才生效。
+ */
+describe("resolveKlingSettings — user resolution & product defaults (契约 A1)", () => {
+  it("honours an explicit req.resolution over both the product default and the instance env", () => {
+    vi.stubEnv("KLING_VIDEO_RESOLUTION", "720p");
+    const settings = resolveKlingSettings(
+      base({ durationSec: 5, resolution: "1080p" }),
+      { resolution: "720p" },
+    );
+    expect(settings.resolution).toBe("1080p");
+  });
+
+  it("normalizes a 480p request up to 720p rather than rejecting or leaving it as-is", () => {
+    const settings = resolveKlingSettings(base({ durationSec: 5, resolution: "480p" }));
+    expect(settings.resolution).toBe("720p");
+  });
+
+  it("falls back to the product default resolution when the request names none", () => {
+    vi.stubEnv("KLING_VIDEO_RESOLUTION", "720p"); // instance default must lose to the product default
+    const settings = resolveKlingSettings(base({ durationSec: 5 }), { resolution: "1080p" });
+    expect(settings.resolution).toBe("1080p");
+  });
+
+  it("falls back to the instance env when neither the request nor the product name a resolution", () => {
+    vi.stubEnv("KLING_VIDEO_RESOLUTION", "1080p");
+    const settings = resolveKlingSettings(base({ durationSec: 5 }));
+    expect(settings.resolution).toBe("1080p");
+  });
+
+  it("still forces 1080p for native audio even when the user explicitly asked for 720p", () => {
+    vi.stubEnv("KLING_VIDEO_AUDIO", "native");
+    const settings = resolveKlingSettings(base({ durationSec: 5, resolution: "720p", generateAudio: true }));
+    expect(settings).toMatchObject({ resolution: "1080p", audio: "native" });
+  });
+
+  it("honours a product's native-audio default (defaults.audio) even when the instance env says off", () => {
+    vi.stubEnv("KLING_VIDEO_AUDIO", "off");
+    const settings = resolveKlingSettings(base({ durationSec: 5, generateAudio: true }), { audio: "native" });
+    expect(settings).toMatchObject({ resolution: "1080p", audio: "native" });
+  });
+});
+
+function dataUri(tag: string): MediaRef {
+  return { kind: "data_uri", dataUri: `data:image/jpeg;base64,${tag}` };
+}
+
+/**
+ * 契约 A1：`ProviderGenerateRequest.lastImage?`。可灵图生视频带尾帧时必须发
+ * `{type:"last_frame", url}` 且分辨率钉在 1080p；其余场景（文生视频、没有尾帧）绝不发。
+ */
+describe("resolveKlingSettings / mapToKlingRequest — lastImage (契约 A1)", () => {
+  it("forces 1080p when image_to_video carries a lastImage, even if the user asked for 720p", () => {
+    const settings = resolveKlingSettings(
+      base({ mode: "image_to_video", durationSec: 5, resolution: "720p", lastImage: dataUri("last") }),
+    );
+    expect(settings.resolution).toBe("1080p");
+  });
+
+  it("does NOT force 1080p for a lastImage on text_to_video — the field is meaningless there", () => {
+    // hasLastFrame() in rest-map.ts only looks at image_to_video; a stray lastImage on a
+    // t2v request must not silently upcharge the user for an unusable field.
+    const settings = resolveKlingSettings(
+      base({ mode: "text_to_video", durationSec: 5, resolution: "720p", lastImage: dataUri("stray") }),
+    );
+    expect(settings.resolution).toBe("720p");
+  });
+
+  it("golden: image_to_video + lastImage adds a last_frame content entry and settings.resolution is 1080p", () => {
+    const { body } = mapToKlingRequest(
+      base({
+        mode: "image_to_video",
+        prompt: "walk forward",
+        startImage: dataUri("first"),
+        lastImage: dataUri("last"),
+        resolution: "720p",
+        durationSec: 5,
+      }),
+    );
+    expect(body.contents).toEqual([
+      { type: "prompt", text: "walk forward" },
+      { type: "first_frame", url: "data:image/jpeg;base64,first" },
+      { type: "last_frame", url: "data:image/jpeg;base64,last" },
+    ]);
+    expect((body.settings as Record<string, unknown>).resolution).toBe("1080p");
+  });
+
+  it("never includes a last_frame entry when the request carries no lastImage", () => {
+    const { body } = mapToKlingRequest(
+      base({
+        mode: "image_to_video",
+        prompt: "walk forward",
+        startImage: dataUri("first"),
+        durationSec: 5,
+      }),
+    );
+    expect(JSON.stringify(body)).not.toMatch(/last_frame/);
+  });
+
+  it("never includes a last_frame entry for text_to_video even if lastImage is (incorrectly) set", () => {
+    const { body } = mapToKlingRequest(
+      base({ mode: "text_to_video", aspectRatio: "16:9", durationSec: 5, lastImage: dataUri("stray") }),
+    );
+    expect(JSON.stringify(body)).not.toMatch(/last_frame/);
+  });
+});
+
+/**
+ * 契约 A1：产品目录里同一家 provider 可能对应不同上游模型（这里可灵只有一个，但字段
+ * 已经通用化）。`req.model` 非空时必须被当作这次调用真正要用的模型，不能被实例默认
+ * `KLING_VIDEO_MODEL` 覆盖回去——否则「标准」与「高清有声」两个产品会被同一个模型名
+ * 抹平成同一个 URL。
+ */
+describe("mapToKlingRequest — req.model overrides the instance default", () => {
+  it("uses req.model in the URL path when present", () => {
+    vi.stubEnv("KLING_VIDEO_MODEL", "kling-instance-default");
+    const { path } = mapToKlingRequest(base({ model: "kling-3.0", aspectRatio: "16:9", durationSec: 5 }));
+    expect(path).toBe("/text-to-video/kling-3.0");
+  });
+
+  it("falls back to KLING_VIDEO_MODEL when req.model is blank", () => {
+    vi.stubEnv("KLING_VIDEO_MODEL", "kling-instance-default");
+    const { path } = mapToKlingRequest(base({ model: "   ", aspectRatio: "16:9", durationSec: 5 }));
+    expect(path).toBe("/text-to-video/kling-instance-default");
   });
 });

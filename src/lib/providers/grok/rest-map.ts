@@ -91,6 +91,11 @@ export function assertModeConstraints(req: ProviderGenerateRequest) {
   if (req.startImage && req.referenceImages?.length) {
     throw new ProviderHttpError(400, "invalid_argument", "首页图与参考图不能同时使用");
   }
+  // 尾帧永不进入 Grok 请求体（`capabilities().supportsLastFrameLock === false`）。
+  // 走到这里说明上游选择出了错，宁可 400 也不出一段没锁尾帧、却按锁了收钱的片子。
+  if (req.lastImage) {
+    throw new ProviderHttpError(400, "invalid_argument", "当前模型不支持首尾帧");
+  }
   if (HARNESS_DURATION(req.durationSec)) {
     throw new ProviderHttpError(
       400,

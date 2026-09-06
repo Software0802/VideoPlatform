@@ -2,10 +2,10 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 更新日期 | 2026-09-06 晚（前端整体换壳 Genius App：侧栏 + 五视图 + 悬浮创作面板，**工作区改动，尚未提交/部署**）；上一条已提交历史见下「YMan 中转 provider」行 |
-| 基线 | `main` @ `9280c459`（父提交 `73b88da` 阶段一止血）+ 工作区未提交的 UI 换壳改动。方案 `docs/plan-ui-genius-app.md`（本轮）、`docs/plan-architecture-2026-09.md` §3.4「功能先于供应商」（YMan/路由）。此前一轮可灵直连视频详见 §0c；用户系统 / 配额 / 留存清理详见 §0b |
+| 更新日期 | 2026-09-06 夜（阶段 A「面板补全 + 礼品码」：产品目录 / 模型下拉 / 分辨率尊重用户 / 首尾帧 / 参考生视频 / 数量 / 素材复用 / 礼品码 / 积分流水，**工作区改动，叠加在下方 0e 的 UI 换壳改动之上，均未提交/部署**）；再上一条已提交历史见下「YMan 中转 provider」行（现 §0f） |
+| 基线 | `main` @ `9280c459`（父提交 `73b88da` 阶段一止血）+ 工作区未提交的 UI 换壳改动（§0e）+ 工作区未提交的阶段 A 改动（§0，方案 `docs/plan-frontend-backend-adaptation.md`）。此前一轮可灵直连视频详见 §0c；用户系统 / 配额 / 留存清理详见 §0b |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | 本轮（UI 换壳，工作区未提交）：`tsc --noEmit` 绿、`eslint src` 绿、`pnpm test` 71 文件 / 681 通过、1 条 skip、`pnpm e2e` 12/12 通过。上一提交 `9280c45`（YMan）门禁：`pnpm test` 681 通过（同一数字，无冲突）；Codex 跨厂商审查状态见 §0「审查修复」小节。再上一提交 `73b88da`（阶段一止血）：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 63 文件 / 530 通过、1 条 skip；`pnpm e2e` 隔离模式 10/10 通过；Codex 审 diff 给出 BLOCK 四条，均已处理 |
+| 门禁状态 | 本轮（阶段 A，工作区未提交）：由 code-reviewer 子智能体审查（Codex 额度受限），13 条 findings，必修 3 条与顺手 9 条均已修复，详见 §0；`tsc`/`eslint`/`pnpm test`/`pnpm e2e` 的具体数字本任务书未给出，新会话接手前请自行跑一遍三项门禁 + `pnpm e2e`（新增 e2e 用例 15 条）确认绿。上一轮（UI 换壳，工作区未提交）：`tsc --noEmit` 绿、`eslint src` 绿、`pnpm test` 71 文件 / 681 通过、1 条 skip、`pnpm e2e` 12/12 通过。再上一提交 `9280c45`（YMan）门禁：`pnpm test` 681 通过（同一数字，无冲突）；Codex 跨厂商审查状态见 §0f「审查修复」小节。再上一提交 `73b88da`（阶段一止血）：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 63 文件 / 530 通过、1 条 skip；`pnpm e2e` 隔离模式 10/10 通过；Codex 审 diff 给出 BLOCK 四条，均已处理 |
 | 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新账号余额为 0，提交前需管理员用 `node scripts/grant-balance.mjs <邮箱> <金额> --note "..."` 充值（见下 §0d.一） |
 | 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。**本轮尚未部署**，服务器仍是可灵版 `bcad123`（§0c）；`scripts/deploy.sh` 已加回滚判定，`scripts/backup.sh` 待首次在服务器手动跑通并加入 cron。步骤见 §0a.4 |
 
@@ -51,7 +51,37 @@
 
 ---
 
-## 0. 本轮（2026-09-06 晚）：YMan 中转 provider · 按能力路由 · 积分耗尽自动切换
+## 0. 本轮（2026-09-06 夜）：阶段 A「面板补全 + 礼品码」
+
+方案 `docs/plan-frontend-backend-adaptation.md`（用户 2026-09-06 晚决策：模型用产品名不露供应商；首尾帧先接可灵 1080p；编辑 / 续写继续置灰；礼品码提前到阶段 A；智能体 / 画布单独立项）。目标：把 §0e 换壳后暴露出的「置灰」入口逐项变成能用——产品/模型选择、分辨率尊重用户、首尾帧、参考生视频多图、数量、素材复用、礼品码自助充值、积分流水。**工作区未提交改动，叠加在 §0e 之上**（两轮都未提交，无法分别单独回滚）。
+
+### 已实现
+
+- **产品目录** `src/lib/products/catalog.ts`：七档内置产品——视频「快速」（YMan `minimax-H3 文字`/`minimax-h3-933-图文`，720p，参考图 ≤9）、「标准」（可灵 `kling-2.6`，720p/1080p，无声，支持首尾帧）、「高清有声」（可灵 1080p，`native` 音轨）、「Grok」（1–15 秒、七画幅、有声）；图片「快速」（YMan `gpt-image-2`）、「标准」（openai）、「Grok」。`LUMEN_PRODUCTS`（JSON 数组）可按 id 覆盖或追加，坏 JSON / 缺字段回落内置表并记 warn。`availableProducts()` 只列「provider 有 key、该通道未被 `exhaustion.ts` 判定耗尽、且（可灵有声档）实例确实开了 `KLING_VIDEO_AUDIO=native`」的产品；mock 实例返回全部。`GET /api/models` 只回产品字段的白名单（不含 `provider`/上游模型名），带 `samplePriceCny`（视频按 5 秒 + 默认档估、图片按 1K）。
+- **`model` 请求字段**：`createJobBodySchema` 新增可选 `model`（产品 id，≤64 字符）。指定时由产品决定 provider / 上游模型名，并按产品的 mode / 画幅 / 分辨率 / 时长上限 / 首尾帧 / 参考图上限做 400 校验；未指定时沿用原有 ORDER + 能力路由，选中的 provider 反查第一个匹配产品打标签。`JobRecord`/`JobPublic` 新增 `product`/`productName`，前端只显示 `productName`，不显示 provider 名或上游模型名。
+- **分辨率尊重用户**：`resolveKlingSettings`/`resolveYmanSettings` 改为取请求分辨率（480p 向上归一 720p），可灵有声档仍强制 1080p（上游硬约束）；路由按 `capabilities().resolutions` 过滤 provider，`videoResolutions()` 下发并集给前端；`KLING_VIDEO_RESOLUTION`/`KLING_VIDEO_AUDIO` 降级为「用户未选时」的产品默认档。
+- **首尾帧接可灵**：`ProviderGenerateRequest.lastImage` 新字段；可灵 i2v 发 `last_frame` 并强制 1080p（写回分辨率与定价）；grok 的「尾帧永不进请求体」约束改为 provider 专属——grok `validate` 直接拒绝带尾帧的请求，`toProviderReq` 对不支持尾帧的 provider 不填该字段（golden test 按 provider 分开断言）；`lastUploadId` 仍只允许 `image_to_video`；mock provider 也声明支持尾帧（保 e2e 可测）。真实冒烟（2026-09-06 晚）：可灵首尾帧 1080p 5 秒成功，上游 2.5 积分，售 ¥3。
+- **参考生视频多图**：`createJobBodySchema` 的 `referenceUploadIds` 上限从 grok 的硬编码 7 抬到 schema 层 9（各 provider 在自己的 `validate` 里再收紧：grok 7、yman 9、可灵 0/不支持该模式），grok 专属校验从通用校验里拆成独立的 `grok.validate`。真实冒烟：YMan `minimax-h3-933-图文` 两张参考图成功，售 ¥2。
+- **礼品码**：`src/lib/users/gift-codes.ts` 复用邀请码同款机制（同一套 60 bit 码型、同一把 `withUserLock`）落盘 `data/gift-codes/<code>.json`；`scripts/mint-gift-codes.mjs <数量> <金额> [--note]` 管理员 CLI 打印码到标准输出；`POST /api/me/redeem { code }` → `{ amountCny, balance }`，409 已用 / 404 无效或格式不对（同一答案，防码空间探测）/ 429（IP 与用户各一个桶，5 次/分钟，比登录的 10 次更紧）。认领（写 `usedBy`）与入账（`applyBalanceChangeLocked`）在同一个 `withUserLock` 临界区内分两步完成，`creditedAt` 是「认领了但还没入账」与「入账幂等补记」之间的判据——同一用户重复兑同一张码会走「跳过认领、直接入账」分支，但 `applyBalanceChangeLocked` 按 `giftCode` 去重不会真的入两次账。备份脚本白名单已含 `gift-codes/`（详见 §5 数据落盘）。
+- **积分明细** `GET /api/me/ledger?before=&limit=&kind=`：读 `data/ledger/<userId>.jsonl` 倒序游标分页，`limit` 上限 200，`kind` 可筛 `grant`/`charge`/`adjust`，坏行跳过不报错。订阅页「积分使用详情」拉全量、「账单记录」传 `kind=grant`。
+- **素材复用** `POST /api/uploads/from-job { jobId, role }`：把调用者自己一条 `succeeded` 且未被留存清理（`artifactsPurgedAt` 为空）的图片任务产物，读盘复制成一次新上传（`storeUploadFromBuffer`，走 `preprocessImage` 同一条压缩路径），返回 `uploadId` 供当前槽位（首帧/尾帧/参考）直接引用；别人的任务、不存在的任务、非图片任务、已清理的任务分别给 404/400，不泄漏「id 是否存在」以外的情报。
+- **前端**：`ModelPop.tsx` 模型下拉（产品名 + ⚡样例价 + 一行描述，供应商名与上游模型名只作 `data-product-id`，不进任何可见文案）；`SpecsPop.tsx` 三块规格卡的选项全部来自当前产品能力（`/api/models`），拿不到产品时回落服务端下发的枚举；首尾帧模式不显示宽高比卡（成片比例跟着两张帧走）。`AssetPicker.tsx` 弹窗现在服务于「当前槽位」（`openPicker(target)` 设定标题为「选择首帧/尾帧/参考图」），「已上传」走对应槽位的 `input[type=file]`（`Dock.tsx` 现持有三个独立 ref：start/last/reference），「已创建」页签点选后调 `POST /api/uploads/from-job` 认领成上传，不再是「仅展示不可选」。数量 1–4（循环创建 N 条任务，N 个幂等 key）。订阅页新增兑换礼品码输入框与流水抽屉（`SubscriptionView.tsx`），四档订阅卡仍是占位。
+
+### 审查
+
+Codex 额度受限，改由 code-reviewer 子智能体审查本轮 diff，13 条 findings：必修 3 条已修——① mock provider 补声明支持尾帧（否则 mock 模式测不了首尾帧路径）；② 产品可用性判定尊重 `VIDEO_PROVIDER_ORDER`/`IMAGE_PROVIDER_ORDER`（不能因为产品目录写了某 provider 就当它一定在路由里）；③ 产品的上游模型名改为可选，缺省回落各 provider 自己的 env 模型（不强制每个产品都显式写模型名）。顺手 9 条已由并行 coder 处理（具体条目未在任务书中列出，新会话如需细节请找该轮 code-reviewer 记录或重新审一次 diff）。
+
+### 已知未做
+
+- `.specs-pop` 在 375px 宽的手机视口下被裁切——§0e 换壳时的遗留问题，本轮未处理。
+- 积分流水抽屉里礼品码兑换的 `note` 直接显示码原文（`礼品码 <code>`），未脱敏。
+- 数量 1–4 是**串行**创建 N 条任务（非并发批量提交），提交耗时随 N 线性增加。
+- `docs/plan-frontend-backend-adaptation.md` §3 阶段 B/C 未动：作品分页 / 标签 / 删除 / 分享、任务完成通知、模板、动作模仿、图生图、语音合成、配置面板（负向提示词/seed）、创作搭子（LLM 润色）均保持占位或缺失；编辑（`edit_video`）/ 续写（`extend_video`）继续置灰（生产无 grok key）；智能体 / 画布按用户决策单独立项，本轮不动。
+- 本轮未提交、未部署，且叠加在同样未提交的 §0e UI 换壳改动之上；新会话核对门禁前先确认两轮改动都还在工作区。
+
+---
+
+## 0f. 此前一轮（2026-09-06 晚，已合入本轮基线）：YMan 中转 provider · 按能力路由 · 积分耗尽自动切换
 
 > **审查修复（`ba6cd2d`，2026-09-06 17:50）**：Codex 额度受限，改由 code-reviewer 子智能体审 `9280c45`，10 条 findings 中 8 条已修：换家后售价只降不升、时长档变长且更贵则不换家；耗尽后兜底不落 mock（该类任务配了真 key 却无人可用 → 503 `no_provider_available`；纯生图实例请求视频仍 mock）；openai-image 通道 402 / 429 insufficient_quota 归一 `quota_exhausted`（图片切换真正可达）；文生图画幅恒七种、视频画幅 / 时长芯片跳过耗尽 provider；`markExhausted` 加锁；下载头按 provider 绑定；默认 `VIDEO_PROVIDER_ORDER` 改回 `grok`（生产已显式写 `kling,yman,grok`，不受影响）。未修（记录）：时长芯片按第一顺位 provider 下发，画幅改派后可能被归一（与「不静默改写」原则相悖，待 UI 重构一并解决）；`IMAGE_PROVIDER_ORDER` 收窄时 grok 仍是图片隐式最后一档。新增 `exhaustion / failover / 图片 402 / 路由 503` 测试，`pnpm test` 681 通过。**同一工作区另有会话在做 UI 重构（`src/app/(shell)/`、`src/components/genius/`），本提交只含 provider 路径；`pnpm e2e` 因旧 spec 被删未跑。**
 

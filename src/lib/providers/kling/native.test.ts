@@ -33,10 +33,12 @@ describe("klingProvider.capabilities", () => {
     expect(klingProvider.capabilities()).toEqual({
       modes: ["text_to_video", "image_to_video"],
       maxDurationSec: 10,
-      supportsLastFrameLock: false,
+      supportsLastFrameLock: true,
       maxResolution: "1080p",
       aspectRatios: ["16:9", "9:16", "1:1"],
       durations: [5, 10],
+      resolutions: ["720p", "1080p"],
+      maxReferenceImages: 0,
     });
   });
 });

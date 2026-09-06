@@ -56,13 +56,28 @@ export const jobPublicSchema = z.object({
   mode: nativeModeSchema,
   model: z.string(),
   provider: z.enum(["grok", "mock", "jimeng", "openai", "kling", "yman"]),
+  /**
+   * 产品 id（`src/lib/products/catalog.ts`）。用户选的那一档，也是界面该显示的东西——
+   * `model` 是上游模型名（`kling-2.6`），不该出现在界面上，供应商名更不该。
+   * 旧记录没有这两个字段，所以是可选的；没有产品时界面回落显示模式名。
+   */
+  product: z.string().optional(),
+  productName: z.string().optional(),
   prompt: z.string(),
   durationSec: z.number(),
   aspectRatio: aspectRatioSchema.nullable(),
   resolution: resolutionSchema.nullable(),
   generateAudio: z.boolean(),
   lastFrameStored: z.boolean(),
-  lastFrameLocksOutput: z.literal(false),
+  /**
+   * 尾帧是否真的锁住了成片的最后一帧。
+   *
+   * 曾经是字面量 `false`（那时唯一的上游是 grok，尾帧只落盘、永不进请求体）。可灵这条
+   * 通道会把 `last_frame` 真的发上去，此时说 false 就是在骗人——用户按「首尾帧」那一档
+   * 被计了价，界面却告诉他没锁。判据是「provider 声明 `supportsLastFrameLock` 且这次
+   * 真的带了尾帧」，见 `jobs/create.ts`。
+   */
+  lastFrameLocksOutput: z.boolean(),
   harness: z.object({ enabled: z.boolean() }),
   /**
    * 对用户的售价，人民币元（方案 §3.2）。提交时按归一后的参数定一次，之后永不改写——
@@ -148,6 +163,15 @@ export const uploadIdSchema = z.string().regex(UPLOAD_ID_RE);
 
 export const createJobBodySchema = z.object({
   mode: nativeModeSchema,
+  /**
+   * 产品 id（`video-standard` 之类），**不是**上游模型名。缺省时由服务端按 ORDER 能力
+   * 路由决定，并把选中的产品写进记录。认不出、当前不可用、或不支持这次的
+   * mode / 画幅 / 分辨率时一律 400——一个提交就会被拒的选项不该被静默换掉。
+   *
+   * `.max(64)`：产品 id 是我们自己发的短标识，长度上限挡住「拿这个字段当垃圾桶」的请求，
+   * 与 `prompt` 的 2000 同一个理由（它会被原样带进错误信息与日志）。
+   */
+  model: z.string().max(64).optional(),
   prompt: z.string().max(2000).default(""),
   durationSec: z.number().optional(),
   aspectRatio: aspectRatioSchema.optional(),
@@ -156,7 +180,9 @@ export const createJobBodySchema = z.object({
   imageResolution: imageResolutionSchema.optional(),
   startUploadId: uploadIdSchema.optional(),
   lastUploadId: uploadIdSchema.optional(),
-  referenceUploadIds: z.array(uploadIdSchema).max(7).optional(),
+  // 上限放宽到 9（YMan 的参考生视频收 9 张）；精确上限由选中的 provider / 产品在
+  // `create.ts` 里按 `capabilities().maxReferenceImages` 判定，grok 仍是 7。
+  referenceUploadIds: z.array(uploadIdSchema).max(9).optional(),
   voiceIds: z.array(z.string()).max(3).optional(),
   sourceVideoUploadId: uploadIdSchema.optional(),
   idempotencyKey: z.string().optional(),

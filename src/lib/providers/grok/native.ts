@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { ticksToUsd } from "@/lib/cost";
 import { grokGet, grokPost } from "@/lib/providers/grok/client";
 import { isImageMode } from "@/lib/providers/grok/mode-matrix";
-import { mapPoll, mapToGrokRest } from "@/lib/providers/grok/rest-map";
+import { assertModeConstraints, mapPoll, mapToGrokRest } from "@/lib/providers/grok/rest-map";
 import type {
   MediaRef,
   ProviderGenerateRequest,
@@ -29,8 +29,13 @@ export const grokNativeProvider: VideoProvider = {
       // 七种画幅全收（`mode-matrix` 的 ASPECT_RATIOS 是同一份事实）；能力最全，
       // 所以它也是路由的最后兜底。durations 故意不写：秒数是连续的，不是档位。
       aspectRatios: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"],
+      // 三档全出得了；resolutions 与 maxResolution 同义，写出来是为了让路由不必分两套判据。
+      resolutions: ["480p", "720p", "1080p"],
+      maxReferenceImages: 7,
     };
   },
+  /** xAI 自己的请求约束（参考图 7 张、源视频必须 file_id、尾帧一律拒绝）。 */
+  validate: assertModeConstraints,
   async submit(req: ProviderGenerateRequest): Promise<ProviderHandle> {
     const hydrated = await hydratePaths(req);
     const call = mapToGrokRest(hydrated);

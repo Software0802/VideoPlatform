@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { serverDataDir } from "./invites";
 
@@ -123,6 +125,58 @@ async function waitTerminal(task: Locator) {
   await expect(task).toHaveAttribute("data-state", /^(done|failed)$/, { timeout: 150_000 });
 }
 
+/**
+ * 阶段 A：面板的可选项来自 `GET /api/models`（产品目录），不再是一组写死的枚举。
+ * 用例读同一个接口来决定「该点哪个产品、该出现哪些芯片」——把断言钉在服务端事实上，
+ * 而不是把 `docs/plan-ui-genius-app.md` 里的默认目录抄进测试。
+ *
+ * 返回体是**白名单**（`src/app/api/models/route.ts`）：`provider` 与上游 `model` 根本不
+ * 出网，界面上只允许出现 `name`——「不露供应商」是用户 2026-09-06 的决定，下面有专门的
+ * 用例守着接口与下拉两侧。
+ */
+type ApiProduct = {
+  id: string;
+  name: string;
+  kind: "video" | "image";
+  modes: string[];
+  resolutions: string[];
+  aspectRatios: string[];
+  durations?: number[];
+  audio: "off" | "native" | "uncontrolled";
+  supportsLastFrame: boolean;
+  maxReferenceImages: number;
+  imageResolutions?: string[];
+  samplePriceCny: number;
+};
+
+async function apiProducts(page: Page): Promise<ApiProduct[]> {
+  const res = await page.request.get("/api/models");
+  expect(res.ok(), "GET /api/models 应可读").toBeTruthy();
+  const list = ((await res.json()) as { products: ApiProduct[] }).products;
+  expect(list.length, "mock 实例应至少有一个可用产品").toBeGreaterThan(0);
+  return list;
+}
+
+/**
+ * 时长连续的那一档（`durations` 省略 = 1–15 秒都收）。30 / 45 / 60 秒长片只有它接得下，
+ * 画幅 / 分辨率也最全，所以「随便选个参数提交」的用例都先切到它。
+ */
+function flexibleVideo(list: ApiProduct[]): ApiProduct {
+  const hit = list.find((p) => p.kind === "video" && !p.durations);
+  expect(hit, "应有一个时长连续的视频产品（长片与自由档位用例依赖它）").toBeTruthy();
+  return hit!;
+}
+
+/** 打开模型下拉，选中一个产品，等芯片文案换过来。 */
+async function pickProduct(page: Page, product: ApiProduct) {
+  await page.locator(".composer__model").click();
+  const item = page.locator(`.model-pop button[data-product-id="${product.id}"]`);
+  await expect(item).toBeVisible();
+  await item.click();
+  await expect(page.locator(".model-pop")).toBeHidden();
+  await expect(page.locator(".composer__model")).toContainText(product.name);
+}
+
 // ---------------------------------------------------------------------------
 
 test("空态：壳水合、侧栏五项、顶栏标题与积分、收起态输入条、瀑布流空态", async ({ page }) => {
@@ -161,10 +215,14 @@ test("空态：壳水合、侧栏五项、顶栏标题与积分、收起态输�
 });
 
 test("文生视频：规格弹层选参数 → 创作 → 跳转 /create → 成片可见 → 按估价扣积分", async ({ page }) => {
+  const flexible = flexibleVideo(await apiProducts(page));
   await ensureComposerOpen(page);
   await expect(composer(page).getByRole("tab", { name: "视频" })).toHaveAttribute("aria-selected", "true");
   await expect(composer(page).getByRole("radio", { name: "图文" })).toHaveAttribute("aria-checked", "true");
 
+  // 阶段 A：芯片按**选中产品**的能力收窄。默认产品的时长是按档计费的枚举（没有 8s、
+  // 也没有音轨开关），所以先切到时长连续、自带音轨的那一档再选参数。
+  await pickProduct(page, flexible);
   await setSpecs(page, { res: "720p", ratio: "9:16", dur: 8 });
   const specs = page.locator(".composer__specs");
   await expect(specs).toContainText("720P");
@@ -202,9 +260,9 @@ test("文生视频：规格弹层选参数 → 创作 → 跳转 /create → 成
     aspectRatio: "9:16",
     resolution: "720p",
     generateAudio: true,
+    // 阶段 A：请求体的 `model` 是**产品 id**（不是上游模型名），由模型下拉选出。
+    model: flexible.id,
   });
-  // AGENTS.md 硬约束：createJobBodySchema 是 .strict()，没有 model 字段，模型由服务端按 mode 决定。
-  expect(body).not.toHaveProperty("model");
 
   const jobId = ((await res.json()) as { id: string }).id;
   await expect(page).toHaveURL(/\/create$/);
@@ -265,7 +323,7 @@ test("[fail] 标记：失败态不扣款 → 重新生成换新任务 → 取消
   // task 容器做包含性文本检查，而不是猜一个 .task__err 之类的选择器。
   await expect(task1).toContainText("模拟失败");
   // 失败不扣钱（AGENTS.md：失败/取消/过期不扣钱，预留随终态消失）。
-  expect(await creditsNow(page)).toBe(creditsBeforeFail);
+  await expect.poll(() => creditsNow(page), { timeout: 10_000 }).toBe(creditsBeforeFail);
 
   const retryBtn1 = task1.getByRole("button", { name: "重新生成" });
   await expect(retryBtn1).toBeVisible();
@@ -279,7 +337,7 @@ test("[fail] 标记：失败态不扣款 → 重新生成换新任务 → 取消
   await expect(task2).toHaveAttribute("data-state", "failed");
   // 重试复制了同一条 [fail] 提示词，所以还是同样的失败，「重新生成」按钮还在（可以无限重试）。
   await expect(task2.getByRole("button", { name: "重新生成" })).toBeVisible();
-  expect(await creditsNow(page)).toBe(creditsBeforeFail);
+  await expect.poll(() => creditsNow(page), { timeout: 10_000 }).toBe(creditsBeforeFail);
 
   // 提交一条正常任务并取消：mock 出片要几秒，取消窗口是真实的（不是靠运气）。
   await ensureComposerOpen(page);
@@ -311,9 +369,70 @@ test("图生视频：上传首帧切换 data-mode，请求体带 startUploadId",
   const body = res.request().postDataJSON() as Record<string, unknown>;
   expect(body.mode).toBe("image_to_video");
   expect(body.startUploadId).toMatch(/^up_[0-9a-f]{16}$/);
-  expect(body).not.toHaveProperty("model");
+  // 没手动切模型时也要带上默认选中的产品 id（阶段 A：面板恒定报出它选的那一档）
+  expect(typeof body.model).toBe("string");
 
   const jobId = ((await res.json()) as { id: string }).id;
+  const task = taskById(page, jobId);
+  await waitTerminal(task);
+  await expect(task).toHaveAttribute("data-state", "done");
+  await expect(task.locator("video")).toBeVisible();
+});
+
+/**
+ * 首尾帧（阶段 A）：两槽都放图 → `image_to_video` + `lastUploadId`，分辨率被抬到 1080p。
+ *
+ * mock 实例上这条路径同样要通：mock 是所有 provider 的替身（`capabilities()` 声明
+ * `supportsLastFrameLock`），否则开发机与 CI 上首尾帧会是唯一一条走不通的路径。它的
+ * submit 拿到尾帧只是忽略——出的本来就是占位片。
+ *
+ * 1080p 不是面板自己挑的：带尾帧的图生视频上游只在 1080p 接受，服务端按抬完的档计价
+ * （AGENTS.md 后端约定），所以规格弹层只留这一档，请求体与落盘记录也必须是它。
+ */
+test("首尾帧：两槽上传 → image_to_video + lastUploadId，分辨率锁 1080p", async ({ page }) => {
+  const products = await apiProducts(page);
+  test.skip(
+    !products.some((p) => p.kind === "video" && p.supportsLastFrame),
+    "这台实例没有支持首尾帧的视频产品",
+  );
+
+  await ensureComposerOpen(page);
+  // 当前产品不支持首尾帧时面板会自动换到支持的那一档（ShellContext.pickMode）
+  await composer(page).getByRole("radio", { name: "首尾帧" }).click();
+  await expect(composer(page).getByRole("radio", { name: "首尾帧" })).toHaveAttribute("aria-checked", "true");
+
+  const uploads = page.waitForResponse((r) => r.url().endsWith("/api/uploads") && r.request().method() === "POST");
+  await page.getByLabel("上传图片").setInputFiles(START_FRAME);
+  expect((await uploads).ok()).toBeTruthy();
+  const lastUpload = page.waitForResponse((r) => r.url().endsWith("/api/uploads") && r.request().method() === "POST");
+  await page.getByLabel("上传尾帧图片").setInputFiles(START_FRAME);
+  expect((await lastUpload).ok()).toBeTruthy();
+
+  await expect(page.locator('.composer__slot[data-slot="start"]')).toHaveAttribute("data-state", "ready");
+  await expect(page.locator('.composer__slot[data-slot="last"]')).toHaveAttribute("data-state", "ready");
+  await expect(composer(page)).toHaveAttribute("data-mode", "image_to_video");
+  // 首尾帧只剩 1080p 一档（720p 会被上游抬上去、还按 1080p 收钱，留着就是骗人）
+  await expect(page.locator(".composer__specs")).toContainText("1080P");
+
+  await promptBox(page).fill("从第一帧过渡到最后一帧，镜头缓慢右移");
+  const created = page.waitForResponse((r) => r.url().endsWith("/api/jobs") && r.request().method() === "POST");
+  await sendButton(page).click();
+  const res = await created;
+  const body = res.request().postDataJSON() as Record<string, unknown>;
+  expect(body.mode).toBe("image_to_video");
+  expect(body.startUploadId).toMatch(/^up_[0-9a-f]{16}$/);
+  expect(body.lastUploadId).toMatch(/^up_[0-9a-f]{16}$/);
+  expect(body.lastUploadId).not.toBe(body.startUploadId);
+  expect(body.resolution).toBe("1080p");
+
+  const jobId = ((await res.json()) as { id: string }).id;
+  const record = (await (await page.request.get(`/api/jobs/${jobId}`)).json()) as {
+    resolution: string;
+    lastFrameStored: boolean;
+  };
+  expect(record.resolution).toBe("1080p");
+  expect(record.lastFrameStored).toBe(true);
+
   const task = taskById(page, jobId);
   await waitTerminal(task);
   await expect(task).toHaveAttribute("data-state", "done");
@@ -333,7 +452,7 @@ test("图片页：文生图产出静态图", async ({ page }) => {
   const res = await created;
   const body = res.request().postDataJSON() as Record<string, unknown>;
   expect(body.mode).toBe("text_to_image");
-  expect(body).not.toHaveProperty("model");
+  expect(typeof body.model).toBe("string");
 
   const jobId = ((await res.json()) as { id: string }).id;
   const task = taskById(page, jobId);
@@ -346,7 +465,11 @@ test("长片：30s 走一致性管线，分镜读数推进到成片", async ({ p
   const h = await health(page);
   test.skip(!h.harnessRunnable, "HARNESS_ENABLED 未开启");
 
+  const flexible = flexibleVideo(await apiProducts(page));
   await ensureComposerOpen(page);
+  // 30 / 45 / 60 只挂在时长连续的那条通道上：按档计费的产品选了会被服务端 400
+  // （product-choice.ts「所选模型不支持 30 / 45 / 60 秒长片」），面板也就不给这几个芯片。
+  await pickProduct(page, flexible);
   await setSpecs(page, { dur: 30 });
   await expect(page.locator(".composer__specs")).toContainText("30s");
 
@@ -574,6 +697,107 @@ test("五视图导航：标题与 aria-current 联动，画布不横向溢出", 
       expect(overflowing, "画布视图不应横向溢出").toBe(false);
     }
   }
+});
+
+test("模型下拉：列出产品、只露产品名、切换后规格芯片跟着收窄", async ({ page }) => {
+  const list = await apiProducts(page);
+  const videos = list.filter((p) => p.kind === "video");
+  test.skip(videos.length < 2, "这台实例只有一个视频产品，无从切换");
+
+  await ensureComposerOpen(page);
+  await page.locator(".composer__model").click();
+  const pop = page.locator(".model-pop");
+  await expect(pop).toBeVisible();
+  // 视频页只列视频产品（图片产品在图片页）
+  await expect(pop.locator("button[data-product-id]")).toHaveCount(videos.length);
+  for (const p of videos) await expect(pop.locator(`button[data-product-id="${p.id}"]`)).toContainText(p.name);
+
+  // 用户 2026-09-06 的决定：只显示产品名，不露供应商。第一道防线在接口——白名单挑
+  // 字段，`provider` 与上游 `model` 压根不下发，浏览器里没有可泄露的东西。
+  for (const p of list) {
+    expect(p, "GET /api/models 不该下发 provider").not.toHaveProperty("provider");
+    expect(p, "GET /api/models 不该下发上游 model").not.toHaveProperty("model");
+  }
+  // 第二道：下拉里也不该出现上游模型名。
+  const popText = (await pop.textContent()) ?? "";
+  for (const leak of ["kling-", "minimax", "gpt-image", "grok-imagine"]) {
+    expect(popText.toLowerCase(), `模型下拉泄露了上游模型名 ${leak}`).not.toContain(leak);
+  }
+  await page.locator(".composer__model").click();
+  await expect(pop).toBeHidden();
+
+  // 切换产品 → 分辨率 / 时长芯片按新产品的能力重列（阶段 A §1）
+  const withRes = videos.filter((p) => p.resolutions.length > 0);
+  const a = withRes[0];
+  const b = withRes.find((p) => p.resolutions.join() !== a.resolutions.join());
+  test.skip(!b, "所有视频产品的分辨率档位相同，切换看不出差别");
+
+  for (const product of [a, b!]) {
+    await pickProduct(page, product);
+    await withSpecsPop(page, async (specs) => {
+      await expect(specs.locator("button[data-res]")).toHaveCount(product.resolutions.length);
+      for (const r of product.resolutions) await expect(specs.locator(`button[data-res="${r}"]`)).toBeVisible();
+      await expect(specs.locator("button[data-ratio]")).toHaveCount(product.aspectRatios.length);
+      // 按档计费的产品：时长芯片就是它声明的那几档，没有别的（长片档也不会混进来）
+      if (product.durations) {
+        await expect(specs.locator("button[data-dur]")).toHaveCount(product.durations.length);
+        for (const d of product.durations) await expect(specs.locator(`button[data-dur="${d}"]`)).toBeVisible();
+      }
+    });
+    // 选中的档位必须落在新产品的能力里，否则提交必被 400
+    const specsText = (await page.locator(".composer__specs").textContent()) ?? "";
+    const [resLabel] = specsText.split("|").map((s) => s.trim());
+    expect(product.resolutions.map((r) => r.toUpperCase())).toContain(resLabel);
+  }
+});
+
+test("礼品码：兑换到账、重复兑换被拒、账单记录能看到这一笔", async ({ page }) => {
+  // 铸码没有 HTTP 入口（和邀请码一样是管理员动作），照 auth.setup.ts 的做法直接调 CLI，
+  // 顺带在每次 e2e 里验证这个脚本还能跑。stdout 每行一个码，统计信息走 stderr。
+  const dataDir = await serverDataDir();
+  const script = path.resolve(__dirname, "../scripts/mint-gift-codes.mjs");
+  const { stdout } = await promisify(execFile)(process.execPath, [script, "1", "20", "--note", "playwright e2e"], {
+    env: { ...process.env, DATA_DIR: dataDir },
+  });
+  const code = stdout.trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
+  expect(code, "mint-gift-codes.mjs 应在 stdout 打印一个礼品码").toMatch(/^[0-9A-Z]{12}$/);
+
+  await page.locator("nav").getByRole("link", { name: "订阅" }).click();
+  await expect(page).toHaveURL(/\/subscription$/);
+  const before = await creditsNow(page);
+
+  const openRedeem = async () => {
+    await page.getByRole("button", { name: "兑换礼品码" }).click();
+    const dialog = page.locator('.redeem[role="dialog"]');
+    await expect(dialog).toBeVisible();
+    return dialog;
+  };
+
+  const dialog = await openRedeem();
+  await dialog.getByLabel("礼品码", { exact: true }).fill(code);
+  await dialog.getByRole("button", { name: "兑换", exact: true }).click();
+  await expect(dialog).toBeHidden();
+
+  // ¥20 × 100 = 2000 积分（AGENTS.md 硬约束的换算口径）。顶栏读数来自重拉的 /api/me。
+  await expect(topCredits(page)).toHaveAttribute("aria-label", `积分 ${before + 2000}`, { timeout: 20_000 });
+
+  // 同一张码第二次：服务端 409 gift_code_used，弹窗留在原地并给出理由
+  const again = await openRedeem();
+  await again.getByLabel("礼品码", { exact: true }).fill(code);
+  await again.getByRole("button", { name: "兑换", exact: true }).click();
+  await expect(again.locator(".redeem__err")).toContainText("已被使用");
+  await again.getByRole("button", { name: "取消" }).click();
+  await expect(again).toBeHidden();
+
+  // 账单记录抽屉只看 kind=grant，这一笔应在最前
+  await page.getByRole("button", { name: "账单记录" }).click();
+  const ledger = page.locator('.ledger[role="dialog"]');
+  await expect(ledger).toBeVisible();
+  const first = ledger.locator(".ledger__item").first();
+  await expect(first).toHaveAttribute("data-kind", "grant");
+  await expect(first.locator(".ledger__amount")).toHaveText("+2000");
+  await ledger.getByRole("button", { name: "关闭" }).click();
+  await expect(ledger).toBeHidden();
 });
 
 test("手机端 375 宽：五个视图都不横向溢出", async ({ page }) => {

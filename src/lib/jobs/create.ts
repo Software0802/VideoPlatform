@@ -28,13 +28,14 @@ import { resolveLocalOutput } from "@/lib/jobs/local-output";
 import { purgedBlock, retryBlock } from "@/lib/jobs/retry-guard";
 import { readJob, tmpDir, toPublic, writeJob } from "@/lib/jobs/store";
 import { isHarnessDuration, isImageMode } from "@/lib/providers/grok/mode-matrix";
-import { assertModeConstraints } from "@/lib/providers/grok/rest-map";
 import { imageConfigFor } from "@/lib/providers/openai-image/config";
 import {
   mapAspectToSize as mapOpenaiImageSize,
   mapQuality as mapOpenaiImageQuality,
 } from "@/lib/providers/openai-image/rest-map";
-import { currentProviderId } from "@/lib/providers/router";
+import { providerForId } from "@/lib/providers/router";
+import { isProductAvailable, productById } from "@/lib/products/catalog";
+import { chooseProduct, labelProduct } from "@/lib/jobs/product-choice";
 import { mediaStore } from "@/lib/storage/local-fs";
 
 /**
@@ -106,15 +107,52 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     }
   }
 
-  // 画幅一起交给路由：接不下这个画幅的 provider 不该被选中（选中了只会把竖屏悄悄
-  // 换成横屏，或者被上游 400）。没有一家接得下时 `currentProviderId` 自己抛 400。
-  const provider = currentProviderId(mode, { harness, aspectRatio: body.aspectRatio });
-  const model = modelForProvider(provider, mode);
+  // 画幅、分辨率、尾帧一起交给路由 / 产品校验：接不下的 provider 不该被选中（选中了
+  // 只会把竖屏悄悄换成横屏、把 1080p 降成 720p，或者被上游 400）。没有一家接得下时
+  // `chooseProduct` 自己抛 400。用户点名了产品（`body.model` 是产品 id）时绕过 ORDER。
+  const choice = chooseProduct({
+    mode,
+    requestedId: body.model,
+    harness,
+    aspectRatio: body.aspectRatio,
+    resolution: body.resolution,
+    imageResolution: image ? (body.imageResolution ?? "1k") : undefined,
+    needsLastFrame: Boolean(last),
+    referenceCount: refs.length,
+    durationSec,
+  });
+  const provider = choice.provider;
+  const model = modelForProvider(provider, mode, choice.product);
+  const product = labelProduct(choice, mode, model);
+  const providerImpl = providerForId(provider);
+  const caps = providerImpl.capabilities();
+  // 尾帧只有声明 `supportsLastFrameLock` 的 provider 发得出去（当前只有可灵，且强制 1080p）。
+  // 路由已经按这条挑过人，这里兜住「用户点名了一个发不了的产品」与 mock 之外的漏网。
+  if (last && !caps.supportsLastFrameLock) {
+    throw new ProviderHttpError(400, "invalid_argument", "当前模型不支持首尾帧");
+  }
+  if (caps.maxReferenceImages != null && refs.length > caps.maxReferenceImages) {
+    throw new ProviderHttpError(
+      400,
+      "invalid_argument",
+      caps.maxReferenceImages > 0
+        ? `所选模型最多支持 ${caps.maxReferenceImages} 张参考图`
+        : "所选模型不支持参考图",
+    );
+  }
   // 每家上游各有各的枚举（可灵只收 5 / 10 秒；YMan 按模型有 5/10/15 或 10/15 的档）。
   // 归一后的值要写回记录：4 秒的请求上游按 5 秒计费，账目与详情卡都得是「会被计费的
-  // 那个值」（方案 §4）。
-  const settings = providerSettingsFor(provider, mode, durationSec, body, model);
-  assertModeConstraints({
+  // 那个值」（方案 §4）。带尾帧时可灵会把分辨率抬到 1080p，售价也按抬完的档算。
+  const settings = providerSettingsFor(provider, mode, durationSec, body, model, {
+    // 只有用户**点名**的产品才参与归一（`choice.product`）。没点名时 `product` 只是按
+    // provider 打上的标签，让它去决定默认分辨率 / 音轨，等于让一张产品表悄悄推翻
+    // `KLING_VIDEO_AUDIO` 这类实例配置——那不是用户的选择，也不该改变他被收的钱。
+    product: choice.product,
+    hasLastFrame: Boolean(last),
+  });
+  // provider 自己的约束（grok 的参考图 7 张、源视频必须 file_id、尾帧一律拒绝）。
+  // 通用的请求体校验在上面的 `assertCreateJobFields`，与 provider 无关。
+  providerImpl.validate?.({
     jobId: "preview",
     mode,
     prompt: body.prompt,
@@ -174,6 +212,8 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     mode,
     model,
     provider,
+    product: product?.id,
+    productName: product?.name,
     prompt: body.prompt,
     durationSec: dur,
     aspectRatio:
@@ -184,7 +224,10 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     imageResolution,
     generateAudio,
     lastFrameStored: Boolean(last),
-    lastFrameLocksOutput: false,
+    // 真的把尾帧发给了上游、成片最后一帧真会是它，才算「锁住尾帧」：当前只有可灵这条
+    // 通道会发（其余 provider 只落盘，grok 的 rest-map 甚至会拒绝带尾帧的请求体），
+    // mock 更是只出一段占位片。记成 true 却没锁，就是按锁了收钱。
+    lastFrameLocksOutput: provider === "kling" && Boolean(last),
     harness: { enabled: harness },
     priceCny: priceCny({ mode, durationSec: dur, resolution, generateAudio, imageResolution }),
     costUsdEstimate: harness
@@ -270,21 +313,47 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
   // Re-resolving both together keeps a retry from pairing a stale model name with a provider
   // the current environment would now pick (e.g. an OpenAI key added since the first attempt).
   const harness = Boolean(source.harness?.enabled);
-  // 画幅同样参与路由：重试不该把源任务的竖屏悄悄换成另一家的默认横屏。没有一家接得下
-  // 时抛 400——这条路径上它的意思是「这个画幅现在没人做了」，比出一个别的画幅诚实。
-  const provider = currentProviderId(source.mode, {
+  // 画幅、分辨率、尾帧同样参与路由：重试不该把源任务的竖屏悄悄换成另一家的默认横屏，
+  // 也不该把 1080p 降成 720p。没有一家接得下时抛 400——这条路径上它的意思是「这个
+  // 组合现在没人做了」，比出一个别的东西诚实。
+  //
+  // 产品沿用源任务：用户当初点的是「标准」，重试出来的也该是「标准」。那个产品现在
+  // 不可用（下架、耗尽、换了配置）时 `chooseProduct` 会 400，所以先自己判一次可用性，
+  // 不可用就退回默认路由——重试本来就是一次全新的下单，回落比整个拒绝有用。
+  // 长片不带产品重新下单：它恒定留在 xAI 的一致性管线，源任务上的标签（可能是 mock
+  // 实例随手打的）不该让重试卡在「所选模型不支持长片」上。
+  const sourceProduct = harness ? undefined : productById(source.product);
+  const keepProduct = sourceProduct && isProductAvailable(sourceProduct) ? sourceProduct : undefined;
+  const choice = chooseProduct({
+    mode: source.mode,
+    requestedId: keepProduct?.id,
     harness,
     aspectRatio: source.aspectRatio ?? undefined,
+    resolution: source.resolution ?? undefined,
+    imageResolution: source.imageResolution ?? undefined,
+    needsLastFrame: Boolean(source.assets.last),
+    referenceCount: source.assets.references?.length ?? 0,
+    durationSec: source.durationSec,
   });
-  const model = modelForProvider(provider, source.mode);
+  const provider = choice.provider;
+  const model = modelForProvider(provider, source.mode, choice.product);
+  const product = labelProduct(choice, source.mode, model);
   // 源任务可能是 grok 时代的 6 秒片：换了 provider 后同样要归一，否则重试会照着一个上游
   // 根本不收的时长下单，账目也还是旧 provider 的估价。
-  const settings = providerSettingsFor(provider, source.mode, source.durationSec, {
-    prompt: source.prompt,
-    aspectRatio: source.aspectRatio ?? undefined,
-    resolution: source.resolution ?? undefined,
-    generateAudio: source.generateAudio,
-  }, model);
+  const settings = providerSettingsFor(
+    provider,
+    source.mode,
+    source.durationSec,
+    {
+      prompt: source.prompt,
+      aspectRatio: source.aspectRatio ?? undefined,
+      resolution: source.resolution ?? undefined,
+      generateAudio: source.generateAudio,
+    },
+    model,
+    // 同 `createJob`：只有当初被点名、这次仍沿用的那个产品参与归一。
+    { product: choice.product, hasLastFrame: Boolean(source.assets.last) },
+  );
   // 重试是一次全新的、要计费的上游请求，所以按**当下**的参数重新定价，而不是抄源任务的
   // `priceCny`：源任务可能是换 provider 之前的 6 秒片，归一后时长档都变了。
   const durationSec = settings?.durationSec ?? source.durationSec;
@@ -300,6 +369,8 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     mode: source.mode,
     model,
     provider,
+    product: product?.id,
+    productName: product?.name,
     prompt: source.prompt,
     durationSec,
     aspectRatio: settings?.ratio ?? source.aspectRatio,
@@ -307,7 +378,8 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     imageResolution,
     generateAudio,
     lastFrameStored: source.lastFrameStored,
-    lastFrameLocksOutput: false,
+    // 同 `createJob`：重试可能换了 provider，锁没锁尾帧要按**这次**的落点算。
+    lastFrameLocksOutput: provider === "kling" && Boolean(source.assets.last),
     harness: { enabled: harness },
     priceCny: priceCny({ mode: source.mode, durationSec, resolution, generateAudio, imageResolution }),
     costUsdEstimate: settings

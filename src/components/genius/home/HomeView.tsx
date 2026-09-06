@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { formatCny } from "@/lib/billing/prices";
+import { productNameOf } from "@/lib/client/models";
 import { IconClose, IconStar } from "@/components/genius/icons";
 import { SOON, creditsOf, useShell } from "@/components/genius/ShellContext";
 
@@ -63,9 +64,14 @@ function workOf(j: JobPublic): Work | null {
   const purged = Boolean(j.artifactsPurgedAt);
   const out = j.output;
   const image = out.kind === "image";
-  const parts = image
-    ? [(j.imageResolution ?? "1k").toUpperCase(), j.aspectRatio ?? "16:9"]
-    : [`${j.durationSec}s`, j.aspectRatio ?? "16:9", j.resolution ?? "720p", j.generateAudio ? "有声" : "无声"];
+  // 产品名排在最前（`/api/models` 的对外命名）；老任务没有这个字段就还是原来那行
+  const product = productNameOf(j);
+  const parts = [
+    ...(product ? [product] : []),
+    ...(image
+      ? [(j.imageResolution ?? "1k").toUpperCase(), j.aspectRatio ?? "16:9"]
+      : [`${j.durationSec}s`, j.aspectRatio ?? "16:9", j.resolution ?? "720p", j.generateAudio ? "有声" : "无声"]),
+  ];
   if (j.priceCny > 0) parts.push(`${formatCny(j.priceCny)} · ⚡${creditsOf(j.priceCny)}`);
   return {
     key: j.id,

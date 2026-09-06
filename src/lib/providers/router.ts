@@ -9,6 +9,7 @@ import {
   videoProviderOrder,
 } from "@/lib/env";
 import { isExhausted, type ExhaustionKind } from "@/lib/providers/exhaustion";
+import { RESOLUTION_TIERS, resolutionRank, servesResolution } from "@/lib/providers/resolution";
 import { grokNativeProvider } from "@/lib/providers/grok/native";
 import { ASPECT_RATIOS, isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
 import { klingProvider } from "@/lib/providers/kling/native";
@@ -22,6 +23,7 @@ import type {
   NativeMode,
   ProviderGenerateRequest,
   ProviderId,
+  Resolution,
   VideoProvider,
 } from "@/lib/providers/types";
 
@@ -54,7 +56,34 @@ function servesRatio(provider: VideoProvider, aspectRatio?: AspectRatio): boolea
   return !ratios || ratios.includes(aspectRatio);
 }
 
+/**
+ * 这个 provider 出不出得了这个分辨率。没声明 `resolutions` = 按 `maxResolution` 判断
+ * （xAI / mock 都是 1080p，也就是全收）。
+ *
+ * 只挡「不够高」，不挡「更高」：480p 的请求交给只有 720p 的一家是向上归一，用户拿到的
+ * 只多不少；1080p 的请求交给只有 720p 的一家则是悄悄降档，那正是这次要杜绝的事。
+ */
+function servesResolutionCap(provider: VideoProvider, resolution?: Resolution): boolean {
+  if (!resolution) return true;
+  const caps = provider.capabilities();
+  return servesResolution(resolution, caps.resolutions ?? [caps.maxResolution]);
+}
+
+/** 尾帧只有声明 `supportsLastFrameLock` 的 provider 发得出去（当前只有可灵）。 */
+function servesLastFrame(provider: VideoProvider, needsLastFrame?: boolean): boolean {
+  return !needsLastFrame || provider.capabilities().supportsLastFrameLock;
+}
+
+/** 视频路由的硬条件。三条都是「用户点的东西」，一条都不能靠静默改写来满足。 */
+export type VideoRouteConstraints = {
+  aspectRatio?: AspectRatio;
+  resolution?: Resolution;
+  needsLastFrame?: boolean;
+};
+
 const NO_PROVIDER_FOR_RATIO = "当前画幅暂无可用的生成服务";
+const NO_PROVIDER_FOR_RESOLUTION = "当前分辨率暂无可用的生成服务";
+const NO_PROVIDER_FOR_LAST_FRAME = "当前模型不支持首尾帧";
 const NO_PROVIDER_AVAILABLE = "所有生成服务暂时不可用，请稍后再试";
 
 /** 这台实例有没有配任何一把真实上游 key。只要有一把，mock 就不再是合法的落点。 */
@@ -96,25 +125,55 @@ function fallbackProvider(kind: ExhaustionKind): VideoProvider {
  * 时长不参与筛选：秒数允许向上归一（4→5，上游按档计费，多给不少给）。画幅参与，
  * 因为竖屏换横屏不是归一，是交付了另一个东西。
  *
+ * 分辨率与尾帧同样是硬条件（2026-09-06 起）：请求 1080p 的任务不会被派给只出 720p 的
+ * provider，带尾帧的任务只会落到声明 `supportsLastFrameLock` 的那家。方向仍是单向的——
+ * 480p 交给 720p 的一家是向上归一，允许；反过来是降档，不允许。
+ *
  * 一个都没选中时分两种：
  *  - 这个**模式**没人接（r2v / edit / extend）：照旧回落 grok（能力最全），没 key 才 mock。
- *  - 模式接得了、**画幅**接不了：返回 null，由调用方 400。回落等于替用户把画幅换成
- *    另一家的默认值，而这正是这次要杜绝的静默改写。
+ *  - 模式接得了、**画幅 / 分辨率 / 尾帧**接不了：返回 `{ blocked }`，由调用方 400。回落
+ *    等于替用户把他点的东西换成另一家的默认值，而这正是这次要杜绝的静默改写。
  */
-function pickVideoProvider(mode: NativeMode, aspectRatio?: AspectRatio): VideoProvider | null {
-  let ratioBlocked = false;
+/**
+ * 选中的 provider，或「没人接得下」时那句该告诉用户的话。
+ * 用结果对象而不是 null，是因为「画幅没人接」「分辨率没人接」「没人发得了尾帧」
+ * 是三件不同的事，用户要改的东西也不一样。
+ */
+type VideoRoute = { provider: VideoProvider } | { blocked: string };
+
+function pickVideoProvider(mode: NativeMode, constraints?: VideoRouteConstraints): VideoRoute {
+  let blocked: string | null = null;
   for (const id of videoProviderOrder()) {
     if (!hasProviderKey(id) || isExhausted(id, "video")) continue;
     const provider = providerForId(id);
     if (!provider.capabilities().modes.includes(mode)) continue;
-    if (!servesRatio(provider, aspectRatio)) {
-      ratioBlocked = true;
+    // 记下**第一个**被挡住的理由：错误信息要指向用户真正该改的那一项。
+    if (!servesRatio(provider, constraints?.aspectRatio)) {
+      blocked ??= NO_PROVIDER_FOR_RATIO;
       continue;
     }
-    return provider;
+    if (!servesResolutionCap(provider, constraints?.resolution)) {
+      blocked ??= NO_PROVIDER_FOR_RESOLUTION;
+      continue;
+    }
+    if (!servesLastFrame(provider, constraints?.needsLastFrame)) {
+      blocked ??= NO_PROVIDER_FOR_LAST_FRAME;
+      continue;
+    }
+    return { provider };
   }
-  if (ratioBlocked) return null;
-  return fallbackProvider("video");
+  if (blocked) return { blocked };
+  const fallback = fallbackProvider("video");
+  // 兜底那一家同样要过这三关：xAI 能力最全，但它同样发不出尾帧，
+  // 「没人接得下」必须以 400 结束，而不是交给一个做不到的 provider。
+  if (!servesRatio(fallback, constraints?.aspectRatio)) return { blocked: NO_PROVIDER_FOR_RATIO };
+  if (!servesResolutionCap(fallback, constraints?.resolution)) {
+    return { blocked: NO_PROVIDER_FOR_RESOLUTION };
+  }
+  if (!servesLastFrame(fallback, constraints?.needsLastFrame)) {
+    return { blocked: NO_PROVIDER_FOR_LAST_FRAME };
+  }
+  return { provider: fallback };
 }
 
 /**
@@ -150,9 +209,13 @@ export function selectProvider(req?: ProviderGenerateRequest): VideoProvider {
     // grok 没钱了也不能把长片交给 mock。
     return fallbackProvider("video");
   }
-  const provider = pickVideoProvider(req?.mode ?? "text_to_video", req?.aspectRatio);
-  if (!provider) throw new ProviderHttpError(400, "invalid_argument", NO_PROVIDER_FOR_RATIO);
-  return provider;
+  const route = pickVideoProvider(req?.mode ?? "text_to_video", {
+    aspectRatio: req?.aspectRatio,
+    resolution: req?.resolution,
+    needsLastFrame: Boolean(req?.lastImage),
+  });
+  if ("blocked" in route) throw new ProviderHttpError(400, "invalid_argument", route.blocked);
+  return route.provider;
 }
 
 /**
@@ -162,16 +225,16 @@ export function selectProvider(req?: ProviderGenerateRequest): VideoProvider {
  */
 export function currentProviderId(
   mode?: NativeMode,
-  opts?: { harness?: boolean; aspectRatio?: AspectRatio; durationSec?: number },
+  opts?: VideoRouteConstraints & { harness?: boolean; durationSec?: number },
 ): ProviderId {
   if (forceMock()) return "mock";
   if (mode === "text_to_image") return pickImageProvider().id;
   if (opts?.harness || isHarnessDuration(opts?.durationSec)) {
     return fallbackProvider("video").id;
   }
-  const provider = pickVideoProvider(mode ?? "text_to_video", opts?.aspectRatio);
-  if (!provider) throw new ProviderHttpError(400, "invalid_argument", NO_PROVIDER_FOR_RATIO);
-  return provider.id;
+  const route = pickVideoProvider(mode ?? "text_to_video", opts);
+  if ("blocked" in route) throw new ProviderHttpError(400, "invalid_argument", route.blocked);
+  return route.provider.id;
 }
 
 export function providerForId(id: VideoProvider["id"]): VideoProvider {
@@ -232,6 +295,29 @@ export function videoAspectRatios(): AspectRatio[] {
   // 全被筛没了（配置错到没有一家能出这三个画幅中的任何一个）就退回全集：
   // 芯片留空是个死界面，露出来至少还能拿到一句明确的 400。
   return out.length ? out : [...UI_VIDEO_RATIOS];
+}
+
+/**
+ * 首页 / 规格弹层的分辨率格子：ORDER 里所有**有 key、未耗尽**的视频 provider 出得了的
+ * 档位并集，与 `videoAspectRatios` 同一个道理——只要有一家出得了 1080p，这个格子就该
+ * 露出来，路由会把它派给那一家；一家都出不了的档必须消失，留着就是「能选、一提交
+ * 就被拒」。有 provider 不声明 `resolutions`（xAI / mock）时直接给三档全集。
+ */
+export function videoResolutions(): Resolution[] {
+  if (forceMock()) return [...RESOLUTION_TIERS];
+  const allowed = new Set<Resolution>();
+  let sawKeyedProvider = false;
+  for (const id of videoProviderOrder()) {
+    if (!hasProviderKey(id) || isExhausted(id, "video")) continue;
+    const caps = providerForId(id).capabilities();
+    if (!caps.modes.includes("text_to_video")) continue;
+    sawKeyedProvider = true;
+    if (!caps.resolutions) return [...RESOLUTION_TIERS];
+    for (const resolution of caps.resolutions) allowed.add(resolution);
+  }
+  if (!sawKeyedProvider) return [...RESOLUTION_TIERS];
+  const out = [...allowed].sort((a, b) => resolutionRank(a) - resolutionRank(b));
+  return out.length ? out : [...RESOLUTION_TIERS];
 }
 
 /**

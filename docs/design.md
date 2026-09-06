@@ -129,8 +129,9 @@ flowchart TB
 ### 时长归一(5/10)与画幅/分辨率/音频
 
 - 可灵 `duration` 接口枚举**只有 5 与 10**(官方能力地图写 3–10s 是营销口径)。`create.ts` 在 provider 真选中 kling 时,把任意 `durationSec` 归一为 `≤5→5`、`>5→10` 并**写回 `job.durationSec`**——4 秒请求被上游按 5 秒计费,账目与详情卡必须如实;`retryJob` 同步重新归一与重新估价。首页时长芯片同源判据(`videoProvider==="kling"`)换成 `[5,10]`。
-- 分辨率由 `KLING_VIDEO_RESOLUTION`(默认 720p)覆盖并写回 `job.resolution`。`generateAudio` **2026-09-06 阶段一起尊重用户选择**:`resolveKlingSettings` 只在「实例允许有声(`KLING_VIDEO_AUDIO=native`)且用户没有选无声(`req.generateAudio !== false`)」时才出声,设为 `native` 才把分辨率抬到 1080p(上游硬约束:有声只支持 1080p);用户选无声时分辨率回到实例默认档,不再被强抬多收 1080p 的钱。实例不允许有声时,UI 的「有声」芯片显示「暂不可用」(见 §2d 与 `docs/handoff.md` §0.一)。
+- 分辨率 **2026-09-06 夜阶段 A 起尊重用户选择**:`resolveKlingSettings` 取请求的 `resolution`(480p 向上归一 720p),`KLING_VIDEO_RESOLUTION` 降级为「用户未选、产品也没规定默认档」时才生效的兜底,并写回 `job.resolution`。`generateAudio`(2026-09-06 阶段一起尊重用户选择):`resolveKlingSettings` 只在「实例允许有声(`KLING_VIDEO_AUDIO=native`)且用户没有选无声(`req.generateAudio !== false`)」时才出声,设为 `native` 才把分辨率抬到 1080p(上游硬约束:有声只支持 1080p);用户选无声时分辨率回到该产品/实例默认档,不再被强抬多收 1080p 的钱。实例不允许有声时,UI 的「有声」芯片显示「暂不可用」,「高清有声」产品也不会出现在 `/api/models` 里(见 §2d、§2f 与 `docs/handoff.md` §0.一)。
 - 画幅:t2v 直传 UI 仅有的 16:9/9:16/1:1(i2v 不发画幅,随首帧)。若绕过 UI 直接调 API 发送其他画幅,是在 provider `submit` 阶段被上游 400 拒绝、任务落 `failed`。
+- **首尾帧(阶段 A,as-built)**:`ProviderGenerateRequest.lastImage` 只在 i2v 且产品/provider 声明 `supportsLastFrame` 时才有意义;可灵是当前唯一实现方——`rest-map.ts` 把它映到 `contents[].last_frame.url`(data URI),并强制该次请求分辨率为 1080p(写回 `job.resolution` 与定价)。grok 的「尾帧永不进请求体」约束下放为 provider 专属:`grok.validate` 直接拒绝带尾帧的请求,`toProviderReq` 对不支持尾帧的 provider 不填该字段(golden test 按 provider 分开断言,不再是全局单一断言)。`lastUploadId` 仍只允许 `image_to_video`;mock provider 也声明支持尾帧以保 e2e 覆盖。真实冒烟(2026-09-06 晚):可灵首尾帧 1080p 5 秒成功,上游 2.5 积分,售 ¥3。
 
 ### 计价与 billing
 
@@ -156,7 +157,7 @@ flowchart TB
 
 模型目录 `catalog.ts`:模型 ID 必须用上游 `GET /v1/models` 的**展示名**(如 `minimax-H3 文字`、`minimax-h3-933-图文`),旧内部名(如 `minimax_h3_t2v`)作别名识别;`YMAN_MODEL_CATALOG`(JSON)可逐字段合并追加/覆盖模型的档位与积分价目。默认 t2v 模型 `minimax-H3 文字`(纯文生,不收参考图),i2v 模型 `minimax-h3-933-图文`(收参考图 ≤9 张)。
 
-计价:按积分预扣(¥1 = 100 积分,失败自动退),**不与时长成正比**(如 minimax_h3_* 的 5/10/15 秒是 40/90/140 积分);服务端把请求时长向上取到该模型最近一档并写回 `job.durationSec`,首页时长芯片跟着换档;目录里没有的模型按 `YMAN_UNKNOWN_CREDITS`(默认 150)估价,绝不为 0。新增 `usdCnyRate()`(默认 7.2,`USD_CNY_RATE` 覆盖)把人民币积分换算成美元口径的 `costUsdEstimate`/`costUsdActual`(与 §2d 的人民币 `priceCny` 售价是两套独立口径,售价不受此影响)。
+计价:按积分预扣(¥1 = 100 积分,失败自动退),**不与时长成正比**(如 minimax_h3_* 的 5/10/15 秒是 40/90/140 积分);服务端把请求时长向上取到该模型最近一档并写回 `job.durationSec`,首页时长芯片跟着换档;目录里没有的模型按 `YMAN_UNKNOWN_CREDITS`(默认 150)估价,绝不为 0。新增 `usdCnyRate()`(默认 7.2,`USD_CNY_RATE` 覆盖)把人民币积分换算成美元口径的 `costUsdEstimate`/`costUsdActual`(与 §2d 的人民币 `priceCny` 售价是两套独立口径,售价不受此影响)。**分辨率(阶段 A,as-built)**:`resolveYmanSettings` 同可灵一样改为取请求分辨率(480p 归一 720p)。**参考生视频(阶段 A,as-built)**:`referenceUploadIds` 的 schema 层上限从 grok 硬编码的 7 抬到 9,各 provider 在自己的 `validate` 里再收紧——grok 7、yman 9、可灵不支持该 mode;grok 专属校验从通用校验拆成独立的 `grok.validate`。真实冒烟(2026-09-06 晚):YMan `minimax-h3-933-图文` 两张参考图成功,售 ¥2。
 
 音频:YMan 建任务接口没有音频参数,`audioAvailableFor("yman")` 恒为 `false`——是「不可控」而非「一定无声」,不向用户收有声加价,UI 芯片显示「无声 · 暂不可用」。
 
@@ -176,6 +177,14 @@ flowchart TB
 - `retryJob` 对图片任务仍沿用旧的估价逻辑,未针对换家场景重新验证。
 - Codex 跨厂商审查进行中,结论未在提交时给出。
 - 本轮未部署到生产(见 `docs/handoff.md` 顶部表)。
+
+## 2f. 产品目录与模型选择(2026-09-06 夜,阶段 A,as-built)
+
+方案 `docs/plan-frontend-backend-adaptation.md`(用户决策:模型用产品名不露供应商)。`src/lib/products/catalog.ts` 定义七档内置`Product`(视频 快速/标准/高清有声/Grok,图片 快速/标准/Grok),每档绑定一个 provider + 上游模型名(可选,缺省回落各 provider 自己的 env 模型)、能力(modes/resolutions/aspectRatios/durations/audio/supportsLastFrame/maxReferenceImages)与描述;`LUMEN_PRODUCTS`(JSON 数组,见 `.env.example`)按 id 覆盖或追加,坏 JSON/缺字段回落内置表并记 warn。
+
+`availableProducts()` 只列这一刻真能下单的产品:provider 有 key(`hasProviderKey`)、该通道(视频/图片分开)未被 `exhaustion.ts` 判定耗尽、可灵有声档还要求实例确实 `KLING_VIDEO_AUDIO=native`;mock 实例(无任何真 key)返回全部产品。`GET /api/models`(需登录)返回这份列表的白名单字段 + `samplePriceCny`(视频按 5 秒+产品默认分辨率+其音轨档估、图片按 1K 估),**不含** `provider`/上游 `model` 字段——浏览器不该也不需要知道供应商。
+
+`POST /api/jobs` 的 `model` 字段(`createJobBodySchema`,可选,≤64 字符)传的是产品 id。指定时 `productForProvider`/`defaultProductFor` 解出 provider 与上游模型名,并按该产品的能力做 400 校验(mode 不支持 / 画幅不在列 / 分辨率向上归一后仍不支持 / 时长超上限 / 首尾帧不支持 / 参考图超 `maxReferenceImages`);未指定时沿用 §2b/§2c/§2e 的 ORDER + 能力路由,选中 provider 后反查第一个匹配该 mode 的产品打标签。`JobRecord`/`JobPublic` 新增 `product`(id)/`productName`,前端与详情卡只显示 `productName`。
 
 ## 2d. 余额与计费(2026-09-06 阶段一,as-built)
 
@@ -221,10 +230,14 @@ flowchart TB
 | 端点 | 说明 |
 | --- | --- |
 | `POST /api/uploads` | multipart 流式(@fastify/busboy);`role ∈ start|last|reference|source_video`;图 ≤**6MB**(2026-09-06 阶段一从 12MB 下调,sharp 后覆盖写)、视频 mp4 ≤**24MB**(从 48MB 下调,ffmpeg 探针,产线 2 核/1.8G/`MemoryMax=700M` 下的内存预算,见 §3.3 与 `docs/plan-architecture-2026-09.md` P1);写 `data/tmp/{up_16hex}` + sidecar json;**不**做模式相关校验、不调 Files |
-| `POST /api/jobs` | 幂等 key 24h 重放;队列满 429;按 mode 校验(含 edit ≤8.7s / extend 2–15s);余额不足 **402 `insufficient_balance`**(§2d);tmp 字节 move 进 `inputs/`;uploadId 必须匹配 `^up_[0-9a-f]{16}$` |
+| `POST /api/jobs` | 幂等 key 24h 重放;队列满 429;按 mode 校验(含 edit ≤8.7s / extend 2–15s);可选 `model`(产品 id,§2f)按产品能力再校验一遍;余额不足 **402 `insufficient_balance`**(§2d);tmp 字节 move 进 `inputs/`;uploadId 必须匹配 `^up_[0-9a-f]{16}$` |
 | `GET /api/jobs` / `GET /api/jobs/:id` | 列表(createdAt 降序)/ 单个 |
 | `POST /api/jobs/:id/cancel|retry` | 见 §3;retry 同样受 402 余额判定 |
 | `GET /api/jobs/:id/events` | SSE,`maxDuration=900`;15s `: ping` 心跳 + abort 时解除订阅 |
+| `GET /api/models`(2026-09-06 夜,阶段 A) | 需登录;返回 `availableProducts()` 的白名单字段 + `samplePriceCny`(§2f),不含 `provider`/上游模型名 |
+| `POST /api/uploads/from-job`(阶段 A) | `{ jobId, role }`;把调用者自己一条 `succeeded` 且未清理的图片任务产物复制成一次新上传(走与手动上传相同的 `preprocessImage`),`role ∈ start|last|reference`;别人的/不存在的/非图片/已清理的任务分别 404/400 |
+| `GET /api/me/ledger`(阶段 A) | `?before=&limit=&kind=`;读 `data/ledger/<userId>.jsonl` 倒序游标分页,`limit≤200`,坏行跳过 |
+| `POST /api/me/redeem`(阶段 A) | `{ code }`;礼品码认领 + 入账同一临界区(§5);成功 `{ amountCny, balance }`;404 无效 / 409 已用 / 429(IP+用户各一桶,5 次/分钟) |
 | `GET /api/media/:jobId/:file` | 白名单 `video.mp4|poster.jpg|image.jpg`;`jobId` 经 `assertSafeId`;先做 owner 校验(§12.2)再看缓存头;`Cache-Control: private, no-cache` + 弱 ETag(size+mtime)+ `Last-Modified`,`If-None-Match` 命中在 owner 校验**之后**评估、回 304(§9);Range/206;支持 suffix range `bytes=-N`,416 带 `Content-Range: bytes */size`;`?download=1` 加 attachment |
 | `GET /api/health` | ffmpeg 二进制/字体/dataDir 可写/upstream kind/队列深度;新增 `audioAvailable`(当前视频 provider 会不会真的出音轨,§2d);缺 ffmpeg → `ok:false`(匿名可访问) |
 | `POST /api/auth/register` | 邮箱 + 密码(≥8 位) + 一次性邀请码;成功即写会话 Cookie 并返回 `MePublic` |
@@ -251,12 +264,13 @@ data/
     index.json                         # email → usr_xxx,派生缓存,可从下方目录重建
     usr_xxx/user.json                   # 事实源:email、密码哈希、disabled、sessionEpoch、balanceCny(2026-09-06)
   invites/<code>.json                   # 一次性邀请码:{ code, createdAt, note?, usedBy?, usedAt? }
+  gift-codes/<code>.json                # 2026-09-06 夜(阶段 A):礼品码,{ code, amountCny, createdAt, note?, usedBy?, usedAt?, creditedAt? }
   ledger/<userId>.jsonl                 # 2026-09-06:余额流水,只增;{at,kind,amountCny,balanceAfterCny,jobId?,note?}
 ```
 
 `MediaStore` 接口(`storage/types.ts`)由 `LocalFsMediaStore` 实现,id 白名单 `[A-Za-z0-9_-]+`、rel 路径解析后必须落在 jobDir 内;后期 `S3MediaStore` 同接口替换。
 
-生产实例(阿里云)另有 `/opt/genius/backups/genius-data-<时间戳>.tgz`(`scripts/backup.sh`,每份只含 `users/ invites/ ledger/ jobs/*/job.json` 白名单,不含产物,保留最近 14 份,`chmod 600`)与阿里云 ECS 控制台配置的整盘自动快照(每日一份、保留 7 天),两层数据安全见 §10.2。
+生产实例(阿里云)另有 `/opt/genius/backups/genius-data-<时间戳>.tgz`(`scripts/backup.sh`,每份只含 `users/ invites/ gift-codes/ ledger/ jobs/*/job.json` 白名单——`gift-codes/` 于 2026-09-06 夜阶段 A 补入,不含产物,保留最近 14 份,`chmod 600`)与阿里云 ECS 控制台配置的整盘自动快照(每日一份、保留 7 天),两层数据安全见 §10.2。
 
 ## 6. 前端与场景层(2026-09-05 晚按 Genius 交接包重建为深色单屏)
 

@@ -1,5 +1,6 @@
 import { ymanCreditsToUsd } from "@/lib/cost";
 import { ymanBase } from "@/lib/env";
+import { normalizeUpResolution, resolutionRank } from "@/lib/providers/resolution";
 import {
   creditsFor,
   modelFor,
@@ -39,13 +40,23 @@ export type YmanSettings = {
  * 接得下的），真走到这里还是接不下就 400 —— 见 `mapToYmanRequest`。
  * `model` 一律归一成 `/v1/models` 的展示名（`resolveModel`），发给上游的就是这一串。
  */
-export function resolveYmanSettings(req: ProviderGenerateRequest): YmanSettings {
+export function resolveYmanSettings(
+  req: ProviderGenerateRequest,
+  defaults?: { resolution?: YmanResolution },
+): YmanSettings {
   const model = req.model?.trim() ? resolveModel(req.model) : modelFor(req.mode);
   const caps = ymanCapabilities(model);
+  // 用户选的档优先，向上归一到这个模型出得了的最近一档（480p → 720p）。一档都不够高时
+  // 落到该模型最高的一档：这种请求本该被路由（`capabilities().resolutions`）或产品校验
+  // 挡在前面 400，走到这里说明是别处配错了，宁可出片也不炸——但绝不悄悄涨价，
+  // `create.ts` 用同一个函数定价。
+  const supported = caps.resolutions.length ? caps.resolutions : (["720p"] as YmanResolution[]);
+  const asked = req.resolution ?? defaults?.resolution;
+  const byRank = [...supported].sort((a, b) => resolutionRank(a) - resolutionRank(b));
   const resolution =
-    req.resolution && (caps.resolutions as string[]).includes(req.resolution)
-      ? (req.resolution as YmanResolution)
-      : (caps.resolutions[0] ?? "720p");
+    (normalizeUpResolution(asked, supported) as YmanResolution | undefined) ??
+    // 没选就用最低档（便宜的那个），选了却一档都不够高就用最高档。
+    (asked ? byRank[byRank.length - 1] : byRank[0]);
   return {
     model,
     durationSec: normalizeYmanDuration(model, req.durationSec),

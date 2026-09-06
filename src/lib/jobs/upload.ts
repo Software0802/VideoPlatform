@@ -7,7 +7,7 @@ import Busboy, { type BusboyInstance } from "@fastify/busboy";
 import { probeDurationSec } from "@/lib/ffmpeg";
 import { tmpDir } from "@/lib/jobs/store";
 import { preprocessImage } from "@/lib/media/preprocess";
-import { uploadRoleSchema, type UploadSidecar } from "@/lib/jobs/schema";
+import { uploadRoleSchema, type UploadRole, type UploadSidecar } from "@/lib/jobs/schema";
 import { ProviderHttpError } from "@/lib/providers/types";
 
 /**
@@ -143,16 +143,20 @@ export async function handleUpload(request: Request, ownerId: string): Promise<U
     await cleanupUpload(dest);
     throw new ProviderHttpError(400, "invalid_argument", "未知上传角色");
   }
-  if (parsedRole.data === "source_video" && !isVideo) {
+  // 本地 const 而不是 `parsedRole.data`：下面按它分叉，TypeScript 只在局部变量上
+  // 才把「不是 source_video」这件事记住，图片分支就不用再断言一次角色。
+  const uploadRole = parsedRole.data;
+  if (uploadRole === "source_video" && !isVideo) {
     await cleanupUpload(dest);
     throw new ProviderHttpError(400, "invalid_argument", "源视频必须是 MP4 文件");
   }
-  if (parsedRole.data !== "source_video" && isVideo) {
+  if (uploadRole !== "source_video" && isVideo) {
     await cleanupUpload(dest);
     throw new ProviderHttpError(400, "invalid_argument", "首帧、尾帧和参考资产必须是图片");
   }
 
-  if (isVideo) {
+  // 走到这里两者已经互为充要条件（上面两条守卫排掉了另外两种组合），按角色分叉。
+  if (uploadRole === "source_video") {
     try {
       const probe = await probeDurationSec(dest);
       if (
@@ -168,7 +172,7 @@ export async function handleUpload(request: Request, ownerId: string): Promise<U
       const side: UploadSidecar = {
         uploadId,
         ownerId,
-        role: parsedRole.data,
+        role: uploadRole,
         width: probe.width,
         height: probe.height,
         bytes: written,
@@ -184,13 +188,35 @@ export async function handleUpload(request: Request, ownerId: string): Promise<U
     }
   }
 
+  // 图片走和 `POST /api/uploads/from-job` 同一条落盘路径：预处理、尺寸、sidecar 只有
+  // 一份实现，两个入口产出的上传在 `create.ts` 眼里没有任何区别。`dest` 这时还没被
+  // 写过（图片是攒在内存里的），所以让它自己取一个 uploadId 不会留下孤儿文件。
+  return storeUploadFromBuffer(Buffer.concat(chunks), uploadRole, ownerId);
+}
+
+/**
+ * 把一段图片字节变成一个可被 `createJob` 认领的上传：压缩 → 落 `data/tmp/<uploadId>`
+ * → 写同名 `.json` sidecar。`ownerId` 是会话用户，盖进 sidecar 后只有本人能认领
+ * （plan §5.3）。
+ *
+ * 两个调用方：`handleUpload`（multipart 上传）与 `POST /api/uploads/from-job`
+ * （拿自己已生成的图片当首帧）。只接图片——`source_video` 不走这里。
+ */
+export async function storeUploadFromBuffer(
+  buffer: Buffer,
+  role: Exclude<UploadRole, "source_video">,
+  ownerId: string,
+): Promise<UploadSidecar> {
+  const uploadId = `up_${randomBytes(8).toString("hex")}`;
+  await mkdir(tmpDir(), { recursive: true });
+  const dest = path.join(tmpDir(), uploadId);
   try {
-    const jpeg = await preprocessImage(Buffer.concat(chunks));
+    const jpeg = await preprocessImage(buffer);
     await writeFile(dest, jpeg.jpeg);
     const side: UploadSidecar = {
       uploadId,
       ownerId,
-      role: parsedRole.data,
+      role,
       width: jpeg.width,
       height: jpeg.height,
       bytes: jpeg.jpeg.length,

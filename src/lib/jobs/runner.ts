@@ -10,6 +10,7 @@ import {
   providerSettingsFor,
   videoPricingOf,
 } from "@/lib/jobs/provider-settings";
+import { productForProvider } from "@/lib/products/catalog";
 import { recoverDecision } from "@/lib/jobs/recover";
 import { JOB_UNCERTAIN_SUBMIT_MESSAGE, UNCERTAIN_SUBMIT_CODE } from "@/lib/jobs/retry-guard";
 import { sweepRetention } from "@/lib/jobs/retention";
@@ -234,6 +235,11 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
     next = currentProviderId(rec.mode, {
       harness: Boolean(rec.harness?.enabled),
       aspectRatio: rec.aspectRatio ?? undefined,
+      // 尾帧是硬条件：换到一家发不出尾帧的上游，交付的是另一个东西，不是同一件事换个门。
+      needsLastFrame: Boolean(rec.assets.last),
+      // 分辨率**故意不做硬条件**：这条路径上的备选是「降一档并退掉差价」还是「彻底没有
+      // 成片」。降档后 `priceCny` 只降不升（下面那段），所以降档是对用户有利的一侧；
+      // 而创建任务时没有这个两难，1080p 接不下就该 400，不该悄悄给 720p。
       durationSec: rec.durationSec,
     });
   } catch {
@@ -245,12 +251,27 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
   if (next === rec.provider || next === "mock") return false;
 
   const model = modelForProvider(next, rec.mode);
-  const settings = providerSettingsFor(next, rec.mode, rec.durationSec, {
-    prompt: rec.prompt,
-    aspectRatio: rec.aspectRatio ?? undefined,
-    resolution: rec.resolution ?? undefined,
-    generateAudio: rec.generateAudio,
-  }, model);
+  const settings = providerSettingsFor(
+    next,
+    rec.mode,
+    rec.durationSec,
+    {
+      prompt: rec.prompt,
+      aspectRatio: rec.aspectRatio ?? undefined,
+      resolution: rec.resolution ?? undefined,
+      generateAudio: rec.generateAudio,
+    },
+    model,
+    // 产品只当标签用，不参与归一：换家是我们内部的事，不该顺手把实例配置
+    // （`KLING_VIDEO_AUDIO` 之类）换成产品表里的默认档，那会改动用户被收的钱。
+    { hasLastFrame: Boolean(rec.assets.last) },
+  );
+  // 产品标签跟着 provider 走：换家之后仍挂着「标准」，界面就会拿一个不是这次执行的
+  // 产品名去显示。找不到对应产品就摘掉标签，不编一个。音轨也要对上——可灵的「标准」
+  // 与「高清有声」共用同一个上游模型，只按模型名找会把出声的那条标成无声的那一档。
+  const product = productForProvider(next, rec.mode, model, {
+    audio: settings ? settings.audio : undefined,
+  });
   // 新家归一后这次任务该值多少钱。图片模式 `settings` 恒为 null，算出来与原价同档。
   const switchedPrice = priceCny({
     mode: rec.mode,
@@ -275,6 +296,8 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
     if (r.canceled || r.status === "canceled") return r;
     r.provider = next;
     r.model = model;
+    r.product = product?.id;
+    r.productName = product?.name;
     if (settings) {
       r.durationSec = settings.durationSec;
       r.resolution = settings.resolution;
@@ -509,6 +532,13 @@ function toProviderReq(job: JobRecord): ProviderGenerateRequest {
   const start = job.assets.start
     ? pathRef(job.id, job.assets.start.path)
     : undefined;
+  // 尾帧只发给声明 `supportsLastFrameLock` 的 provider。发不了的那几家里，grok 的
+  // `assertModeConstraints` 会对带尾帧的请求体直接 400——一条 kling 之前落盘过尾帧的
+  // 老任务（那时尾帧只存不发）重试到 grok 就会永远失败，而它本来该照常出片、忽略尾帧。
+  const lastImage =
+    job.assets.last && providerForId(job.provider).capabilities().supportsLastFrameLock
+      ? pathRef(job.id, job.assets.last.path)
+      : undefined;
   const refs = job.assets.references?.map((a) => pathRef(job.id, a.path));
   let source: MediaRef | undefined;
   if (job.assets.source?.xaiFileId) {
@@ -527,6 +557,9 @@ function toProviderReq(job: JobRecord): ProviderGenerateRequest {
     imageResolution: job.imageResolution ?? undefined,
     generateAudio: isImageMode(job.mode) ? false : job.generateAudio,
     startImage: start,
+    // 可灵在图生视频里以 `last_frame` 发送（上游强制 1080p，`create.ts` 已按这一档定价）；
+    // 其余 provider 拿不到它，尾帧只留在 `inputs/last.jpg`（上面那段）。
+    lastImage,
     referenceImages: refs,
     referenceAudios: job.voiceIds?.map((voiceId) => ({ voiceId })),
     sourceVideo: source,

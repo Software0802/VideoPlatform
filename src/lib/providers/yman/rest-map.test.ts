@@ -388,3 +388,71 @@ describe("mapYmanTask", () => {
     expect(withoutModel.usage).toBeUndefined();
   });
 });
+
+/**
+ * 契约 A1：产品目录取代环境变量成为「用户没选时」的默认档，`resolveYmanSettings`
+ * 的第二参 `defaults` 就是产品传进来的那一份；用户的 `req.resolution` 仍然优先。
+ */
+describe("resolveYmanSettings — user resolution & product defaults (契约 A1)", () => {
+  it("normalizes a 480p ask up to the model's only tier (720p)", () => {
+    expect(resolveYmanSettings(base({ durationSec: 5, resolution: "480p" })).resolution).toBe("720p");
+  });
+
+  it("honours an explicit req.resolution the model supports, over the product default", () => {
+    vi.stubEnv(
+      "YMAN_MODEL_CATALOG",
+      JSON.stringify({ "minimax-H3 文字": { resolutions: ["720p", "1080p"] } }),
+    );
+    const settings = resolveYmanSettings(base({ durationSec: 5, resolution: "1080p" }), { resolution: "720p" });
+    expect(settings.resolution).toBe("1080p");
+  });
+
+  it("falls back to the product default resolution when the request names none", () => {
+    vi.stubEnv(
+      "YMAN_MODEL_CATALOG",
+      JSON.stringify({ "minimax-H3 文字": { resolutions: ["720p", "1080p"] } }),
+    );
+    const settings = resolveYmanSettings(base({ durationSec: 5 }), { resolution: "1080p" });
+    expect(settings.resolution).toBe("1080p");
+  });
+
+  it("without any ask or product default, settles on the model's lowest (cheapest) tier", () => {
+    vi.stubEnv(
+      "YMAN_MODEL_CATALOG",
+      JSON.stringify({ "minimax-H3 文字": { resolutions: ["720p", "1080p"] } }),
+    );
+    expect(resolveYmanSettings(base({ durationSec: 5 })).resolution).toBe("720p");
+  });
+
+  /**
+   * 任务书摘要写「请求 1080p 而模型只 720p → 400 或路由跳过」；但 `resolveYmanSettings`
+   * 自身的注释（rest-map.ts「一档都不够高时落到该模型最高的一档」那段）明确说这种情况
+   * 本该被路由或产品校验挡在前面 400，走到这一层是「别处配错了」的兜底，宁可出片也不
+   * 悄悄涨价——所以这一层是静默降级到模型最高档，不是抛错。这里按*当前实现*钉住这条
+   * 兜底行为；400 / 跳过这条契约应该在 router.ts（`servesResolutionCap`）与 create.ts
+   * 校验层验证，不在 rest-map 这一层重复断言两种互斥的行为。见测试报告「源码疑点」。
+   */
+  it("gracefully degrades to the model's highest tier when asked exceeds it, rather than throwing (documented fallback)", () => {
+    const settings = resolveYmanSettings(base({ durationSec: 5, resolution: "1080p" }));
+    expect(settings.resolution).toBe("720p");
+  });
+});
+
+/**
+ * 契约 A1：「r2v 9 张」——ref2v 模型的 `maxReferenceImages` 是 9。已有的
+ * "truncates reference_images to the model's cap" 用例覆盖了超量截断；这里补上
+ * 恰好 9 张时全部保留、一张都不截断的边界。
+ */
+describe("mapToYmanRequest — reference_to_video at the 9-image cap", () => {
+  it("passes through exactly 9 reference images without truncating any of them", () => {
+    const refs = Array.from({ length: 9 }, (_, i) => ({
+      kind: "data_uri" as const,
+      dataUri: `data:image/jpeg;base64,ref${i}`,
+    }));
+    const { body } = mapToYmanRequest(
+      base({ mode: "reference_to_video", prompt: "九张参考图", referenceImages: refs, durationSec: 5 }),
+    );
+    expect((body.reference_images as string[]).length).toBe(9);
+    expect(body.reference_images).toEqual(refs.map((r) => r.dataUri));
+  });
+});

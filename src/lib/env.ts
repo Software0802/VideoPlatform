@@ -164,6 +164,17 @@ export function priceTableRaw(): string | undefined {
 }
 
 /**
+ * 产品目录的覆盖 / 追加 JSON 原文（`src/lib/products/catalog.ts`）。
+ *
+ * 产品是「对用户露出的模型」——名字、能力、默认档，供应商名不露出。默认表写在代码里，
+ * 但换模型、加档位、调默认分辨率都不该等一次发版，所以留这条口子。解析、按 id 合并与
+ * 坏 JSON 的回落都在 catalog 里，这里只取原文。
+ */
+export function lumenProductsRaw(): string | undefined {
+  return process.env.LUMEN_PRODUCTS?.trim() || undefined;
+}
+
+/**
  * gpt-image-1 常要 30–120 秒才返回，远超通用的 `UPSTREAM_TIMEOUT_MS`（默认 30s）。
  * 用通用超时会在图片已经生成、正要返回时 abort，而这一次调用照样计费。
  */

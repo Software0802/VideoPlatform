@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { access, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -419,5 +420,308 @@ describe("createJob provider selection — YMan", () => {
     // Refused before any job directory (and thus any priced/billed record) is written.
     const after = await readdir(path.join(dataRoot, "jobs")).catch(() => [] as string[]);
     expect(after).toEqual(before);
+  });
+});
+
+/** Owner ids for the 契约 A1 blocks below, "f"-prefixed to avoid colliding with the
+ * "d"/"e"-prefixed owners used by the balance-admission and YMan blocks above, which
+ * share this same file's temporary DATA_DIR. */
+function productOwner(tag: string): string {
+  return `usr_${tag.padStart(16, "0")}`;
+}
+
+async function seedProductBalance(id: string, balanceCny: number) {
+  const { writeUser } = await import("@/lib/users/store");
+  return writeUser({
+    id,
+    email: `${id}@example.com`,
+    passwordHash: "hash",
+    sessionEpoch: 1,
+    plan: "free",
+    balanceCny,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/** Polls a job to a terminal status so a stubbed `global.fetch` is never left mid-flight
+ * once the calling test's `afterEach` unstubs it — same safety rule as the YMan block's
+ * local `drain` above, redefined here since that one is out of scope for this block. */
+async function drainToTerminal(id: string) {
+  for (let i = 0; i < 20; i += 1) {
+    const current = await readJob(id);
+    if (current && ["succeeded", "failed", "expired"].includes(current.status)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+function stubYmanFetch() {
+  const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    const body =
+      method === "POST"
+        ? { id: "vid_stub_product", status: "queued" }
+        : { id: "vid_stub_product", status: "failed", error: { message: "stub: no real upstream call" } };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+}
+
+function stubKlingFetch() {
+  const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    const body =
+      method === "POST"
+        ? { code: 0, data: { id: "kling_stub_product" } }
+        : {
+            code: 0,
+            data: [{ id: "kling_stub_product", status: "failed", message: "stub: no real upstream call" }],
+          };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+}
+
+async function seedJpegUpload(owner: string, role: "start" | "last" | "reference", seed: number): Promise<string> {
+  const uploadId = `up_${randomBytes(8).toString("hex")}`;
+  const tmp = path.join(dataRoot, "tmp");
+  await mkdir(tmp, { recursive: true });
+  const jpeg = await sharp({
+    create: { width: 2, height: 2, channels: 3, background: { r: seed % 255, g: 1, b: 1 } },
+  })
+    .jpeg()
+    .toBuffer();
+  await writeFile(path.join(tmp, uploadId), jpeg);
+  await writeFile(
+    path.join(tmp, `${uploadId}.json`),
+    JSON.stringify({
+      uploadId,
+      ownerId: owner,
+      role,
+      width: 2,
+      height: 2,
+      bytes: jpeg.length,
+      mimeType: "image/jpeg",
+      durationSec: null,
+      createdAt: new Date().toISOString(),
+    }),
+  );
+  return uploadId;
+}
+
+/**
+ * 契约 A1：`createJobBodySchema.model?`（产品 id）。不可用 / 不支持 mode → 400；
+ * 指定产品时 `JobRecord.provider/model/product/productName` 由产品决定；未指定时
+ * 路由后仍写 `product`（`jobs/schema.ts` 已经加了 `product`/`productName` 字段，
+ * 但 `create.ts` 是否已经读 `body.model` 并回填它们，就是这组测试要钉住的）。
+ */
+describe("createJob — model / product selection (契约 A1)", () => {
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    delete process.env.VIDEO_PROVIDER_ORDER;
+    delete process.env.YMAN_API_KEY;
+    delete process.env.XAI_API_KEY;
+    process.env.LUMEN_FORCE_MOCK = "1";
+  });
+
+  it("rejects an unknown model id with 400 invalid_argument", async () => {
+    const id = productOwner("f1");
+    await seedProductBalance(id, 1000);
+    await expect(
+      createJob(
+        { mode: "text_to_video", prompt: "p", model: "no-such-product", durationSec: 5 } as Parameters<
+          typeof createJob
+        >[0],
+        id,
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_argument" });
+  });
+
+  it("rejects a model that doesn't support the requested mode with 400 (video-grok can't do text_to_image)", async () => {
+    const id = productOwner("f2");
+    await seedProductBalance(id, 1000);
+    await expect(
+      createJob(
+        { mode: "text_to_image", prompt: "p", model: "video-grok" } as Parameters<typeof createJob>[0],
+        id,
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("stamps provider/model/product/productName from the selected product when model is specified", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    stubYmanFetch();
+    const id = productOwner("f3");
+    await seedProductBalance(id, 1000);
+
+    const { job } = await createJob(
+      {
+        mode: "text_to_video",
+        prompt: "海上日出，长镜头",
+        model: "video-fast",
+        durationSec: 5,
+      } as Parameters<typeof createJob>[0],
+      id,
+    );
+
+    expect(job.provider).toBe("yman");
+    expect(job.product).toBe("video-fast");
+    expect(job.productName).toBeTruthy();
+    await drainToTerminal(job.id);
+  });
+
+  it("still stamps a product when no model is given, based on whichever provider the router picks", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    stubYmanFetch();
+    const id = productOwner("f4");
+    await seedProductBalance(id, 1000);
+
+    const { job } = await createJob(
+      { mode: "text_to_video", prompt: "海上日出，长镜头", durationSec: 5 } as Parameters<typeof createJob>[0],
+      id,
+    );
+
+    expect(job.provider).toBe("yman");
+    expect(job.product).toBe("video-fast");
+    await drainToTerminal(job.id);
+  });
+});
+
+/**
+ * 契约 A1：尾帧只有支持 `supportsLastFrame` 的产品能发——video-fast（yman）不支持，
+ * video-standard（kling）支持且固定 1080p。`create.ts` 目前还是「对不支持尾帧的产品
+ * 400」这句话尚未接进来的状态，这组测试就是钉住这句话。
+ */
+describe("createJob — lastUploadId requires a last-frame-capable product (契约 A1)", () => {
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    delete process.env.VIDEO_PROVIDER_ORDER;
+    delete process.env.YMAN_API_KEY;
+    delete process.env.KLING_API_KEY;
+    delete process.env.XAI_API_KEY;
+    process.env.LUMEN_FORCE_MOCK = "1";
+  });
+
+  it("rejects lastUploadId for video-fast (yman) — that product doesn't support last-frame locking", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    stubYmanFetch();
+    const id = productOwner("f5");
+    await seedProductBalance(id, 1000);
+    const startUploadId = await seedJpegUpload(id, "start", 1);
+    const lastUploadId = await seedJpegUpload(id, "last", 2);
+
+    await expect(
+      createJob(
+        {
+          mode: "image_to_video",
+          prompt: "let it move",
+          model: "video-fast",
+          startUploadId,
+          lastUploadId,
+          durationSec: 5,
+        } as Parameters<typeof createJob>[0],
+        id,
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("accepts lastUploadId for video-standard (kling) and records the forced 1080p resolution", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "kling";
+    process.env.KLING_API_KEY = "kling-test-key";
+    stubKlingFetch();
+    const id = productOwner("f6");
+    await seedProductBalance(id, 1000);
+    const startUploadId = await seedJpegUpload(id, "start", 3);
+    const lastUploadId = await seedJpegUpload(id, "last", 4);
+
+    const { job } = await createJob(
+      {
+        mode: "image_to_video",
+        prompt: "let it move",
+        model: "video-standard",
+        startUploadId,
+        lastUploadId,
+        resolution: "720p", // user asked 720p; a last frame must still force 1080p
+        durationSec: 5,
+      } as Parameters<typeof createJob>[0],
+      id,
+    );
+
+    expect(job.provider).toBe("kling");
+    expect(job.lastFrameStored).toBe(true);
+    expect(job.resolution).toBe("1080p");
+    await drainToTerminal(job.id);
+  });
+});
+
+/**
+ * 契约 A1：参考图上限从 `capabilities().maxReferenceImages` 判定——grok 7、yman 9。
+ * `createJobBodySchema.referenceUploadIds` 的 zod 上限已经放宽到 9（见 schema.ts），
+ * 但 `create.ts` 目前对每个 job 都无条件调用 grok 专属的 `assertModeConstraints`
+ * （`providers/grok/rest-map.ts`），它自己写死了「参考图最多 7 张」且不看 provider——
+ * grok 的 8 张用例今天就应该红（本来就该拒），yman 的 9 张用例目前会被这条无差别的
+ * 7 张上限连带挡下，这正是任务书要的「provider 上限由 capabilities().maxReferenceImages
+ * 校验」尚未接入之处，见测试报告「源码疑点」。
+ */
+describe("createJob — reference image cap is per-provider (契约 A1)", () => {
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    delete process.env.VIDEO_PROVIDER_ORDER;
+    delete process.env.YMAN_API_KEY;
+    delete process.env.XAI_API_KEY;
+    process.env.LUMEN_FORCE_MOCK = "1";
+  });
+
+  it("rejects 8 reference images when routed to grok (grok's own 7-image cap)", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.XAI_API_KEY = "xai-live"; // grok is the fallback for reference_to_video
+    const id = productOwner("f7");
+    await seedProductBalance(id, 1000);
+    const referenceUploadIds = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => seedJpegUpload(id, "reference", i)),
+    );
+
+    await expect(
+      createJob(
+        {
+          mode: "reference_to_video",
+          prompt: "八张参考图",
+          referenceUploadIds,
+          durationSec: 5,
+        } as Parameters<typeof createJob>[0],
+        id,
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_argument" });
+  });
+
+  it("accepts 9 reference images when routed to yman (its own 9-image cap)", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    stubYmanFetch();
+    const id = productOwner("f8");
+    await seedProductBalance(id, 1000);
+    const referenceUploadIds = await Promise.all(
+      Array.from({ length: 9 }, (_, i) => seedJpegUpload(id, "reference", i)),
+    );
+
+    const { job } = await createJob(
+      {
+        mode: "reference_to_video",
+        prompt: "九张参考图",
+        referenceUploadIds,
+        durationSec: 5,
+      } as Parameters<typeof createJob>[0],
+      id,
+    );
+    expect(job.provider).toBe("yman");
+    await drainToTerminal(job.id);
   });
 });

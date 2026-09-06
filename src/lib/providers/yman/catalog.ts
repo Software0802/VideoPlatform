@@ -249,6 +249,26 @@ export function ymanVideoRatios(): AspectRatio[] {
 }
 
 /**
+ * 这一刻 yman 视频侧出得了的分辨率档（t2v 与 i2v 两个模型的**并集**，理由同
+ * `ymanVideoRatios`）。路由拿它筛选：请求 1080p 时不会被派给只有 720p 的模型。
+ */
+export function ymanVideoResolutions(): YmanResolution[] {
+  const out = new Set<YmanResolution>();
+  for (const mode of ["text_to_video", "image_to_video"] as const) {
+    for (const res of ymanCapabilities(modelFor(mode)).resolutions) out.add(res);
+  }
+  return out.size ? [...out] : ["720p"];
+}
+
+/**
+ * 参考生视频的上限，取 i2v / r2v 那个模型的（首帧与参考图在上游是同一个
+ * `reference_images` 字段）。纯文生模型是 0，不参与这条。
+ */
+export function ymanMaxReferenceImages(): number {
+  return ymanCapabilities(modelFor("image_to_video")).maxReferenceImages;
+}
+
+/**
  * 请求秒数 → 上游认的时长档，**向上**取。4→5、6/8→10、12→15，超出最大档取最大档。
  * 向上而不是就近：上游按档计费，取到更短的一档等于用户少拿了片子还照付这一档的钱。
  * 归一后的值必须写回 job（`create.ts`），账目与详情卡才是「会被计费的那个时长」。

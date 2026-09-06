@@ -8,6 +8,7 @@
 # 只打「丢了就重建不出来」的事实源：
 #   users/      账号（含密码哈希）、users/index.json 派生缓存
 #   invites/    一次性邀请码
+#   gift-codes/ 礼品码（面额 + 认领状态；丢了等于凭空多出一批可兑换的钱）
 #   ledger/     余额流水（余额模型上线后才有，不存在就跳过）
 #   jobs/*/job.json  任务记录本身
 # **不打**产物（outputs / inputs / shots / tmp）：几十上百 MB，且 30 天后本来就会被
@@ -81,7 +82,7 @@ LISTING="$(mktemp "${TMPDIR:-/tmp}/genius-backup-verify-XXXXXX")"
 # 白名单清单，NUL 分隔，路径相对 DATA_DIR。
 (
   cd "$DATA_DIR"
-  for d in users invites ledger; do
+  for d in users invites gift-codes ledger; do
     if [ -d "$d" ]; then find "$d" -print0; fi
   done
   # jobs/<id>/job.json 且只有它：mindepth/maxdepth 2 天然挡掉 outputs/ inputs/ shots/。
@@ -90,7 +91,7 @@ LISTING="$(mktemp "${TMPDIR:-/tmp}/genius-backup-verify-XXXXXX")"
   fi
 ) > "$LIST" || die "扫描 $DATA_DIR 失败"
 
-[ -s "$LIST" ] || die "$DATA_DIR 里没有可备份的内容（users/ invites/ ledger/ jobs/*/job.json 全为空）"
+[ -s "$LIST" ] || die "$DATA_DIR 里没有可备份的内容（users/ invites/ gift-codes/ ledger/ jobs/*/job.json 全为空）"
 
 # 服务是活的，job.json 可能正好在写。GNU tar 遇到「读的时候文件变了」退出 1，
 # 这不是致命错误（原子 rename 保证读到的是完整的旧版或新版），退出 ≥2 才是真失败。
@@ -113,7 +114,7 @@ tar --list --gzip --file "$TMP_OUT" > "$LISTING" || die "无法读回刚生成�
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   case "$entry" in
-    users|users/*|invites|invites/*|ledger|ledger/*) ;;
+    users|users/*|invites|invites/*|gift-codes|gift-codes/*|ledger|ledger/*) ;;
     jobs/*/job.json) ;;
     *) die "包内出现不该有的条目「$entry」，已丢弃 $TMP_OUT" ;;
   esac

@@ -1,16 +1,17 @@
 "use client";
 
-import { IMAGE_RES, VIDEO_RES, useShell } from "@/components/genius/ShellContext";
+import { IMAGE_RES_LABEL, RES_LABEL, useShell } from "@/components/genius/ShellContext";
 
 /*
   规格弹层（交接包 §4.1 图 5）：向上弹出的三块卡——分辨率 / 宽高比 / 时长。
-  与原型的两处有意差异（方案 §4）：
-  1. 分辨率只列后端真有的档（视频 480P/720P/1080P、图片 1K/2K），去掉原型的 360P/540P；
-     右上「预览模式」开关与底部「剩余 3 次试用」一并去掉——后端没有这两个概念。
-  2. 宽高比 / 时长只列服务端下发的枚举（provider 能力），不是原型写死的 8 项 / 15 档。
+  与原型的几处有意差异（方案 §4 + 阶段 A）：
+  1. 三块卡的选项**全部来自当前产品的能力**（`/api/models`），拿不到产品时回落服务端
+     下发的枚举——不是原型写死的 360P/540P、8 项画幅、15 档时长。
+  2. 右上「预览模式」开关与底部「剩余 3 次试用」去掉——后端没有这两个概念。
+  3. 首尾帧模式不显示宽高比卡：成片比例跟着两张帧走，选了也没处发（交接包图 11）。
 */
 
-/** 线框按原型的像素表（16:9 = 26×15…）按比例画；服务端下发之外的画幅不会出现。 */
+/** 线框按原型的像素表（16:9 = 26×15…）按比例画；产品能力之外的画幅不会出现。 */
 const FRAME: Record<string, [number, number]> = {
   "16:9": [26, 15],
   "4:3": [22, 16],
@@ -22,7 +23,22 @@ const FRAME: Record<string, [number, number]> = {
 };
 
 export function SpecsPop() {
-  const { tab, res, setRes, imageRes, setImageRes, ratio, setRatio, ratios, dur, setDur, durs } = useShell();
+  const {
+    tab,
+    res,
+    setRes,
+    resolutions,
+    imageRes,
+    setImageRes,
+    imageResolutions,
+    ratio,
+    setRatio,
+    ratios,
+    ratioUsable,
+    dur,
+    setDur,
+    durs,
+  } = useShell();
   const isImage = tab === "image";
 
   return (
@@ -31,46 +47,42 @@ export function SpecsPop() {
         <span className="specs-pop__title">分辨率</span>
         <div className="specs-pop__res">
           {isImage
-            ? IMAGE_RES.map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  data-res={r.id}
-                  aria-pressed={imageRes === r.id}
-                  onClick={() => setImageRes(r.id)}
-                >
-                  {r.label}
+            ? imageResolutions.map((r) => (
+                <button key={r} type="button" data-res={r} aria-pressed={imageRes === r} onClick={() => setImageRes(r)}>
+                  {IMAGE_RES_LABEL[r]}
                 </button>
               ))
-            : VIDEO_RES.map((r) => (
-                <button key={r.id} type="button" data-res={r.id} aria-pressed={res === r.id} onClick={() => setRes(r.id)}>
-                  {r.label}
+            : resolutions.map((r) => (
+                <button key={r} type="button" data-res={r} aria-pressed={res === r} onClick={() => setRes(r)}>
+                  {RES_LABEL[r]}
                 </button>
               ))}
         </div>
       </div>
 
-      <div className="specs-pop__card">
-        <span className="specs-pop__title">宽高比</span>
-        <div className="specs-pop__grid">
-          {ratios.map((r) => {
-            const [w, h] = FRAME[r] ?? [20, 20];
-            return (
-              <button
-                key={r}
-                type="button"
-                className="specs-pop__ratio"
-                data-ratio={r}
-                aria-pressed={ratio === r}
-                onClick={() => setRatio(r)}
-              >
-                <span className="specs-pop__frame" style={{ width: `${w}px`, height: `${h}px` }} aria-hidden="true" />
-                <span className="specs-pop__label">{r}</span>
-              </button>
-            );
-          })}
+      {ratioUsable ? (
+        <div className="specs-pop__card">
+          <span className="specs-pop__title">宽高比</span>
+          <div className="specs-pop__grid">
+            {ratios.map((r) => {
+              const [w, h] = FRAME[r] ?? [20, 20];
+              return (
+                <button
+                  key={r}
+                  type="button"
+                  className="specs-pop__ratio"
+                  data-ratio={r}
+                  aria-pressed={ratio === r}
+                  onClick={() => setRatio(r)}
+                >
+                  <span className="specs-pop__frame" style={{ width: `${w}px`, height: `${h}px` }} aria-hidden="true" />
+                  <span className="specs-pop__label">{r}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {isImage ? null : (
         <div className="specs-pop__card">

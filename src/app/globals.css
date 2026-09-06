@@ -1275,6 +1275,253 @@ input::placeholder {
 .picker__ok:hover {
   filter: brightness(1.05);
 }
+/* 「已创建」可选后不再是置灰缩略：图片按原样铺满，hover 抬一层描边 */
+.picker__item {
+  transition:
+    box-shadow 0.16s ease,
+    transform 0.2s;
+}
+.picker__item:hover {
+  box-shadow: var(--ring-strong);
+  transform: translateY(-2px);
+}
+
+/* ── 模型下拉（交接包 §4.1 图 7） ── */
+
+.model-pop {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 360px;
+  max-height: 420px;
+  overflow: auto;
+  z-index: 11;
+  border-radius: 12px;
+  background: rgba(24, 24, 28, 0.98);
+  box-shadow: var(--ring), var(--shadow-pop);
+  padding: 12px;
+  animation: pop-in 0.2s ease both;
+}
+.model-pop__title {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 2px 4px 10px;
+}
+.model-pop__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.model-pop__item {
+  display: flex;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  text-align: left;
+  background: transparent;
+  transition: background 0.16s ease;
+}
+.model-pop__item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.model-pop__item[data-on="true"] {
+  background: rgba(255, 255, 255, 0.09);
+}
+.model-pop__icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 8px;
+  background: var(--grad-d);
+}
+.model-pop__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.model-pop__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.model-pop__price {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 15px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--credit);
+  background: rgba(240, 217, 168, 0.14);
+  font-variant-numeric: tabular-nums;
+}
+.model-pop__mock {
+  height: 15px;
+  padding: 0 5px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  color: var(--fg-2);
+  background: rgba(255, 255, 255, 0.09);
+}
+.model-pop__desc {
+  font-size: 11.5px;
+  color: var(--weak);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer__model-wrap,
+.composer__count-wrap {
+  position: relative;
+}
+.composer__model {
+  transition: background 0.16s ease;
+}
+.composer__model:hover:not([aria-disabled="true"]),
+.composer__model[data-on="true"] {
+  background: var(--chip-hover);
+}
+.composer__model[data-on="true"] {
+  box-shadow: var(--ring-strong);
+}
+.composer__count-chip {
+  transition: background 0.16s ease;
+}
+.composer__count-chip:hover,
+.composer__count-chip[data-on="true"] {
+  background: var(--chip-hover);
+}
+
+/* ── 数量下拉 ── */
+
+.count-pop {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 11;
+  display: flex;
+  gap: 4px;
+  border-radius: 12px;
+  background: rgba(24, 24, 28, 0.98);
+  box-shadow: var(--ring), var(--shadow-pop);
+  padding: 8px;
+  animation: pop-in 0.2s ease both;
+}
+.count-pop button {
+  width: 32px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--fg-3);
+  background: var(--chip);
+  font-variant-numeric: tabular-nums;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+.count-pop button:hover {
+  color: var(--fg);
+}
+.count-pop button[aria-selected="true"] {
+  color: var(--fg);
+  background: var(--chip-on);
+}
+
+/*
+  窄屏：模型下拉是 360 宽，而它右对齐的锚点（模型芯片）离面板右边只有一百多像素，
+  照原样弹会有一半跑到屏幕外——`documentElement` 不会因此产生横向滚动，所以那条
+  「375 宽不横向溢出」的用例也照样绿。把定位上下文抬到整行选项上，让它按面板宽度铺开。
+*/
+@media (max-width: 560px) {
+  .composer__opts {
+    position: relative;
+  }
+  .composer__model-wrap {
+    position: static;
+  }
+  .model-pop {
+    left: 0;
+    right: 0;
+    width: auto;
+    max-height: 50vh;
+  }
+}
+
+/* ── 首尾帧 / 参考图槽 ── */
+
+.composer__arrow {
+  align-self: center;
+  flex: none;
+  color: var(--ph);
+  display: grid;
+  place-items: center;
+}
+.composer__refs {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: none;
+  max-width: 340px;
+  flex-wrap: wrap;
+}
+.composer__ref {
+  position: relative;
+  width: 66px;
+  height: 66px;
+  flex: none;
+  border-radius: 10px;
+  overflow: visible;
+}
+.composer__ref-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+  display: block;
+  box-shadow: var(--ring);
+}
+.composer__ref[data-state="busy"] .composer__ref-img {
+  opacity: 0.6;
+}
+.composer__ref[data-state="error"] .composer__ref-img {
+  box-shadow: inset 0 0 0 1px rgba(255, 155, 155, 0.5);
+}
+.composer__ref-add {
+  width: 66px;
+  height: 66px;
+  flex: none;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--weak);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: var(--ring);
+  transition:
+    color 0.16s ease,
+    background 0.16s ease;
+}
+.composer__ref-add:hover {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.09);
+}
+.composer__ref-count {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ══ 主页 ══════════════════════════════════════════════════════════ */
 

@@ -28,6 +28,12 @@ export type ProviderGenerateRequest = {
   imageResolution?: ImageResolution;
   generateAudio: boolean;
   startImage?: MediaRef;
+  /**
+   * 尾帧（首尾帧锁定）。**只有声明 `supportsLastFrameLock` 的 provider 才会发它**：
+   * grok 的 rest-map 永远不把它写进请求体（golden test 保障），可灵在图生视频里以
+   * `last_frame` 发送并被上游强制到 1080p。其余 provider 忽略。
+   */
+  lastImage?: MediaRef;
   referenceImages?: MediaRef[];
   referenceAudios?: { voiceId: string }[];
   sourceVideo?: MediaRef;
@@ -79,6 +85,19 @@ export interface VideoProvider {
     supportsLastFrameLock: boolean;
     maxResolution: Resolution;
     /**
+     * 视频侧真正出得了的分辨率档。**省略 = 不限**（按 `maxResolution` 判断）。
+     *
+     * 路由拿它当硬条件：请求 1080p 时不会被派给只出 720p 的 provider。方向是单向的——
+     * 480p 的请求交给只有 720p 的一家没问题（向上归一，用户拿到的只多不少），反过来
+     * 把 1080p 降成 720p 是交付了另一个东西。
+     */
+    resolutions?: Resolution[];
+    /**
+     * 参考生视频最多收几张参考图。**省略 = 不限**（受请求体 schema 的上限约束）。
+     * grok 7、YMan 9（按所选模型）、可灵 0。
+     */
+    maxReferenceImages?: number;
+    /**
      * 视频侧接得下的画幅。**省略 = 不限**（xAI / mock 那样什么都收）。
      *
      * 路由拿它当硬条件：一个不声明 1:1 的 provider 不会被派去做 1:1 的任务，而不是
@@ -91,6 +110,15 @@ export interface VideoProvider {
      */
     durations?: number[];
   };
+  /**
+   * 这家上游**自己**的请求约束（可选）。
+   *
+   * 与请求体的通用校验（`jobs/request-validation.ts`）分工明确：那边管「这个 mode 该带
+   * 哪些字段」，与 provider 无关；这里管「这家接不接得下这样一个请求」——参考图上限、
+   * 源视频必须是 file_id、某个模型不收源视频之类。创建任务时按选中的 provider 调一次，
+   * 所以 grok 的 7 张参考图上限不会再被套到 YMan 的 9 张上。
+   */
+  validate?(req: ProviderGenerateRequest): void;
   submit(req: ProviderGenerateRequest): Promise<ProviderHandle>;
   poll(handle: ProviderHandle): Promise<ProviderPoll>;
   /**

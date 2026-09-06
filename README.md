@@ -29,6 +29,10 @@ node scripts/mint-invites.mjs 5 --note "内测第一批"
 node scripts/grant-balance.mjs <邮箱> 20 --note "内测赠送"
 ```
 
+也可以让用户自己充值：管理员用 `node scripts/mint-gift-codes.mjs <数量> <金额> [--note "..."]` 铸礼品码（打印到标准输出，不写日志），用户在订阅页「兑换礼品码」输入即可到账（`POST /api/me/redeem`，详见 `docs/design.md` §5 与 `docs/handoff.md` §0）。
+
+界面上的「模型」下拉列的是产品名（不露供应商），内置七档见 `src/lib/products/catalog.ts`，可用 `.env.example` 里的 `LUMEN_PRODUCTS`（JSON）按 id 覆盖或追加档位。
+
 可选：设置 `KLING_API_KEY`（可灵直连视频，见下）或 `OPENAI_API_KEY`（文生图走 OpenAI 兼容 provider，见 `.env.example` 的 `OPENAI_*` 段）；都不设时视频 / 图片各自回落 xAI 或模拟模式。`DATA_DIR` 默认 `./data`。
 
 ### 真出片：官方 xAI 或 Sub2API
@@ -57,7 +61,7 @@ UPSTREAM_RETRY_BASE_MS=250
 
 **可选：可灵（Kling）直连视频**（详见 `docs/plan-kling-video.md` 与 `docs/handoff.md` §0c）——设置 `KLING_API_KEY` 与 `VIDEO_PROVIDER=kling` 后，文生视频 / 图生视频改走可灵开放平台，价格约为 xAI 的三分之一；参考生视频 / 编辑 / 延长与长片仍固定在 xAI。变量说明见 `.env.example`。
 
-**可选：YMan 中转渠道**（视频 + 生图，详见 `docs/design.md` §2e 与 `docs/handoff.md` 本轮小节）——设置 `YMAN_API_KEY` 后自动参与路由（默认次序 `VIDEO_PROVIDER_ORDER=kling,grok`、`IMAGE_PROVIDER_ORDER=openai,grok`，把 `yman` 加进对应的 ORDER 变量才会被选中，如 `VIDEO_PROVIDER_ORDER=yman,kling,grok`）。视频模型 ID 必须用上游 `GET /v1/models` 的展示名（默认 `YMAN_T2V_MODEL=minimax-H3 文字`、`YMAN_I2V_MODEL=minimax-h3-933-图文`），生图默认 `YMAN_IMAGE_MODEL=gpt-image-2`；一家上游积分用完（`quota_exhausted`）会被自动标记耗尽 `PROVIDER_EXHAUSTED_TTL_MS`（默认 6 小时）并改走下一家，用户报价不变。全部变量说明见 `.env.example`。
+**可选：YMan 中转渠道**（视频 + 生图，详见 `docs/design.md` §2e 与 `docs/handoff.md` §0f）——设置 `YMAN_API_KEY` 后自动参与路由（默认次序 `VIDEO_PROVIDER_ORDER=kling,grok`、`IMAGE_PROVIDER_ORDER=openai,grok`，把 `yman` 加进对应的 ORDER 变量才会被选中，如 `VIDEO_PROVIDER_ORDER=yman,kling,grok`）。视频模型 ID 必须用上游 `GET /v1/models` 的展示名（默认 `YMAN_T2V_MODEL=minimax-H3 文字`、`YMAN_I2V_MODEL=minimax-h3-933-图文`），生图默认 `YMAN_IMAGE_MODEL=gpt-image-2`；一家上游积分用完（`quota_exhausted`）会被自动标记耗尽 `PROVIDER_EXHAUSTED_TTL_MS`（默认 6 小时）并改走下一家，用户报价不变。全部变量说明见 `.env.example`。
 
 Sub2API 的 Grok 媒体路由与 xAI 字段兼容；OAuth 订阅号需要付费权益探测通过才会接图/视频，否则上游返回 `503 grok_media_no_eligible_account`。
 

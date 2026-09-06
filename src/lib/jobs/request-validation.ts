@@ -121,4 +121,10 @@ export function assertCreateJobFields(body: CreateJobBody): void {
   } else if (!VIDEO_MODES.has(mode) && has(body, "lastUploadId")) {
     reject("尾帧图只适用于视频模式");
   }
+
+  // 首尾帧 = 首帧 + 尾帧，两头都锁住才有意义。只有图生视频带得了首帧，别的模式带上尾帧
+  // 既发不出去（provider 只在 i2v 里发 last_frame），还会把分辨率抬到 1080p 多收 50%。
+  if (mode !== "image_to_video" && has(body, "lastUploadId")) {
+    reject("首尾帧需要先上传首帧图（仅图生视频支持）");
+  }
 }

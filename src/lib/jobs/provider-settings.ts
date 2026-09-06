@@ -1,10 +1,10 @@
 import type { VideoPricingHint } from "@/lib/cost";
-import { klingVideoModel, openaiImageModel, ymanImageModel } from "@/lib/env";
-import { modelForMode } from "@/lib/providers/grok/mode-matrix";
+import { defaultResolutionOf, modelForProduct, type Product } from "@/lib/products/catalog";
 import { resolveKlingSettings } from "@/lib/providers/kling/rest-map";
-import { modelFor as ymanModelFor } from "@/lib/providers/yman/catalog";
+import { envModelFor } from "@/lib/providers/model-name";
+import { type YmanResolution } from "@/lib/providers/yman/catalog";
 import { resolveYmanSettings } from "@/lib/providers/yman/rest-map";
-import type { AspectRatio, NativeMode, ProviderId } from "@/lib/providers/types";
+import type { AspectRatio, NativeMode, ProviderId, Resolution } from "@/lib/providers/types";
 import type { CreateJobBody } from "@/lib/jobs/schema";
 
 /**
@@ -16,15 +16,21 @@ import type { CreateJobBody } from "@/lib/jobs/schema";
  */
 
 /**
- * Model名与 provider 必须同源：OpenAI 生图用 OPENAI_IMAGE_MODEL、可灵视频用 KLING_VIDEO_MODEL、
- * YMan 视频用它的展示名目录、YMan 生图用 YMAN_IMAGE_MODEL，其余仍按 mode 走 Grok 矩阵。
+ * Model名与 provider 必须同源：具体那张对照表在 `providers/model-name.ts` 的
+ * `envModelFor`（OpenAI 生图 OPENAI_IMAGE_MODEL、可灵 KLING_VIDEO_MODEL、YMan 视频用
+ * 它的展示名目录、YMan 生图 YMAN_IMAGE_MODEL，其余按 mode 走 Grok 矩阵）。
  * 对既有的 grok / mock 任务，本函数与 `modelForMode` 结果完全一致。
  */
-export function modelForProvider(provider: ProviderId, mode: NativeMode): string {
-  if (provider === "openai") return openaiImageModel();
-  if (provider === "kling") return klingVideoModel();
-  if (provider === "yman") return mode === "text_to_image" ? ymanImageModel() : ymanModelFor(mode);
-  return modelForMode(mode);
+export function modelForProvider(
+  provider: ProviderId,
+  mode: NativeMode,
+  product?: Product | null,
+): string {
+  // 用户点名了产品，且这次真的由它的 provider 执行：模型名以产品为准。
+  // provider 与产品对不上（mock 实例、换家之后）时不能用产品的模型名——那会把一个
+  // 别家的模型名写进记录，日志、账目、重试全跟着错。
+  if (product && product.provider === provider) return modelForProduct(product, mode);
+  return envModelFor(provider, mode);
 }
 
 /**
@@ -49,7 +55,14 @@ export function providerSettingsFor(
   durationSec: number | undefined,
   body: Pick<CreateJobBody, "prompt" | "aspectRatio" | "resolution" | "generateAudio">,
   model: string,
+  opts?: {
+    /** 用户选中的产品（或路由后打上的那个标签）。只在它的 provider 真的执行时才起作用。 */
+    product?: Product | null;
+    /** 这次任务带了尾帧：可灵会因此把分辨率抬到 1080p，售价必须按抬完的档算。 */
+    hasLastFrame?: boolean;
+  },
 ): ProviderSettings | null {
+  const product = opts?.product && opts.product.provider === provider ? opts.product : null;
   const req = {
     jobId: "preview",
     mode,
@@ -59,17 +72,24 @@ export function providerSettingsFor(
     aspectRatio: body.aspectRatio,
     resolution: body.resolution,
     generateAudio: body.generateAudio ?? true,
+    // 只有形状重要（是否存在），内容不会被发出去——归一发生在提交之前，此时素材还没认领。
+    lastImage: opts?.hasLastFrame ? ({ kind: "path", path: "preview" } as const) : undefined,
   };
   if (provider === "kling") {
     if (mode !== "text_to_video" && mode !== "image_to_video") return null;
-    const kling = resolveKlingSettings(req);
+    const kling = resolveKlingSettings(req, {
+      // 产品是「默认档」的来源，用户选了分辨率仍以用户为准（`resolveKlingSettings`）；
+      // 产品没说话时才回落 `KLING_VIDEO_RESOLUTION` / `KLING_VIDEO_AUDIO`。
+      resolution: klingResolution(product),
+      audio: product ? (product.audio === "native" ? "native" : "off") : undefined,
+    });
     return { durationSec: kling.durationSec, resolution: kling.resolution, audio: kling.audio };
   }
   if (provider === "yman") {
     if (mode !== "text_to_video" && mode !== "image_to_video" && mode !== "reference_to_video") {
       return null;
     }
-    const yman = resolveYmanSettings(req);
+    const yman = resolveYmanSettings(req, { resolution: ymanResolution(product) });
     // YMan 的建任务接口没有音频开关（出不出声由模型决定），所以记录一律记无声：
     // 记成有声就是拿一个我们控制不了的东西向用户收有声的加价。
     return {
@@ -80,6 +100,18 @@ export function providerSettingsFor(
     };
   }
   return null;
+}
+
+/** 产品默认档收窄到可灵出得了的两档；产品没说话（或不是可灵的产品）时返回 undefined。 */
+function klingResolution(product: Product | null): "720p" | "1080p" | undefined {
+  const preferred = product ? defaultResolutionOf(product) : undefined;
+  return preferred === "1080p" || preferred === "720p" ? preferred : undefined;
+}
+
+/** 同上，收窄到 YMan 的两档。 */
+function ymanResolution(product: Product | null): YmanResolution | undefined {
+  const preferred: Resolution | undefined = product ? defaultResolutionOf(product) : undefined;
+  return preferred === "1080p" || preferred === "720p" ? preferred : undefined;
 }
 
 export function videoPricingOf(

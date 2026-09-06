@@ -21,6 +21,7 @@ import {
   uiProviderId,
   videoAspectRatios,
   videoDurationsFor,
+  videoResolutions,
 } from "@/lib/providers/router";
 
 export const runtime = "nodejs";
@@ -72,6 +73,9 @@ export async function GET() {
       // 文生图的画幅芯片：恒定七个，与视频 provider 的能力无关（三条生图通道都能出）。
       // 与 `src/app/page.tsx` 下发的同名 prop 同源。
       imageAspectRatios: imageAspectRatios(),
+      // 分辨率格子的取值：有 key、未耗尽的视频 provider 出得了的档位并集（2026-09-06 起
+      // 用户选的分辨率不再被 env 覆盖，所以这条也是排查「为什么 1080p 提交被拒」的入口）。
+      videoResolutions: videoResolutions(),
       // 这一刻的视频 provider 会不会真的**按我们的要求**出音轨。可灵由 KLING_VIDEO_AUDIO
       // 决定（默认 off，上游只在 1080p 出声）；YMan 的建任务接口根本没有音频参数，出不出声
       // 由模型自己决定，所以是「不可控」而不是「一定无声」——不可控就不能向用户收有声的

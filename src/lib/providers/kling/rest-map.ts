@@ -1,6 +1,7 @@
 import { klingUnitsToUsd } from "@/lib/cost";
 import { klingVideoAudio, klingVideoModel, klingVideoResolution } from "@/lib/env";
-import type { MediaRef, ProviderGenerateRequest, ProviderPoll } from "@/lib/providers/types";
+import { normalizeUpResolution } from "@/lib/providers/resolution";
+import type { MediaRef, ProviderGenerateRequest, ProviderPoll, Resolution } from "@/lib/providers/types";
 import { ProviderHttpError } from "@/lib/providers/types";
 
 export type KlingRestCall = {
@@ -18,6 +19,19 @@ export type KlingSettings = {
 /** 可灵 t2v 只收这三种画幅；UI 恰好也只有这三种。i2v 不发画幅，随首帧。 */
 const KLING_ASPECT_RATIOS: readonly string[] = ["16:9", "9:16", "1:1"];
 
+/** 上游出得了的两档。480p 的请求向上归一到 720p（`normalizeUpResolution`）。 */
+export const KLING_RESOLUTIONS: readonly Extract<Resolution, "720p" | "1080p">[] = ["720p", "1080p"];
+
+/**
+ * 产品目录给这次调用定的默认档（`jobs/provider-settings.ts` 传入）。
+ * 省略时回落到 `KLING_VIDEO_RESOLUTION` / `KLING_VIDEO_AUDIO` —— 那两个变量从
+ * 「覆盖用户选择」降级成「产品没说话时的默认」。
+ */
+export type KlingDefaults = {
+  resolution?: KlingSettings["resolution"];
+  audio?: KlingSettings["audio"];
+};
+
 /**
  * 上游 `duration` 的枚举只有 5 / 10（能力地图写的 3–10s 是营销口径）。
  * 4 秒的请求会被按 5 秒计费，所以归一后的值必须写回 job，账目才如实。
@@ -28,21 +42,46 @@ export function normalizeKlingDuration(sec: number | undefined): 5 | 10 {
 }
 
 /**
- * 一次可灵调用真正会用的三个参数。音频 = 实例允许有声（`KLING_VIDEO_AUDIO=native`）
- * **且**用户没有选无声（`req.generateAudio !== false`）；实例不允许时用户的选择被忽略，
- * UI 侧对应显示「无声 · 暂不可用」。有声只在 1080p 出片，所以 `native` 会把分辨率抬上去——
- * 静默降级会让成片与账单对不上；用户选无声时分辨率回到实例默认档，不再多收 1080p 的钱。
+ * 一次可灵调用真正会用的三个参数。
+ *
+ * 音频 = 这次调用允许有声（产品声明 `native`，或实例 `KLING_VIDEO_AUDIO=native`）**且**
+ * 用户没有选无声（`req.generateAudio !== false`）；不允许时用户的选择被忽略，UI 侧对应
+ * 显示「无声 · 暂不可用」。
+ *
+ * 分辨率**先看用户**（`req.resolution`，向上归一到上游出得了的档：480p → 720p），用户没选
+ * 才用产品默认 / 实例默认。两个例外会把它抬到 1080p 并**写回记录**（`create.ts` 用同一个
+ * 函数定价，所以账单与成片始终同档）：有声只在 1080p 出片；带尾帧的图生视频上游同样只在
+ * 1080p 接受。静默降级则一律不做——那是交付了另一个东西。
  */
-export function resolveKlingSettings(req: ProviderGenerateRequest): KlingSettings {
+export function resolveKlingSettings(
+  req: ProviderGenerateRequest,
+  defaults?: KlingDefaults,
+): KlingSettings {
+  const allowsAudio = (defaults?.audio ?? klingVideoAudio()) === "native";
   const audio: KlingSettings["audio"] =
-    klingVideoAudio() === "native" && req.generateAudio !== false ? "native" : "off";
-  const resolution = audio === "native" ? "1080p" : klingVideoResolution();
+    allowsAudio && req.generateAudio !== false ? "native" : "off";
+  const asked = normalizeUpResolution(req.resolution, KLING_RESOLUTIONS) as
+    | KlingSettings["resolution"]
+    | undefined;
+  const base = asked ?? defaults?.resolution ?? klingVideoResolution();
+  const resolution = audio === "native" || hasLastFrame(req) ? "1080p" : base;
   return { resolution, audio, durationSec: normalizeKlingDuration(req.durationSec) };
 }
 
-export function mapToKlingRequest(req: ProviderGenerateRequest): KlingRestCall {
-  const model = klingVideoModel();
-  const { resolution, audio, durationSec } = resolveKlingSettings(req);
+/**
+ * 尾帧只在图生视频里有意义（首帧 + 尾帧 = 一段被两头锁住的运动）。文生视频带着尾帧
+ * 既发不出去也不该把分辨率抬到 1080p——那是让用户为一个用不上的东西多付 50%。
+ */
+function hasLastFrame(req: ProviderGenerateRequest): boolean {
+  return req.mode === "image_to_video" && Boolean(req.lastImage);
+}
+
+export function mapToKlingRequest(
+  req: ProviderGenerateRequest,
+  defaults?: KlingDefaults,
+): KlingRestCall {
+  const model = req.model?.trim() || klingVideoModel();
+  const { resolution, audio, durationSec } = resolveKlingSettings(req, defaults);
   // external_task_id 让「POST 超时但上游已建任务」可以按 jobId 找回，避免二次计费；
   // 不发 callback_url——轮询是真相。
   const options = {
@@ -75,8 +114,14 @@ export function mapToKlingRequest(req: ProviderGenerateRequest): KlingRestCall {
     const contents: Record<string, unknown>[] = [];
     // 提示词对 i2v 可选；空串发上去会被上游按非法参数拒掉，所以有内容才带。
     if (req.prompt.trim()) contents.push({ type: "prompt", text: req.prompt });
-    // 尾帧永不进请求体：last_frame 只落盘，是全项目的硬约束。
     contents.push({ type: "first_frame", url: mediaToKlingUrl(req.startImage) });
+    // 尾帧：可灵是唯一收它的通道（`supportsLastFrameLock`），且上游只在 1080p 接受——
+    // 上面的 `resolveKlingSettings` 已经把 resolution 抬到 1080p，`create.ts` 用同一个
+    // 函数定价，所以这里不会出现「发了 1080p、按 720p 收钱」。grok 那条通道仍然永不
+    // 发送尾帧（`grok/rest-map.ts` 的 golden test 保障）。
+    if (req.lastImage) {
+      contents.push({ type: "last_frame", url: mediaToKlingUrl(req.lastImage) });
+    }
     return {
       path: `/image-to-video/${model}`,
       body: {

@@ -83,18 +83,28 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 - 能力与账号：`caps`（`mock/harness/videoDurations/videoAspectRatios/imageAspectRatios/videoModel/imageModel/audioAvailable/initialEmail/initialJobs`，由 `(shell)/layout.tsx` 服务端下发）、`me`（`GET /api/me`）、`credits`（`Math.round(availableCny*100)`，¥1=100 积分仅显示，余额模型与后端计费不变）。
 - 任务：`jobs`、`currentJob`（派生值 = 显式选中的那条 ?? 最新一条，`setCurrentJob(null)` 才真正清空，方案 §7.1 #8）、`busy`/`working`、`cancel`/`retry`。
 - 面板：`open/tab(video|image|audio)/mode(VIDEO_MODES 之一，只有"图文"接后端)/collapsed/pop(null|specs|model|buddy|picker)/prompt/res/imageRes/ratio/ratios/dur/durs/audio/multi/image(Frame:首帧上传)/nativeMode(text_to_video|image_to_video|text_to_image)/price/sendCredits/balanceShort/quotaExhausted/error/notice`。
-- 提交：`submit()` 走 `createJobBodySchema`（strict，无 `model` 字段），幂等 key 一次逻辑创作一个（`idempotencyKey.current ??= newIdempotencyKey()`，提交成功清空，任何面板改动作废）。
+- 提交：`submit()` 走 `createJobBodySchema`（strict）；2026-09-06 夜阶段 A 起可带可选 `model`（选中产品的 id，见下「模型下拉」），未选则不传字段、沿用能力路由。幂等 key 一次逻辑创作一个（`idempotencyKey.current ??= newIdempotencyKey()`，提交成功清空，任何面板改动作废）；数量 1–4 时循环创建 N 次、各自一个幂等 key（串行提交，非批量并发）。
+
+## 阶段 A 新增规格（2026-09-06 夜，方案 `docs/plan-frontend-backend-adaptation.md`）
+
+- **模型下拉**（`ModelPop.tsx`）：`.composer__model` 从只读文案改为可点开的下拉列表（`role="listbox"`），内容来自 `GET /api/models`，每行「图标 + 产品名 + ⚡样例积分 + 一行描述」，选中项高亮；用户 2026-09-06 决定只显示产品名与售价，供应商名与上游模型名不出现在任何可见文案，只作 `data-product-id` 与提交体的 `model` 字段。拿不到产品列表（如接口失败）时退回旧的只读文案。
+- **规格芯片按产品收窄**：`SpecsPop.tsx` 三块卡（分辨率/宽高比/时长）的可选项全部来自当前选中产品的能力（`resolutions`/`aspectRatios`/`durations`），不再是全局服务端枚举；未选具体产品（走默认路由）时回落原来的服务端下发枚举。首尾帧模式下不显示宽高比卡——成片比例跟着两张帧走，选了也没处发。
+- **参考模式多图**：参考图槽位从固定单图改为最多 `产品.maxReferenceImages` 张（YMan 产品 9 张、Grok 产品 7 张），超过产品上限的槽位不渲染。
+- **首尾帧双槽**：i2v 模式下除首帧槽外新增尾帧槽，只有当前产品 `supportsLastFrame` 为真时才显示（目前只有可灵「标准」「高清有声」两档），选中尾帧槽会自动把产品切到支持首尾帧的那个、并把分辨率锁定 1080p（上游硬约束，见 `docs/design.md` §2c）。
+- **数量**：`.composer` 内新增数量选择器（芯片式，1/2/3/4），点击「创作」按选中的 N 循环调用 `createJob`，每次用独立幂等 key；卡片/进度区各自独立展示 N 条任务。
+- **素材弹窗「已创建」可选**：`AssetPicker.tsx` 弹窗现在服务于「当前槽位」（首帧/尾帧/参考），标题随槽位变化；「已创建」页签点选一张成功的图片作品会调 `POST /api/uploads/from-job` 认领成上传并填入当前槽位，不再是「仅展示、标即将上线」。
+- **订阅页兑换礼品码与积分流水**：「我的方案」卡新增礼品码输入框 + 兑换按钮（`POST /api/me/redeem`，成功后刷新顶栏积分并 toast 到账金额，404/409/429 分别显示对应中文错误）；「积分使用详情」「账单记录」两个链接改为打开一个抽屉，分页读 `GET /api/me/ledger`（后者带 `kind=grant` 只看充值/兑换），列表按时间倒序展示 `kind` 中文标签、金额、余额快照与备注。四档订阅卡本身仍是占位（按钮 toast「即将上线」）。
 
 ## 与交接包的有意偏离
 
-- 规格弹层无「预览模式」开关与「剩余试用」文案（后端没有配额档位这个概念）；分辨率只列服务端枚举 `480P/720P/1080P`（图片 `1K/2K`），宽高比/时长同样只列服务端下发的枚举，不画交接包里的 21:9 等占位档。
-- 模型芯片只读文案（`caps.videoModel`/`imageModel`，mock 模式后缀「· 模拟」），不做下拉——请求体 schema 没有 `model` 字段，选了也无处可发。
+- 规格弹层无「预览模式」开关与「剩余试用」文案（后端没有配额档位这个概念）；分辨率/宽高比/时长只列当前产品（或无产品时服务端）下发的枚举，不画交接包里的 21:9、360P/540P 等占位档。
+- **（2026-09-06 夜阶段 A 起已不再是偏离，见上「阶段 A 新增规格」）**模型芯片曾经是只读文案不做下拉；现在 `POST /api/jobs` 支持可选 `model` 字段，`.composer__model` 是真的下拉（`GET /api/models` 驱动）。
 - `.composer__specs` 用 `font-size:0` 的分隔 `span` 保证 `textContent` 精确等于 `720P | 16:9 | 5s`（e2e 依赖精确字符串）。
 - 创作页内容块底部留白 236px，`main` 本身不留（避免其它视图也被顶开）。
 - 图片页图片槽置灰显示「即将上线」（后端图片路径不支持首帧）。
 - 创作面板关闭态仍留在 DOM（`hidden` + `data-open="false"`），不是条件渲染，便于状态保留与 e2e 断言。
 - 窄屏（≤900px）侧栏收成 56px 图标栏，导航文字用 `clip-path` 隐藏而非 `display:none`。
-- 素材选择弹窗「已创建」页签只展示用户成功图片任务，不可选作首帧（`startUploadId` 仍需走上传通道，本轮未打通「已创建」直接引用），标「即将上线」。
+- **（2026-09-06 夜阶段 A 起已不再是偏离）**素材选择弹窗「已创建」页签曾经只展示不可选；现在点选会走 `POST /api/uploads/from-job` 认领成上传，可直接用作首帧/尾帧/参考图（见上「阶段 A 新增规格」）。
 - 头像菜单是 disclosure 语义（按钮+条件渲染的菜单容器），不是 `role="menu"`/`role="menuitem"`。
 - 订阅四档价格是原型的美元占位值，未与人民币计费对齐（`docs/plan-ui-genius-app.md` 明确按钮为「即将上线」toast，非真实购买路径）。
 - 进入技能广场 / 会话页（智能体视图的子状态）时顶栏标题仍固定显示「智能体」；画布视图顶栏标题固定「画布」——顶栏标题只跟五视图路由走，不感知视图内部 state（未做「视图内子页上报标题」的接口）。

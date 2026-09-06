@@ -543,3 +543,149 @@ describe("selectProvider / currentProviderId — exhaustion-aware routing", () =
     expect(videoDurationsFor(uiProviderId("text_to_video"))).toEqual([4, 6, 8, 10]);
   });
 });
+
+/**
+ * 契约 A1：「router 能力筛选含分辨率」。`servesResolutionCap` 的方向与画幅一致——只挡
+ * 「这家出不了这么高」，480p 的请求交给只有 720p 的一家不受影响（向上归一）。
+ * YMan 默认 t2v/i2v 模型只出 720p（见 yman/catalog.test.ts 的 ymanVideoResolutions），
+ * 可灵两档都出，是这里唯一现成的「一家不够高、另一家够」的组合。
+ */
+describe("selectProvider / currentProviderId — resolution-aware routing (契约 A1)", () => {
+  function reqRes(
+    mode: ProviderGenerateRequest["mode"],
+    resolution: ProviderGenerateRequest["resolution"],
+  ): ProviderGenerateRequest {
+    return { jobId: "job_router", mode, prompt: "p", model: "m", generateAudio: false, resolution };
+  }
+
+  it("skips a 720p-only leader for a 1080p request, falling through to a provider that can serve it", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman,kling";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    process.env.KLING_API_KEY = "kling-test-key";
+    expect(selectProvider(reqRes("text_to_video", "1080p")).id).toBe("kling");
+    expect(currentProviderId("text_to_video", { resolution: "1080p" })).toBe("kling");
+  });
+
+  it("still uses YMan for a resolution it does serve (720p), in the same configuration", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman,kling";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    process.env.KLING_API_KEY = "kling-test-key";
+    expect(selectProvider(reqRes("text_to_video", "720p")).id).toBe("yman");
+    expect(currentProviderId("text_to_video", { resolution: "720p" })).toBe("yman");
+  });
+
+  it("throws 400 invalid_argument when YMan is the only configured provider and can't serve 1080p", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    delete process.env.XAI_API_KEY;
+    expect(() => selectProvider(reqRes("text_to_video", "1080p"))).toThrow(ProviderHttpError);
+    try {
+      currentProviderId("text_to_video", { resolution: "1080p" });
+      throw new Error("expected currentProviderId to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProviderHttpError);
+      expect(error).toMatchObject({ status: 400, code: "invalid_argument" });
+    }
+  });
+
+  it("never lets an unset resolution trip the filter — every video mode still works with none given", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    expect(selectProvider(req("text_to_video")).id).toBe("yman");
+    expect(currentProviderId("text_to_video")).toBe("yman");
+  });
+});
+
+/**
+ * 契约 A1：「needsLastFrame 只落 kling」。`capabilities().supportsLastFrameLock` 当前只有
+ * 可灵为 true；一个带 `lastImage` 的请求必须只落到它，即便别家排在前面，且**兜底也要
+ * 过这一关**——grok 能力最全但同样发不出尾帧。
+ */
+describe("selectProvider / currentProviderId — needsLastFrame routing (契约 A1)", () => {
+  function reqLastFrame(mode: ProviderGenerateRequest["mode"]): ProviderGenerateRequest {
+    return {
+      jobId: "job_router",
+      mode,
+      prompt: "p",
+      model: "m",
+      generateAudio: false,
+      lastImage: { kind: "data_uri", dataUri: "data:image/jpeg;base64,a" },
+    };
+  }
+
+  it("routes a lastImage-bearing request to kling even when YMan leads the order", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman,kling";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    process.env.KLING_API_KEY = "kling-test-key";
+    expect(selectProvider(reqLastFrame("image_to_video")).id).toBe("kling");
+    expect(currentProviderId("image_to_video", { needsLastFrame: true })).toBe("kling");
+  });
+
+  it("ignores lastImage-driven routing for a request that doesn't carry one, in the same configuration", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman,kling";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    process.env.KLING_API_KEY = "kling-test-key";
+    expect(selectProvider(req("image_to_video")).id).toBe("yman");
+  });
+
+  it("throws 400 invalid_argument when no configured provider — including the grok fallback — supports last-frame locking", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    // A real xAI key is present so the fallback path is actually exercised, not skipped
+    // for lack of any key at all — grok must still be rejected, since it never declares
+    // supportsLastFrameLock.
+    process.env.XAI_API_KEY = "xai-live";
+    expect(() => selectProvider(reqLastFrame("image_to_video"))).toThrow(ProviderHttpError);
+    try {
+      currentProviderId("image_to_video", { needsLastFrame: true });
+      throw new Error("expected currentProviderId to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProviderHttpError);
+      expect(error).toMatchObject({ status: 400, code: "invalid_argument" });
+    }
+  });
+});
+
+/**
+ * 契约 A1：「新导出 videoResolutions()」，与 videoAspectRatios() 同一套并集逻辑。
+ * 用动态 import 而不是加进文件顶部的静态 import——这个符号在任务派发时还不存在，
+ * 静态 import 一个不存在的具名导出可能让整份测试文件在收集阶段就跑不起来，
+ * 掩盖掉上面这些已经能跑的路由测试。
+ */
+describe("videoResolutions (契约 A1, 新增导出)", () => {
+  async function loadVideoResolutions(): Promise<(() => string[]) | undefined> {
+    const mod: Record<string, unknown> = await import("./router");
+    return typeof mod.videoResolutions === "function"
+      ? (mod.videoResolutions as () => string[])
+      : undefined;
+  }
+
+  it("is exported as a function from router.ts", async () => {
+    const videoResolutions = await loadVideoResolutions();
+    expect(typeof videoResolutions).toBe("function");
+  });
+
+  it("unions the resolutions of every keyed, non-exhausted video provider", async () => {
+    const videoResolutions = await loadVideoResolutions();
+    if (!videoResolutions) throw new Error("router.ts 尚未导出 videoResolutions() — 见契约 A1");
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman,kling";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    process.env.KLING_API_KEY = "kling-test-key";
+    expect(videoResolutions().sort()).toEqual(["720p", "1080p"].sort());
+  });
+
+  it("falls back to the full tier set once no keyed provider declares resolutions", async () => {
+    const videoResolutions = await loadVideoResolutions();
+    if (!videoResolutions) throw new Error("router.ts 尚未导出 videoResolutions() — 见契约 A1");
+    process.env.LUMEN_FORCE_MOCK = "1";
+    expect(videoResolutions().sort()).toEqual(["480p", "720p", "1080p"].sort());
+  });
+});

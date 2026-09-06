@@ -57,6 +57,32 @@ export const inviteRecordSchema = z.object({
 });
 export type InviteRecord = z.infer<typeof inviteRecordSchema>;
 
+/**
+ * `data/gift-codes/<code>.json` — 自助充值码（方案 §1.7）。
+ *
+ * 码型（字母表 / 长度 / 校验 / 归一化）与邀请码**完全一致**：两者都是管理员线下分发、
+ * 用户手打一次的一次性口令，共用一套规则省掉第二份归一化逻辑，也让「带空格 / 小写 /
+ * 连字符」的输入在两处表现相同。不加前缀区分——码放在哪个目录就决定它是什么，
+ * `data/invites/` 与 `data/gift-codes/` 是两个命名空间，同一个码不会被两边同时认领。
+ */
+export const giftCodeRecordSchema = z.object({
+  code: z.string().regex(INVITE_CODE_RE),
+  /** 面额，人民币元，与 `balanceCny` 同单位。必须为正：0 元码只会让人以为兑换失败。 */
+  amountCny: z.number().positive().max(100_000),
+  note: z.string().max(200).optional(),
+  createdAt: z.string(),
+  /** 认领人。一旦写上，这个码就永久归 TA，任何人（包括 TA 自己）再兑换都是 409。 */
+  usedBy: z.string().regex(USER_ID_RE).optional(),
+  usedAt: z.string().optional(),
+  /**
+   * 入账完成的时刻。认领（`usedBy`）与入账在同一个临界区里先后发生，这个字段是
+   * 「钱已经进账」的凭据：崩在两者之间时记录上有 `usedBy` 没有 `creditedAt`，
+   * 同一个人再兑换一次会走补入账分支（`redeemGiftCode`），别人来则照样 409。
+   */
+  creditedAt: z.string().optional(),
+});
+export type GiftCodeRecord = z.infer<typeof giftCodeRecordSchema>;
+
 /** Derived cache only: `{ "email@x.com": "usr_xxx" }`, rebuildable by scanning. */
 export const userIndexSchema = z.record(z.string(), z.string().regex(USER_ID_RE));
 
@@ -91,7 +117,8 @@ const passwordInputSchema = z.string().min(8, "密码至少 8 位").max(200);
 /**
  * Only normalized here. A malformed code must fail the same way an unknown or
  * already-used one does (`invite_invalid`), so the format check lives in
- * `consumeInvite` rather than in the request schema.
+ * `consumeInvite` rather than in the request schema. Gift codes reuse this for
+ * the same reason (`gift_code_invalid` covers both shapes).
  */
 const inviteInputSchema = z.string().max(64).transform(normalizeInviteCode);
 
@@ -107,3 +134,7 @@ export const loginBodySchema = z.strictObject({
   password: passwordInputSchema,
 });
 export type LoginBody = z.infer<typeof loginBodySchema>;
+
+/** `POST /api/me/redeem`. Same normalization as the invite code — see above. */
+export const redeemBodySchema = z.strictObject({ code: inviteInputSchema });
+export type RedeemBody = z.infer<typeof redeemBodySchema>;

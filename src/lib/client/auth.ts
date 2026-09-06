@@ -106,6 +106,91 @@ export async function fetchMe(): Promise<MePublic> {
   };
 }
 
+/* ── 礼品码与积分流水（阶段 A 契约） ── */
+
+/** `POST /api/me/redeem` 的成功回执：这次到账多少、兑换后余额是多少（均为人民币元）。 */
+export type RedeemResult = { amountCny: number; balance: BalancePublic | null };
+
+export async function redeemGiftCode(code: string): Promise<RedeemResult> {
+  const res = await fetch("/api/me/redeem", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const data = await parseAuthed<{ amountCny?: unknown; balance?: unknown }>(res, "兑换失败");
+  return {
+    amountCny: typeof data.amountCny === "number" && Number.isFinite(data.amountCny) ? data.amountCny : 0,
+    // `balance` 只是省一次 /api/me 的顺手回执；形状不对就当没给，调用方照常重拉。
+    balance: readBalance(data.balance) ?? null,
+  };
+}
+
+/** 码来自 `src/lib/users/gift-codes.ts`（404 / 409）与兑换路由的限流（429）。 */
+const REDEEM_MESSAGES: Record<string, string> = {
+  gift_code_invalid: "礼品码无效",
+  gift_code_used: "礼品码已被使用",
+  rate_limited: "兑换太频繁，稍后再试",
+};
+
+/**
+ * 兑换失败的文案。服务端的码是事实源，这里只把已知的几种钉成固定中文；认不出的码
+ * 一律回落服务端自己那句话（而不是吞成「兑换失败」，那会让用户不知道到底哪一步不对）。
+ */
+export function redeemErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return error instanceof Error && error.message ? error.message : "网络异常，请稍后再试";
+  }
+  const byCode = error.code ? REDEEM_MESSAGES[error.code] : undefined;
+  if (byCode) return byCode;
+  if (error.status === 429) return "兑换太频繁，稍后再试";
+  return error.message || "兑换失败，请稍后再试";
+}
+
+/** 一条积分流水。`kind` 由服务端定义（`grant` 是充值 / 兑换，其余是消费类）。 */
+export type LedgerEntry = {
+  at: string;
+  kind: string;
+  amountCny: number;
+  balanceAfterCny: number;
+  jobId?: string;
+  note?: string;
+};
+
+export type LedgerPage = { entries: LedgerEntry[]; nextBefore?: string };
+
+function readLedgerEntry(raw: unknown): LedgerEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Record<string, unknown>;
+  const at = typeof e.at === "string" ? e.at : "";
+  const kind = typeof e.kind === "string" ? e.kind : "";
+  if (!at || !kind) return null;
+  const money = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  return {
+    at,
+    kind,
+    amountCny: money(e.amountCny),
+    balanceAfterCny: money(e.balanceAfterCny),
+    jobId: typeof e.jobId === "string" ? e.jobId : undefined,
+    note: typeof e.note === "string" ? e.note : undefined,
+  };
+}
+
+/** `GET /api/me/ledger`。`before` 传上一页的 `nextBefore` 就是「加载更多」。 */
+export async function fetchLedger(opts: { before?: string; limit?: number; kind?: string } = {}): Promise<LedgerPage> {
+  const q = new URLSearchParams();
+  if (opts.before) q.set("before", opts.before);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  if (opts.kind) q.set("kind", opts.kind);
+  const suffix = q.size ? `?${q.toString()}` : "";
+  const res = await fetch(`/api/me/ledger${suffix}`, { cache: "no-store" });
+  const data = await parseAuthed<{ entries?: unknown; nextBefore?: unknown }>(res, "无法读取积分流水");
+  const raw = Array.isArray(data.entries) ? data.entries : [];
+  return {
+    entries: raw.map(readLedgerEntry).filter((e): e is LedgerEntry => e !== null),
+    nextBefore: typeof data.nextBefore === "string" && data.nextBefore ? data.nextBefore : undefined,
+  };
+}
+
 export type LoginInput = { email: string; password: string };
 export type RegisterInput = LoginInput & { inviteCode: string };
 

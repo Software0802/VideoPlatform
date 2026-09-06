@@ -1,4 +1,4 @@
-import { access, appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, appendFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -14,13 +14,14 @@ let dataRoot = "";
 let applyBalanceChange: typeof import("./ledger").applyBalanceChange;
 let ledgerFilePath: typeof import("./ledger").ledgerFilePath;
 let hasChargeFor: typeof import("./ledger").hasChargeFor;
+let readLedger: typeof import("./ledger").readLedger;
 let writeUser: typeof import("@/lib/users/store").writeUser;
 let readUser: typeof import("@/lib/users/store").readUser;
 
 beforeAll(async () => {
   dataRoot = await mkdtemp(path.join(os.tmpdir(), "lumen-ledger-test-"));
   process.env.DATA_DIR = dataRoot;
-  ({ applyBalanceChange, ledgerFilePath, hasChargeFor } = await import("./ledger"));
+  ({ applyBalanceChange, ledgerFilePath, hasChargeFor, readLedger } = await import("./ledger"));
   ({ writeUser, readUser } = await import("@/lib/users/store"));
 });
 
@@ -203,5 +204,94 @@ describe("hasChargeFor", () => {
     await applyBalanceChange(id, -1, { kind: "charge", amountCny: -1, jobId: "job_g" });
     expect(await hasChargeFor(id, "job_g")).toBe(true);
     expect((await readUser(id))?.balanceCny).toBe(12);
+  });
+});
+
+/**
+ * 契约 A2：`readLedger(userId, { before?, limit? })` 倒序分页，坏行跳过，`nextBefore`。
+ * 直接手写 jsonl 行（而不是走 `applyBalanceChange`）以拿到可控的 `at` 时间戳，
+ * 分页边界才能被稳定断言，不依赖真实时钟先后。
+ */
+describe("readLedger", () => {
+  async function seedLine(
+    id: string,
+    entry: {
+      at: string;
+      kind: "grant" | "charge" | "adjust";
+      amountCny: number;
+      balanceAfterCny: number;
+      jobId?: string;
+      giftCode?: string;
+    },
+  ) {
+    const file = ledgerFilePath(id);
+    await mkdir(path.dirname(file), { recursive: true });
+    await appendFile(file, `${JSON.stringify(entry)}\n`, "utf8");
+  }
+
+  it("returns entries newest-first with a nextBefore cursor mid-list, and none on the final page", async () => {
+    // "e" — every single-char tag through "d" is already claimed by an earlier describe
+    // block sharing this file's DATA_DIR (applyBalanceChange uses "1".."9", hasChargeFor
+    // uses "a"/"b"); reusing one here would append these hand-timestamped rows onto an
+    // existing ledger file that already has real-clock rows, corrupting the ordering.
+    const id = userId("e1");
+    await seedUser(id, 0);
+    const times = [
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-02T00:00:00.000Z",
+      "2026-01-03T00:00:00.000Z",
+    ];
+    for (const [i, at] of times.entries()) {
+      await seedLine(id, { at, kind: "grant", amountCny: 1, balanceAfterCny: i + 1 });
+    }
+
+    const first = await readLedger(id, { limit: 2 });
+    expect(first.entries.map((e) => e.at)).toEqual([times[2], times[1]]); // newest first
+    expect(first.nextBefore).toBe(times[1]);
+
+    const second = await readLedger(id, { limit: 2, before: first.nextBefore });
+    expect(second.entries.map((e) => e.at)).toEqual([times[0]]);
+    expect(second.nextBefore).toBeUndefined(); // reached the oldest row
+  });
+
+  it("filters by kind before paginating, and silently skips a corrupt line", async () => {
+    const id = userId("e2");
+    await seedUser(id, 0);
+    await seedLine(id, { at: "2026-02-01T00:00:00.000Z", kind: "grant", amountCny: 5, balanceAfterCny: 5 });
+    await seedLine(id, {
+      at: "2026-02-02T00:00:00.000Z",
+      kind: "charge",
+      amountCny: -2,
+      balanceAfterCny: 3,
+      jobId: "job_1",
+    });
+    // A half-written or hand-edited line must not throw and must not count as a row.
+    await appendFile(ledgerFilePath(id), "{not json\n", "utf8");
+
+    const grantsOnly = await readLedger(id, { kind: "grant" });
+    expect(grantsOnly.entries).toHaveLength(1);
+    expect(grantsOnly.entries[0]).toMatchObject({ kind: "grant", amountCny: 5 });
+
+    const everything = await readLedger(id);
+    expect(everything.entries).toHaveLength(2); // the corrupt line contributed nothing
+  });
+
+  it("clamps limit into [1, LEDGER_PAGE_MAX] instead of returning zero rows or throwing", async () => {
+    const id = userId("e3");
+    await seedUser(id, 0);
+    for (let i = 0; i < 3; i += 1) {
+      await seedLine(id, {
+        at: `2026-03-0${i + 1}T00:00:00.000Z`,
+        kind: "grant",
+        amountCny: 1,
+        balanceAfterCny: i + 1,
+      });
+    }
+
+    const zeroLimit = await readLedger(id, { limit: 0 });
+    expect(zeroLimit.entries).toHaveLength(1); // clamped up to the floor of 1, not 0
+
+    const hugeLimit = await readLedger(id, { limit: 100000 });
+    expect(hugeLimit.entries).toHaveLength(3); // only 3 rows exist; the LEDGER_PAGE_MAX ceiling just doesn't bind here
   });
 });

@@ -8,6 +8,7 @@ import {
   uiProviderId,
   videoAspectRatios,
   videoDurationsFor,
+  videoResolutions,
 } from "@/lib/providers/router";
 import { listJobRecordsForUser, toPublic } from "@/lib/jobs/store";
 import { SESSION_COOKIE, sessionUserFromValue } from "@/lib/users/session";
@@ -43,6 +44,9 @@ export default async function ShellLayout({ children }: { children: React.ReactN
         videoDurations: [...videoDurationsFor(videoProvider)],
         // 画幅取**并集**：只要 ORDER 里有一家接得下 1:1，这个格子就该露出来。
         videoAspectRatios: videoAspectRatios(),
+        // 分辨率同理。阶段 A 起面板优先听选中产品的 `resolutions`，这一份是 `/api/models`
+        // 还没回来（或这台实例没有可用产品）时的兜底，芯片不至于空着。
+        videoResolutions: videoResolutions(),
         // 文生图的画幅与视频**完全无关**：三条生图通道都能出全部七个，共用视频那份并集会
         // 让一台只配了 16:9/9:16 视频模型的实例把文生图的 4:3 / 3:2 一起吞掉。
         imageAspectRatios: imageAspectRatios(),

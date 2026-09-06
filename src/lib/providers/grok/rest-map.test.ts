@@ -224,4 +224,28 @@ describe("rest-map", () => {
       ),
     ).toThrow(/2–10/);
   });
+
+  /**
+   * 契约 A1：`ProviderGenerateRequest` 新增了 `lastImage?`（可灵用它发首尾帧），但 grok
+   * 的 `capabilities().supportsLastFrameLock` 恒为 false——「尾帧只落盘，永不进入 Grok
+   * 请求体」这条硬约束现在具体落在 `assertModeConstraints` 里：带 lastImage 的请求直接
+   * 400，而不是被默默丢弃。默默丢弃会让用户以为尾帧生效、实际却收了钱没锁尾帧。
+   */
+  it("rejects a lastImage on image_to_video with 400 invalid_argument, mentioning 首尾帧", () => {
+    const req = base({
+      mode: "image_to_video",
+      startImage: { kind: "data_uri", dataUri: "data:image/jpeg;base64,a" },
+      lastImage: { kind: "data_uri", dataUri: "data:image/jpeg;base64,SENTINEL_LAST_FRAME" },
+    });
+    expect(() => mapToGrokRest(req)).toThrow(ProviderHttpError);
+    expect(() => mapToGrokRest(req)).toThrow(/首尾帧/);
+  });
+
+  it("rejects a lastImage even on text_to_video, where it is doubly meaningless", () => {
+    const req = base({
+      durationSec: 5,
+      lastImage: { kind: "data_uri", dataUri: "data:image/jpeg;base64,x" },
+    });
+    expect(() => mapToGrokRest(req)).toThrow(ProviderHttpError);
+  });
 });

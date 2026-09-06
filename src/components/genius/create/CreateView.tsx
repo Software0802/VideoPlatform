@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { formatCny } from "@/lib/billing/prices";
-import { formatElapsed, isActive, isFailed, isTerminal } from "@/lib/client/labels";
+// 六种模式的中文名用共享那份：本地只列三种时，参考 / 编辑 / 延长会原样露出英文枚举
+import { MODE_LABEL, formatElapsed, isActive, isFailed, isTerminal } from "@/lib/client/labels";
+import { productNameOf } from "@/lib/client/models";
 import { IconBolt } from "@/components/genius/icons";
 import { creditsOf, useShell } from "@/components/genius/ShellContext";
 
@@ -32,15 +34,12 @@ const STAGE_LABEL: Record<JobPublic["status"], string> = {
   canceled: "已取消",
 };
 
-const MODE_LABEL: Partial<Record<JobPublic["mode"], string>> = {
-  text_to_video: "文生视频",
-  image_to_video: "图生视频",
-  text_to_image: "文生图",
-};
-
 function jobMeta(j: JobPublic): string {
   const image = j.mode === "text_to_image";
+  // 产品名（`/api/models` 的对外命名）排在最前；老任务没有这个字段，就还是原来那行
+  const product = productNameOf(j);
   const parts = [
+    ...(product ? [product] : []),
     MODE_LABEL[j.mode] ?? j.mode,
     image ? (j.imageResolution ?? "1k").toUpperCase() : `${j.durationSec}s · ${j.resolution ?? "720p"}`,
     j.aspectRatio ?? "16:9",

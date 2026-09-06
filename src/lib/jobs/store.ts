@@ -46,13 +46,17 @@ export function toPublic(rec: JobRecord): JobPublic {
     mode: rec.mode,
     model: rec.model,
     provider: rec.provider,
+    // 界面显示的是产品名（「标准」），不是 `model`（`kling-2.6`）。
+    product: rec.product,
+    productName: rec.productName,
     prompt: rec.prompt,
     durationSec: rec.durationSec,
     aspectRatio: rec.aspectRatio,
     resolution: rec.resolution,
     generateAudio: rec.generateAudio,
     lastFrameStored: rec.lastFrameStored,
-    lastFrameLocksOutput: false as const,
+    // 老记录没有这个字段（那时它是字面量 false），读出即 false——与当初的语义一致。
+    lastFrameLocksOutput: Boolean(rec.lastFrameLocksOutput),
     harness: { enabled: Boolean(rec.harness?.enabled) },
     priceCny: rec.priceCny,
     costUsdEstimate: rec.costUsdEstimate,

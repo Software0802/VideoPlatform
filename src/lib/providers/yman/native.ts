@@ -2,7 +2,13 @@ import { readFile } from "node:fs/promises";
 import { YMAN_IMAGE_CONFIG } from "@/lib/providers/openai-image/config";
 import { makeOpenaiImageProvider } from "@/lib/providers/openai-image/native";
 import { ymanGet, ymanPost } from "@/lib/providers/yman/client";
-import { modelFor, ymanCapabilities, ymanVideoRatios } from "@/lib/providers/yman/catalog";
+import {
+  modelFor,
+  ymanCapabilities,
+  ymanMaxReferenceImages,
+  ymanVideoRatios,
+  ymanVideoResolutions,
+} from "@/lib/providers/yman/catalog";
 import { mapToYmanRequest, mapYmanTask } from "@/lib/providers/yman/rest-map";
 import type {
   MediaRef,
@@ -38,6 +44,10 @@ export const ymanProvider: VideoProvider = {
       // 上游按档计费，芯片上只能出现「会被计费的那个时长」。首页读的是第一顺位
       // provider 的这条，所以按 t2v 模型给。
       durations: ymanCapabilities(modelFor("text_to_video")).durations,
+      // 当前目录里的视频模型都只出 720p；请求 1080p 的任务会被路由跳过而不是悄悄降档。
+      resolutions: ymanVideoResolutions(),
+      // 首帧与参考图在上游是同一个 `reference_images`，上限按 i2v/r2v 模型算（默认 9）。
+      maxReferenceImages: ymanMaxReferenceImages(),
     };
   },
   async submit(req: ProviderGenerateRequest): Promise<ProviderHandle> {
