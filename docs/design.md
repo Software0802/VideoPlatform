@@ -128,10 +128,13 @@ flowchart TB
 | `POST /api/jobs/:id/cancel|retry` | 见 §3 |
 | `GET /api/jobs/:id/events` | SSE,`maxDuration=900`;15s `: ping` 心跳 + abort 时解除订阅 |
 | `GET /api/media/:jobId/:file` | 白名单 `video.mp4|poster.jpg|image.jpg`;`jobId` 经 `assertSafeId`;Range/206;支持 suffix range `bytes=-N`,416 带 `Content-Range: bytes */size`;`?download=1` 加 attachment |
-| `GET /api/health` | ffmpeg 二进制/字体/dataDir 可写/upstream kind/队列深度;缺 ffmpeg → `ok:false` |
-| `POST/DELETE /api/auth/session` | 校验并写入/清除 HttpOnly Cookie `lumen_token`(此端点本身不要求已登录) |
+| `GET /api/health` | ffmpeg 二进制/字体/dataDir 可写/upstream kind/队列深度;缺 ffmpeg → `ok:false`(匿名可访问) |
+| `POST /api/auth/register` | 邮箱 + 密码(≥8 位) + 一次性邀请码;成功即写会话 Cookie 并返回 `MePublic` |
+| `POST /api/auth/login` | 邮箱 + 密码;IP+邮箱滑动窗口限流(10 次/分钟) |
+| `POST /api/auth/logout` | 清除会话 Cookie |
+| `GET /api/me` | 当前用户 email + `quota:{limit,used,inFlight,remaining,resetsAt,blocked}` |
 
-全部 `/api/*`(除 `/api/auth/session`)校验 `LUMEN_ACCESS_TOKEN`(设置时);未配置则仅监听 localhost 场景使用。
+`src/proxy.ts` 对全部 `/api/*`(除 register/login/logout/health)校验 HMAC 签名会话 Cookie,零 I/O 验签,校验通过后网关层再读一次 `user.json` 确认 `disabled` 不为真;未登录访问非 `/api/*` 页面由页面本身(`/`)服务端 307 到 `/login`。旧的 `LUMEN_ACCESS_TOKEN` / `POST/DELETE /api/auth/session` 已删除,详见 §12。
 
 ## 5. 数据落盘
 
@@ -145,7 +148,11 @@ data/
     shots/{index}/video.mp4 tail.jpg        # harness 每镜成片与 tail-chain 抽取帧
     logs.jsonl
   tmp/{uploadId} + {uploadId}.json     # 24h TTL
-  idempotency/{sha256}.json
+  idempotency/{ownerId,clientKey 的 sha256}.json
+  users/
+    index.json                         # email → usr_xxx,派生缓存,可从下方目录重建
+    usr_xxx/user.json                   # 事实源:email、密码哈希、disabled、sessionEpoch
+  invites/<code>.json                   # 一次性邀请码:{ code, createdAt, note?, usedBy?, usedAt? }
 ```
 
 `MediaStore` 接口(`storage/types.ts`)由 `LocalFsMediaStore` 实现,id 白名单 `[A-Za-z0-9_-]+`、rel 路径解析后必须落在 jobDir 内;后期 `S3MediaStore` 同接口替换。
@@ -212,7 +219,10 @@ data/
 | 路径穿越 | media `assertSafeId`;uploadId 正则;MediaStore rel 越界拒绝 |
 | 上传炸弹 | busboy 流式 + 大小上限;tmp TTL;超限即时删残留 |
 | SSRF | 不接受用户任意 URL 转发上游;只送 data URI / file_id |
-| 额度燃烧 | 并发/队列深度限制;**[M1.6]** ACCESS_TOKEN;Sub2API 场景务必不暴露公网 |
+| 额度燃烧 | 并发/队列深度限制;按用户每日出图配额(§12.3);止损阀 `FREE_DAILY_FAILURE_LIMIT`;Sub2API 场景务必不暴露公网 |
+| 越权访问他人任务 | `ownerId` 覆盖任务读写/幂等/上传四条路径,非本人一律 404(§12.2) |
+| 会话伪造/重放 | HMAC 签名 Cookie,`timingSafeEqual` 校验,每请求读一次 `disabled`;改密写 `sessionEpoch` 使旧会话失效 |
+| 撞库/枚举 | 登录注册按 IP+邮箱滑动窗口限流;邀请码用尽/不存在统一 400 `invite_invalid`,不区分原因 |
 | 审核 | `respect_moderation === false` 视为失败,不进画廊 |
 | AGPL | 禁止拷贝 ArcReel / OpenMontage 源码,只学概念 |
 
@@ -235,7 +245,7 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 5. 反代入口借用同机已有的 taiyu Caddy 容器,新增站点块 `genius.homeaistack.online → reverse_proxy 10.255.1.1:3000`(`taiyu_default` 网络网关,不是 docker0 的 10.255.0.1);Caddyfile 改前备份。
 6. 健康检查:`curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/api/health`。
 
-详细操作步骤见 `docs/handoff.md` §0.4;DNS/HTTPS 尚未完成,3000 端口不对外(安全组只开 22/80/443)。
+详细操作步骤见 `docs/handoff.md` §0a.4;DNS/HTTPS 尚未完成,3000 端口不对外(安全组只开 22/80/443)。
 
 ## 11. 与 rev 3 的差异清单
 
@@ -246,5 +256,51 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 5. 源视频 data URI 兜底被判定违规,回归"Files 失败即 fail";
 6. Windows 环境适配(tracing glob、路径);
 7. harness 详设吸收 H1–H5(清晰度选帧、QC 校准、shot 断点/并行、成本护栏、即梦 spike 前置);
-8. 最小鉴权(ACCESS_TOKEN)从 Phase 4 提前到 M1;
-9. PR 计划由 `docs/plan.md` 的 M1–M4 里程碑取代。
+8. 最小鉴权(ACCESS_TOKEN)从 Phase 4 提前到 M1,后于 §12 被会话鉴权取代;
+9. PR 计划由 `docs/plan.md` 的 M1–M4 里程碑取代;
+10. §12 新增用户系统 / 日配额 / 数据留存清理,`LUMEN_ACCESS_TOKEN` 单口令模式退役。
+
+## 12. 用户系统 · 日配额 · 数据留存清理(2026-09-06,as-built)
+
+方案见 `docs/plan-users-quota.md`(v2,已按 Codex 两轮评审修订);目标是把单用户实例变成靠一次性邀请码限量发放的多用户实例,按人限定每日出图数量。不引入数据库,沿用现有「文件系统 + 原子替换」的落盘风格。
+
+### 12.1 用户存储与会话
+
+- `data/users/usr_xxx/user.json` 是唯一事实源(email、scrypt 密码哈希及其自描述参数、`disabled`、`sessionEpoch`);`data/users/index.json` 是 email→id 的派生缓存,启动时校验并按需从 `user.json` 目录重建。
+- 密码用 scrypt,参数自描述以便未来调参不破坏旧哈希;`burnPasswordTiming` 在用户不存在时仍烧一次等量耗时,防止靠响应延迟枚举邮箱。
+- 会话是 HMAC-SHA256 签名 Cookie(`usr_xxx.<过期时间戳>.<签名>`),密钥 `LUMEN_SESSION_SECRET`(必需,未设置服务启动即报错),`timingSafeEqual` 校验。签名与校验分居两处:`src/lib/users/session-token.ts` 是零 I/O 纯函数供 `src/proxy.ts` 网关层用;`src/lib/users/session.ts` 额外读一次 `user.json` 校验 `disabled` 与 `sessionEpoch`(改密即令旧 Cookie 失效)。无服务端会话表,故不能单点撤销会话,只能靠这两个字段或轮换密钥(全体登出)。
+- 邀请码:`data/invites/<code>.json`,12 位 base32(去混淆字符),`scripts/mint-invites.mjs N --note "..."` 批量生成并打印到标准输出(不写日志);注册在与用户注册同一把进程内串行锁中校验码存在且 `usedBy` 为空、建用户、回写 `usedBy`/`usedAt`;码用尽或不存在统一 400 `invite_invalid`,不区分原因。
+- 管理员由 `LUMEN_ADMIN_USER_ID` 绑定具体 user id(不再按邮箱匹配,邮箱可被抢注);未设置则没有任何人是管理员,无主的历史任务(§12.2)仅对管理员可见。
+
+### 12.2 会话网关与 `ownerId` 隔离
+
+`src/proxy.ts` 取代旧的 `LUMEN_ACCESS_TOKEN` 校验,对 `/api/*`(除 register/login/logout/health)做零 I/O 验签,通过后由各 handler 再读一次 `user.json` 确认未被禁用。`JobRecord` 新增 `ownerId?: string`,以下四条路径均已校验:
+
+| 路径 | 越权处理 |
+| --- | --- |
+| 任务 detail / SSE / cancel / retry | 非本人 404(不用 403,避免探测任务是否存在) |
+| `GET /api/media/:jobId/:file` | 同样按 owner 校验,不因是静态文件跳过 |
+| 幂等回放 | 文件名改为 `sha256(ownerId + "\0" + clientKey)`,回放命中后仍校验 `rec.ownerId` 匹配当前用户;旧的无主幂等记录视为未命中 |
+| 上传 sidecar 认领 | sidecar 增加 `ownerId`,跨用户认领按「上传不存在」拒绝,返回 **400 `invalid_argument`**(与「真的不存在」逐字一致)——例外于「越权一律 404」的约定,因为这是 `POST /api/jobs` 请求体字段校验,不是按 id 寻址的资源路由(方案 §5.3) |
+
+首页 SSR(`listJobRecords`)按会话过滤;无主历史任务(旧数据无 `ownerId`)仅 `LUMEN_ADMIN_USER_ID` 可见。
+
+### 12.3 配额:预留 + 结算
+
+只对 `text_to_image` 计数,口径见 `src/lib/jobs/quota.ts`:
+
+- 今日已用 = 今日「成功落盘」的生图任务数(按 `completedAt` 归日,`store.updateJob` 在非终态→终态边上盖章且永不覆盖);今日在途 = 该用户当前处于非终态的生图任务数;准入条件 = 已用 + 在途 < `FREE_DAILY_IMAGE_QUOTA`(默认 10)。
+- 判定与落盘必须在同一个 `withAdmissionLock` 临界区内完成,且在幂等回放判定之后、`writeJob` 之前;`createJob` 与 `retryJob` 共用同一段检查(重试同样会向上游发新的计费请求)。
+- 上游 5xx/超时/内容审核拒绝、用户取消:任务转终态,预留自动释放,不占额度(实测上游 `charged:false`/`charge_status:"pending_delivery"` 直到取回 result 才结算,与「不扣额度」语义一致)。
+- 独立止损阀 `FREE_DAILY_FAILURE_LIMIT`(默认 30):账号每日失败/取消次数超限即拒绝新提交,防止有人靠反复失败消耗上游余额;它的优先级高于配额判定。
+- 「今日」按 Asia/Shanghai 自然日,用 `Intl.DateTimeFormat` 反算,不做每用户时区。
+- `GET /api/me` 返回 `quota:{limit,used,inFlight,remaining,resetsAt,blocked}`;超限时创建/重试返回 `429 quota_exceeded`。管理员不豁免配额。
+- 已知限制:配额按账号计;同一人拿多个邀请码可开多号,不再加机制(分发环节问题)。
+
+### 12.4 数据留存清理
+
+`src/lib/jobs/retention.ts`:终态任务且 `completedAt ?? updatedAt` 超过 `DATA_RETENTION_DAYS`(默认 30,0 关闭)时删 `outputs/`、`inputs/`、`shots/` 三个目录,写 `artifactsPurgedAt`(同一次 `updateJob` 内,先给缺 `completedAt` 的老记录补章再写清理时间戳,保证幂等)——**只写这个字段,不改 `status`**,不碰任何非终态任务。runner 每小时的 `maintenance()` 依次跑 tmp 清理 → idempotency 24h 清理 → retention。已清理任务禁止一键重试(`retryJob` 返回 409 `artifacts_purged`,输入已删,UI 引导「用这条提示词重新生成」走全新提交与全新配额);UI 画廊对 `artifactsPurgedAt` 非空的任务显示占位卡「作品已过期清理」,不请求已删除的 media。取消操作触发的 `job failed` 日志级别由 warn 降为 info,避免和真实失败一起淹没日志。
+
+### 12.5 登录 / 注册
+
+新路由 `/login`(`src/app/login/`、`src/components/lumen/LoginScreen.tsx`):登录/注册两个 tab,注册多一栏邀请码,视觉复用既有玻璃语言与 `mountDawn` 背景,不引组件库。未登录访问 `/` 由页面服务端 307 到 `/login`;登录成功后整页跳转 `/`(而非客户端路由),保证 SSR 首屏带上新会话。顶栏原「登录」按钮改为账号名 + 「退出」(窄屏 ≤520px 隐藏账号名节省空间)。旧 `AccessTokenPrompt` 弹窗与 `POST/DELETE /api/auth/session` 端点已删除;`src/lib/client/http.ts` 收到 401 时整页跳转登录页而非弹窗。

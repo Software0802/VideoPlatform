@@ -2,18 +2,57 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 更新日期 | 2026-09-06（生图 OpenAI 兼容 provider + 生产部署上线） |
-| 基线 | HEAD `2c6695a`（已提交，工作区干净）。链路：`293f84e`（OpenAI 官方生图 provider）→ `c088f9e`（接 ccgoai、七画幅原生尺寸、档位计价）→ `2c6695a`（202 异步出图协议）。此前一轮的 `6c01ba6`（M2.4 + Playwright 冒烟）与紧随其后的 `b897b7b`（Genius 单屏 UI 重构 + 预算门禁全覆盖 + 子代理调度体系，即下方历史小节里"工作区未提交"的那批改动）均已提交，不再是未提交状态 |
-| 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | 2026-09-06（生图三轮改动后重跑）：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 46 文件 / 301 用例通过、1 条 skip。本轮只改 provider / 路由 / 计价，未碰 UI，故未跑 `pnpm e2e`；`pnpm run evals:check` 仍红（缺 `character-en.jpg` / `character-zh.jpg` 两张人物素材，与本轮无关，见 `evals/README.md` → 素材） |
-| 运行 | `pnpm dev` → http://localhost:3000；无任何 key 即 mock 模式，只配 `OPENAI_API_KEY` 时视频路径仍各自回落 mock、文生图走真实 OpenAI 兼容上游。预览配置 `.claude/launch.json` → `lumen-dev`。本机 `.env.local`（不入库）已设 `HARNESS_ENABLED=1` |
-| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`，详见 §0 |
+| 更新日期 | 2026-09-06（用户系统 · 日配额 · 数据留存清理，分支 `integrate/users2`） |
+| 基线 | `integrate/users2` @ `ea3aed2`（`9211324` 代码 + 本轮文档，工作区干净）。**`main` 落后于此分支**，`main` 最新是 `4ad5d60`（登录版已部署，缺第五批留存清理与 shots 清理），详见 §0.5「未完成 / 已知」。`integrate/users2` 自 `3bf9f15`（生图 provider + 生产部署基线）起的提交链：`b4ff99b`（第一批存储/会话/邀请码/注册登录 API）→ `fb6e6f7`（第二批会话网关 + ownerId 五路隔离）→ `3e68717`（e2e 随机凭据 + 上传认领 400 例外）→ `3bf9f15`（第三批配额：预留+结算）→ `fa93200`（配额三条修复）→ `fe44d3d`（第四批登录页）→ `83d4312`（第五批留存清理）→ `9211324`（shots/ 纳入清理） |
+| 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom\.claude\worktrees\integrate2`（worktree，分支 `integrate/users2`），Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
+| 门禁状态 | `integrate/users2` @ `9211324`：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 53 文件 / 396+2 用例通过、1 条 skip；`pnpm e2e` 10 例通过；`pnpm run evals:check` 仍红（缺 `character-en.jpg` / `character-zh.jpg` 两张人物素材，历史遗留，与本轮无关） |
+| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式。本机 `.env.local`（不入库）需设 `LUMEN_SESSION_SECRET` 才能起服务 |
+| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`，登录版已上线（部署 `4ad5d60`），留存清理版（`9211324`）待部署，详见 §0.4 |
 
-新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，§2b 生图 provider / §6 前端 / §7 harness）、`DESIGN.md`（UI 规格，Genius 单屏）、`docs/plan.md`（里程碑）。
+新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，新增用户/配额/留存小节）、`DESIGN.md`（UI 规格，含登录页）、`docs/plan-users-quota.md`（本轮方案，§9 为实施顺序）。
 
 ---
 
-## 0a. 2026-09-06：展览区「丝绸幕布」（ThreeUI WovenCloth · iridescent）
+## 0. 本轮（2026-09-06）：用户系统 · 日配额 · 数据留存清理
+
+方案见 `docs/plan-users-quota.md`（v2，已按 Codex 评审修订）。目标：把「全站一个共享口令」的单用户实例，变成可发给一批认识的人使用的多用户实例，每人每天最多出 10 张图。方案 §9 的五步实施顺序**已全部完成**。
+
+### 0.1 已实现（按方案 §2–§8）
+
+- **用户存储** `src/lib/users/`：`user.json` 事实源 + `index.json` 派生缓存（启动重建）；scrypt 密码（自描述参数、防篡改撑爆内存、`burnPasswordTiming` 防枚举）；HMAC 签名 Cookie（`session-token.ts` 纯函数给 proxy，`session.ts` 带 `disabled`/`sessionEpoch` 校验）；一次性邀请码 `data/invites/<code>.json`（`scripts/mint-invites.mjs N --note`）；登录注册按 IP+邮箱限流。
+- **会话网关** `src/proxy.ts`：`/api/*` 会话校验（零 I/O 验签），放行 register/login/logout/health；旧 `LUMEN_ACCESS_TOKEN` 与 `lib/auth.ts`、`/api/auth/session` 已删除。
+- **`ownerId` 五路隔离**：任务 detail/SSE/media/cancel/retry（非本人 404）、幂等 key 按 owner 分区并二次校验、上传 sidecar 归属（跨用户认领返回与「不存在」逐字一致的 400——方案 §5.3 记录的例外）、首页 SSR 按会话过滤、无主历史任务仅 `LUMEN_ADMIN_USER_ID` 可见。
+- **配额** `src/lib/jobs/quota.ts`：只算 `text_to_image`；已用 = 今日 succeeded（按 `completedAt` 归日，`store.updateJob` 在非终态→终态边上盖章且永不覆盖），在途 = 所有非终态；准入 = 已用+在途 < `FREE_DAILY_IMAGE_QUOTA`(10)，在 `withAdmissionLock` 内、幂等回放之后、`writeJob` 之前，`createJob` 与 `retryJob` 共用；失败/取消释放；止损阀 `FREE_DAILY_FAILURE_LIMIT`(30) 优先判定；Asia/Shanghai 自然日用 `Intl.DateTimeFormat` 反算；`/api/me` 返回 `quota:{limit,used,inFlight,remaining,resetsAt,blocked}`；管理员不豁免。
+- **取消中断异步出图**：`ProviderGenerateRequest.shouldAbort`（runner 重读 job.json），`task-poll.ts` 在每次 sleep 后与取 result 前检查，已取消抛 499 `canceled`，**绝不发出计费的 result GET**。
+- **登录页** `/login`（`src/app/login/`、`LoginScreen.tsx`）：两 tab，注册带邀请码；未登录 `/` → 307 `/login`；顶栏账号名 + 退出（≤520px 隐藏账号名）；配额行「今日剩余 n/N」，用完禁用提交；`AccessTokenPrompt` 删除；`client/http.ts` 401 → 整页跳登录。e2e：`auth.setup.ts` 真实注册登录注入 storageState（随机凭据），`auth.spec.ts` 新用例，`invites.ts` 铸码助手。
+- **留存清理** `src/lib/jobs/retention.ts`：终态且 `completedAt ?? updatedAt` 超 `DATA_RETENTION_DAYS`(30，0 关闭) → 删 `outputs/ inputs/ shots/` → 同一次 `updateJob` 先给无 `completedAt` 的老记录补章再写 `artifactsPurgedAt`；不改 status；runner 每小时 `maintenance()`（tmp → idempotency 24h → retention）；已清理任务 retry 返回 409 `artifacts_purged`；UI 占位卡「作品已过期清理」，不请求已删 media；取消的 `job failed` 日志降为 info。
+
+### 0.2 评审
+
+方案经 Codex 两轮（v1 BLOCK 6×P1+1×P2 → v3）；第二批 diff PASS_WITH_NOTES（2×P2 已处理）；第三批 diff BLOCK 3 条（全部修复见 `fa93200`）；第五批 diff **未审**（Codex 用量上限），由主代理自审删除路径（非终态不碰、时间异常不删、`rm` 不跟随符号链接、先删后盖章幂等）。
+
+### 0.3 新增环境变量
+
+`LUMEN_SESSION_SECRET`（必需，未设置服务启动即报错）、`FREE_DAILY_IMAGE_QUOTA`(默认 10)、`FREE_DAILY_FAILURE_LIMIT`(默认 30)、`DATA_RETENTION_DAYS`(默认 30，0 关闭清理)、`LUMEN_ADMIN_USER_ID`（未设置则无人是管理员）。`LUMEN_ACCESS_TOKEN` 已废弃删除。
+
+### 0.4 生产状态（阿里云，https://genius.homeaistack.online）
+
+- 登录版已上线（部署 `4ad5d60`），留存清理版（`9211324`）已部署。`/` 307→`/login`，`/api/health` 匿名 200，其余 `/api/*` 401。
+- `.env` 已有 `LUMEN_SESSION_SECRET`、`FREE_DAILY_IMAGE_QUOTA=10`、`FREE_DAILY_FAILURE_LIMIT=30`、`DATA_RETENTION_DAYS=30`、`LUMEN_ADMIN_USER_ID=usr_c8ce213e3155795b`（管理员已用首个邀请码注册）；`LUMEN_ACCESS_TOKEN` 已删。
+- 部署命令 `bash scripts/deploy.sh`（含 Turbopack external 别名软链步骤）。**部署 worktree 时 `node_modules` 不能用软链，Turbopack 会 panic，必须 `pnpm install`**。
+- 方案 §4 切换顺序已完成；后续给内测用户：服务器 `DATA_DIR=/opt/genius/data node scripts/mint-invites.mjs N --note "..."`。
+
+### 0.5 未完成 / 已知
+
+- `main` 已合并 `integrate/users2`（本提交）。用户的 ThreeUI 丝绸幕布实验已由其自行提交（`e45f527`）并随合并进入 `main`，**生产部署的仍是不含实验的 `integrate/users2` 代码**；实验何时上线由用户决定。
+- `scripts/smoke-lumen.mjs` / `smoke-cancel.mjs` 仍读已删除的 `LUMEN_ACCESS_TOKEN`，现已无法打进需会话的 `/api/*`，待改为会话登录。
+- 第五批 Codex 审查待补（用量恢复后 `--mode base --base 333159d`）。
+- 配额按账号；同一人拿多个邀请码可开多号（分发环节，代码不再加机制）。
+- `gallery|studio|jobs/[id]` 桩页未登录会两跳（`/` → `/login`）。
+
+---
+
+## 0x. 2026-09-06：展览区「丝绸幕布」实验（ThreeUI WovenCloth · iridescent；已合入 main，生产未部署）
 
 - 生成中（`exhibitState === "busy"`）展览区黑框被一块虹彩丝绸盖住；出片（done）整块布 `rotateY(180deg)` 翻转露出成片后卸载；失败 / 关闭淡出；下一次 busy 重新挂载。组件 `src/components/lumen/ClothVeil.tsx`，样式 `globals.css` 的 `.exhibit__veil*`（z-index 1，百分比 / 阶段行 / 取消按钮在 z-index 2 压在布上，e2e 断言不受影响）。
 - 源码来自 ThreeUI 注册包 `https://threeui.com/source-code/woven-cloth.json`。`src/shaders/woven-cloth/woven-cloth-iridescent.html` 逐字落盘，SHA-256 `e3b14ada…bee7b` 与注册值一致，**不要手改**；它在 `sandbox="allow-scripts"` 的 srcDoc iframe 里跑，自带 three r160（jsdelivr CDN），与站内 three 0.185 互不影响。
@@ -21,13 +60,15 @@
 - `?raw` 导入在 Turbopack 里换成 `next.config.ts` 的 `turbopack.rules["*.html"] → raw-loader`（新增 devDependency `raw-loader`），类型声明 `src/shaders/html.d.ts`。
 - 幕布在 busy 后 **延迟 1.2s 挂载**（`MOUNT_DELAY_MS`）：一是让读数先落位再淡入；二是无头 Chromium 的软件 GPU 会被 iframe 的 WebGL 帧拖住几秒，mock 任务 3~4s 就完成，不延迟则 e2e「文生视频读数」「失败态→取消」两条必挂（A/B 验证过；`IsolateSandboxedIframes` 进程隔离无效，卡的是共享 GPU 进程而非 JS 主线程）。布还没铺上任务就结束时直接收起、不翻转。
 - 已知：iframe 首帧要等 CDN 脚本 + 1600×1000 贴图生成，约 1s 内是 `#05060d` 纯色，随后布淡入。内置浏览器面板不绘制时 CSS 动画会停在起点，真实浏览器无此现象；组件另有 1.6s 兜底计时器保证幕布最终卸载。
-- 本地 dev 现在必须有 `LUMEN_SESSION_SECRET`（第二批用户系统引入），已补进 `.env.local`；`AccessTokenPrompt` 仍 POST 已不存在的 `/api/auth/session`，登录弹窗需要改成邮箱 / 密码（待办）。
+- 本地 dev 现在必须有 `LUMEN_SESSION_SECRET`（第二批用户系统引入），已补进 `.env.local`；`AccessTokenPrompt` 仍 POST 已不存在的 `/api/auth/session`，登录弹窗需要改成邮箱 / 密码（待办）。—— 已由用户系统第四批的 `/login` 页解决，`AccessTokenPrompt` 已删除。
 
-## 0. 本轮（2026-09-06）：文生图接 OpenAI 兼容 provider + 生产部署
+---
+
+## 0a. 此前一轮（2026-09-06，已合入本轮基线）：文生图接 OpenAI 兼容 provider + 生产部署
 
 范围只有**文生图 + 生产部署**，视频 / harness 未改动。
 
-### 0.1 新增 provider `src/lib/providers/openai-image/`
+### 0a.1 新增 provider `src/lib/providers/openai-image/`
 
 | 文件 | 作用 |
 | --- | --- |
@@ -39,7 +80,7 @@
 
 路由（`src/lib/providers/router.ts` `selectProvider`）：`text_to_image` 有 `OPENAI_API_KEY` 走 `openaiImageProvider`，否则回落 grok / mock；视频路径不受影响。`isMockMode()`（`src/lib/env.ts`）语义改为「xAI 与 OpenAI 两把 key 都没有才算 mock」，否则只配生图 key 的实例会整体掉进 mock。落盘时**绝不把 base64 放进 handle**（会被原样写进 job.json），mock 分支也一样写 `tmp/image.jpg` 后返回 `localVideoPath`。
 
-### 0.2 上游三种响应（最容易踩的坑）
+### 0a.2 上游三种响应（最容易踩的坑）
 
 `POST /images/generations` 按状态码 + Content-Type 分流（`client.ts`）：
 
@@ -53,13 +94,13 @@
 
 **计费语义**：上游任务状态里 `charged:false` / `charge_status:"pending_delivery"`，**只有取回 result 才真正结算**——轮询与状态查询免费可重复，但**重发生成 POST 会新建任务、重复付费**，所以生成 POST 固定 `maxAttempts:1`。
 
-### 0.3 画幅 / 画质 / 计价
+### 0a.3 画幅 / 画质 / 计价
 
 - `OPENAI_IMAGE_FLEXIBLE_SIZES=1` 时 7 个画幅 × 1k/2k 全部**原生出图、零裁切**（尺寸都是 16 的倍数，如 16:9→2048x1152、9:16→1152x2048、3:2→2016x1344）；未开启时走官方 `gpt-image-1` 的三档尺寸 + sharp 居中裁切。
 - `OPENAI_IMAGE_QUALITY` 决定画质，**默认 high**；请求必须显式带 quality，漏传会被上游按 medium 计费。
 - `OPENAI_IMAGE_PRICE_TABLE`（JSON，quality × 1K/2K/4K，`src/lib/cost.ts`）配置后按档计价，忽略 token。⚠️ **单位随上游而定**：ccgoai 的任务状态里 `pricing_currency: "CNY"`，配表后 `costUsdEstimate` / `costUsdActual` 是**上游额度（人民币）而非美元**，没有做汇率换算，做配额 / 花费上限的人必须知道这一点。上游 `actual_charge` 只在配了档表时才采信（同口径），否则回落 token × $40/M。修了 `estimateCostUsd` 对未知图片模型返回 0 的缺口。
 
-### 0.4 生产部署（阿里云 8.209.212.178）
+### 0a.4 生产部署（阿里云 8.209.212.178）
 
 - 路径 `/opt/genius`，systemd 单元 `genius.service`（`MemoryHigh=550M` / `MemoryMax=700M` / `OOMPolicy=stop`，与 taiyu 共存；实测常驻 86–145MB）。
 - 配置 `/opt/genius/.env`（权限 600），`DATA_DIR=/opt/genius/data`，`JOB_CONCURRENCY=1`，`HARNESS_ENABLED=false`。
@@ -71,11 +112,11 @@
   4. **坑二**：`output: "standalone"` 这条路在 Windows→Linux 行不通——Next 生成的 pnpm 符号链接写死了构建机绝对路径（`/d/dev/repos/...`），到 Linux 全是死链且递归断链。已放弃，不要再试。
 - 启动 `systemctl start genius`，健康检查 `curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/api/health`。
 
-### 0.5 上游选型结论（避免后人重复踩）
+### 0a.5 上游选型结论（避免后人重复踩）
 
 评估过三家 OpenAI 兼容中转：**portdan**（`/images/generations` 404，只能走 responses 工具，size/quality 不可控、恒 low）、**runapi**（同上，且无图片渠道）、**ccgoai**（✅ 标准端点、size/quality 精确生效、中文正常、有 `/v1/usage` 查余额）。前两家本质是 Codex 订阅反代，参数不可透传，**不适合做生图后端**。
 
-### 0.6 状态与未完成
+### 0a.6 状态与未完成
 
 - 门禁：`tsc` / `eslint` 绿，`pnpm test` 46 文件 / 301 通过 / 1 跳过。UI 未改故未跑 e2e。
 - 生产已验证：中文提示词、16:9 与 9:16、2K high、202 异步链路、档位计价，成片尺寸与画幅一致。

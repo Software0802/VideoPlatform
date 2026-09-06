@@ -917,6 +917,37 @@ canvas {
   color: var(--muted);
   letter-spacing: 0.04em;
 }
+/* 留存期满的作品：环上是本地占位图，这里是 DOM 里的占位卡（方案 §8） */
+.works__purged {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 22px 30px;
+  border-radius: 22px;
+  text-align: center;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+.works__purged-title {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.works__purged-hint {
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.recent__item[data-purged="true"] {
+  opacity: 0.5;
+}
 .works__foot {
   display: flex;
   align-items: flex-end;

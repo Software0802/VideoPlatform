@@ -8,6 +8,28 @@ import type { JobRecord } from "@/lib/jobs/schema";
  */
 export const UNCERTAIN_SUBMIT_CODE = "uncertain_submit";
 
+/**
+ * Retention purged this job's `inputs/` (plan §8), so a one-click retry has
+ * nothing to copy: an image-to-video retry would silently become text-to-video,
+ * and the harness would re-pay for shots whose clips are gone. The way forward is
+ * a fresh submission with the same prompt, which the works view offers.
+ */
+export const ARTIFACTS_PURGED_CODE = "artifacts_purged";
+
+export type PurgedBlock = {
+  code: typeof ARTIFACTS_PURGED_CODE;
+  message: string;
+};
+
+/** Why a purged job may not be retried, or null. Checked before anything else. */
+export function purgedBlock(rec: Pick<JobRecord, "artifactsPurgedAt">): PurgedBlock | null {
+  if (!rec.artifactsPurgedAt) return null;
+  return {
+    code: ARTIFACTS_PURGED_CODE,
+    message: "作品已过期清理，请用这条提示词重新生成",
+  };
+}
+
 export type RetryBlock = {
   code: "uncertain_submit";
   message: string;

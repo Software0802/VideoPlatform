@@ -62,6 +62,7 @@ export function toPublic(rec: JobRecord): JobPublic {
     output: coerceOutput(rec.output),
     createdAt: rec.createdAt,
     updatedAt: rec.updatedAt,
+    artifactsPurgedAt: rec.artifactsPurgedAt ?? null,
     bible: null,
     retryBlocked: retryBlock(rec),
     shots: publicShots(rec),
