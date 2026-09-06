@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 状态 | v1 草案，待用户确认优先级；Codex 方案审查待额度恢复后补 |
+| 状态 | v2，已按用户 2026-09-06 决策修订（余额模型取代日配额、功能面与供应商解耦、Harness 继续关闭、留存 30 天不变、备份本机 + 云快照）；Codex 方案审查待额度恢复后补 |
 | 基线 | `main` @ `8f82f52`（可灵 provider 已上线，生产 `videoProvider: kling`） |
 | 输入 | 三个只读审查（服务治理 / 性能 / 功能完整度），每条结论带 `文件:行号`；本文只收敛为决策与路线，逐条证据见 §附录 |
 | 产出 | §3 目标架构、§4 三个阶段的路线图、§5 需要用户拍板的决策 |
@@ -48,11 +48,11 @@
 
 ### 3.2 服务治理线
 
-**成本闸门（统一模型）**：把现在「文生图每日张数」扩成「按 mode 分桶的每日次数 + 按 `costUsdEstimate` 累计的每日金额上限」，仍在 `withAdmissionLock` 内、`writeJob` 之前判定，`createJob` 与 `retryJob` 共用。新增 `FREE_DAILY_VIDEO_QUOTA`（默认 10）、`FREE_DAILY_USD_CAP`（默认 3）。`/api/me` 的 quota 返回三桶，UI「今日剩余」按当前 mode 显示。管理员不豁免（沿用）。
+**用量模型：定价 × 余额，取代日配额**（用户 2026-09-06 决策）。每种任务的价格是定值，由服务端价目表决定（`priceFor(mode, durationSec, resolution, audio)`，与 provider 无关，是**对用户的售价**而非上游成本；上游成本仍记在 `costUsdActual` 供分账）。用户有余额 `balance`（`user.json` 新字段，单位与售价同）。准入规则：`createJob` / `retryJob` 在 `withAdmissionLock` 内做「余额 − 在途任务预留 ≥ 本次售价」判定，通过则预留，终态结算：成功扣售价，失败 / 取消 / 过期释放预留。UI 侧：`/api/me` 返回 `balance`、`reserved` 与价目表，提交面板实时显示「本次约 x」，当前配置超出可用余额时提示「当前配置，余额可能不够，请充值」并禁用提交。充值本轮走管理员 CLI `scripts/grant-balance.mjs <email> <amount> --note`（写入 `user.json` 并追加 `data/ledger/` 流水），支付网关放第三阶段。现有的 `FREE_DAILY_IMAGE_QUOTA` 与止损阀 `FREE_DAILY_FAILURE_LIMIT` 保留为防滥用兜底，不再是主闸门。
 
 **计费安全闭环**：`recover` 对「`submitting` 且无 `remoteId`」不再 requeue，改为 `failed` + `uncertain_submit`，由现有 `retry-guard` 409 拦截；可灵路径已发送 `external_task_id=jobId`，恢复时先 `GET /tasks?external_task_ids=` 回填 `remoteId` 再 `resume-pending`，把窗口彻底关掉。`rate_limited` / `quota_exhausted` 从终态失败改为「退避后回 `queued`，最多 3 次」，并从止损阀统计中排除。轮询上限按 provider 读（可灵用 `klingTaskTimeoutMs()`），与 recover 的陈旧判定解耦。
 
-**数据安全**：每日 cron 打包 `data/users`、`data/invites`、全部 `job.json`（不含产物）到 OSS 或异机，保留 7 份；成片按需另议。`deploy.sh` 末尾 health 非 200 即 `mv .next.prev .next` + restart + 非零退出。GitHub Actions 最低配：`tsc` + `eslint` + `pnpm test`，push 到 main 触发。
+**数据安全**（用户决策：不用 OSS）：两层。① 服务器本机每日 cron 打包 `data/users`、`data/invites`、全部 `job.json`（不含产物，现总量几 MB）到 `/opt/genius/backups/`，保留 14 份，防误删与坏写；② 阿里云 ECS **自动快照策略**（控制台配置，整盘每日一份保留 7 天，按已用容量计费约 ¥1–3/月）防磁盘 / 实例丢失，不需要代码。`deploy.sh` 末尾 health 非 200 即 `mv .next.prev .next` + restart + 非零退出。GitHub Actions 最低配：`tsc` + `eslint` + `pnpm test`，push 到 main 触发。
 
 **安全收口**：logout 递增 `sessionEpoch`；`POST /api/jobs`、`/api/uploads` 复用 `consumeRateLimit`（每分钟 10 / 5）；`maxQueuedJobs` 加 per-owner 子上限 5；`/api/health` 匿名只回 `{ok}`，详细字段需会话；proxy 对非 GET 校验 `Origin`。
 
@@ -82,7 +82,7 @@
 
 **任务生命周期**：`DELETE /api/jobs/:id`（终态才可删，删产物与记录）+ 环上删除；`?before=` 游标分页 + 「加载更多」；分享用 24h 签名 URL，与 `artifactsPurgedAt` 协同。
 
-**能力面（需决策，见 §5）**：r2v / edit / extend 要么补 UI，要么删 `labels.ts` 死代码并在 README 标「仅 API」；Harness 要么定位为白名单实验，要么 README 标「未上线」；分辨率 / 2K / 音频作为高级选项芯片露出，由 provider `validate` 决定可用项。
+**能力面：功能先于供应商**（用户 2026-09-06 决策）。前端交付的是功能，不随后端供应商变化：文生视频、图生视频、参考生视频、编辑视频、延长视频、文生图六条路径全部露出 UI，分辨率 / 画幅 / 时长 / 音频作为选项芯片露出。供应商差异在 provider 层吸收：每个 provider 声明 `capabilities()`（模式、时长枚举、分辨率、画幅、音频、尾帧）；router 按「功能 → 能支持它的 provider 列表 → 优先级（成本）」路由，而不是按 key 存在性；某功能当前没有任何已配置的 provider 支持时，UI 显示「暂不可用」而不是隐藏入口。第四家（如 fal.ai）只增一个目录与一行优先级。Harness 长片继续关闭，README 标「实验」，等可灵路径跑稳再议。
 
 **内容安全**：本地关键词黑名单前置（提示词）；服务条款页；moderation 失败文案说明计费情况；`invitedBy` 作为追溯抓手。
 
@@ -90,19 +90,23 @@
 
 | 阶段 | 目标 | 内容 | 估时 |
 | --- | --- | --- | --- |
-| **一 · 止血**（本周） | 不多花钱、不丢数据、能回滚 | G1 恢复不重提 · G2 视频配额 + 金额上限 · G3 每日备份 · G4 部署回滚 + CI · P1 sharp 限制 · P3 媒体缓存头 · F3 音频标注 · G5 429 退避 | 4–5 天 |
+| **一 · 止血**（本周） | 不多花钱、不丢数据、能回滚 | G1 恢复不重提 · G2 **余额模型**（价目表 + 预留结算 + 充值 CLI + UI 提示） · G3 本机备份 + 云快照 · G4 部署回滚 + CI · P1 sharp 限制 · P3 媒体缓存头 · F3 音频标注 · G5 429 退避 | 5–6 天 |
 | **二 · 稳态**（下两周） | 随规模不恶化、出问题看得见 | P2 jobs 索引 + 归档 · G6 超时按 provider · G7 安全收口 · G8 日志 reqId + health 扩展 + usage CLI · P4 轮询阶梯 / 冷启动 · F1 改密 + 重置 CLI · F2 管理 CLI · F7 README / runbook / env 清理 | 6–8 天 |
-| **三 · 外壳**（之后） | 产品闭环 | F5 删除 / 分页 / 分享 · F6 前置审核 + 条款 · F4 能力面决策落地 · Provider `validate/cancel/health` 接口迁移 · 前端拆分与 three 内联 · 注销账号 | 8–10 天 |
+| **三 · 外壳**（之后） | 产品闭环 | F4 六条路径全部露出 UI + 选项芯片 + capability 路由重构 · Provider `validate/cancel/health` 接口迁移 · F5 删除 / 分页 / 分享 · F6 前置审核 + 条款 · 前端拆分与 three 内联 · 注销账号 · 支付网关 | 10–12 天 |
 
 每阶段结束：门禁三绿 + `pnpm e2e` + 部署 + handoff 写回；阶段一、二的 diff 触及 AGENTS.md 列的高风险区（`jobs/`、`proxy.ts`、`api/`），按规则派 Codex 审。
 
-## 5. 需要用户拍板
+## 5. 用户决策记录（2026-09-06）
 
-1. **视频配额默认值**：每日 10 条 + 每日 $3 金额上限，是否合适？（可灵 5s 720p 一条 $0.15，10 条 = $1.5）
-2. **r2v / edit / extend**：补 UI（各 1–2 天，且可灵不支持，只在 grok 有 key 时可用）还是标「仅 API」删死代码？建议后者，等有 grok 预算再说。
-3. **Harness 长片**：生产继续关闭并在 README 标「实验」，还是开白名单？它被钉在 grok，一条 30s ≈ $2.1–4.2。建议前者。
-4. **备份目标**：阿里云 OSS（同账号，最省事）还是本机每日 rsync 拉回？建议 OSS。
-5. **是否现在就把 `DATA_RETENTION_DAYS` 从 30 降到 14**：这是索引做完前控制目录数最便宜的手段。
+| 议题 | 决定 |
+| --- | --- |
+| 用量控制 | 不用日配额。每种任务定价为定值，用户余额预判，不够时提示「当前配置，余额可能不够，请充值」 |
+| 功能面 | 前端交付功能，不随后端供应商变化；六条路径全部露出，供应商差异在 provider 层吸收；系统为切换供应商（可灵 / fal 等）留扩展性；xAI Grok 大概率弃用 |
+| Harness 长片 | 继续关闭，标「实验」，等可灵路径跑稳 |
+| 留存天数 | 保持 30，不降 |
+| 备份 | 不用 OSS；服务器本机每日备份 + 阿里云自动快照 |
+
+待确认：余额的初始值与充值方式（本轮建议：新用户初始 0，管理员 CLI 手动充值；支付网关第三阶段）。
 
 ## 附录 · 审查原文要点
 
