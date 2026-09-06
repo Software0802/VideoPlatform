@@ -3,7 +3,7 @@
 | 字段 | 值 |
 | --- | --- |
 | 更新日期 | 2026-09-06（用户系统 · 日配额 · 数据留存清理，分支 `integrate/users2`） |
-| 基线 | `integrate/users2` @ HEAD `9211324`（工作区干净，未提交）。**`main` 落后于此分支**，`main` 最新是 `4ad5d60`（登录版已部署，缺第五批留存清理与 shots 清理），详见 §0.5「未完成 / 已知」。`integrate/users2` 自 `3bf9f15`（生图 provider + 生产部署基线）起的提交链：`b4ff99b`（第一批存储/会话/邀请码/注册登录 API）→ `fb6e6f7`（第二批会话网关 + ownerId 五路隔离）→ `3e68717`（e2e 随机凭据 + 上传认领 400 例外）→ `3bf9f15`（第三批配额：预留+结算）→ `fa93200`（配额三条修复）→ `fe44d3d`（第四批登录页）→ `83d4312`（第五批留存清理）→ `9211324`（shots/ 纳入清理） |
+| 基线 | `integrate/users2` @ `ea3aed2`（`9211324` 代码 + 本轮文档，工作区干净）。**`main` 落后于此分支**，`main` 最新是 `4ad5d60`（登录版已部署，缺第五批留存清理与 shots 清理），详见 §0.5「未完成 / 已知」。`integrate/users2` 自 `3bf9f15`（生图 provider + 生产部署基线）起的提交链：`b4ff99b`（第一批存储/会话/邀请码/注册登录 API）→ `fb6e6f7`（第二批会话网关 + ownerId 五路隔离）→ `3e68717`（e2e 随机凭据 + 上传认领 400 例外）→ `3bf9f15`（第三批配额：预留+结算）→ `fa93200`（配额三条修复）→ `fe44d3d`（第四批登录页）→ `83d4312`（第五批留存清理）→ `9211324`（shots/ 纳入清理） |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom\.claude\worktrees\integrate2`（worktree，分支 `integrate/users2`），Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
 | 门禁状态 | `integrate/users2` @ `9211324`：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 53 文件 / 396+2 用例通过、1 条 skip；`pnpm e2e` 10 例通过；`pnpm run evals:check` 仍红（缺 `character-en.jpg` / `character-zh.jpg` 两张人物素材，历史遗留，与本轮无关） |
 | 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式。本机 `.env.local`（不入库）需设 `LUMEN_SESSION_SECRET` 才能起服务 |
