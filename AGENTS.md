@@ -10,20 +10,17 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - 交接文档 `docs/handoff.md`：当前状态、已完成 / 未完成、下一刀。每次会话从这里开始。
 - 后端真相 `docs/design.md`（as-built）；阶段计划 `docs/plan.md`；UI 规格 `DESIGN.md`；用户系统 / 配额 / 留存清理方案 `docs/plan-users-quota.md`。
-- 首页设计交接包 `design_handoff/design_handoff_genius_home/README.md`（规格）+ `Lumen v2.dc.html`（定稿原型），它们是首页像素级还原的依据。
+- 前端设计交接包 `design_handoff/design_handoff_genius_app/README.md`（规格）+ `Genius App.dc.html`（定稿原型），它们是侧栏 + 五视图换壳的依据；实施记录与 DOM 契约见 `docs/plan-ui-genius-app.md`。
 
-## 前端约定（2026-09-05 晚起，Genius 单屏）
+## 前端约定（2026-09-06 晚起，Genius App 换壳：侧栏 + 五视图 + 悬浮创作面板）
 
-- 整站是 `src/components/lumen/LumenHome.tsx` 一个 100vh 单屏（`body overflow:hidden`），三个视图：首页 / 工作室（输入即转场：左操作台、右展览区、输入卡落底）/ 作品（环形画廊）。视觉是深色玻璃语言：页面 `#0a0d12`、卡片 `rgba(28,30,36,.92)`、描边 `rgba(214,228,255,.12)`、强调 `#DDE1E8`；圆角 26 / 22 / 12 / 9；文案全中文，品牌名 Genius。改 UI 前先读 `DESIGN.md`。
-- 样式写在 `src/app/globals.css`（BEM 风格类名 + `@theme` 令牌），字体 Manrope + Noto Sans SC 经 `next/font/google`；不引入组件库，不用 `@react-three/fiber`、`drei` 或图标库（图标是内联 SVG）。
-- three.js 只走 `src/lib/scene/lumen-three.ts` 的纯函数场景（`mountDawn` 黎明河面背景、`mountRingDark` 作品环），通过 `src/components/scene/SceneHost.tsx` 挂载；需要重建场景时换 `key`，不要在 render 中碰 ref。任务进行中 `dawn.setEnergy(1)`。
-- 浏览器只经 `src/lib/client/jobs.ts` 和 `useJobLive.ts` 访问 `/api/*`；组件不直接 `fetch`。未登录访问 `/` 服务端 307 到 `/login`；`src/lib/client/http.ts` 收到 401 时整页跳转 `/login`（`window.location.assign`），不再弹窗——`AccessTokenPrompt` 与 `LUMEN_ACCESS_TOKEN` 已删除，鉴权改为 `src/proxy.ts` 校验 HMAC 签名会话 Cookie。顶栏显示账号名 + 「退出」（≤520px 隐藏账号名）。
-- UI 只暴露三条路径：文生视频 / 图生视频 / 文生图。时长与画幅是点击循环的芯片（`data-dur` / `data-ratio`）；`harnessEnabled()` 为真时时长循环追加 30 / 45 / 60（仅 t2v / i2v），展览区阶段行按 `job.shots` 显示「生成分镜 n/m」。`reference_to_video / edit_video / extend_video` 仍在 API 与 provider 层，不要从后端删除。
-- 展览区生成中的「丝绸幕布」是 ThreeUI `WovenCloth`（iridescent）的注册源码，走 `src/components/lumen/ClothVeil.tsx` → `src/shaders/woven-cloth/`（srcDoc iframe，自带 three r160）。`woven-cloth-iridescent.html` 逐字对应注册哈希，不要手改；`*.html` 经 `next.config.ts` 的 raw-loader 规则作字符串导入。
-- 操作台四组（滤镜 / 磨皮 / 色彩 / 镜头）每组单选，选中项的提示词以 `
-
-` 分段追加进 textarea；用户手动编辑后按"文本是否仍含该段"同步选中态。
-- `POST /api/jobs` 的请求体以 `src/lib/jobs/schema.ts` 的 `createJobBodySchema`（strict）为准，没有 `model` 字段，模型由服务端按 mode 决定。
+- 路由用 `src/app/(shell)/` 分组：`layout.tsx` 服务端校验会话、下发 provider 能力，`page.tsx`（主页）/`create/page.tsx`/`agent/page.tsx`/`canvas/page.tsx`/`subscription/page.tsx` 五个路由共享同一个 `GeniusShell`。组件在 `src/components/genius/`：`GeniusShell.tsx`/`ShellContext.tsx`（唯一客户端状态所有者，`useShell()`）/`Sidebar.tsx`/`TopBar.tsx`/`icons.tsx`/`composer/`（创作面板）/`home/`/`create/`/`agent/`/`canvas/`/`subscription/`。视觉是侧栏 `#0c0c0d` + 内容区 `#0a0a0b` 的深色 App 语言：卡片 `#131316`、悬浮面板 `#16161a`（不透明）、描边 `rgba(255,255,255,.07/.09)`、主强调渐变 `linear-gradient(90deg,#ff8a3d,#ff4d8d 60%,#a855f7)`；圆角 14–16 / 12 / 8–9；文案全中文（部分画布/智能体占位文案沿用原型英文，见 `DESIGN.md`「与交接包的有意偏离」），品牌名 Genius。改 UI 前先读 `DESIGN.md`。
+- 样式：`src/app/globals.css` 覆盖壳 + 主页 + 创作面板 + 创作页 + 登录页；智能体 / 画布 / 订阅各自一个文件 `src/app/styles/{agent,canvas,subscription}.css`，由 `globals.css` 顶部 `@import` 引入。BEM 类名 + `data-*` 状态，不用 Tailwind 工具类，不引组件库 / 图标库（图标内联 SVG，收进 `icons.tsx`）；字体仍是 Manrope + Noto Sans SC 经 `next/font/google`。控件 reset 必须用 `:where()` 包住，否则会盖掉单类规则的权重；带 `transform` 动画的祖先会成为 `position:fixed` 元素的包含块，toast 一类浮层要放在动画层外面，不能指望 `fixed` 逃出去。
+- **悬浮创作面板必须是 `main` 的兄弟节点**（锚在 `.col`，`position:absolute`），不能塞进滚动容器；`main` 不为它预留 `padding-bottom`。旧的 `src/lib/scene/`（three.js 场景）、`src/shaders/`（丝绸幕布）、`ClothVeil.tsx`、`SceneHost.tsx` 本轮已无任何引用，待删（未删，见 `docs/handoff.md` 本轮小节）。
+- 浏览器只经 `src/lib/client/*`（`jobs.ts`/`auth.ts`/`useJobLive.ts`/`http.ts`）访问 `/api/*`；组件不直接 `fetch`。未登录访问任意 `(shell)` 路由服务端 307 到 `/login`；401 时整页跳转 `/login`（`window.location.assign`）。顶栏头像菜单（disclosure，非 `role=menu`）显示完整邮箱 + 「退出」。
+- UI 只暴露三条真实路径：视频页「图文」模式（图片槽为空 → `text_to_video`，放图 → `image_to_video`）与图片页「默认」模式（`text_to_image`）；其余模式行渲染但 `aria-disabled="true"`，点击 toast「即将上线」。`POST /api/jobs` 请求体以 `src/lib/jobs/schema.ts` 的 `createJobBodySchema`（strict）为准，没有 `model` 字段，模型由服务端按 mode 决定；模型芯片只读展示 `caps.videoModel`/`imageModel`，不做下拉。时长 / 画幅是弹层里的按钮网格（`data-dur`/`data-ratio`/`data-res`），枚举由服务端按 provider 能力下发；`harnessEnabled()` 为真时时长追加 30 / 45 / 60（仅 t2v / i2v），创作页当前任务区按 `job.shots` 显示「生成分镜 n/m」。`reference_to_video / edit_video / extend_video` 仍在 API 与 provider 层，不要从后端删除。
+- 积分口径 **¥1 = 100 积分**，只用于顶栏与创作按钮的显示换算（`ShellContext.creditsOf`），余额模型与后端计费（`priceCny`）不变。
+- 幂等：一次逻辑创作一个 `idempotencyKey`（`ShellContext` 里 `idempotencyKey.current ??= newIdempotencyKey()`），提交成功才清空；用户改了提示词或任一选项就作废重取。
 
 ## 后端约定
 
@@ -43,7 +40,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## 验证门禁
 
 - 改代码后依次跑：`pnpm exec tsc --noEmit`、`pnpm exec eslint src`、`pnpm test`，三者绿才算完成。`.github/workflows/ci.yml` 在 push main 与所有 PR 上跑同样三条（Ubuntu，顺带验证 sharp/ffmpeg-static 的 Linux 原生依赖能装上），不跑 `pnpm e2e`。
-- 改 UI 后跑 `pnpm e2e`（Playwright，`e2e/lumen.spec.ts`：空态 / 文生视频与操作台飞入 / `[fail]` 重试与取消 / 作品环与再生成 / 首帧上传 / 30s 长片 / 手机端成片位置，全部 mock 模式，约 2.5 分钟）。它会复用已在 3000 端口运行的 `next dev`（`lumen-dev` 预览），没有就自己起一个；`CI` 或 `E2E_ISOLATED=1` 时拒绝复用并用隔离 `DATA_DIR`，`CI` 或 `E2E_REQUIRE_MOCK=1` 时非 mock 直接失败而非跳过。base URL 必须是 `localhost`，`127.0.0.1` 会被 Next 16 dev 拒 403 导致不水合。仍可再用预览面板（或 Playwright 截图）人工看一眼河面与作品环。
+- 改 UI 后跑 `pnpm e2e`（Playwright，全部 mock 模式）。用例分两个文件：`e2e/genius.spec.ts`（空态：壳水合/侧栏五项/顶栏标题与积分/收起态输入条/瀑布流空态；文生视频：规格弹层选参数→创作→跳转 `/create`→成片可见→按估价扣积分；`[fail]` 标记：失败态不扣款→重新生成换新任务→取消；图生视频：上传首帧切换 `data-mode`；图片页：文生图产出静态图；长片：30s 一致性管线分镜读数推进；已清理作品：瀑布流占位卡/无成片请求/一键重试被拒；`retryBlocked`：`uncertain_submit` 阻断一键重试；五视图导航：标题与 `aria-current` 联动、画布不横向溢出；手机端 375 宽：五视图都不横向溢出）与 `e2e/auth.spec.ts`（未登录被送到登录页；注册后进首页、头像菜单显示账号；退出后又被挡回）。它会复用已在 3000 端口运行的 `next dev`，没有就自己起一个；`CI` 或 `E2E_ISOLATED=1` 时拒绝复用并用隔离 `DATA_DIR`（**Next 16 单实例锁**：3000 已有 dev server 在跑时，`E2E_ISOLATED=1` 会因端口冲突启动失败，此时改用非隔离复用或先停掉已在跑的 dev server），`CI` 或 `E2E_REQUIRE_MOCK=1` 时非 mock 直接失败而非跳过。base URL 必须是 `localhost`，`127.0.0.1` 会被 Next 16 dev 拒 403 导致不水合。仍可再用预览面板（或 Playwright 截图）人工看一眼五个视图。
 - 内置浏览器面板在页面滚动后截图会空白，这是截图工具的问题；用 `translateY` 位移检查下方区块，或在真实浏览器里看。
 
 ## PR 评审流程

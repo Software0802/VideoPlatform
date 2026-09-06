@@ -1,6 +1,6 @@
-# Genius（原 流光 / Lumen）— 视频工作室
+# Genius（原 流光 / Lumen）— 视频创作平台
 
-深色沉浸的单屏工作室（`design_handoff/design_handoff_genius_home`）：黎明河面上写一句提示词，输入即进入工作室，左侧操作台把滤镜 / 色彩 / 镜头拼进提示词，右侧展览区看进度与成片，作品页是环形画廊。UI 只暴露三条路径——文生视频 / 图生视频 / 文生图；API 与 provider 层仍支持 Grok 原生参考生 / 编辑 / 延长。无上游密钥时走模拟模式。30 / 45 / 60 秒一致性管线（Harness）已接入，由 `HARNESS_ENABLED` 开关；mock 端到端已验证，真实 key 的质量与成本验收仍待完成（见 `docs/handoff.md`）。
+侧栏 + 五视图的深色 App（`design_handoff/design_handoff_genius_app`）：主页瀑布流看真实作品，创作页跟进当前任务，悬浮创作面板接后端出片，智能体 / 画布 / 订阅三个视图是像素复刻的本地交互（占位数据，不发请求）。UI 只暴露三条真实路径——文生视频 / 图生视频 / 文生图；API 与 provider 层仍支持 Grok 原生参考生 / 编辑 / 延长。无上游密钥时走模拟模式。30 / 45 / 60 秒一致性管线（Harness）已接入，由 `HARNESS_ENABLED` 开关；mock 端到端已验证，真实 key 的质量与成本验收仍待完成（见 `docs/handoff.md`）。
 
 新会话先读 [`docs/handoff.md`](docs/handoff.md)。
 
@@ -94,7 +94,7 @@ pnpm run smoke:live
 - 会话交接（当前状态 / 已完成 / 未完成）：[`docs/handoff.md`](docs/handoff.md)
 - 项目规则：[`AGENTS.md`](AGENTS.md)
 - 当前设计（as-built）：[`docs/design.md`](docs/design.md)
-- UI 设计系统（Blueprint 首页）：[`DESIGN.md`](DESIGN.md)；原始交接包 `design_handoff/design_handoff_lumen_blueprint/`
+- UI 设计系统（Genius App 换壳）：[`DESIGN.md`](DESIGN.md)；原始交接包 `design_handoff/design_handoff_genius_app/`
 - 阶段计划：[`docs/plan.md`](docs/plan.md)
 - 审查报告：[`docs/review-2026-09-02.md`](docs/review-2026-09-02.md)（架构与 UI 重构）、[`docs/review-2026-08-29.md`](docs/review-2026-08-29.md)
 - Phase 0 历史设计：[`docs/architecture.md`](docs/architecture.md)

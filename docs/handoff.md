@@ -2,16 +2,52 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 更新日期 | 2026-09-06 晚（YMan 中转 provider + 按能力路由 + 积分耗尽自动切换，分支 `main`，**已提交** `9280c45`） |
-| 基线 | `main` @ `9280c459`（父提交 `73b88da` 阶段一止血）。方案 `docs/plan-architecture-2026-09.md` §3.4「功能先于供应商」。此前一轮可灵直连视频详见 §0c；用户系统 / 配额 / 留存清理详见 §0b |
+| 更新日期 | 2026-09-06 晚（前端整体换壳 Genius App：侧栏 + 五视图 + 悬浮创作面板，**工作区改动，尚未提交/部署**）；上一条已提交历史见下「YMan 中转 provider」行 |
+| 基线 | `main` @ `9280c459`（父提交 `73b88da` 阶段一止血）+ 工作区未提交的 UI 换壳改动。方案 `docs/plan-ui-genius-app.md`（本轮）、`docs/plan-architecture-2026-09.md` §3.4「功能先于供应商」（YMan/路由）。此前一轮可灵直连视频详见 §0c；用户系统 / 配额 / 留存清理详见 §0b |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | 上一提交 `73b88da`（阶段一止血）：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 63 文件 / 530 通过、1 条 skip；`pnpm e2e` 隔离模式 10/10 通过；Codex 审 diff 给出 BLOCK 四条，均已处理（媒体缓存跨账号、结算窗口崩溃语义、部署清单遗漏、充值 CLI 无跨进程锁记为已知限制）。本轮 `9280c45`（YMan）：门禁数字未在任务书中给出，Codex 审查进行中，结论由主代理另补，新会话接手前先确认 |
+| 门禁状态 | 本轮（UI 换壳，工作区未提交）：`tsc --noEmit` 绿、`eslint src` 绿、`pnpm test` 71 文件 / 681 通过、1 条 skip、`pnpm e2e` 12/12 通过。上一提交 `9280c45`（YMan）门禁：`pnpm test` 681 通过（同一数字，无冲突）；Codex 跨厂商审查状态见 §0「审查修复」小节。再上一提交 `73b88da`（阶段一止血）：`tsc --noEmit` 绿；`eslint src` 绿；`pnpm test` 63 文件 / 530 通过、1 条 skip；`pnpm e2e` 隔离模式 10/10 通过；Codex 审 diff 给出 BLOCK 四条，均已处理 |
 | 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新账号余额为 0，提交前需管理员用 `node scripts/grant-balance.mjs <邮箱> <金额> --note "..."` 充值（见下 §0d.一） |
 | 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。**本轮尚未部署**，服务器仍是可灵版 `bcad123`（§0c）；`scripts/deploy.sh` 已加回滚判定，`scripts/backup.sh` 待首次在服务器手动跑通并加入 cron。步骤见 §0a.4 |
 
 架构综合审查与治理路线见 `docs/plan-architecture-2026-09.md`（2026-09-06，三维度审查收敛，阶段一已完成，§5 用户已拍板）。
 
 新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，新增 §2d 余额与计费）、`docs/plan-architecture-2026-09.md`（本轮方案与阶段路线）、`DESIGN.md`（UI 规格）。
+
+---
+
+## 0e. 本轮（2026-09-06 晚）：前端换壳 Genius App（侧栏 + 五视图 + 悬浮创作面板）
+
+方案 `docs/plan-ui-genius-app.md`（含 §7/§7.1 DOM 契约）。目标：把整站从「单屏 3D 场景（首页/工作室/作品三视图）」换成交接包 `design_handoff/design_handoff_genius_app/` 定稿的「212px 侧栏 + 56px 顶栏 + 滚动 main + 悬浮创作面板」App 壳，五个视图：主页 / 创作 / 智能体 / 画布 / 订阅。**工作区改动，尚未提交、尚未部署**；与同一工作区此前已提交的 `9280c45`（YMan provider）互不冲突（那一轮只碰 provider 路径）。
+
+### 派工与流程
+
+按方案 §8 派工：coder-A（壳、`ShellContext`、主页、创作面板接真后端、创作页、登录页、`globals.css`、删 `LumenHome`）∥ coder-B（`agent/canvas/subscription` 三视图 + 三个 css 文件，像素复刻 + 本地交互）∥ tester（重写 `e2e/genius.spec.ts`、迁移 `e2e/auth.spec.ts`）并行，之后 coder-fix 收敛主代理核对门禁时发现的问题。Codex 方案审查（`--mode plan`）5 条 findings 全部采纳。
+
+### 文件清单
+
+- 新增：`src/app/(shell)/{layout,page}.tsx`、`(shell)/{create,agent,canvas,subscription}/page.tsx`；`src/components/genius/`（`GeniusShell.tsx`/`ShellContext.tsx`/`Sidebar.tsx`/`TopBar.tsx`/`icons.tsx`/`views.ts`/`LoginScreen.tsx`/`composer/`/`home/`/`create/`/`agent/`/`canvas/`/`subscription/`）；`src/app/styles/{agent,canvas,subscription}.css`；`e2e/genius.spec.ts`；`design_handoff/design_handoff_genius_app/`（新交接包）；`docs/plan-ui-genius-app.md`。
+- 修改：`src/app/globals.css`（整体重写，壳 + 主页 + 创作面板 + 创作页 + 登录页）、`src/app/login/page.tsx`、`e2e/auth.spec.ts`（选择器改为 `.shell[data-ready]`/头像菜单「退出」/瀑布流/`积分 n`）。
+- 删除：`src/app/page.tsx`、`src/components/lumen/LumenHome.tsx`、`src/components/lumen/LoginScreen.tsx`、`e2e/lumen.spec.ts`、旧交接包 `design_handoff/design_handoff_genius_home/`（含全部截图 / assets / `_ds` 设计系统包）。
+
+### 门禁结果
+
+`pnpm exec tsc --noEmit` 绿；`pnpm exec eslint src` 绿；`pnpm test` 71 文件 / 681 通过、1 条 skip；`pnpm e2e` 12/12 通过（`e2e/genius.spec.ts` 11 条 + `e2e/auth.spec.ts` 1 条，用例标题见 `AGENTS.md`「验证门禁」）。
+
+### coder 报告的有意偏离（详见 `DESIGN.md`「与交接包的有意偏离」）
+
+规格弹层无「预览模式」与「剩余试用」、分辨率只列 480P/720P/1080P（图片 1K/2K）、宽高比/时长只列服务端枚举；模型芯片只读不做下拉；`.composer__specs` 用 `font-size:0` 分隔 span 保证 `textContent` 精确等于 `720P | 16:9 | 5s`；创作页内容块底部留白 236px 而 `main` 不留；图片页图片槽置灰「即将上线」；创作面板关闭态仍在 DOM（`hidden` + `data-open="false"`）；≤900px 侧栏收成 56px 图标栏（文字 `clip-path` 隐藏）；素材弹窗「已创建」只展示不可选；头像菜单为 disclosure 语义非 `role=menu`；订阅价格是原型美元占位值未与人民币计费对齐；进技能广场/会话页时顶栏仍显示「智能体」、画布标题固定「画布」；工具箱工具名/画布节点标签/部分模型名保留英文占位；画布结果视频用 hover 进度条模拟（非真实 `<video>`）；技能卡可选中、技能广场筛选/工具箱搜索为真实本地过滤、会话页可发送占位回复、画布右键弹类型菜单、订阅月付隐藏划线价（均为 coder-B 对原型的补强，超出最低要求但不发请求）。
+
+### 未做 / 未处理
+
+- 订阅四档价目仍是原型美元占位值，未与人民币计费对齐（按钮固定 toast「即将上线」，非真实购买路径）。
+- 顶栏标题上报接口未做：智能体子状态（技能广场/会话页）与画布视图的顶栏标题不感知视图内部 state，固定显示视图名。
+- 工具箱工具名、画布节点标签、部分模型名沿用原型英文占位文案，未本地化。
+- 画布结果视频节点未接入真实 `<video>` play/pause，仍是 hover 进度条模拟。
+- 旧 three.js 场景相关死代码待删：`src/lib/scene/`、`src/shaders/`、`ClothVeil.tsx`、`SceneHost.tsx` 本轮已无任何组件引用，未删除，另开一刀清理。
+- `public/lumina` 仍是旧版低清样片，未替换成新交接包 `assets/lumina` 或真实内容。
+- 手机端只做了「侧栏收窄」的最低适配（≤900px 图标栏），未做手机端定稿；e2e 只验证 375 宽不横向溢出，未做完整体验回归。
+- `src/components/genius/Sidebar.tsx:34` 注释（「可访问名靠 title 兜住」）与实现不符——收起态图标链接没有加 `title` 属性，可访问名目前只靠 `aria-current`，新会话若要修可访问性可顺手补上。
+- 本轮未提交、未部署；与已提交的 `9280c45`（YMan provider）合并/一并提交前建议再跑一遍三项门禁 + `pnpm e2e`。
 
 ---
 
