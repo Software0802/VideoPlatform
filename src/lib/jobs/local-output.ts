@@ -51,7 +51,8 @@ export async function cleanupJobArtifacts(
  * `job.json` itself is deliberately not touched: the record stays as history and is
  * what carries `artifactsPurgedAt`.
  */
-const PURGED_DIRS = ["outputs", "inputs"] as const;
+// `shots/` holds every per-shot clip of a harness job — the largest artifact set of all.
+const PURGED_DIRS = ["outputs", "inputs", "shots"] as const;
 
 /**
  * Delete one job's artifact directories, keeping the record. Used only by the
