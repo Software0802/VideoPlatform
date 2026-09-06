@@ -17,6 +17,8 @@
 
 ## 0. 本轮（2026-09-06 晚）：YMan 中转 provider · 按能力路由 · 积分耗尽自动切换
 
+> **审查修复（`ba6cd2d`，2026-09-06 17:50）**：Codex 额度受限，改由 code-reviewer 子智能体审 `9280c45`，10 条 findings 中 8 条已修：换家后售价只降不升、时长档变长且更贵则不换家；耗尽后兜底不落 mock（该类任务配了真 key 却无人可用 → 503 `no_provider_available`；纯生图实例请求视频仍 mock）；openai-image 通道 402 / 429 insufficient_quota 归一 `quota_exhausted`（图片切换真正可达）；文生图画幅恒七种、视频画幅 / 时长芯片跳过耗尽 provider；`markExhausted` 加锁；下载头按 provider 绑定；默认 `VIDEO_PROVIDER_ORDER` 改回 `grok`（生产已显式写 `kling,yman,grok`，不受影响）。未修（记录）：时长芯片按第一顺位 provider 下发，画幅改派后可能被归一（与「不静默改写」原则相悖，待 UI 重构一并解决）；`IMAGE_PROVIDER_ORDER` 收窄时 grok 仍是图片隐式最后一档。新增 `exhaustion / failover / 图片 402 / 路由 503` 测试，`pnpm test` 681 通过。**同一工作区另有会话在做 UI 重构（`src/app/(shell)/`、`src/components/genius/`），本提交只含 provider 路径；`pnpm e2e` 因旧 spec 被删未跑。**
+
 提交 `9280c45`（父提交 `73b88da`）。方案 `docs/plan-architecture-2026-09.md` §3.4「功能先于供应商」。目标：接入第三家视频/图片上游 YMan（中转渠道），并把此前「按 key 存在性 + 单点开关」的路由改成「按能力 + 优先级列表」，为后续再加供应商铺路；同时补上「一家上游积分用完自动换下一家」的止损。
 
 ### 0.一 已实现：YMan provider
