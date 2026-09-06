@@ -107,7 +107,7 @@ flowchart TB
 
 ## 2c. 视频 provider 路由(可灵,2026-09-06,as-built)
 
-方案 `docs/plan-kling-video.md`。文生视频 / 图生视频在满足条件时改走可灵开放平台新系统 API,其余视频模式(参考生 / 编辑 / 延长 / harness 长片)不受影响,仍固定在 xAI。**本节所述改动尚未提交、未部署**,详见 `docs/handoff.md` §0。
+方案 `docs/plan-kling-video.md`。文生视频 / 图生视频在满足条件时改走可灵开放平台新系统 API,其余视频模式(参考生 / 编辑 / 延长 / harness 长片)不受影响,仍固定在 xAI。已作为 `bcad123` 提交并于 2026-09-06 部署到生产(`api-singapore` 域名),详见 `docs/handoff.md` §0。
 
 | 优先级 | 条件 | provider |
 | --- | --- | --- |
