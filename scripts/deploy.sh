@@ -58,7 +58,7 @@ PKG="$(mktemp -t genius-deploy-XXXXXX)"
 tar czf "$PKG" \
   --exclude=.next/cache --exclude=.next/dev --exclude=.next/types --exclude=.next/standalone \
   .next public package.json pnpm-lock.yaml pnpm-workspace.yaml next.config.ts \
-  scripts/mint-invites.mjs scripts/backup.sh scripts/grant-balance.mjs
+  scripts/mint-invites.mjs scripts/backup.sh scripts/grant-balance.mjs scripts/mint-gift-codes.mjs
 ls -lh "$PKG" | awk '{print "   包大小:", $5}'
 
 echo "== 4/5 上传"
