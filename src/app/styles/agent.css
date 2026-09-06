@@ -1,0 +1,1005 @@
+/*
+  智能体视图（/agent）— 交接包 design_handoff_genius_app/README.md §5，原型图 16–25。
+  块名统一以 agent- 开头，状态走 data-*；令牌局部定义在 .agent-view 上，不依赖 globals.css 的变量名。
+*/
+
+.agent-view {
+  --ag-card: #131316;
+  --ag-card-alt: #101013;
+  --ag-pop: rgba(28, 28, 33, 0.98);
+  --ag-drawer: #0d0d0f;
+  --ag-line: rgba(255, 255, 255, 0.07);
+  --ag-ring: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+  --ag-ring-soft: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  --ag-ring-strong: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  --ag-chip: rgba(255, 255, 255, 0.06);
+  --ag-chip-hi: rgba(255, 255, 255, 0.1);
+  --ag-chip-on: rgba(255, 255, 255, 0.14);
+  --ag-fg: #fff;
+  --ag-fg-2: #e4e4e8;
+  --ag-fg-3: #c9c9ce;
+  --ag-fg-4: #a9aab0;
+  --ag-fg-5: #8b8b91;
+  --ag-weak: #7d7e84;
+  --ag-placeholder: #6f7075;
+  --ag-gold: #f0d9a8;
+  --ag-grad: linear-gradient(140deg, #ff8a3d, #ff4d8d 60%, #a855f7);
+  --ag-grad-text: linear-gradient(90deg, #ff8a3d, #ff4d8d 55%, #a855f7);
+  --ag-grad-switch: linear-gradient(90deg, #7c5cff, #a855f7);
+  --ag-shadow-pop: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 18px 44px rgba(0, 0, 0, 0.55);
+
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 归零控件的 UA 样式。用 :where() 让整条规则的权重为 0，
+   否则 `.agent-view button` 会盖掉下面所有 `.agent-xxx` 单类名里的 background。 */
+:where(.agent-view) :where(button, textarea, input) {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+}
+:where(.agent-view) :where(button) {
+  cursor: pointer;
+}
+:where(.agent-view) :where(textarea, input)::placeholder {
+  color: var(--ag-placeholder);
+}
+
+.agent-view__scroll {
+  height: 100%;
+  overflow: auto;
+  animation: agent-fade-up 0.35s ease both;
+}
+
+@keyframes agent-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes agent-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes agent-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- 首屏 ---------- */
+
+.agent-hero {
+  position: relative;
+  padding: clamp(48px, 9vh, 96px) 20px clamp(36px, 6vh, 64px);
+  background: radial-gradient(
+    70% 120% at 50% -10%,
+    rgba(168, 85, 247, 0.3),
+    rgba(255, 77, 141, 0.1) 45%,
+    transparent 72%
+  );
+}
+
+.agent-hero__title {
+  margin: 0 0 clamp(24px, 4vh, 40px);
+  text-align: center;
+  font-size: clamp(26px, 3.4vw, 44px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.agent-hero__grad {
+  background: var(--ag-grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---------- 输入卡 ---------- */
+
+.agent-ask {
+  position: relative;
+  max-width: 680px;
+  margin: 0 auto;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  padding: 18px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.agent-ask__input {
+  width: 100%;
+  resize: none;
+  padding: 0 2px;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ag-fg);
+}
+
+.agent-ask__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.agent-ask__slot {
+  position: relative;
+}
+
+.agent-ask__icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--ag-fg-3);
+  background: rgba(255, 255, 255, 0.07);
+  transition: background 0.16s ease, color 0.16s ease;
+}
+.agent-ask__icon:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--ag-fg);
+}
+
+.agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  color: var(--ag-fg-2);
+  background: rgba(255, 255, 255, 0.07);
+  transition: background 0.16s ease;
+}
+.agent-chip:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.agent-chip[data-open="true"] {
+  background: var(--ag-chip-on);
+  box-shadow: var(--ag-ring-strong);
+}
+.agent-chip--tall {
+  height: 32px;
+  padding: 0 13px;
+  background: rgba(255, 255, 255, 0.07);
+}
+.agent-chip__badge {
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--ag-fg-3);
+  background: var(--ag-chip-hi);
+}
+
+.agent-send {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #15161a;
+  background: var(--ag-grad);
+  transition: filter 0.16s ease;
+}
+.agent-send:hover {
+  filter: brightness(1.08);
+}
+
+/* ---------- 下拉浮层 ---------- */
+
+.agent-pop {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  overflow: auto;
+  border-radius: 12px;
+  background: var(--ag-pop);
+  box-shadow: var(--ag-shadow-pop);
+  padding: 6px;
+  z-index: 4;
+  animation: agent-pop-in 0.2s ease both;
+}
+.agent-pop--text {
+  width: 250px;
+  max-height: 250px;
+}
+.agent-pop--filter {
+  left: auto;
+  right: 0;
+  width: 160px;
+}
+.agent-pop--img {
+  width: 320px;
+  max-height: 280px;
+}
+.agent-pop--vid {
+  width: 340px;
+  max-height: 300px;
+}
+
+.agent-pop__plain {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  color: var(--ag-fg-2);
+  background: transparent;
+  transition: background 0.16s ease;
+}
+.agent-pop__plain:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.agent-pop__plain[data-current="true"] {
+  background: rgba(255, 255, 255, 0.09);
+}
+.agent-pop__dot {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 4px;
+  background: var(--ag-chip-on);
+}
+
+.agent-pop__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 10px;
+  text-align: left;
+  background: transparent;
+  transition: background 0.16s ease;
+}
+.agent-pop__item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.agent-pop__item[data-current="true"] {
+  background: rgba(255, 255, 255, 0.09);
+}
+.agent-pop__icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 8px;
+}
+.agent-pop__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.agent-pop__name {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.agent-pop__desc {
+  font-size: 11.5px;
+  color: var(--ag-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-pop__auto {
+  height: 19px;
+  padding: 0 8px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  font-size: 11px;
+  color: var(--ag-fg-3);
+  background: var(--ag-chip-hi);
+}
+
+/* ---------- 技能下拉 + 悬停预览卡 ---------- */
+
+.agent-skillpop {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  z-index: 4;
+  animation: agent-pop-in 0.2s ease both;
+}
+.agent-skillpop__panel {
+  width: 290px;
+  flex: none;
+  border-radius: 12px;
+  background: var(--ag-pop);
+  box-shadow: var(--ag-shadow-pop);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+}
+.agent-skillpop__list {
+  max-height: 250px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agent-skillpop__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  text-align: left;
+  background: transparent;
+  transition: background 0.16s ease;
+}
+.agent-skillpop__item[data-current="true"] {
+  background: rgba(255, 255, 255, 0.09);
+}
+.agent-skillpop__icon {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--ag-fg-3);
+  background: rgba(255, 255, 255, 0.08);
+}
+.agent-skillpop__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agent-skillpop__name {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-skillpop__desc {
+  font-size: 11px;
+  color: var(--ag-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-skillpop__manage {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 4px;
+  padding: 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--ag-fg-2);
+  border-top: 1px solid var(--ag-line);
+}
+.agent-skillpop__manage:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.agent-skillpop__manage svg:last-child {
+  margin-left: auto;
+}
+.agent-skillpop__preview {
+  width: 250px;
+  flex: none;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--ag-pop);
+  box-shadow: var(--ag-shadow-pop);
+}
+.agent-skillpop__shot {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background-color: #1a1a1f;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+.agent-skillpop__pbody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px 14px;
+}
+.agent-skillpop__pname {
+  font-size: 13px;
+  font-weight: 700;
+}
+.agent-skillpop__pdesc {
+  font-size: 11.5px;
+  color: var(--ag-fg-4);
+  line-height: 1.5;
+}
+
+/* ---------- 技能卡片网格 ---------- */
+
+.agent-picks {
+  padding: 0 20px 40px;
+}
+.agent-picks__title {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.agent-picks__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
+}
+
+.agent-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  text-align: left;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--ag-card);
+  box-shadow: var(--ag-ring-soft);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.16s ease;
+}
+.agent-card:hover {
+  transform: translateY(-3px);
+}
+.agent-card[data-active="true"] {
+  box-shadow: inset 0 0 0 1.5px var(--ag-gold);
+}
+.agent-card__shot {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background-color: #1a1a1f;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+.agent-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 13px 14px;
+}
+.agent-card__name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.agent-card__desc {
+  font-size: 12px;
+  color: var(--ag-weak);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 历史抽屉 ---------- */
+
+.agent-history-btn {
+  position: absolute;
+  left: 20px;
+  top: 14px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ag-fg-2);
+  background: var(--ag-chip);
+  transition: background 0.16s ease, color 0.16s ease;
+}
+.agent-history-btn:hover {
+  background: var(--ag-chip-hi);
+  color: var(--ag-fg);
+}
+
+.agent-drawer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 290px;
+  z-index: 4;
+  background: var(--ag-drawer);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: agent-slide-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.agent-drawer__head {
+  display: flex;
+  align-items: center;
+}
+.agent-drawer__title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.agent-drawer__close {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--ag-fg-5);
+}
+.agent-drawer__close:hover {
+  color: var(--ag-fg);
+  background: rgba(255, 255, 255, 0.08);
+}
+.agent-drawer__new {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--ag-fg-2);
+  background: var(--ag-chip);
+}
+.agent-drawer__new:hover {
+  background: var(--ag-chip-hi);
+  color: var(--ag-fg);
+}
+.agent-drawer__label {
+  font-size: 11.5px;
+  color: var(--ag-weak);
+  padding-left: 2px;
+}
+.agent-drawer__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  text-align: left;
+  color: var(--ag-fg-2);
+  background: var(--ag-chip);
+}
+.agent-drawer__item:hover {
+  background: var(--ag-chip-hi);
+}
+.agent-drawer__item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-drawer__item-more {
+  color: var(--ag-fg-5);
+}
+
+/* ---------- 技能广场 ---------- */
+
+.agent-plaza {
+  padding: 16px 20px 40px;
+}
+.agent-plaza__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 18px;
+}
+.agent-round {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--ag-fg-2);
+  background: rgba(255, 255, 255, 0.07);
+  transition: background 0.16s ease, color 0.16s ease;
+}
+.agent-round:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--ag-fg);
+}
+.agent-plaza__title {
+  flex: 1;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+}
+.agent-plaza__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 14px;
+}
+.agent-plaza__empty {
+  margin: 24px 0 0;
+  font-size: 12.5px;
+  color: var(--ag-weak);
+}
+.agent-plaza-card {
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--ag-card-alt);
+  box-shadow: var(--ag-ring-soft);
+}
+.agent-plaza-card__shot {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background-color: #1a1a1f;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+.agent-plaza-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 13px 10px;
+}
+.agent-plaza-card__name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-plaza-card__desc {
+  font-size: 11.5px;
+  color: var(--ag-weak);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-plaza-card__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 13px 12px;
+}
+.agent-plaza-card__meta {
+  font-size: 11.5px;
+  color: var(--ag-weak);
+}
+.agent-switch {
+  margin-left: auto;
+  width: 34px;
+  height: 19px;
+  flex: none;
+  border-radius: 99px;
+  padding: 2px;
+  display: flex;
+  justify-content: flex-start;
+  background: rgba(255, 255, 255, 0.16);
+  transition: background 0.18s ease;
+}
+.agent-switch[data-on="true"] {
+  justify-content: flex-end;
+  background: var(--ag-grad-switch);
+}
+.agent-switch__knob {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+/* ---------- 会话页 ---------- */
+
+.agent-chat {
+  height: 100%;
+  display: flex;
+  overflow: auto;
+  animation: agent-fade-up 0.3s ease both;
+}
+.agent-chat__left {
+  width: 400px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--ag-line);
+  padding: 14px 16px 16px;
+}
+.agent-chat__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 16px;
+}
+.agent-chat__back {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--ag-fg-3);
+}
+.agent-chat__back:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ag-fg);
+}
+.agent-chat__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-chat__more {
+  color: var(--ag-fg-5);
+}
+.agent-chat__log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.agent-chat__bubble {
+  align-self: flex-end;
+  max-width: 300px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  background: rgba(255, 255, 255, 0.07);
+}
+.agent-chat__answer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.agent-chat__text {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ag-fg-2);
+}
+.agent-chat__skill-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--ag-weak);
+}
+.agent-chat__skill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 7px;
+  color: var(--ag-fg-2);
+  background: rgba(255, 255, 255, 0.07);
+}
+.agent-chat__credits {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: var(--ag-gold);
+  background: var(--ag-chip);
+}
+.agent-chat__composer {
+  margin-top: 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  padding: 14px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.agent-chat__input {
+  width: 100%;
+  font-size: 13px;
+  color: var(--ag-fg);
+}
+.agent-chat__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.agent-chat__icon {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--ag-fg-3);
+  background: rgba(255, 255, 255, 0.07);
+}
+.agent-chat__icon:hover {
+  color: var(--ag-fg);
+}
+.agent-chat__tag {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ag-fg-3);
+  background: rgba(255, 255, 255, 0.07);
+}
+.agent-chat__send {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #15161a;
+  background: var(--ag-grad);
+  transition: filter 0.16s ease;
+}
+.agent-chat__send:hover {
+  filter: brightness(1.08);
+}
+.agent-chat__right {
+  flex: 1;
+  min-width: 400px;
+  padding: 14px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.agent-chat__assets-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.agent-chat__assets-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.agent-chat__assets-count {
+  font-size: 12px;
+  color: var(--ag-weak);
+}
+.agent-chat__assets-tabs {
+  display: flex;
+  gap: 6px;
+  margin-left: 14px;
+}
+.agent-chat__assets-tab {
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ag-fg-4);
+  background: var(--ag-chip);
+  transition: background 0.16s ease, color 0.16s ease;
+}
+.agent-chat__assets-tab[data-on="true"] {
+  color: var(--ag-fg);
+  background: var(--ag-chip-on);
+}
+.agent-chat__assets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.agent-asset {
+  position: relative;
+  display: block;
+  padding: 0;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  background-color: #141417;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  box-shadow: var(--ag-ring-soft);
+}
+.agent-asset[data-on="true"] {
+  box-shadow: inset 0 0 0 1.5px var(--ag-gold);
+}
+.agent-asset__n {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.75);
+  font-variant-numeric: tabular-nums;
+}
+.agent-chat__fail {
+  width: 210px;
+  border-radius: 10px;
+  background: #111114;
+  box-shadow: var(--ag-ring-soft);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+.agent-chat__fail-label {
+  font-size: 11.5px;
+  color: var(--ag-weak);
+}
+.agent-chat__fail-state {
+  align-self: center;
+  font-size: 12px;
+  color: var(--ag-fg-5);
+}
+
+/* ---------- 窄屏最低适配 ---------- */
+
+@media (max-width: 900px) {
+  .agent-chat__left {
+    width: 340px;
+  }
+  .agent-chat__right {
+    min-width: 320px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-view *,
+  .agent-view *::before,
+  .agent-view *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

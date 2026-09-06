@@ -1,0 +1,349 @@
+/*
+  订阅视图（/subscription）— 交接包 design_handoff_genius_app/README.md §7，原型图 16-subscription。
+  块名统一以 sub- 开头；令牌局部定义在 .sub-view 上，不依赖 globals.css 的变量名。
+*/
+
+.sub-view {
+  --sb-card: #101013;
+  --sb-line: rgba(255, 255, 255, 0.07);
+  --sb-ring: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  --sb-chip: rgba(255, 255, 255, 0.06);
+  --sb-chip-hi: rgba(255, 255, 255, 0.12);
+  --sb-chip-on: rgba(255, 255, 255, 0.14);
+  --sb-fg: #fff;
+  --sb-fg-2: #e4e4e8;
+  --sb-fg-3: #d4d4d8;
+  --sb-fg-5: #8b8b91;
+  --sb-weak: #7d7e84;
+  --sb-dim: #6f7075;
+  --sb-gold: #f0d9a8;
+  --sb-badge: linear-gradient(90deg, #ff8a3d, #ff4d8d);
+  --sb-grad: linear-gradient(90deg, #ff8a3d, #ff4d8d 60%, #a855f7);
+
+  padding: 18px 20px 60px;
+}
+
+/* 入场动画只挂在内容层：挂到 .sub-view 上会让它成为 position:fixed 的包含块，
+   .sub-toast 就会贴到内容底部而不是视口底部。 */
+.sub-view__body {
+  animation: sub-fade-up 0.35s ease both;
+}
+
+/* 归零控件的 UA 样式；:where() 保证权重为 0，不会盖掉下面单类名规则里的 background。 */
+:where(.sub-view) :where(button) {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+@keyframes sub-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- 我的方案 ---------- */
+
+.sub-mine {
+  border-radius: 14px;
+  background: var(--sb-card);
+  box-shadow: var(--sb-ring);
+  padding: 20px 22px;
+}
+.sub-mine__head {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+.sub-mine__title {
+  font-size: 15px;
+  font-weight: 700;
+}
+.sub-mine__link {
+  font-size: 12px;
+  color: var(--sb-weak);
+  padding: 0;
+  transition: color 0.16s ease;
+}
+.sub-mine__link:hover {
+  color: var(--sb-fg-2);
+}
+.sub-mine__link--end {
+  margin-left: auto;
+}
+.sub-mine__body {
+  display: flex;
+  align-items: flex-start;
+  gap: 34px;
+  flex-wrap: wrap;
+  padding: 18px 0 4px;
+}
+.sub-mine__plan {
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 64px;
+}
+.sub-mine__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.sub-mine__credits {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.sub-mine__breakdown {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--sb-weak);
+}
+.sub-mine__num {
+  color: var(--sb-fg-2);
+}
+.sub-mine__redeem {
+  margin-top: 16px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  color: var(--sb-fg-2);
+  background: rgba(255, 255, 255, 0.07);
+  transition: background 0.16s ease, color 0.16s ease;
+}
+.sub-mine__redeem:hover {
+  background: var(--sb-chip-hi);
+  color: var(--sb-fg);
+}
+
+/* ---------- 订阅方案标题 + 年月切换 ---------- */
+
+.sub-plans__head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 44px 0 26px;
+}
+.sub-plans__title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+}
+.sub-cycle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--sb-chip);
+}
+.sub-cycle__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 18px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--sb-fg-5);
+  background: transparent;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+.sub-cycle__btn:hover {
+  color: var(--sb-fg);
+}
+.sub-cycle__btn[data-on="true"] {
+  color: var(--sb-fg);
+  background: var(--sb-chip-on);
+}
+.sub-cycle__badge {
+  height: 19px;
+  padding: 0 7px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #15161a;
+  background: var(--sb-badge);
+}
+
+/* ---------- 四档卡片 ---------- */
+
+.sub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.sub-card {
+  position: relative;
+  border-radius: 14px;
+  background: var(--sb-card);
+  box-shadow: var(--sb-ring);
+  padding: 22px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.sub-card[data-popular="true"] {
+  box-shadow: inset 0 0 0 1.5px #ff8a3d;
+}
+.sub-card__popular {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 0 14px 0 8px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #15161a;
+  background: var(--sb-badge);
+}
+.sub-card__top {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sub-card__name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sub-card__name {
+  font-size: 15px;
+  font-weight: 700;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.sub-card__off {
+  height: 19px;
+  padding: 0 7px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #15161a;
+  background: var(--sb-badge);
+}
+.sub-card__price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.sub-card__price {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.sub-card__unit {
+  font-size: 13px;
+  color: var(--sb-fg-5);
+}
+.sub-card__was {
+  font-size: 13px;
+  color: var(--sb-dim);
+  text-decoration: line-through;
+}
+.sub-card__total {
+  font-size: 11.5px;
+  color: var(--sb-weak);
+}
+.sub-card__cta {
+  height: 42px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #15161a;
+  background: #f0f0f2;
+  transition: filter 0.16s ease;
+}
+.sub-card__cta:hover {
+  filter: brightness(1.06);
+}
+.sub-card[data-popular="true"] .sub-card__cta {
+  background: var(--sb-grad);
+}
+.sub-card__features {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding-top: 4px;
+  border-top: 1px solid var(--sb-line);
+}
+.sub-feature {
+  display: flex;
+  gap: 9px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--sb-fg-3);
+}
+.sub-feature__tick {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* ---------- 轻提示 ---------- */
+
+.sub-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  z-index: 40;
+  pointer-events: none;
+}
+.sub-toast__pill {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--sb-fg-2);
+  background: rgba(24, 24, 28, 0.98);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 18px 44px rgba(0, 0, 0, 0.55);
+  animation: sub-pop-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes sub-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sub-view,
+  .sub-view *,
+  .sub-view *::before,
+  .sub-view *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

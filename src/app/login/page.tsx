@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { LoginScreen } from "@/components/lumen/LoginScreen";
+import { LoginScreen } from "@/components/genius/LoginScreen";
 import { SESSION_COOKIE, sessionUserFromValue } from "@/lib/users/session";
 
 export const dynamic = "force-dynamic";
