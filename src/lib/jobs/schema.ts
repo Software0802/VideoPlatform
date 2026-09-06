@@ -94,6 +94,14 @@ export const jobPublicSchema = z.object({
     .nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  /**
+   * When the retention sweep deleted this job's `inputs/` and `outputs/` (plan §8),
+   * ISO, or null. `status` deliberately stays `succeeded`: terminal statuses have no
+   * outgoing edges, so artifact retention is a second axis rather than a state
+   * transition. The browser needs it to render a placeholder instead of requesting
+   * bytes that are no longer on disk.
+   */
+  artifactsPurgedAt: z.string().nullable(),
   bible: z.null(),
   /** Set when a shot may already have been paid for upstream: one-click Retry is refused
    * server-side (409 `retry_blocked`) and the UI shows `message` instead of the button. */
@@ -205,8 +213,14 @@ export type JobAssetVideo = JobAssetImage & {
  * `retryBlocked` is derived from `harnessShots` at `toPublic` time, never stored, so it is
  * omitted here — otherwise every writer of a record would have to carry a computed field.
  */
-export type JobRecord = Omit<JobPublic, "retryBlocked"> & {
+export type JobRecord = Omit<JobPublic, "retryBlocked" | "artifactsPurgedAt"> & {
   schemaVersion: 1;
+  /**
+   * Set once by the retention sweep (`retention.ts`) after it deleted the job's
+   * `inputs/` and `outputs/`. Absent on every record that still has its bytes,
+   * which is why it is optional here and `string | null` on the public DTO.
+   */
+  artifactsPurgedAt?: string;
   /**
    * Owning user (plan §5). Deliberately absent from `JobPublic`: the browser
    * never needs it and must not learn other people's user ids. Missing means a

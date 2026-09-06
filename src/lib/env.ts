@@ -34,6 +34,15 @@ export function freeDailyFailureLimit(): number {
   return intFromEnv(process.env.FREE_DAILY_FAILURE_LIMIT, 30, 1);
 }
 
+/**
+ * 产物留存天数（plan §8）。终态任务的 `completedAt ?? updatedAt` 早于它，
+ * 就删掉该任务的 `inputs/` 与 `outputs/` 并写 `artifactsPurgedAt`；`status` 不动。
+ * 0 = 关闭清理（永久保留）。负数与非法值按非法处理，回落默认 30。
+ */
+export function dataRetentionDays(): number {
+  return intFromEnv(process.env.DATA_RETENTION_DAYS, 30, 0);
+}
+
 /** 空串与非法值一律回落默认，避免 `Number("")===0` 把额度悄悄清零。 */
 function intFromEnv(raw: string | undefined, fallback: number, min: number): number {
   const text = raw?.trim();

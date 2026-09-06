@@ -130,19 +130,25 @@ type Work = {
   cost: number | null;
   costIncomplete: boolean;
   sample: boolean;
+  /** 留存期满、成片与素材已删（方案 §8）：环上换占位卡，不给播放 / 下载 / 重试 */
+  purged: boolean;
 };
+
+/** 已清理作品在环上的那一格；本地静态图，绝不去请求已删掉的 /api/media/... */
+const PURGED_STILL = "/lumina/purged.svg";
 
 function worksFromJobs(jobs: JobPublic[]): Work[] {
   const real = jobs
     .filter((j) => j.status === "succeeded" && j.output && UI_MODE_OF[j.mode])
     .map<Work>((j) => {
       const out = j.output!;
+      const purged = Boolean(j.artifactsPurgedAt);
       return {
         key: j.id,
         jobId: j.id,
         kind: out.kind,
-        still: out.kind === "video" ? out.posterUrl : out.imageUrl,
-        media: out.kind === "video" ? out.videoUrl : out.imageUrl,
+        still: purged ? PURGED_STILL : out.kind === "video" ? out.posterUrl : out.imageUrl,
+        media: purged ? "" : out.kind === "video" ? out.videoUrl : out.imageUrl,
         prompt: j.prompt || "（无提示词，以首帧为准）",
         mode: UI_MODE_OF[j.mode]!,
         dur: j.durationSec,
@@ -151,6 +157,7 @@ function worksFromJobs(jobs: JobPublic[]): Work[] {
         cost: j.costUsdActual ?? j.costUsdEstimate,
         costIncomplete: Boolean(j.costIncomplete),
         sample: false,
+        purged,
       };
     });
   if (real.length) return real;
@@ -168,6 +175,7 @@ function worksFromJobs(jobs: JobPublic[]): Work[] {
     cost: null,
     costIncomplete: false,
     sample: true,
+    purged: false,
   }));
 }
 
@@ -859,8 +867,9 @@ export function LumenHome({
                   key={w.key}
                   type="button"
                   className="recent__item"
-                  title={w.prompt}
-                  aria-label={w.prompt}
+                  data-purged={w.purged}
+                  title={w.purged ? `${w.prompt}（作品已过期清理）` : w.prompt}
+                  aria-label={w.purged ? `${w.prompt}，作品已过期清理` : w.prompt}
                   tabIndex={studio ? -1 : 0}
                   style={{ backgroundImage: `url(${w.still})`, "--delay": `${(1.08 + i * 0.06).toFixed(2)}s` } as React.CSSProperties}
                   onClick={() => openWork(w)}
@@ -881,6 +890,12 @@ export function LumenHome({
               </div>
             </div>
             {!list.length ? <span className="works__empty">还没有{kind === "video" ? "视频" : "图片"}作品</span> : null}
+            {current?.purged ? (
+              <div className="works__purged" role="status">
+                <span className="works__purged-title">作品已过期清理</span>
+                <span className="works__purged-hint">超过留存期的成片与素材已删除，可用这条提示词重新生成</span>
+              </div>
+            ) : null}
             <div className="works__foot">
               <div className="works__info">
                 <span className="works__meta">{current ? workMeta(current) : ""}</span>
@@ -891,7 +906,7 @@ export function LumenHome({
                 <button type="button" className="btn-glass" disabled={!current} onClick={() => current && reuse(current)}>
                   用这条提示词再生成
                 </button>
-                {current ? (
+                {current && !current.purged ? (
                   <a className="btn-light" href={current.sample ? current.media : `${current.media}?download=1`} download>
                     下载
                   </a>
