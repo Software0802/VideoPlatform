@@ -74,7 +74,6 @@
 - `scripts/grant-balance.mjs`/其余管理 CLI 与线上服务无跨进程锁，操作前后建议核对 `data/ledger/<userId>.jsonl`。
 - 生产 crontab 已有每日 03:17 的 `scripts/backup.sh`（2026-09-07 核实，`/opt/genius/backups/` 已有两份）；阿里云 ECS 自动快照策略只能在控制台看，SSH 核实不了，未确认。
 - 手机端只做了侧栏收窄的最低适配（≤900px），未做完整体验回归。
-- 旧 three.js 场景代码 `src/lib/scene/`、`src/shaders/`、`ClothVeil.tsx`、`SceneHost.tsx` 已无任何组件引用，代码仍在仓库，待清理。
 
 ## 4. 运维与部署
 
@@ -85,6 +84,5 @@
 1. 在阿里云控制台核实 ECS 自动快照策略是否开启（crontab 备份已在跑）。
 2. 视需要给生产配 `AGENT_API_KEY`（当前走 `ccgoai.club`，若要换更稳定的对话上游）或补 `XAI_API_KEY`（解锁 `edit_video`/`extend_video`/harness 长片）。
 3. 校准 `HARNESS_QC_VISUAL_THRESHOLD`（需要 `evals/runs` 对照集），再评估是否开启 `HARNESS_ENABLED`。
-4. 清理无引用的旧场景代码（`src/lib/scene/`、`src/shaders/`、`ClothVeil.tsx`、`SceneHost.tsx`）。
-5. 手机端定稿（当前只有侧栏收窄的最低适配）。
-6. 画布视图（节点工作流）何时接真实后端，按用户排期另行立项。
+4. 手机端定稿（当前只有侧栏收窄的最低适配）。
+5. 画布视图（节点工作流）何时接真实后端，按用户排期另行立项。

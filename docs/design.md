@@ -333,7 +333,7 @@ data/
 - **时长 / 画幅 / 音频芯片由服务端按 provider 能力下发**(见 §2e):`router.ts` 的 `videoDurationsFor(providerId)`(读 `capabilities().durations`,不声明则默认 `[4,6,8,10]`,开启 harness 时追加 30/45/60)、`videoAspectRatios()`(`VIDEO_PROVIDER_ORDER` 里所有有 key 的 provider 支持画幅的并集)、`audioAvailableFor(providerId)`(可灵读 `KLING_VIDEO_AUDIO`,YMan 恒 `false`,grok/mock 恒真)经 `/api/health` 与 `(shell)/layout.tsx` 解析一次下发给 `ShellContext`;前端不再写死档位或按 provider 名特判。选中具体产品(§2f)时,规格弹层进一步收窄到该产品自己的能力。
 - API 边界:`src/lib/client/{jobs,auth,agent,subscription,templates,models}.ts`(create/cancel/retry/幂等 key)、`useJobLive.ts`(SSE + 轮询)、`useEvents.ts`(全局通知)、`labels.ts`(终态判断/计时)。401 由 `client/http.ts` 整页跳转 `/login`。
 - 成片来源:主页瀑布流与详情浮层直接用 `JobPublic.output`(视频取 `posterUrl`,图片取 `imageUrl`),按 `output.kind` 分视频/图片;`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡。
-- 依赖:`three`/`@react-three/fiber`/`@react-three/drei`/`@phosphor-icons/react` 均已卸载(旧场景层的遗留代码 `src/lib/scene/`、`src/shaders/`、`src/components/lumen/ClothVeil.tsx`、`src/components/scene/SceneHost.tsx` 已无任何组件引用,仍留在仓库待清理,见 `docs/handoff.md` §3);字体经 `next/font/google`(Manrope + Noto Sans SC)。
+- 依赖:`three`/`@types/three`/`raw-loader` 与旧场景层代码(`src/lib/scene/`、`src/shaders/`、`ClothVeil.tsx`、`SceneHost.tsx`)已于 2026-09-07 一并移除,`next.config.ts` 不再有 `*.html` raw-loader 规则;前端不含任何 WebGL 依赖。
 - 画布 `/canvas` 是像素复刻 + 本地交互的原型,不发请求(占位数据);智能体 `/agent`(§2h)与订阅 `/subscription`(§2i)已接真实后端。
 
 ## 7. Harness 一致性管线 **[Phase 2 详设 — 产品核心]**
