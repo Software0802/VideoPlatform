@@ -1,5 +1,6 @@
 import { loadBalanceUsage } from "@/lib/billing/admission";
 import { priceTable } from "@/lib/billing/prices";
+import { publicSubscription, settleSubscription } from "@/lib/billing/subscription";
 import { jsonError } from "@/lib/http";
 import { loadQuotaUsage, publicQuota } from "@/lib/jobs/quota";
 import { toPublicUser } from "@/lib/users/schema";
@@ -8,11 +9,14 @@ import { sessionUser } from "@/lib/users/session";
 export const runtime = "nodejs";
 
 /**
- * The caller's own account: `{ userId, email, plan, balance, prices, quota }`.
+ * The caller's own account: `{ userId, email, plan, balance, prices, quota, subscription }`.
  *
- * `balance` 与 `prices` 是余额模型的两半（方案 §3.2）：前者现算（余额 − 在途预留），
- * 后者是价目表本身，交给提交面板在本地算「本次约 ¥x」——同一份表两边用，界面上的
- * 数字和服务端的判定才不会各说各话。
+ * `balance` 与 `prices` 是余额模型的两半（方案 §3.2）：前者现算（两个池之和 − 在途
+ * 预留），后者是价目表本身，交给提交面板在本地算「本次约 ¥x」——同一份表两边用，
+ * 界面上的数字和服务端的判定才不会各说各话。
+ *
+ * 读余额**之前**先 `settleSubscription`（订阅 §3.2）：结算是惰性的，没有定时任务。
+ * 顺序反过来的话，页面会先显示一份已经到期、本该清零的会员积分。
  *
  * `quota` is counted live from `job.json` (plan §6.3) — `remaining` already
  * accounts for jobs still running, so the UI can show "今日剩余 n/10" without
@@ -34,12 +38,14 @@ export async function GET(request: Request) {
         { status: 401 },
       );
     }
+    const settled = await settleSubscription(user.id);
     const [quotaUsage, balance] = await Promise.all([loadQuotaUsage(user.id), loadBalanceUsage(user.id)]);
     return Response.json({
-      ...toPublicUser(user),
+      ...toPublicUser(settled ?? user),
       balance,
       prices: priceTable(),
       quota: publicQuota(quotaUsage),
+      subscription: publicSubscription(settled ?? user),
     });
   } catch (e) {
     return jsonError(e);

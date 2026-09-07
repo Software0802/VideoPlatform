@@ -9,17 +9,14 @@ import {
   FIT_PAD_X,
   FIT_PAD_Y,
   ICON_GRADS,
-  NODE_TEXT_1,
-  RESULT_BLOCK,
   RTE_ACTIVE,
   RTE_ITEMS,
   SCENE_H,
   SCENE_W,
-  SEED_PROMPT,
   SKELETON_ROWS,
-  VIDEO_SEED_PROMPT,
   shot,
 } from "./data";
+import { useT } from "@/components/genius/i18n/I18nProvider";
 import {
   IconArrowUp,
   IconAudio,
@@ -104,6 +101,7 @@ function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, clo
  * 全部本地 state，占位数据，不发任何请求。
  */
 export default function CanvasView() {
+  const t = useT();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -181,12 +179,12 @@ export default function CanvasView() {
     setNodeKind(kind);
     setNodeState("idle");
     setStage(2);
-    setPrompt(kind === "video" ? VIDEO_SEED_PROMPT : "");
+    setPrompt(kind === "video" ? t("canvas.videoSeedPrompt") : "");
   };
 
   const send = () => {
     if (!prompt.trim()) {
-      setPrompt(SEED_PROMPT);
+      setPrompt(t("canvas.seedPrompt"));
       return;
     }
     setNodeState("busy");
@@ -230,10 +228,10 @@ export default function CanvasView() {
             <div className="canvas-empty__copy">
               <span className="canvas-empty__hint">
                 <IconPointer />
-                右键
+                {t("canvas.empty.rightClick")}
               </span>
-              <span className="canvas-empty__title">在画布上放下第一个节点</span>
-              <span className="canvas-empty__sub">从这里开始搭建你的镜头流程</span>
+              <span className="canvas-empty__title">{t("canvas.empty.title")}</span>
+              <span className="canvas-empty__sub">{t("canvas.empty.sub")}</span>
             </div>
           </div>
           <div className="canvas-empty__actions">
@@ -241,25 +239,25 @@ export default function CanvasView() {
               <span className="canvas-entry__icon">
                 <IconImage size={15} />
               </span>
-              生图
+              {t("canvas.entry.image")}
             </button>
             <button type="button" className="canvas-entry" onClick={() => setStage(1)}>
               <span className="canvas-entry__icon">
                 <IconVideo size={15} />
               </span>
-              故事视频
+              {t("canvas.entry.story")}
             </button>
             <button type="button" className="canvas-entry" onClick={() => setStage(1)}>
               <span className="canvas-entry__icon">
                 <IconFace />
               </span>
-              三视图
+              {t("canvas.entry.three")}
             </button>
             <button type="button" className="canvas-entry" onClick={() => setStage(1)}>
               <span className="canvas-entry__icon">
                 <IconGrid9 />
               </span>
-              九宫格
+              {t("canvas.entry.grid")}
             </button>
           </div>
         </div>
@@ -311,16 +309,16 @@ export default function CanvasView() {
             >
               <span className="canvas-node__label">
                 <IconText size={12} />
-                文本 1
+                {t("canvas.node.text1")}
               </span>
               <div className="canvas-node__body canvas-node__body--text" style={{ height: RECTS.text1.h }}>
-                {NODE_TEXT_1}
+                {t("canvas.nodeText1")}
                 {hoverText1 ? (
                   <>
                     <button
                       type="button"
                       className="canvas-node__handle canvas-node__handle--left"
-                      aria-label="在左侧添加节点"
+                      aria-label={t("canvas.node.handleLeft")}
                       onClick={() => openMenuAt({ x: 24, y: 224 })}
                     >
                       <IconPlus size={10} />
@@ -328,7 +326,7 @@ export default function CanvasView() {
                     <button
                       type="button"
                       className="canvas-node__handle canvas-node__handle--right"
-                      aria-label="在右侧添加节点"
+                      aria-label={t("canvas.node.handleRight")}
                       onClick={() => openMenuAt(DEFAULT_MENU)}
                     >
                       <IconPlus size={10} />
@@ -345,7 +343,7 @@ export default function CanvasView() {
             >
               <span className="canvas-node__label">
                 <IconImage size={12} />
-                图片 1
+                {t("canvas.node.img1")}
               </span>
               <span
                 className="canvas-node__shot"
@@ -397,7 +395,7 @@ export default function CanvasView() {
                 style={{ left: addedRect.x, top: addedRect.y, width: addedRect.w }}
               >
                 {!isVideoNode ? (
-                  <div className="canvas-rte" role="toolbar" aria-label="富文本">
+                  <div className="canvas-rte" role="toolbar" aria-label={t("canvas.rte.aria")}>
                     {RTE_ITEMS.map((r, i) => (
                       <span key={r} className="canvas-rte__item" data-on={i === RTE_ACTIVE ? "true" : undefined}>
                         {r}
@@ -407,7 +405,7 @@ export default function CanvasView() {
                 ) : null}
                 <span className="canvas-node__label">
                   {isVideoNode ? <IconVideo size={12} /> : <IconText size={12} />}
-                  {isVideoNode ? "视频 2" : "文本 3"}
+                  {isVideoNode ? t("canvas.node.video2") : t("canvas.node.text3")}
                 </span>
                 <div
                   className={
@@ -417,7 +415,7 @@ export default function CanvasView() {
                   data-state={nodeState}
                 >
                   {nodeState === "idle" ? (
-                    <span className="canvas-node__hint">{isVideoNode ? "生成视频" : "请输入内容…"}</span>
+                    <span className="canvas-node__hint">{isVideoNode ? t("canvas.node.hintVideo") : t("canvas.node.hintText")}</span>
                   ) : null}
                   {nodeState === "busy" ? (
                     <>
@@ -447,13 +445,13 @@ export default function CanvasView() {
                       </div>
                     ) : (
                       <div className="canvas-result">
-                        <span className="canvas-result__title">{RESULT_BLOCK.title}</span>
-                        <span className="canvas-result__sub">{RESULT_BLOCK.concept}</span>
+                        <span className="canvas-result__title">{t("canvas.result.title")}</span>
+                        <span className="canvas-result__sub">{t("canvas.result.concept")}</span>
                         <span className="canvas-result__rule" />
-                        <span className="canvas-result__sub">{RESULT_BLOCK.sceneLabel}</span>
-                        <span>{RESULT_BLOCK.scene}</span>
+                        <span className="canvas-result__sub">{t("canvas.result.sceneLabel")}</span>
+                        <span>{t("canvas.result.scene")}</span>
                         <span className="canvas-result__rule" />
-                        <span className="canvas-result__sub">{RESULT_BLOCK.layoutLabel}</span>
+                        <span className="canvas-result__sub">{t("canvas.result.layoutLabel")}</span>
                       </div>
                     )
                   ) : null}
@@ -471,17 +469,17 @@ export default function CanvasView() {
                   {refsAdded ? (
                     <span className="canvas-prompt__ref" style={{ backgroundImage: `url(${shot(1)})` }} />
                   ) : null}
-                  <button type="button" className="canvas-prompt__icon" data-on="true" aria-label="文本">
+                  <button type="button" className="canvas-prompt__icon" data-on="true" aria-label={t("canvas.prompt.text")}>
                     <IconText size={15} />
                   </button>
-                  <button type="button" className="canvas-prompt__icon" aria-label="添加参考">
+                  <button type="button" className="canvas-prompt__icon" aria-label={t("canvas.prompt.addRef")}>
                     <IconPlus size={15} />
                   </button>
                   <button
                     type="button"
                     className="canvas-prompt__icon canvas-prompt__icon--ring"
-                    title="从工具箱选择参考"
-                    aria-label="从工具箱选择参考"
+                    title={t("canvas.prompt.fromToolbox")}
+                    aria-label={t("canvas.prompt.fromToolbox")}
                     onClick={() => setToolboxOpen(true)}
                   >
                     <IconToolbox size={15} />
@@ -495,8 +493,8 @@ export default function CanvasView() {
                   className="canvas-prompt__text"
                   value={prompt}
                   maxLength={5000}
-                  aria-label="画布提示词"
-                  placeholder="描述您想要生成的任何内容…"
+                  aria-label={t("canvas.prompt.aria")}
+                  placeholder={t("canvas.prompt.placeholder")}
                   onChange={(e) => setPrompt(e.target.value)}
                 />
 
@@ -514,7 +512,7 @@ export default function CanvasView() {
                   </button>
                   {isVideoNode ? (
                     <span className="canvas-vidchip">
-                      参考 · 16:9 · 540p · 3秒
+                      {t("canvas.vidchip")}
                       <IconVolume />
                     </span>
                   ) : null}
@@ -523,13 +521,13 @@ export default function CanvasView() {
                     <IconBolt />
                     {cost}
                   </span>
-                  <button type="button" className="canvas-prompt__send" aria-label="发送" onClick={send}>
+                  <button type="button" className="canvas-prompt__send" aria-label={t("canvas.prompt.send")} onClick={send}>
                     <IconArrowUp />
                   </button>
 
                   {modelPop ? (
                     <div className="canvas-modelpop" role="menu">
-                      <span className="canvas-modelpop__title">模型</span>
+                      <span className="canvas-modelpop__title">{t("canvas.modelpop.title")}</span>
                       {CANVAS_MODELS.map((m, i) => (
                         <button
                           type="button"
@@ -548,7 +546,7 @@ export default function CanvasView() {
                           />
                           <span className="canvas-modelpop__body">
                             <span className="canvas-modelpop__name">{m.name}</span>
-                            <span className="canvas-modelpop__desc">{m.desc}</span>
+                            <span className="canvas-modelpop__desc">{t(m.descKey)}</span>
                           </span>
                         </button>
                       ))}
@@ -563,23 +561,23 @@ export default function CanvasView() {
               <div className="canvas-menu" role="menu" ref={menuRef} style={{ left: menu.x, top: menu.y }}>
                 <button type="button" role="menuitem" className="canvas-menu__item" onClick={() => addNode("text")}>
                   <IconText />
-                  文本
+                  {t("canvas.menu.text")}
                 </button>
                 <button type="button" role="menuitem" className="canvas-menu__item" onClick={closeMenu}>
                   <IconImage />
-                  图片
+                  {t("canvas.menu.image")}
                 </button>
                 <button type="button" role="menuitem" className="canvas-menu__item" onClick={() => addNode("video")}>
                   <IconVideo />
-                  视频
+                  {t("canvas.menu.video")}
                 </button>
                 <button type="button" role="menuitem" className="canvas-menu__item" onClick={closeMenu}>
                   <IconAudio />
-                  音频
+                  {t("canvas.menu.audio")}
                 </button>
                 <button type="button" role="menuitem" className="canvas-menu__item" onClick={closeMenu}>
                   <IconBoard />
-                  分镜表
+                  {t("canvas.menu.board")}
                 </button>
               </div>
             ) : null}
@@ -591,11 +589,11 @@ export default function CanvasView() {
       <div className="canvas-topright">
         <button type="button" className="canvas-topright__btn">
           <IconShare />
-          分享
+          {t("canvas.topright.share")}
         </button>
         <button type="button" className="canvas-topright__btn">
           <IconBot />
-          智能助手
+          {t("canvas.topright.assistant")}
         </button>
       </div>
 
@@ -604,23 +602,23 @@ export default function CanvasView() {
         <button
           type="button"
           className="canvas-tools__add"
-          aria-label="添加节点"
+          aria-label={t("canvas.tools.add")}
           onClick={() => openMenuAt(DEFAULT_MENU)}
         >
           <IconPlus />
         </button>
         <div className="canvas-tools__group">
-          <button type="button" className="canvas-tools__btn" data-on="true" title="选择" aria-label="选择">
+          <button type="button" className="canvas-tools__btn" data-on="true" title={t("canvas.tools.select")} aria-label={t("canvas.tools.select")}>
             <IconCursor />
           </button>
-          <button type="button" className="canvas-tools__btn" title="素材" aria-label="素材">
+          <button type="button" className="canvas-tools__btn" title={t("canvas.tools.assets")} aria-label={t("canvas.tools.assets")}>
             <IconFolder />
           </button>
           <button
             type="button"
             className="canvas-tools__btn"
-            title="工具箱"
-            aria-label="工具箱"
+            title={t("canvas.tools.toolbox")}
+            aria-label={t("canvas.tools.toolbox")}
             aria-expanded={toolboxOpen}
             data-on={toolboxOpen ? "true" : undefined}
             onClick={() => {
@@ -630,10 +628,10 @@ export default function CanvasView() {
           >
             <IconToolbox />
           </button>
-          <button type="button" className="canvas-tools__btn" title="撤销" aria-label="撤销">
+          <button type="button" className="canvas-tools__btn" title={t("canvas.tools.undo")} aria-label={t("canvas.tools.undo")}>
             <IconUndo />
           </button>
-          <button type="button" className="canvas-tools__btn" title="重做" aria-label="重做">
+          <button type="button" className="canvas-tools__btn" title={t("canvas.tools.redo")} aria-label={t("canvas.tools.redo")}>
             <IconRedo />
           </button>
         </div>
@@ -643,19 +641,19 @@ export default function CanvasView() {
 
       {/* 左下控制条 */}
       <div className="canvas-bottom">
-        <button type="button" className="canvas-bottom__btn" title="面板" aria-label="面板">
+        <button type="button" className="canvas-bottom__btn" title={t("canvas.bottom.panels")} aria-label={t("canvas.bottom.panels")}>
           <IconPanels />
         </button>
         <button
           type="button"
           className="canvas-bottom__btn"
-          title="适应画布"
-          aria-label="适应画布"
+          title={t("canvas.bottom.fit")}
+          aria-label={t("canvas.bottom.fit")}
           onClick={() => setZoom(100)}
         >
           <IconFit />
         </button>
-        <button type="button" className="canvas-bottom__btn" title="缩略图" aria-label="缩略图">
+        <button type="button" className="canvas-bottom__btn" title={t("canvas.bottom.minimap")} aria-label={t("canvas.bottom.minimap")}>
           <IconMinimap />
         </button>
         <span className="canvas-bottom__sep" />
@@ -665,7 +663,7 @@ export default function CanvasView() {
           min={20}
           max={200}
           value={zoom}
-          aria-label="缩放"
+          aria-label={t("canvas.bottom.zoom")}
           onChange={(e) => setZoom(Number(e.target.value))}
         />
         <span className="canvas-bottom__pct">{Math.round(fit * zoom)}%</span>

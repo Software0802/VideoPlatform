@@ -2,18 +2,24 @@
 
 import { useEffect, useId, useState } from "react";
 import { authErrorMessage, login, register } from "@/lib/client/auth";
+import { LanguageSwitch } from "@/components/genius/LanguageSwitch";
+import { useT } from "@/components/genius/i18n/I18nProvider";
+import type { MessageKey } from "@/lib/i18n/messages";
 
 /*
   登录 / 注册。逻辑与旧 `lumen/LoginScreen` 完全一致（会话是服务端下发的 HttpOnly
   Cookie，本组件不持有任何令牌，成功后整页跳 `/`），只换成 Genius App 的配色：
   页面 #0a0a0b、卡片 #131316、描边 rgba(255,255,255,.09)、主按钮渐变。
   背景不再挂 WebGL（three 场景本轮不再被引用），改为一层静态径向光晕。
+
+  多语言：右上角一枚与顶栏同款的语言切换——登录之前也得能换语言。服务端回的错误文案
+  （`authErrorMessage`）仍是中文，不在本轮范围内。
 */
 
 type Tab = "login" | "register";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "login", label: "登录" },
-  { id: "register", label: "注册" },
+const TABS: { id: Tab; labelKey: MessageKey }[] = [
+  { id: "login", labelKey: "login.tab.login" },
+  { id: "register", labelKey: "login.tab.register" },
 ];
 
 /** 只做一眼可见的格式判断；权威校验在服务端的 zod schema。 */
@@ -21,6 +27,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD = 8;
 
 export function LoginScreen() {
+  const t = useT();
   const [tab, setTab] = useState<Tab>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -33,8 +40,8 @@ export function LoginScreen() {
 
   // data-ready 只由客户端 effect 写入，e2e 用它判断已水合
   useEffect(() => {
-    const t = window.setTimeout(() => setReady(true), 0);
-    return () => window.clearTimeout(t);
+    const timer = window.setTimeout(() => setReady(true), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const isRegister = tab === "register";
@@ -47,9 +54,9 @@ export function LoginScreen() {
 
   /** 提交前的本地校验，避免为可预见的错误往返一次并白占限流额度。 */
   function localError(): string | null {
-    if (!EMAIL_RE.test(email.trim())) return "邮箱格式不正确";
-    if (password.length < MIN_PASSWORD) return `密码至少 ${MIN_PASSWORD} 位`;
-    if (isRegister && !inviteCode.trim()) return "请填写邀请码";
+    if (!EMAIL_RE.test(email.trim())) return t("login.err.email");
+    if (password.length < MIN_PASSWORD) return t("login.err.password", { n: MIN_PASSWORD });
+    if (isRegister && !inviteCode.trim()) return t("login.err.invite");
     return null;
   }
 
@@ -87,35 +94,36 @@ export function LoginScreen() {
       <header className="auth__top">
         <span className="side__mark" aria-hidden="true" />
         <span className="auth__brand">Genius</span>
+        <LanguageSwitch className="lang--auth" />
       </header>
 
       <main className="auth__main">
         <form className="auth__card" onSubmit={submit} noValidate>
           <div className="auth__head">
-            <h1 className="auth__title">进入 Genius</h1>
-            <p className="auth__sub">登录后继续创作；注册需要一枚一次性邀请码。</p>
+            <h1 className="auth__title">{t("login.title")}</h1>
+            <p className="auth__sub">{t("login.sub")}</p>
           </div>
 
-          <div className="auth__tabs" role="tablist" aria-label="登录或注册">
-            {TABS.map((t) => (
+          <div className="auth__tabs" role="tablist" aria-label={t("login.tabs.aria")}>
+            {TABS.map((item) => (
               <button
-                key={t.id}
+                key={item.id}
                 type="button"
                 role="tab"
                 className="auth__tab"
-                data-on={tab === t.id}
-                aria-selected={tab === t.id}
+                data-on={tab === item.id}
+                aria-selected={tab === item.id}
                 aria-controls={panelId}
-                onClick={() => switchTab(t.id)}
+                onClick={() => switchTab(item.id)}
               >
-                {t.label}
+                {t(item.labelKey)}
               </button>
             ))}
           </div>
 
           <div className="auth__fields" id={panelId} role="tabpanel">
             <label className="auth__label">
-              <span>邮箱</span>
+              <span>{t("login.email")}</span>
               <input
                 className="auth__field"
                 type="email"
@@ -131,7 +139,7 @@ export function LoginScreen() {
             </label>
 
             <label className="auth__label">
-              <span>密码{isRegister ? `（至少 ${MIN_PASSWORD} 位）` : ""}</span>
+              <span>{isRegister ? t("login.passwordWithMin", { n: MIN_PASSWORD }) : t("login.password")}</span>
               <input
                 className="auth__field"
                 type="password"
@@ -145,7 +153,7 @@ export function LoginScreen() {
 
             {isRegister ? (
               <label className="auth__label">
-                <span>邀请码</span>
+                <span>{t("login.invite")}</span>
                 <input
                   className="auth__field auth__field--code"
                   type="text"
@@ -154,7 +162,7 @@ export function LoginScreen() {
                   autoCapitalize="characters"
                   spellCheck={false}
                   maxLength={64}
-                  placeholder="12 位字母数字"
+                  placeholder={t("login.invitePlaceholder")}
                   aria-describedby={error ? errorId : undefined}
                   onChange={(e) => setInviteCode(e.target.value)}
                 />
@@ -169,12 +177,10 @@ export function LoginScreen() {
           ) : null}
 
           <button type="submit" className="auth__submit" disabled={busy}>
-            {busy ? "处理中" : isRegister ? "注册" : "登录"}
+            {busy ? t("login.submitting") : isRegister ? t("login.tab.register") : t("login.tab.login")}
           </button>
 
-          <p className="auth__hint">
-            {isRegister ? "邀请码一码一号，用过即失效；没有码请联系管理员。" : "还没有账号？切到「注册」并填入邀请码。"}
-          </p>
+          <p className="auth__hint">{isRegister ? t("login.hint.register") : t("login.hint.login")}</p>
         </form>
       </main>
     </div>

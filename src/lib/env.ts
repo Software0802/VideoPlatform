@@ -526,6 +526,37 @@ export function harnessQcVisualThreshold(): number | null {
   return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
 }
 
+/**
+ * 智能体对话的独立凭据（2026-09-07）。
+ *
+ * 刻意**不复用**生图那几把 key：生产上的 `OPENAI_BASE_URL`（ccgoai）与 `YMAN_API_KEY`
+ * 都是只出图的中转，它们的 `/chat/completions` 分别回 503 与 400——按「哪家有 key」
+ * 挑提供方，等于每一轮都先扣款、再失败、再退款。对话是另一种能力，就该有自己的一把
+ * 钥匙。不设它时只回落到 xAI（Director 已经在用的那把），两者都没有就是「智能体不可用」，
+ * 由 API 明说 503，绝不静默落 mock 假装在工作。
+ */
+export function agentApiKey(): string | undefined {
+  return process.env.AGENT_API_KEY?.trim() || undefined;
+}
+
+/** 对话端点的 REST root，**带** `/v1`（缺就补）。默认 OpenAI 官方。 */
+export function agentBase(): string {
+  const raw = process.env.AGENT_BASE_URL?.trim();
+  if (!raw) return OFFICIAL_OPENAI_BASE;
+  return normalizeApiBase(raw, OFFICIAL_OPENAI_BASE);
+}
+
+/**
+ * 智能体对话用的文本模型名（2026-09-06）。
+ *
+ * **不设**才是常态：`src/lib/agent/llm.ts` 用 `AGENT_API_KEY` 时取 `gpt-4o-mini`，
+ * 回落 xAI 时取 `grok-4.6`。这条变量是唯一的覆盖口，一处改所有提供方——刻意不做成
+ * per-provider 两个变量：模型名是运维偶尔要换的一个值，不是一层配置。
+ */
+export function agentChatModel(): string | undefined {
+  return process.env.AGENT_CHAT_MODEL?.trim() || undefined;
+}
+
 export function upstreamRetryBaseMs(): number {
   const n = Number(process.env.UPSTREAM_RETRY_BASE_MS ?? 250);
   return Number.isFinite(n) && n >= 0 ? Math.min(Math.floor(n), 10_000) : 250;

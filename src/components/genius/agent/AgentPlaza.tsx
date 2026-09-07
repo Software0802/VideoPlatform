@@ -1,21 +1,33 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ALL_SKILLS, shot } from "./data";
+import { useI18n, useT } from "@/components/genius/i18n/I18nProvider";
+import type { AgentSkill } from "@/lib/client/agent";
+import { shot } from "./data";
 import { IconChevronDown, IconChevronLeft } from "./icons";
 
 type Props = {
-  off: Record<number, boolean>;
-  onToggle: (index: number) => void;
+  skills: AgentSkill[];
+  /** `true` = 这个技能被用户关掉了（只存在浏览器本地，见 `AgentView`）。 */
+  off: Record<string, boolean>;
+  onToggle: (id: string) => void;
   onBack: () => void;
 };
 
-const FILTERS = ["全部", "已启用", "已关闭"] as const;
+const FILTERS = ["all", "on", "off"] as const;
 type Filter = (typeof FILTERS)[number];
 
-/** 技能广场（原型图 22）：返回圆钮 + 居中标题 + 右侧筛选 + 卡片网格。 */
-export default function AgentPlaza({ off, onToggle, onBack }: Props) {
-  const [filter, setFilter] = useState<Filter>("全部");
+const FILTER_KEY = {
+  all: "agent.filterAll",
+  on: "agent.filterOn",
+  off: "agent.filterOff",
+} as const;
+
+/** 技能广场：返回圆钮 + 居中标题 + 右侧筛选 + 卡片网格。技能来自 `GET /api/agent/skills`。 */
+export default function AgentPlaza({ skills, off, onToggle, onBack }: Props) {
+  const t = useT();
+  const { locale } = useI18n();
+  const [filter, setFilter] = useState<Filter>("all");
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -39,20 +51,20 @@ export default function AgentPlaza({ off, onToggle, onBack }: Props) {
 
   const rows = useMemo(
     () =>
-      ALL_SKILLS.map((s, i) => ({ ...s, index: i, on: !off[i] })).filter((r) =>
-        filter === "全部" ? true : filter === "已启用" ? r.on : !r.on,
-      ),
-    [off, filter],
+      skills
+        .map((s, index) => ({ ...s, index, on: !off[s.id] }))
+        .filter((r) => (filter === "all" ? true : filter === "on" ? r.on : !r.on)),
+    [skills, off, filter],
   );
 
   return (
     <div className="agent-view__scroll">
       <div className="agent-plaza">
         <div className="agent-plaza__head">
-          <button type="button" className="agent-round" aria-label="返回智能体" onClick={onBack}>
+          <button type="button" className="agent-round" aria-label={t("agent.back")} onClick={onBack}>
             <IconChevronLeft />
           </button>
-          <span className="agent-plaza__title">技能广场</span>
+          <span className="agent-plaza__title">{t("agent.plazaTitle")}</span>
           <div className="agent-ask__slot" ref={boxRef}>
             <button
               type="button"
@@ -62,7 +74,7 @@ export default function AgentPlaza({ off, onToggle, onBack }: Props) {
               data-open={open ? "true" : undefined}
               onClick={() => setOpen((v) => !v)}
             >
-              {filter}
+              {t(FILTER_KEY[filter])}
               <IconChevronDown />
             </button>
             {open ? (
@@ -80,7 +92,7 @@ export default function AgentPlaza({ off, onToggle, onBack }: Props) {
                     }}
                   >
                     <span className="agent-pop__dot" />
-                    {f}
+                    {t(FILTER_KEY[f])}
                   </button>
                 ))}
               </div>
@@ -90,27 +102,25 @@ export default function AgentPlaza({ off, onToggle, onBack }: Props) {
 
         <div className="agent-plaza__grid">
           {rows.map((r) => (
-            <div className="agent-plaza-card" key={r.name}>
+            <div className="agent-plaza-card" key={r.id} data-skill-id={r.id}>
               <span
                 className="agent-plaza-card__shot"
                 style={{ backgroundImage: `url(${shot(r.index)})` }}
               />
               <div className="agent-plaza-card__body">
-                <span className="agent-plaza-card__name">{r.name}</span>
-                <span className="agent-plaza-card__desc">{r.desc}</span>
+                <span className="agent-plaza-card__name">{r.name[locale]}</span>
+                <span className="agent-plaza-card__desc">{r.desc[locale]}</span>
               </div>
               <div className="agent-plaza-card__foot">
-                <span className="agent-plaza-card__meta">
-                  @Genius · {r.uses}
-                </span>
+                <span className="agent-plaza-card__meta">{t("agent.author")}</span>
                 <button
                   type="button"
                   role="switch"
                   aria-checked={r.on}
-                  aria-label={`启用技能 ${r.name}`}
+                  aria-label={t("agent.enableSkill", { name: r.name[locale] })}
                   className="agent-switch"
                   data-on={r.on ? "true" : "false"}
-                  onClick={() => onToggle(r.index)}
+                  onClick={() => onToggle(r.id)}
                 >
                   <span className="agent-switch__knob" />
                 </button>
@@ -118,7 +128,7 @@ export default function AgentPlaza({ off, onToggle, onBack }: Props) {
             </div>
           ))}
         </div>
-        {rows.length === 0 ? <p className="agent-plaza__empty">没有符合条件的技能。</p> : null}
+        {rows.length === 0 ? <p className="agent-plaza__empty">{t("agent.plazaEmpty")}</p> : null}
       </div>
     </div>
   );

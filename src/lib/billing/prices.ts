@@ -35,14 +35,35 @@ export type PriceTable = {
   extend: number;
   edit: number;
   image: { "1k": number; "2k": number };
+  /**
+   * 智能体（2026-09-06）：`turn` 是**一轮对话**的售价，与这一轮顺手创建的生成任务无关
+   * ——那些任务照常各自按上面的档位计价、各自走 `/api/jobs` 的准入。一轮只收一次，
+   * 无论这轮出了 0 个还是 2 个任务：收的是那次 LLM 调用。
+   *
+   * 服务端读它一律走 `agentTurnPriceCny()`：那里再兜一次「负数 / NaN 回落默认」，
+   * 与 `parseTable` 对其它档位的口径一致。
+   */
+  agent: { turn: number };
 };
+
+/** 一轮智能体对话的默认售价（元）。`DEFAULT_PRICE_TABLE` 与缺项回落共用这一个数。 */
+export const DEFAULT_AGENT_TURN_CNY = 0.05;
 
 export const DEFAULT_PRICE_TABLE: PriceTable = {
   video: { "5": 2, "10": 4, hd: 1.5, audio: 1 },
   extend: 3,
   edit: 4,
   image: { "1k": 0.5, "2k": 1 },
+  agent: { turn: DEFAULT_AGENT_TURN_CNY },
 };
+
+/** 一轮智能体对话的售价。表里这一项缺失 / 非法（手拼的表、老的落盘值）时回落默认。 */
+export function agentTurnPriceCny(table: PriceTable = priceTable()): number {
+  const value = table.agent?.turn;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? round2(value)
+    : DEFAULT_AGENT_TURN_CNY;
+}
 
 /**
  * 一次任务的售价，人民币元、两位小数。
@@ -104,6 +125,7 @@ type PartialTable = {
   extend?: number;
   edit?: number;
   image?: Partial<PriceTable["image"]>;
+  agent?: Partial<PriceTable["agent"]>;
 };
 
 function parseTable(raw: string): PartialTable | null {
@@ -124,6 +146,9 @@ function parseTable(raw: string): PartialTable | null {
     extend: number(source.extend),
     edit: number(source.edit),
     image: numbers(source.image, ["1k", "2k"]) as Partial<PriceTable["image"]>,
+    // 老的 `LUMEN_PRICE_TABLE`（智能体之前写的那份）里没有 `agent`，这里读出空对象，
+    // 下面 `mergeTable` 就回落成默认的 ¥0.05——不需要运维为了升级去补一段 JSON。
+    agent: numbers(source.agent, ["turn"]) as Partial<PriceTable["agent"]>,
   };
 }
 
@@ -150,6 +175,7 @@ function mergeTable(base: PriceTable, over: PartialTable | null): PriceTable {
     extend: over.extend ?? base.extend,
     edit: over.edit ?? base.edit,
     image: { ...base.image, ...over.image },
+    agent: { ...base.agent, ...over.agent },
   };
 }
 

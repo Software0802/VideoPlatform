@@ -12,6 +12,11 @@
  * 原子替换 → 往 data/ledger/<userId>.jsonl 追加一行同样字段、同样顺序的 JSON。
  * 改动任何一边都必须同步改另一边。
  *
+ * ⚠️ 只动**已购池** `balanceCny`（等价于服务端的 `pool: "purchased"`）。订阅送的
+ * `memberCreditsCny` 是另一个池，期末由 `settleSubscription` 清零，管理员不该手工改它——
+ * 要补偿就充已购池。整份记录是展开写回去的（`{ ...user, balanceCny }`），所以
+ * `memberCreditsCny` / `subscription` 这些本脚本不认识的字段原样保留，不会被抹掉。
+ *
  * ⚠️ 已知限制：本 CLI 与线上服务之间**没有跨进程锁**。服务端的 `withUserLock` 只在
  * 那个进程内串行，管不到这个脚本；两边都是「读 user.json → 改 balanceCny → 原子
  * 替换」，所以充值的同一瞬间若恰好发生同一用户的扣款（任务成功结算）或改密，后写的

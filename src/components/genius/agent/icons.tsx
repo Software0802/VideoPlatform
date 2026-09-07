@@ -100,6 +100,30 @@ export function IconPencil({ size = 14 }: IconProps) {
   );
 }
 
+export function IconTrash({ size = 13 }: IconProps) {
+  return svg(
+    size,
+    <>
+      <path d="M4 7h16" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M6 7l1 13h10l1-13" />
+      <path d="M9 7V4h6v3" />
+    </>,
+  );
+}
+
+export function IconX({ size = 14 }: IconProps) {
+  return svg(size, <path d="M6 6l12 12M18 6 6 18" />, 2);
+}
+
+export function IconPlay({ size = 14 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+
 export function IconBolt({ size = 11 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

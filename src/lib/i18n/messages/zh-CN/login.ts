@@ -1,0 +1,20 @@
+/** 命名空间 `login`：登录 / 注册页，键统一以 `login.` 开头。 */
+export const login = {
+  "login.metaTitle": "登录 · Genius",
+  "login.tabs.aria": "登录或注册",
+  "login.tab.login": "登录",
+  "login.tab.register": "注册",
+  "login.title": "进入 Genius",
+  "login.sub": "登录后继续创作；注册需要一枚一次性邀请码。",
+  "login.email": "邮箱",
+  "login.password": "密码",
+  "login.passwordWithMin": "密码（至少 {n} 位）",
+  "login.invite": "邀请码",
+  "login.invitePlaceholder": "12 位字母数字",
+  "login.err.email": "邮箱格式不正确",
+  "login.err.password": "密码至少 {n} 位",
+  "login.err.invite": "请填写邀请码",
+  "login.submitting": "处理中",
+  "login.hint.register": "邀请码一码一号，用过即失效；没有码请联系管理员。",
+  "login.hint.login": "还没有账号？切到「注册」并填入邀请码。",
+} as const;

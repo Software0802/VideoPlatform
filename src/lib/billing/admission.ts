@@ -1,5 +1,6 @@
 import { listJobIndex } from "@/lib/jobs/index";
 import { ProviderHttpError } from "@/lib/providers/types";
+import { activeMemberCreditsCny } from "@/lib/users/schema";
 import { readUser } from "@/lib/users/store";
 
 /**
@@ -8,7 +9,7 @@ import { readUser } from "@/lib/users/store";
  * 模型和配额那边一样是**预留 + 结算**，只是单位从「次」换成「元」：
  *
  *   reserved  = 该用户所有非终态任务的售价之和
- *   available = balance − reserved
+ *   available = 已购余额 + **有效**会员积分池 − reserved
  *   放行      = available ≥ 本次售价
  *
  * 预留不写盘：它就是「在途任务的 priceCny 之和」，从 job.json 现算。任务转终态时
@@ -17,9 +18,18 @@ import { readUser } from "@/lib/users/store";
  */
 
 export type BalanceUsage = {
+  /** 已购池：礼品码 / 管理员充值进来的钱。买订阅只能花这个池。 */
   balanceCny: number;
+  /** 会员积分池**账面**余量：`user.json` 里的数，可能还没被结算清掉（方案 §3.2）。 */
+  memberCreditsCny: number;
+  /**
+   * 这一刻真正能花的会员积分：订阅已过期（或没有订阅）时是 0，即使 `memberCreditsCny`
+   * 还是正数。判定一律用这个数，不用上面那个账面值。
+   */
+  effectiveMemberCny: number;
   /** 在途任务占住的钱，还没扣，但不能再拿去下单。 */
   reservedCny: number;
+  /** `balanceCny + effectiveMemberCny − reservedCny`：这一刻还能下多少单。 */
   availableCny: number;
 };
 
@@ -33,19 +43,50 @@ export type BalanceUsage = {
  * 管理员能看到无主的历史任务（`canAccessJob`），但那些任务不属于任何人的余额，所以这里
  * 按 `ownerId` 精确筛，不用可见性口径——与 `quota.ts` 的 in-flight 完全一致。
  */
-export async function loadBalanceUsage(userId: string): Promise<BalanceUsage> {
+export async function loadBalanceUsage(
+  userId: string,
+  now: number = Date.now(),
+): Promise<BalanceUsage> {
   const [user, entries] = await Promise.all([
     readUser(userId),
     listJobIndex({ ownerId: userId, nonTerminal: true }),
   ]);
   const balanceCny = user?.balanceCny ?? 0;
+  const memberCreditsCny = user?.memberCreditsCny ?? 0;
+  // 两个池都能付任务的钱（扣的时候会员池优先），所以准入看的是两池之和——但会员池只在
+  // 订阅有效期内算数。结算是惰性的：一个昨天到期、今天还没被 `/api/me` 读过的账号，
+  // 会员池原样躺在 user.json 里，照账面值放行就等于让过期会员积分继续花。这里**不调**
+  // `settleSubscription` 去顺手清它：本函数跑在 `withAdmissionLock` 临界区内，而结算要
+  // 拿用户锁，锁序必须恒为 admission → user，反过来就是死锁。清零交给 `/api/me` 那条路径。
+  const effectiveMemberCny = activeMemberCreditsCny(user, now);
   let reservedCny = 0;
   for (const job of entries) {
     const price = typeof job.priceCny === "number" && Number.isFinite(job.priceCny) ? job.priceCny : 0;
     reservedCny += price;
   }
   reservedCny = round2(reservedCny);
-  return { balanceCny, reservedCny, availableCny: round2(balanceCny - reservedCny) };
+  return {
+    balanceCny,
+    memberCreditsCny,
+    effectiveMemberCny,
+    reservedCny,
+    availableCny: round2(balanceCny + effectiveMemberCny - reservedCny),
+  };
+}
+
+/**
+ * 这一刻能拿去**买订阅**的钱（人民币元）。
+ *
+ * 订阅只花已购池（会员积分买订阅 = 无限套利），但已购池里有一部分可能已经被在途任务
+ * 占住了：在途预留先由有效会员积分顶，顶不住的那部分才落到已购池上，于是
+ *
+ *   可购 = balanceCny − max(0, reservedCny − effectiveMemberCny)
+ *
+ * 不减这一块的话，「先提交五条任务、再把余额买成订阅」就能让那五条任务结算时把已购池
+ * 扣成负数——预留模型在准入那边守住了任务，购买这条路不守就等于开了个后门。
+ */
+export function purchasableCny(usage: BalanceUsage): number {
+  return round2(usage.balanceCny - Math.max(0, usage.reservedCny - usage.effectiveMemberCny));
 }
 
 /**

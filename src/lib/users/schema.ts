@@ -15,6 +15,85 @@ export const INVITE_CODE_RE = /^[0-9A-HJKMNP-TV-Z]{12}$/;
 export const userPlanSchema = z.enum(["free"]);
 export type UserPlan = z.infer<typeof userPlanSchema>;
 
+/**
+ * 订阅档位 id 与计费周期（方案 §3.2）。
+ *
+ * 枚举的事实源放在这里而不是 `@/lib/billing/plans`，方向是刻意的：这个文件只依赖 zod，
+ * 而 plans.ts 要读产品目录（→ 路由 → 全部 provider）。让用户存储反过来 import 计费，
+ * 等于把整张 provider 图拉进每一个碰过 `user.json` 的模块。plans.ts 从这里 import 回去，
+ * 两边永远是同一张表。
+ */
+export const SUBSCRIPTION_PLAN_IDS = ["standard", "pro", "premium", "ultimate"] as const;
+export const subscriptionPlanIdSchema = z.enum(SUBSCRIPTION_PLAN_IDS);
+export type SubscriptionPlanId = z.infer<typeof subscriptionPlanIdSchema>;
+
+export const SUBSCRIPTION_CYCLES = ["monthly", "yearly"] as const;
+export const subscriptionCycleSchema = z.enum(SUBSCRIPTION_CYCLES);
+export type SubscriptionCycle = z.infer<typeof subscriptionCycleSchema>;
+
+/** `sub_` + 8 随机字节，与 `usr_` / `up_` 同形。 */
+export const SUBSCRIPTION_ID_RE = /^sub_[0-9a-f]{16}$/;
+
+/**
+ * 一份生效中的订阅（方案 §3.2）。只在 `user.json` 里，没有独立文件——它的生命周期
+ * 完全绑在账号上，单独存一份只会多一个要对齐的事实源。
+ *
+ * 期（period）固定 30 天：月付 1 期、年付 12 期，`expiresAt` 是最后一期的终点。
+ * 惰性结算（`settleSubscription`）靠 `periodIndex` / `periodStartedAt` 判断该不该
+ * 重置会员池，靠 `lastDailyGrantOn` 判断今天的日积分发过没有。
+ */
+export const subscriptionSchema = z.object({
+  id: z.string().regex(SUBSCRIPTION_ID_RE),
+  planId: subscriptionPlanIdSchema,
+  cycle: subscriptionCycleSchema,
+  startedAt: z.string(),
+  /** 到期时刻（ISO）。到点后会员池清零、这条记录被删掉。 */
+  expiresAt: z.string(),
+  /** 第几个 30 天期，从 0 开始。 */
+  periodIndex: z.number().int().min(0),
+  periodStartedAt: z.string(),
+  /** 最近一次发过每日积分的日期，`YYYY-MM-DD`（Asia/Shanghai）。 */
+  lastDailyGrantOn: z.string().optional(),
+});
+export type SubscriptionRecord = z.infer<typeof subscriptionSchema>;
+
+/** `subscriptionActive` / `activeMemberCreditsCny` 需要的最小形状（方便测试直接构造）。 */
+type SubscriptionHolder = { subscription?: SubscriptionRecord; memberCreditsCny?: number };
+
+/**
+ * 这一刻订阅还生效吗。
+ *
+ * 结算是**惰性**的（`settleSubscription`，没有定时任务），所以「`subscription` 字段还在」
+ * 不等于「还没到期」——一个昨天到期、今天还没被任何请求读过的账号，记录原样躺在
+ * `user.json` 里，会员池也还是满的。凡是拿会员积分做判定的地方（准入、扣款分池）都必须
+ * 走这个函数，不能只看字段在不在，否则过期会员积分照样能花出去。
+ *
+ * 判据只依赖 `expiresAt`，与 `settleSubscriptionLocked` 的到期分支逐字一致
+ * （`now >= expiresAt` 即到期）；时刻解析不出来一律当作已失效。
+ */
+export function subscriptionActive(
+  user: SubscriptionHolder | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  const expiresAt = user?.subscription?.expiresAt;
+  if (!expiresAt) return false;
+  const ms = Date.parse(expiresAt);
+  return Number.isFinite(ms) && ms > now;
+}
+
+/**
+ * 这一刻**真正能花**的会员积分（人民币元）。订阅已过期 / 根本没有订阅时是 0，哪怕
+ * `memberCreditsCny` 还留着一个正数——那笔钱只是在等下一次结算把它清掉。
+ */
+export function activeMemberCreditsCny(
+  user: SubscriptionHolder | null | undefined,
+  now: number = Date.now(),
+): number {
+  if (!user || !subscriptionActive(user, now)) return 0;
+  const pool = user.memberCreditsCny;
+  return typeof pool === "number" && Number.isFinite(pool) ? Math.max(0, pool) : 0;
+}
+
 /** Source of truth: `data/users/<id>/user.json`. */
 export const userRecordSchema = z.object({
   id: z.string().regex(USER_ID_RE),
@@ -34,6 +113,19 @@ export const userRecordSchema = z.object({
    * 允许为负——预留已经放行的任务照样要结算，负数只会出现在并发边缘。
    */
   balanceCny: z.number().default(0),
+  /**
+   * 会员积分池，人民币元（方案 §3.2）。与 `balanceCny`（已购池）是**两个池子**：
+   * 订阅赠送的积分只进这里，期末清零，而且买订阅只能花已购池——两池合一的话，
+   * 「用低于面值的钱买到面值积分」就成了无限套利（买 → 得积分 → 再买）。
+   *
+   * 任务扣款先扣这里、不足部分才扣 `balanceCny`（`applyBalanceChangeLocked`），
+   * 准入的 `available` 是两池之和减在途预留。永不为负：清零 / 扣穿都截在 0。
+   *
+   * `.default(0)`：后加的字段，老记录读出即 0。
+   */
+  memberCreditsCny: z.number().default(0),
+  /** 生效中的订阅；没订阅（或已到期被结算掉）时这个字段不存在。 */
+  subscription: subscriptionSchema.optional(),
   disabled: z.boolean().optional(),
   /** Which one-time invite created this account (traceability, plan §6.4). */
   inviteCode: z.string().regex(INVITE_CODE_RE).optional(),

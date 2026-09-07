@@ -435,6 +435,75 @@ input::placeholder {
   color: var(--off);
 }
 
+/* ── 语言切换（顶栏 + 登录页共用一份） ── */
+
+.lang {
+  position: relative;
+  flex: none;
+}
+.lang__btn {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--fg-3);
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+.lang__btn:hover,
+.lang__btn[data-on="true"] {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg);
+}
+.lang__pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 150px;
+  z-index: 30;
+  border-radius: 12px;
+  background: rgba(28, 28, 33, 0.98);
+  box-shadow: var(--ring), var(--shadow-pop);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: pop-in 0.2s ease both;
+}
+.lang__title {
+  padding: 2px 8px 4px;
+  font-size: 11.5px;
+  color: var(--weak);
+}
+.lang__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--fg-1);
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.16s ease;
+}
+.lang__item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--fg);
+}
+.lang__item[data-on="true"] {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--fg);
+}
+/* 登录页：品牌之后一路推到最右 */
+.lang--auth {
+  margin-left: auto;
+}
+
 /* ── 通知面板（铃铛） ── */
 
 .top__bell {
@@ -2556,12 +2625,15 @@ input::placeholder {
     padding: 0 14px;
     gap: 8px;
   }
-  /* 语言让位，铃铛留着：通知是真功能，窄屏上也得点得到 */
-  .top__icon--lang,
+  /* 账户芯片让位（头像 + 积分够用了）；语言与铃铛都是真功能，窄屏上也得点得到 */
   .top__plan,
   .top__who,
   .top__sep {
     display: none;
+  }
+  /* 弹层贴着屏幕右边，不跟着 30px 的按钮往外飘 */
+  .lang--top .lang__pop {
+    right: -6px;
   }
   .top__sub {
     padding: 0 10px;

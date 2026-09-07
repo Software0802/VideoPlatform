@@ -2,6 +2,7 @@
 
 import { IconBolt } from "@/components/genius/icons";
 import { creditsOf, useShell } from "@/components/genius/ShellContext";
+import { useT } from "@/components/genius/i18n/I18nProvider";
 
 /*
   模型下拉（交接包 §4.1 图 7）：右下向上弹出，每行「图标 + 产品名 + ⚡基准积分 + 一行描述」，
@@ -9,7 +10,7 @@ import { creditsOf, useShell } from "@/components/genius/ShellContext";
 
   用户 2026-09-06 决定：**只显示产品名，不露供应商**。所以这里渲染的一律是
   `Product.name` / `Product.description`，`Product.id` 只作 `data-product-id` 与提交体里的
-  `model`，不出现在任何可见文案里。
+  `model`，不出现在任何可见文案里。产品名与描述由服务端下发，不进字典（切语言不变）。
 
   列表内容来自 `/api/models`，服务端只下发这台实例当前真能跑的产品——所以「列表里有」
   就等于「选了能提交」。拿不到列表时上层根本不渲染这个下拉（芯片退回只读文案）。
@@ -17,10 +18,11 @@ import { creditsOf, useShell } from "@/components/genius/ShellContext";
 
 export function ModelPop() {
   const { productChoices, product, pickProduct, caps } = useShell();
+  const t = useT();
 
   return (
-    <div className="model-pop" role="listbox" aria-label="模型">
-      <span className="model-pop__title">模型</span>
+    <div className="model-pop" role="listbox" aria-label={t("composer.model.title")}>
+      <span className="model-pop__title">{t("composer.model.title")}</span>
       <div className="model-pop__list">
         {productChoices.map((p) => {
           const on = p.id === product?.id;
@@ -44,7 +46,7 @@ export function ModelPop() {
                     <IconBolt size={10} />
                     {creditsOf(p.samplePriceCny)}
                   </span>
-                  {caps.mock ? <span className="model-pop__mock">模拟</span> : null}
+                  {caps.mock ? <span className="model-pop__mock">{t("composer.model.mock")}</span> : null}
                 </span>
                 <span className="model-pop__desc">{p.description}</span>
               </span>

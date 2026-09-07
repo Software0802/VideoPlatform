@@ -25,6 +25,8 @@ import type { Template } from "@/lib/client/templates";
 import { useEvents } from "@/lib/client/useEvents";
 import { useJobLive } from "@/lib/client/useJobLive";
 import { isActive, isTerminal } from "@/lib/client/labels";
+import { useT } from "@/components/genius/i18n/I18nProvider";
+import type { MessageKey } from "@/lib/i18n/messages";
 
 /*
   Genius App 的唯一客户端状态所有者（方案 `docs/plan-ui-genius-app.md` §3）。
@@ -40,12 +42,12 @@ import { isActive, isTerminal } from "@/lib/client/labels";
 
 /* ── 常量 ── */
 
-/** 面板三个标签页。音频整页置灰（后端没有这条路径）。 */
+/** 面板三个标签页。音频整页置灰（后端没有这条路径）。标签文案存键名，渲染时 `t()`。 */
 export const COMPOSER_TABS = [
-  { id: "video", label: "视频" },
-  { id: "image", label: "图片" },
-  { id: "audio", label: "音频" },
-] as const;
+  { id: "video", labelKey: "common.video" },
+  { id: "image", labelKey: "common.image" },
+  { id: "audio", labelKey: "common.audio" },
+] as const satisfies readonly { id: string; labelKey: MessageKey }[];
 export type ComposerTab = (typeof COMPOSER_TABS)[number]["id"];
 
 /**
@@ -53,9 +55,32 @@ export type ComposerTab = (typeof COMPOSER_TABS)[number]["id"];
  * 「参考」（`reference_to_video`）与「首尾帧」（`image_to_video` + 尾帧），后两者还要
  * 当前产品声明了对应能力；其余按用户 2026-09-06 的决定「画出来但置灰」，点击提示
  * 「即将上线」。
+ *
+ * id 是 ASCII 内部标识（多语言：显示名在字典里，见 `VIDEO_MODE_KEY`）——它同时是
+ * `pickMode` / `nativeMode` 的判据，不能跟着语言变。
  */
-export const VIDEO_MODES = ["图文", "参考", "模板", "首尾帧", "编辑", "动作模仿", "续写", "人声"] as const;
+export const VIDEO_MODES = [
+  "prompt",
+  "reference",
+  "template",
+  "firstLast",
+  "edit",
+  "motion",
+  "extend",
+  "voice",
+] as const;
 export type VideoMode = (typeof VIDEO_MODES)[number];
+
+export const VIDEO_MODE_KEY: Record<VideoMode, MessageKey> = {
+  prompt: "composer.mode.prompt",
+  reference: "composer.mode.reference",
+  template: "composer.mode.template",
+  firstLast: "composer.mode.firstLast",
+  edit: "composer.mode.edit",
+  motion: "composer.mode.motion",
+  extend: "composer.mode.extend",
+  voice: "composer.mode.voice",
+};
 
 /** 芯片上的分辨率文案（后端枚举是小写的那份）。 */
 export const RES_LABEL: Record<Resolution, string> = { "480p": "480P", "720p": "720P", "1080p": "1080P" };
@@ -80,12 +105,6 @@ export const JOBS_PAGE = 40;
 
 /** 通知面板最多留几条（交接：铃铛点开列最近 10 条）。 */
 export const MAX_NOTICES = 10;
-
-export const QUOTA_EXHAUSTED = "今日额度已用完，北京时间 0 点重置";
-export const BALANCE_SHORT = "当前配置，余额可能不够，请充值";
-export const SOON = "即将上线";
-const NO_REF_SUPPORT = "当前模型不支持参考图";
-const NO_LAST_FRAME = "当前没有支持首尾帧的模型";
 
 /** ¥1 = 100 积分（用户 2026-09-06 拍板的换算口径），余额模型与后端计费不变。 */
 export const creditsOf = (cny: number): number => Math.round((Number.isFinite(cny) ? cny : 0) * 100);
@@ -306,6 +325,9 @@ const NO_JOB = { id: "", status: "succeeded" } as const;
 export function ShellProvider({ caps, children }: { caps: ShellCaps; children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  // 面板里的提示 / 错误 / toast 全部经字典（`I18nProvider` 挂在根布局，壳一定在它里面）。
+  // `t` 随语言变，所以凡是把文案存进 state 的回调都要把它列进依赖。
+  const t = useT();
 
   const [jobs, setJobs] = useState<JobPublic[]>(caps.initialJobs);
   /*
@@ -331,7 +353,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
 
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ComposerTab>("video");
-  const [mode, setMode] = useState<VideoMode>("图文");
+  const [mode, setMode] = useState<VideoMode>("prompt");
   const [collapsed, setCollapsed] = useState(false);
   const [pop, setPop] = useState<Pop>(null);
   const [slotTarget, setSlotTarget] = useState<SlotTarget>("start");
@@ -410,9 +432,9 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
   */
   const nativeMode: NativeMode = isImageTab
     ? "text_to_image"
-    : mode === "参考"
+    : mode === "reference"
       ? "reference_to_video"
-      : mode === "首尾帧"
+      : mode === "firstLast"
         ? "image_to_video"
         : image
           ? "image_to_video"
@@ -444,7 +466,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     让用户选一个不会生效、还会按 1080p 收钱的档，⚡ 上的预估也就跟着错。
   */
   const resolutions: readonly Resolution[] =
-    tab === "video" && mode === "首尾帧" && productRes.includes("1080p") ? (["1080p"] as const) : productRes;
+    tab === "video" && mode === "firstLast" && productRes.includes("1080p") ? (["1080p"] as const) : productRes;
   const imageResolutions: readonly ImageResolution[] = product?.imageResolutions?.length
     ? product.imageResolutions
     : ALL_IMAGE_RES;
@@ -467,7 +489,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
   const audioAvailable = product ? product.audio === "native" : caps.audioAvailable;
   const maxRefs = product?.maxReferenceImages ?? 0;
   const supportsLastFrame = product?.supportsLastFrame ?? false;
-  const ratioUsable = !(tab === "video" && mode === "首尾帧");
+  const ratioUsable = !(tab === "video" && mode === "firstLast");
 
   const [ratioChoice, setRatioChoice] = useState<AspectRatio | null>(null);
   /*
@@ -534,10 +556,10 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       },
       (e: unknown) => {
         setSigningOut(false);
-        setError(e instanceof Error ? e.message : "退出失败");
+        setError(e instanceof Error ? e.message : t("shell.signOutFailed"));
       },
     );
-  }, [signingOut]);
+  }, [signingOut, t]);
 
   /* ── 任务跟踪 ── */
   const upsert = useCallback((j: JobPublic) => {
@@ -582,11 +604,11 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
         },
         (e: unknown) => {
           setJobsLoading(false);
-          setJobsError(e instanceof Error ? e.message : "读取失败，请稍后再试");
+          setJobsError(e instanceof Error ? e.message : t("home.loadFailed"));
         },
       );
     },
-    [cursor, jobsLoading, more],
+    [cursor, jobsLoading, more, t],
   );
 
   /* ── 作品操作：标签 / 删除 ── */
@@ -646,10 +668,15 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
         id: `${job.id}:${job.status}`,
         jobId: job.id,
         ok,
-        title: ok ? "作品已生成" : job.status === "canceled" ? "任务已取消" : "生成失败",
+        title: ok
+          ? t("shell.notice.done")
+          : job.status === "canceled"
+            ? t("shell.notice.canceled")
+            : t("shell.notice.failed"),
         detail: ok
-          ? job.prompt || (kindOfJob(job) === "image" ? "文生图" : "首帧起始")
-          : (job.error?.message ?? "未知原因"),
+          ? job.prompt ||
+            (kindOfJob(job) === "image" ? t("create.mode.text_to_image") : t("create.firstFrame"))
+          : (job.error?.message ?? t("shell.notice.unknownReason")),
         at: job.updatedAt || new Date().toISOString(),
       };
       setNotices((list) => (list.some((n) => n.id === notice.id) ? list : [notice, ...list].slice(0, MAX_NOTICES)));
@@ -657,7 +684,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       const quiet = quietRef.current.path === "/create" && quietRef.current.jobId === job.id;
       if (!quiet) setNoticeToast(notice);
     },
-    [upsert],
+    [t, upsert],
   );
   useEvents(true, onEventJob);
 
@@ -736,7 +763,8 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     没提交过但按钮本来就按不下去时，把原因常驻显示——否则用户只看见一个灰按钮，
     不知道是余额不够还是今天的额度用完了（方案 §4「余额不足按钮禁用 + 错误行」）。
   */
-  const notice = error ?? (quotaExhausted ? QUOTA_EXHAUSTED : balanceShort ? BALANCE_SHORT : null);
+  const notice =
+    error ?? (quotaExhausted ? t("composer.quotaExhausted") : balanceShort ? t("composer.balanceShort") : null);
 
   /* ── 面板动作（任何一次改动都作废幂等 key） ── */
   const setPrompt = useCallback(
@@ -759,9 +787,9 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
   /** 这个模式此刻能不能用：后端有这条路径 + 当前产品声明了对应能力。 */
   const modeUsable = useCallback(
     (m: VideoMode): boolean => {
-      if (m === "图文") return true;
-      if (m === "参考") return maxRefs > 0 && !!product && supportsMode(product, "reference_to_video");
-      if (m === "首尾帧") return productChoices.some((p) => p.supportsLastFrame);
+      if (m === "prompt") return true;
+      if (m === "reference") return maxRefs > 0 && !!product && supportsMode(product, "reference_to_video");
+      if (m === "firstLast") return productChoices.some((p) => p.supportsLastFrame);
       return false;
     },
     [maxRefs, product, productChoices],
@@ -769,35 +797,35 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
 
   const pickMode = useCallback(
     (next: VideoMode) => {
-      if (next === "首尾帧") {
+      if (next === "firstLast") {
         // 切到首尾帧时当前产品不支持，就自动换到第一个支持的产品并说一声（阶段 A §4）
         if (!supportsLastFrame) {
           const alt = productChoices.find((p) => p.supportsLastFrame);
           if (!alt) {
-            showToast(NO_LAST_FRAME);
+            showToast(t("composer.lastFrame.none"));
             return;
           }
           setVideoProductId(alt.id);
-          showToast(`已切换到 ${alt.name}（支持首尾帧）`);
+          showToast(t("composer.lastFrame.switched", { name: alt.name }));
         }
         setMode(next);
         setPop(null);
         dropKey();
         return;
       }
-      if (next === "参考" && !modeUsable("参考")) {
-        showToast(product ? NO_REF_SUPPORT : SOON);
+      if (next === "reference" && !modeUsable("reference")) {
+        showToast(product ? t("composer.ref.noSupport") : t("common.comingSoon"));
         return;
       }
-      if (next !== "图文" && next !== "参考") {
-        showToast(SOON);
+      if (next !== "prompt" && next !== "reference") {
+        showToast(t("common.comingSoon"));
         return;
       }
       setMode(next);
       setPop(null);
       dropKey();
     },
-    [dropKey, modeUsable, product, productChoices, showToast, supportsLastFrame],
+    [dropKey, modeUsable, product, productChoices, showToast, supportsLastFrame, t],
   );
 
   /**
@@ -811,8 +839,9 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       if (next.kind === "image") setImageProductId(next.id);
       else setVideoProductId(next.id);
       setMode((m) => {
-        if (m === "首尾帧" && !next.supportsLastFrame) return "图文";
-        if (m === "参考" && (next.maxReferenceImages === 0 || !supportsMode(next, "reference_to_video"))) return "图文";
+        if (m === "firstLast" && !next.supportsLastFrame) return "prompt";
+        if (m === "reference" && (next.maxReferenceImages === 0 || !supportsMode(next, "reference_to_video")))
+          return "prompt";
         return m;
       });
       setPop(null);
@@ -860,12 +889,12 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
   );
   const toggleAudio = useCallback(() => {
     if (!audioAvailable) {
-      showToast("当前模型未开启音轨，暂不可用");
+      showToast(t("composer.audio.unavailable"));
       return;
     }
     setAudio((a) => !a);
     dropKey();
-  }, [audioAvailable, dropKey, showToast]);
+  }, [audioAvailable, dropKey, showToast, t]);
   const toggleMulti = useCallback(() => setMulti((m) => !m), []);
   const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => !c);
@@ -939,10 +968,15 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       void uploadFile(file, role).then(
         (up) => settle({ preview, uploadId: up.uploadId, state: "ready" }),
         (e: unknown) =>
-          settle({ preview, uploadId: null, state: "error", message: e instanceof Error ? e.message : "上传失败" }),
+          settle({
+            preview,
+            uploadId: null,
+            state: "error",
+            message: e instanceof Error ? e.message : t("composer.err.upload"),
+          }),
       );
     },
-    [dropKey],
+    [dropKey, t],
   );
 
   const pickImage = useCallback(
@@ -964,13 +998,13 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       // 上限由产品说了算：多选时超出的那几张直接不收，并说一声，而不是传上去再被 400
       const room = Math.max(0, maxRefs - refs.length);
       if (room <= 0) {
-        showToast(`最多 ${maxRefs} 张参考图`);
+        showToast(t("composer.ref.max", { n: maxRefs }));
         return;
       }
-      if (list.length > room) showToast(`最多 ${maxRefs} 张参考图，已取前 ${room} 张`);
+      if (list.length > room) showToast(t("composer.ref.maxTaken", { n: maxRefs, room }));
       for (const file of list.slice(0, room)) uploadInto("reference", file);
     },
-    [maxRefs, refs.length, showToast, uploadInto],
+    [maxRefs, refs.length, showToast, t, uploadInto],
   );
 
   const openPicker = useCallback((target: SlotTarget) => {
@@ -990,7 +1024,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       const target = slotTarget;
       const role = target === "start" ? "start" : target === "last" ? "last" : "reference";
       if (target === "reference" && refs.length >= maxRefs) {
-        showToast(`最多 ${maxRefs} 张参考图`);
+        showToast(t("composer.ref.max", { n: maxRefs }));
         return;
       }
       setError(null);
@@ -1018,10 +1052,15 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       void uploadFromJob(job.id, role).then(
         (up) => settle({ preview, uploadId: up.uploadId, state: "ready" }),
         (e: unknown) =>
-          settle({ preview, uploadId: null, state: "error", message: e instanceof Error ? e.message : "选取失败" }),
+          settle({
+            preview,
+            uploadId: null,
+            state: "error",
+            message: e instanceof Error ? e.message : t("composer.err.pick"),
+          }),
       );
     },
-    [dropKey, maxRefs, refs.length, showToast, slotTarget],
+    [dropKey, maxRefs, refs.length, showToast, slotTarget, t],
   );
 
   const clearAll = useCallback(() => {
@@ -1046,43 +1085,47 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
   const submit = useCallback(() => {
     if (working) return;
     if (tab === "audio") {
-      showToast(SOON);
+      showToast(t("common.comingSoon"));
       return;
     }
     setError(null);
     if (quotaExhausted) {
-      setError(QUOTA_EXHAUSTED);
+      setError(t("composer.quotaExhausted"));
       return;
     }
     if (balanceShort) {
-      setError(BALANCE_SHORT);
+      setError(t("composer.balanceShort"));
       return;
     }
     const framesFor: Frame[] =
       tab !== "video"
         ? []
-        : mode === "参考"
+        : mode === "reference"
           ? refs
-          : mode === "首尾帧"
+          : mode === "firstLast"
             ? [image, lastImage].filter((f): f is Frame => f !== null)
             : image
               ? [image]
               : [];
     const pendingFrame = framesFor.find((f) => f.state !== "ready");
     if (pendingFrame) {
-      setError(pendingFrame.state === "busy" ? "图片还在上传，请稍候" : (pendingFrame.message ?? "图片上传失败，请重试"));
+      setError(
+        pendingFrame.state === "busy"
+          ? t("composer.err.uploading")
+          : (pendingFrame.message ?? t("composer.err.uploadFailed")),
+      );
       return;
     }
-    if (tab === "video" && mode === "参考" && refs.length === 0) {
-      setError("参考模式至少需要一张参考图");
+    if (tab === "video" && mode === "reference" && refs.length === 0) {
+      setError(t("composer.err.needRef"));
       return;
     }
-    if (tab === "video" && mode === "首尾帧" && (!image || !lastImage)) {
-      setError("首尾帧模式需要首帧和尾帧两张图");
+    if (tab === "video" && mode === "firstLast" && (!image || !lastImage)) {
+      setError(t("composer.err.needBothFrames"));
       return;
     }
     if (!prompt.trim() && !(tab === "video" && framesFor.length > 0)) {
-      setError("这条路径需要提示词");
+      setError(t("composer.err.needPrompt"));
       return;
     }
 
@@ -1101,11 +1144,11 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       if (ratioUsable) base.aspectRatio = ratio;
       base.resolution = res;
       base.generateAudio = audioOn;
-      if (mode === "参考") {
+      if (mode === "reference") {
         base.referenceUploadIds = refs.map((f) => f.uploadId).filter((id): id is string => !!id);
       } else {
         if (image?.uploadId) base.startUploadId = image.uploadId;
-        if (mode === "首尾帧" && lastImage?.uploadId) base.lastUploadId = lastImage.uploadId;
+        if (mode === "firstLast" && lastImage?.uploadId) base.lastUploadId = lastImage.uploadId;
       }
     }
 
@@ -1156,6 +1199,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     router,
     setCurrentJob,
     showToast,
+    t,
     tab,
     upsert,
     working,
@@ -1208,7 +1252,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       clearAll();
       setPromptState(text);
       setTab(kind === "image" ? "image" : "video");
-      setMode("图文");
+      setMode("prompt");
       setError(null);
       setOpen(true);
       setCollapsed(false);
@@ -1227,7 +1271,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       setPromptState(template.prompt);
       setTab(template.mode === "text_to_image" ? "image" : "video");
       // 模板只带提示词与规格，不带素材，所以恒定落在「图文」这条不需要上传的路径上
-      setMode("图文");
+      setMode("prompt");
       if (template.aspectRatio) setRatioChoice(template.aspectRatio);
       if (template.durationSec) setDurChoice(template.durationSec);
       setError(null);

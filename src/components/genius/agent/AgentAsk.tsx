@@ -1,16 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import {
-  ALL_SKILLS,
-  IMG_MODELS,
-  SKILL_COUNT,
-  TEXT_MODELS,
-  VID_MODELS,
-  iconGrad,
-  shot,
-  type ModelItem,
-} from "./data";
+import { useI18n, useT } from "@/components/genius/i18n/I18nProvider";
+import { creditsOf } from "@/components/genius/ShellContext";
+import { AGENT_TIERS, type AgentSkill, type AgentTier } from "@/lib/client/agent";
+import type { Product } from "@/lib/client/models";
+import { TIER_KEY, iconGrad, shot } from "./data";
 import {
   IconArrowUp,
   IconChevronDown,
@@ -28,70 +23,59 @@ type Props = {
   onPrompt: (v: string) => void;
   pop: AskPop;
   onPop: (v: AskPop) => void;
-  textModel: string;
-  onTextModel: (v: string) => void;
-  imgModel: string;
-  onImgModel: (v: string) => void;
-  vidModel: string;
-  onVidModel: (v: string) => void;
+  tier: AgentTier;
+  onTier: (v: AgentTier) => void;
+  /** `null` = 自动（由服务端按当前配置路由）。 */
+  imageProduct: string | null;
+  onImageProduct: (v: string | null) => void;
+  videoProduct: string | null;
+  onVideoProduct: (v: string | null) => void;
+  products: Product[];
+  skills: AgentSkill[];
   skillHover: number;
   onSkillHover: (v: number) => void;
-  activeSkill: number | null;
-  onActiveSkill: (v: number | null) => void;
+  activeSkill: string | null;
+  onActiveSkill: (v: string | null) => void;
   onManageSkills: () => void;
   onSend: () => void;
+  busy?: boolean;
+  /** 这台实例配了对话提供方吗。`false` = 整张卡片置灰，一个字也发不出去。 */
+  available?: boolean;
 };
 
-/** 下拉列表里带图标 + 描述的模型行。 */
-function ModelRow({
-  item,
-  index,
-  current,
-  onPick,
-}: {
-  item: ModelItem;
-  index: number;
-  current: string;
-  onPick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="agent-pop__item"
-      data-current={item.name === current ? "true" : undefined}
-      onClick={onPick}
-    >
-      <span className="agent-pop__icon" style={{ background: iconGrad(index) }} />
-      <span className="agent-pop__body">
-        <span className="agent-pop__name">{item.name}</span>
-        <span className="agent-pop__desc">{item.desc}</span>
-      </span>
-      {item.auto ? <span className="agent-pop__auto">自动</span> : null}
-    </button>
-  );
-}
-
-/** 首屏 / 会话页共用的 680 宽输入卡：textarea + 一行芯片 + 渐变发送钮。 */
+/**
+ * 首屏输入卡：textarea + 一行芯片 + 渐变发送钮。
+ *
+ * 三个下拉都接了真数据：文本是三档（映射温度 / 输出上限，不是模型名），图片 / 视频是
+ * `GET /api/models` 下发的**产品**（只露产品名与积分读数，不露供应商），技能是
+ * `GET /api/agent/skills`。原型里那些假模型名已经删掉。
+ */
 export default function AgentAsk(props: Props) {
   const {
     prompt,
     onPrompt,
     pop,
     onPop,
-    textModel,
-    onTextModel,
-    imgModel,
-    onImgModel,
-    vidModel,
-    onVidModel,
+    tier,
+    onTier,
+    imageProduct,
+    onImageProduct,
+    videoProduct,
+    onVideoProduct,
+    products,
+    skills,
     skillHover,
     onSkillHover,
     activeSkill,
     onActiveSkill,
     onManageSkills,
     onSend,
+    busy,
+    available = true,
   } = props;
 
+  const t = useT();
+  const { locale } = useI18n();
   const rowRef = useRef<HTMLDivElement | null>(null);
   const close = useCallback(() => onPop(null), [onPop]);
 
@@ -113,22 +97,79 @@ export default function AgentAsk(props: Props) {
   }, [pop, close]);
 
   const toggle = (which: Exclude<AskPop, null>) => onPop(pop === which ? null : which);
-  const skillList = ALL_SKILLS.slice(0, 10);
+  const images = products.filter((p) => p.kind === "image");
+  const videos = products.filter((p) => p.kind === "video");
+  const nameOf = (id: string | null, pool: Product[]) =>
+    (id ? pool.find((p) => p.id === id)?.name : undefined) ?? t("agent.auto");
+
+  const skillList = skills.slice(0, 10);
   const preview = skillList[skillHover] ?? skillList[0];
-  const active = activeSkill === null ? null : ALL_SKILLS[activeSkill];
+  const active = skills.find((s) => s.id === activeSkill) ?? null;
+
+  const productRows = (pool: Product[], current: string | null, pick: (id: string | null) => void) => (
+    <>
+      <button
+        type="button"
+        role="menuitem"
+        className="agent-pop__item"
+        data-current={current === null ? "true" : undefined}
+        onClick={() => {
+          pick(null);
+          close();
+        }}
+      >
+        <span className="agent-pop__icon" style={{ background: iconGrad(0) }} />
+        <span className="agent-pop__body">
+          <span className="agent-pop__name">{t("agent.auto")}</span>
+          <span className="agent-pop__desc">{t("agent.autoDesc")}</span>
+        </span>
+        <span className="agent-pop__auto">{t("agent.auto")}</span>
+      </button>
+      {pool.map((p, i) => (
+        <button
+          type="button"
+          role="menuitem"
+          key={p.id}
+          className="agent-pop__item"
+          data-product-id={p.id}
+          data-current={p.id === current ? "true" : undefined}
+          onClick={() => {
+            pick(p.id);
+            close();
+          }}
+        >
+          <span className="agent-pop__icon" style={{ background: iconGrad(i + 1) }} />
+          <span className="agent-pop__body">
+            <span className="agent-pop__name">{p.name}</span>
+            <span className="agent-pop__desc">{p.description}</span>
+          </span>
+          <span className="agent-pop__auto">
+            {t("agent.creditsEach", { n: creditsOf(p.samplePriceCny) })}
+          </span>
+        </button>
+      ))}
+    </>
+  );
 
   return (
-    <div className="agent-ask">
+    <div className="agent-ask" data-available={available ? "true" : "false"}>
       <textarea
         className="agent-ask__input"
         rows={2}
         value={prompt}
-        aria-label="智能体提示词"
-        placeholder="为这个角色生成一组多镜头场景"
+        aria-label={t("agent.askLabel")}
+        placeholder={available ? t("agent.askPlaceholder") : t("agent.unavailable")}
+        disabled={!available}
         onChange={(e) => onPrompt(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            if (!busy && available) onSend();
+          }
+        }}
       />
       <div className="agent-ask__row" ref={rowRef}>
-        <button type="button" className="agent-ask__icon" aria-label="添加素材">
+        <button type="button" className="agent-ask__icon" aria-label={t("agent.addAsset")} disabled>
           <IconPlus />
         </button>
 
@@ -142,25 +183,26 @@ export default function AgentAsk(props: Props) {
             onClick={() => toggle("text")}
           >
             <IconLock />
-            {textModel}
+            {t(TIER_KEY[tier])}
             <IconChevronDown />
           </button>
           {pop === "text" ? (
             <div className="agent-pop agent-pop--text" role="menu">
-              {TEXT_MODELS.map((m) => (
+              {AGENT_TIERS.map((item) => (
                 <button
                   type="button"
-                  key={m}
+                  key={item}
                   role="menuitem"
                   className="agent-pop__plain"
-                  data-current={m === textModel ? "true" : undefined}
+                  data-tier={item}
+                  data-current={item === tier ? "true" : undefined}
                   onClick={() => {
-                    onTextModel(m);
+                    onTier(item);
                     close();
                   }}
                 >
                   <span className="agent-pop__dot" />
-                  {m}
+                  {t(TIER_KEY[item])}
                 </button>
               ))}
             </div>
@@ -176,23 +218,12 @@ export default function AgentAsk(props: Props) {
             aria-haspopup="menu"
             onClick={() => toggle("img")}
           >
-            图片: {imgModel}
+            {t("agent.imageChip", { name: nameOf(imageProduct, images) })}
             <IconChevronDown />
           </button>
           {pop === "img" ? (
             <div className="agent-pop agent-pop--img" role="menu">
-              {IMG_MODELS.map((m, i) => (
-                <ModelRow
-                  key={m.name}
-                  item={m}
-                  index={i}
-                  current={imgModel}
-                  onPick={() => {
-                    onImgModel(m.name);
-                    close();
-                  }}
-                />
-              ))}
+              {productRows(images, imageProduct, onImageProduct)}
             </div>
           ) : null}
         </div>
@@ -206,23 +237,12 @@ export default function AgentAsk(props: Props) {
             aria-haspopup="menu"
             onClick={() => toggle("vid")}
           >
-            视频: {vidModel}
+            {t("agent.videoChip", { name: nameOf(videoProduct, videos) })}
             <IconChevronDown />
           </button>
           {pop === "vid" ? (
             <div className="agent-pop agent-pop--vid" role="menu">
-              {VID_MODELS.map((m, i) => (
-                <ModelRow
-                  key={m.name}
-                  item={m}
-                  index={i}
-                  current={vidModel}
-                  onPick={() => {
-                    onVidModel(m.name);
-                    close();
-                  }}
-                />
-              ))}
+              {productRows(videos, videoProduct, onVideoProduct)}
             </div>
           ) : null}
         </div>
@@ -236,24 +256,25 @@ export default function AgentAsk(props: Props) {
             aria-haspopup="menu"
             onClick={() => toggle("skill")}
           >
-            技能
-            <span className="agent-chip__badge">{active ? active.name : SKILL_COUNT}</span>
+            {t("agent.skill")}
+            <span className="agent-chip__badge">{active ? active.name[locale] : skills.length}</span>
           </button>
-          {pop === "skill" ? (
+          {pop === "skill" && skillList.length ? (
             <div className="agent-skillpop">
               <div className="agent-skillpop__panel" role="menu">
                 <div className="agent-skillpop__list">
                   {skillList.map((s, i) => (
                     <button
                       type="button"
-                      key={s.name}
+                      key={s.id}
                       role="menuitem"
                       className="agent-skillpop__item"
+                      data-skill-id={s.id}
                       data-current={i === skillHover ? "true" : undefined}
                       onMouseEnter={() => onSkillHover(i)}
                       onFocus={() => onSkillHover(i)}
                       onClick={() => {
-                        onActiveSkill(activeSkill === i ? null : i);
+                        onActiveSkill(activeSkill === s.id ? null : s.id);
                         close();
                       }}
                     >
@@ -261,33 +282,41 @@ export default function AgentAsk(props: Props) {
                         <IconSkill />
                       </span>
                       <span className="agent-skillpop__body">
-                        <span className="agent-skillpop__name">{s.name}</span>
-                        <span className="agent-skillpop__desc">{s.desc}</span>
+                        <span className="agent-skillpop__name">{s.name[locale]}</span>
+                        <span className="agent-skillpop__desc">{s.desc[locale]}</span>
                       </span>
                     </button>
                   ))}
                 </div>
                 <button type="button" className="agent-skillpop__manage" onClick={onManageSkills}>
                   <IconList />
-                  管理工具
+                  {t("agent.manageSkills")}
                   <IconChevronRight />
                 </button>
               </div>
-              <div className="agent-skillpop__preview" aria-hidden="true">
-                <span
-                  className="agent-skillpop__shot"
-                  style={{ backgroundImage: `url(${shot(skillHover)})` }}
-                />
-                <span className="agent-skillpop__pbody">
-                  <span className="agent-skillpop__pname">{preview.name}</span>
-                  <span className="agent-skillpop__pdesc">{preview.desc}</span>
-                </span>
-              </div>
+              {preview ? (
+                <div className="agent-skillpop__preview" aria-hidden="true">
+                  <span
+                    className="agent-skillpop__shot"
+                    style={{ backgroundImage: `url(${shot(skillHover)})` }}
+                  />
+                  <span className="agent-skillpop__pbody">
+                    <span className="agent-skillpop__pname">{preview.name[locale]}</span>
+                    <span className="agent-skillpop__pdesc">{preview.desc[locale]}</span>
+                  </span>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
 
-        <button type="button" className="agent-send" aria-label="发送" onClick={onSend}>
+        <button
+          type="button"
+          className="agent-send"
+          aria-label={t("agent.send")}
+          disabled={busy || !available || !prompt.trim()}
+          onClick={onSend}
+        >
           <IconArrowUp />
         </button>
       </div>

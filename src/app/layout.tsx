@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Manrope, Noto_Sans_SC } from "next/font/google";
 import "./globals.css";
+import { I18nProvider } from "@/components/genius/i18n/I18nProvider";
+import { resolveLocale } from "@/lib/i18n/server";
 
 /*
   字体：Manrope（400/500/600）+ Noto Sans SC（400/500）作 CJK 回退，见 globals.css 的字体栈。
@@ -14,10 +16,14 @@ export const metadata: Metadata = {
   description: "创建你的世界。文生视频 · 图生视频 · 文生图",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // 语言由 Cookie / Accept-Language 决定（`src/lib/i18n`），`<html lang>` 与首屏字典同源。
+  const locale = await resolveLocale();
   return (
-    <html lang="zh-CN" className={`${manrope.variable} ${noto.variable}`}>
-      <body>{children}</body>
+    <html lang={locale} className={`${manrope.variable} ${noto.variable}`}>
+      <body>
+        <I18nProvider initialLocale={locale}>{children}</I18nProvider>
+      </body>
     </html>
   );
 }

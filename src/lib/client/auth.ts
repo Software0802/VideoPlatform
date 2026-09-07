@@ -23,11 +23,26 @@ export type QuotaPublic = {
   resetsAt: string;
 };
 
-/** 余额模型（方案 §3.2）：`available = balance − 在途预留`，提交面板拿它判够不够。 */
+/**
+ * 余额模型（方案 §3.2）：`available = 已购余额 + 会员积分 − 在途预留`，提交面板拿它
+ * 判够不够。两个池分开报，是因为它们能干的事不一样：订阅只能用已购池买。
+ */
 export type BalancePublic = {
   balanceCny: number;
+  /** 订阅送的会员积分池（期末清零）。老服务端不下发这个字段，读出即 0。 */
+  memberCreditsCny: number;
   reservedCny: number;
   availableCny: number;
+};
+
+/** `GET /api/me` 里的订阅摘要（订阅页要的完整形状在 `@/lib/client/subscription`）。 */
+export type SubscriptionSummary = {
+  id: string;
+  planId: string;
+  cycle: string;
+  expiresAt: string;
+  memberCreditsCny: number;
+  dailyGrantedToday: boolean;
 };
 
 export type MePublic = {
@@ -38,6 +53,8 @@ export type MePublic = {
   /** 服务端当前生效的价目表；缺失时调用方用 `DEFAULT_PRICE_TABLE` 也算不错。 */
   prices?: PriceTable;
   quota?: QuotaPublic;
+  /** 没订阅（或老服务端）时为 null。 */
+  subscription?: SubscriptionSummary | null;
 };
 
 /** Defensive: the shape is server-owned and grows, so only trust what we checked. */
@@ -55,7 +72,11 @@ function readQuota(raw: unknown): QuotaPublic | undefined {
   };
 }
 
-/** 同样只信检查过的字段：三个数缺一个，整块余额读数就不渲染（而不是显示 ¥NaN）。 */
+/**
+ * 同样只信检查过的字段：三个数缺一个，整块余额读数就不渲染（而不是显示 ¥NaN）。
+ * `memberCreditsCny` 是后加的，不进必填集合——老服务端没有它，读出按 0 算，
+ * 界面上「会员积分 0」是对的。
+ */
 function readBalance(raw: unknown): BalancePublic | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const b = raw as Record<string, unknown>;
@@ -63,8 +84,30 @@ function readBalance(raw: unknown): BalancePublic | undefined {
   if (!nums.every((k) => typeof b[k] === "number" && Number.isFinite(b[k]))) return undefined;
   return {
     balanceCny: b.balanceCny as number,
+    memberCreditsCny: money(b.memberCreditsCny),
     reservedCny: b.reservedCny as number,
     availableCny: b.availableCny as number,
+  };
+}
+
+function money(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** 订阅摘要：id / planId 认不出就当没订阅，宁可少显示一块也不显示半块。 */
+function readSubscription(raw: unknown): SubscriptionSummary | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Record<string, unknown>;
+  const id = typeof s.id === "string" ? s.id : "";
+  const planId = typeof s.planId === "string" ? s.planId : "";
+  if (!id || !planId) return null;
+  return {
+    id,
+    planId,
+    cycle: typeof s.cycle === "string" ? s.cycle : "monthly",
+    expiresAt: typeof s.expiresAt === "string" ? s.expiresAt : "",
+    memberCreditsCny: money(s.memberCreditsCny),
+    dailyGrantedToday: s.dailyGrantedToday === true,
   };
 }
 
@@ -74,6 +117,7 @@ function readPrices(raw: unknown): PriceTable | undefined {
   const p = raw as Partial<PriceTable>;
   const video = (p.video ?? {}) as Partial<PriceTable["video"]>;
   const image = (p.image ?? {}) as Partial<PriceTable["image"]>;
+  const agent = (p.agent ?? {}) as Partial<PriceTable["agent"]>;
   const pick = (value: unknown, fallback: number): number =>
     typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
   const d = DEFAULT_PRICE_TABLE;
@@ -87,6 +131,7 @@ function readPrices(raw: unknown): PriceTable | undefined {
     extend: pick(p.extend, d.extend),
     edit: pick(p.edit, d.edit),
     image: { "1k": pick(image["1k"], d.image["1k"]), "2k": pick(image["2k"], d.image["2k"]) },
+    agent: { turn: pick(agent.turn, d.agent.turn) },
   };
 }
 
@@ -103,6 +148,7 @@ export async function fetchMe(): Promise<MePublic> {
     balance: readBalance(data.balance),
     prices: readPrices(data.prices),
     quota: readQuota(data.quota),
+    subscription: readSubscription((data as { subscription?: unknown }).subscription),
   };
 }
 

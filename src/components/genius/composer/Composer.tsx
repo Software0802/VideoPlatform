@@ -19,13 +19,15 @@ import {
   COUNTS,
   IMAGE_RES_LABEL,
   RES_LABEL,
-  SOON,
   VIDEO_MODES,
+  VIDEO_MODE_KEY,
   useShell,
   type ComposerTab,
   type Frame,
   type SlotTarget,
 } from "@/components/genius/ShellContext";
+import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
+import type { MessageKey } from "@/lib/i18n/messages";
 import { ModelPop } from "@/components/genius/composer/ModelPop";
 import { SpecsPop } from "@/components/genius/composer/SpecsPop";
 import { BuddyPop } from "@/components/genius/composer/BuddyPop";
@@ -49,19 +51,22 @@ import { BuddyPop } from "@/components/genius/composer/BuddyPop";
 const TAB_ICON = { video: IconVideo, image: IconPicture, audio: IconAudio } as const;
 
 /** 上传输入的可访问名。首帧沿用「上传图片」（既有 e2e 依赖），另外两个各自成名，避免同名歧义。 */
-const FILE_LABEL: Record<SlotTarget, string> = {
-  start: "上传图片",
-  last: "上传尾帧图片",
-  reference: "上传参考图片",
+const FILE_LABEL: Record<SlotTarget, MessageKey> = {
+  start: "composer.file.start",
+  last: "composer.file.last",
+  reference: "composer.file.reference",
 };
 
 export type FileRefs = Record<SlotTarget, React.RefObject<HTMLInputElement | null>>;
 
-const PLACEHOLDER: Record<ComposerTab, string> = {
-  video: "描述你想用 Genius AI 创作的内容",
-  image: "描述你想用 Genius AI 创作的图片，例如：一张具有高级感的香水产品海报",
-  audio: "输入你想让 Genius AI 转换为语音的文本",
+const PLACEHOLDER: Record<ComposerTab, MessageKey> = {
+  video: "composer.placeholder.video",
+  image: "composer.placeholder.image",
+  audio: "composer.placeholder.audio",
 };
+
+/** 音频页的两个占位模式（整页置灰，点了只提示「即将上线」）。 */
+const AUDIO_MODES: MessageKey[] = ["composer.mode.voice", "composer.mode.music"];
 
 /** 规格芯片里的分隔：视觉是 1px 竖线，文本仍是 ` | `，读屏与断言拿到的是完整一行。 */
 const Sep = () => <span className="composer__sep"> | </span>;
@@ -80,9 +85,11 @@ function Slot({
   inputRef: React.RefObject<HTMLInputElement | null>;
 }) {
   const s = useShell();
+  const t = useT();
   const last = target === "last";
   const clear = last ? s.clearLastImage : s.clearImage;
   const pick = last ? s.pickLastImage : s.pickImage;
+  const soon = t("common.comingSoon");
   return (
     <div className="composer__slot" data-slot={target} data-state={disabled ? "soon" : (frame?.state ?? "empty")}>
       {/* 「上传图片」这个名字留给下面真正的 file input：两个元素同名时 getByLabel
@@ -90,20 +97,31 @@ function Slot({
       <button
         type="button"
         className="composer__slot-btn"
-        aria-label={last ? (frame ? "更换尾帧" : "选择尾帧") : frame ? "更换图片" : "选择图片"}
+        aria-label={
+          last
+            ? frame
+              ? t("composer.slot.changeLast")
+              : t("composer.slot.pickLast")
+            : frame
+              ? t("composer.slot.changeStart")
+              : t("composer.slot.pickStart")
+        }
         aria-disabled={disabled ? true : undefined}
         title={
           disabled
-            ? SOON
-            : (frame?.message ??
-              (last ? "选择尾帧（生成会在两帧之间过渡）" : "选择首帧（放图即转为图生视频）"))
+            ? soon
+            : (frame?.message ?? (last ? t("composer.slot.titleLast") : t("composer.slot.titleStart")))
         }
-        onClick={() => (disabled ? s.showToast(SOON) : s.openPicker(target))}
+        onClick={() => (disabled ? s.showToast(soon) : s.openPicker(target))}
       >
         {frame ? (
           // 本地 ObjectURL 或「已创建」作品的地址，尺寸由 CSS 固定，不引 next/image
           // eslint-disable-next-line @next/next/no-img-element
-          <img className="composer__slot-img" src={frame.preview} alt={last ? "已选尾帧" : "已选图片"} />
+          <img
+            className="composer__slot-img"
+            src={frame.preview}
+            alt={last ? t("composer.slot.altLast") : t("composer.slot.altStart")}
+          />
         ) : last ? (
           <IconPlay size={20} />
         ) : (
@@ -111,7 +129,12 @@ function Slot({
         )}
       </button>
       {frame ? (
-        <button type="button" className="composer__slot-x" aria-label={last ? "移除尾帧" : "移除图片"} onClick={clear}>
+        <button
+          type="button"
+          className="composer__slot-x"
+          aria-label={last ? t("composer.slot.removeLast") : t("composer.slot.removeStart")}
+          onClick={clear}
+        >
           <IconClose size={11} />
         </button>
       ) : null}
@@ -120,7 +143,7 @@ function Slot({
         className="composer__file"
         type="file"
         accept="image/*"
-        aria-label={FILE_LABEL[target]}
+        aria-label={t(FILE_LABEL[target])}
         onChange={(e) => {
           pick(e.target.files?.[0]);
           s.setPop(null);
@@ -134,16 +157,17 @@ function Slot({
 /** 参考图列表：已选的若干张 + 一个「加一张」槽（到上限就不再渲染）。 */
 function RefStrip({ inputRef }: { inputRef: React.RefObject<HTMLInputElement | null> }) {
   const s = useShell();
+  const t = useT();
   return (
     <div className="composer__refs" data-count={s.refs.length}>
       {s.refs.map((f, i) => (
         <div className="composer__ref" key={`${f.preview}-${i}`} data-index={i} data-state={f.state}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="composer__ref-img" src={f.preview} alt={`参考图 ${i + 1}`} title={f.message} />
+          <img className="composer__ref-img" src={f.preview} alt={t("composer.ref.alt", { n: i + 1 })} title={f.message} />
           <button
             type="button"
             className="composer__slot-x"
-            aria-label={`移除参考图 ${i + 1}`}
+            aria-label={t("composer.ref.remove", { n: i + 1 })}
             onClick={() => s.removeRef(i)}
           >
             <IconClose size={11} />
@@ -154,8 +178,8 @@ function RefStrip({ inputRef }: { inputRef: React.RefObject<HTMLInputElement | n
         <button
           type="button"
           className="composer__ref-add"
-          aria-label="添加参考图"
-          title={`最多 ${s.maxRefs} 张参考图`}
+          aria-label={t("composer.ref.add")}
+          title={t("composer.ref.max", { n: s.maxRefs })}
           onClick={() => s.openPicker("reference")}
         >
           <IconImage size={18} />
@@ -170,7 +194,7 @@ function RefStrip({ inputRef }: { inputRef: React.RefObject<HTMLInputElement | n
         type="file"
         accept="image/*"
         multiple
-        aria-label={FILE_LABEL.reference}
+        aria-label={t(FILE_LABEL.reference)}
         onChange={(e) => {
           s.addRefImages(e.target.files);
           s.setPop(null);
@@ -181,18 +205,25 @@ function RefStrip({ inputRef }: { inputRef: React.RefObject<HTMLInputElement | n
   );
 }
 
+/** 模型芯片的文案：产品名（+ mock 实例的「· 模拟」后缀）。 */
+function modelNameOf(name: string, mock: boolean, t: Translate): string {
+  return mock ? `${name} · ${t("composer.model.mock")}` : name;
+}
+
 export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: FileRefs }) {
   const s = useShell();
+  const t = useT();
   const isVideo = s.tab === "video";
   const isImage = s.tab === "image";
   const isAudio = s.tab === "audio";
   const soon = isAudio;
-  const firstLast = isVideo && s.mode === "首尾帧";
-  const reference = isVideo && s.mode === "参考";
+  const soonText = t("common.comingSoon");
+  const firstLast = isVideo && s.mode === "firstLast";
+  const reference = isVideo && s.mode === "reference";
 
   const resLabel = isImage ? IMAGE_RES_LABEL[s.imageRes] : RES_LABEL[s.res];
   /*
-    `data-mode` 报的是**后端模式**而不是模式行上的中文名（契约 §7）：中文名里「图文」
+    `data-mode` 报的是**后端模式**而不是模式行上的名字（契约 §7）：模式名里「图文」
     一个词同时盖住文生视频与图生视频，放首帧时这个属性就不会变，也就证明不了面板确实
     切了通道。音频页后端没有对应模式，单独标 `audio`。
   */
@@ -202,18 +233,22 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
     回来时退回服务端下发的只读模型名；mock 实例一律加「· 模拟」后缀——不能让一段占位片
     看起来像是真上游出的。
   */
-  const modelName = `${s.product?.name ?? (isImage ? s.caps.imageModel : s.caps.videoModel)}${s.caps.mock ? " · 模拟" : ""}`;
+  const modelName = modelNameOf(
+    s.product?.name ?? (isImage ? s.caps.imageModel : s.caps.videoModel),
+    s.caps.mock,
+    t,
+  );
   const modelPickable = s.productChoices.length > 0;
 
   const placeholder = firstLast
-    ? "描述你想让 Genius AI 在首帧和尾帧之间创作的内容"
+    ? t("composer.placeholder.firstLast")
     : reference
-      ? "描述你想用参考图创作的内容"
-      : PLACEHOLDER[s.tab];
+      ? t("composer.placeholder.reference")
+      : t(PLACEHOLDER[s.tab]);
 
   function send() {
     if (soon) {
-      s.showToast(SOON);
+      s.showToast(soonText);
       return;
     }
     s.submit();
@@ -234,32 +269,32 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
     >
       {s.pop === "buddy" ? <BuddyPop /> : null}
 
-      <div className="composer__tabs" role="tablist" aria-label="创作类型">
-        {COMPOSER_TABS.map((t) => {
-          const Icon = TAB_ICON[t.id];
+      <div className="composer__tabs" role="tablist" aria-label={t("composer.tabs.aria")}>
+        {COMPOSER_TABS.map((tab) => {
+          const Icon = TAB_ICON[tab.id];
           return (
             <button
-              key={t.id}
+              key={tab.id}
               type="button"
               role="tab"
               className="composer__tab"
-              aria-selected={s.tab === t.id}
-              data-on={s.tab === t.id}
-              onClick={() => s.pickTab(t.id)}
+              aria-selected={s.tab === tab.id}
+              data-on={s.tab === tab.id}
+              onClick={() => s.pickTab(tab.id)}
             >
               <Icon size={13} />
-              {t.label}
+              {t(tab.labelKey)}
             </button>
           );
         })}
-        {s.collapsed ? <span className="composer__collapsed-hint">收起面板</span> : null}
+        {s.collapsed ? <span className="composer__collapsed-hint">{t("composer.collapsedHint")}</span> : null}
       </div>
 
       <div className="composer__panel">
         {/* ── 模式行 ── */}
         <div className="composer__modes">
           {isVideo ? (
-            <div className="composer__radios" role="radiogroup" aria-label="创作模式">
+            <div className="composer__radios" role="radiogroup" aria-label={t("composer.modes.aria")}>
               {VIDEO_MODES.map((m) => {
                 const usable = s.modeUsable(m);
                 return (
@@ -268,14 +303,15 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
                     type="button"
                     role="radio"
                     className="composer__mode"
+                    data-video-mode={m}
                     aria-checked={s.mode === m}
                     aria-disabled={usable ? undefined : true}
                     data-on={s.mode === m}
                     data-soon={!usable}
-                    title={usable ? undefined : SOON}
+                    title={usable ? undefined : soonText}
                     onClick={() => s.pickMode(m)}
                   >
-                    {m}
+                    {t(VIDEO_MODE_KEY[m])}
                   </button>
                 );
               })}
@@ -284,28 +320,28 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
           {isImage ? (
             // 图片页只有一条路径（text_to_image），但仍按模式行的语义渲染成单选组
             // （方案 §7.1 #5：`role="radio"` 名「默认」且 `aria-checked="true"`）。
-            <div className="composer__radios" role="radiogroup" aria-label="创作模式">
+            <div className="composer__radios" role="radiogroup" aria-label={t("composer.modes.aria")}>
               <button type="button" role="radio" className="composer__mode composer__mode--only" aria-checked data-on>
                 <IconPicture size={13} />
-                默认
+                {t("composer.mode.default")}
               </button>
             </div>
           ) : null}
           {isAudio ? (
-            <div className="composer__radios" role="radiogroup" aria-label="创作模式">
-              {["人声", "音乐"].map((m, i) => (
+            <div className="composer__radios" role="radiogroup" aria-label={t("composer.modes.aria")}>
+              {AUDIO_MODES.map((key, i) => (
                 <button
-                  key={m}
+                  key={key}
                   type="button"
                   role="radio"
                   className="composer__mode"
                   aria-checked={i === 0}
                   aria-disabled="true"
                   data-soon="true"
-                  title={SOON}
-                  onClick={() => s.showToast(SOON)}
+                  title={soonText}
+                  onClick={() => s.showToast(soonText)}
                 >
-                  {m}
+                  {t(key)}
                 </button>
               ))}
             </div>
@@ -316,22 +352,28 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
               <button
                 type="button"
                 className="composer__tool"
-                aria-label="创作搭子"
-                title="创作搭子"
+                aria-label={t("composer.tool.buddy")}
+                title={t("composer.tool.buddy")}
                 data-on={s.pop === "buddy"}
                 onClick={() => s.setPop(s.pop === "buddy" ? null : "buddy")}
               >
                 <IconWand size={15} />
               </button>
             ) : null}
-            <button type="button" className="composer__tool" aria-label="清空" title="清空" onClick={s.clearAll}>
+            <button
+              type="button"
+              className="composer__tool"
+              aria-label={t("composer.tool.clear")}
+              title={t("composer.tool.clear")}
+              onClick={s.clearAll}
+            >
               <IconBroom size={15} />
             </button>
             <button
               type="button"
               className="composer__tool composer__tool--chevron"
-              aria-label={s.collapsed ? "展开面板" : "收起面板"}
-              title={s.collapsed ? "展开面板" : "收起面板"}
+              aria-label={s.collapsed ? t("composer.tool.expand") : t("composer.tool.collapse")}
+              title={s.collapsed ? t("composer.tool.expand") : t("composer.tool.collapse")}
               data-up={s.collapsed}
               onClick={s.toggleCollapsed}
             >
@@ -347,7 +389,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
               className="composer__input"
               value={s.prompt}
               maxLength={2000}
-              aria-label="提示词"
+              aria-label={t("composer.prompt")}
               placeholder={placeholder}
               onChange={(e) => s.setPrompt(e.target.value)}
             />
@@ -378,7 +420,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
                 rows={3}
                 value={s.prompt}
                 maxLength={2000}
-                aria-label="提示词"
+                aria-label={t("composer.prompt")}
                 placeholder={placeholder}
                 onChange={(e) => s.setPrompt(e.target.value)}
                 onKeyDown={(e) => {
@@ -432,7 +474,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
               aria-disabled={s.audioAvailable ? undefined : true}
               onClick={s.toggleAudio}
             >
-              音频{s.audioAvailable ? "" : " · 暂不可用"}
+              {s.audioAvailable ? t("composer.audio.on") : t("composer.audio.off")}
               <span className="composer__track" data-on={s.audio} aria-hidden="true">
                 <span className="composer__knob" />
               </span>
@@ -441,7 +483,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
 
           {isVideo && !firstLast ? (
             <button type="button" className="composer__multi" role="switch" aria-checked={s.multi} onClick={s.toggleMulti}>
-              多镜头
+              {t("composer.multi")}
               <span className="composer__track" data-on={s.multi} aria-hidden="true">
                 <span className="composer__knob" />
               </span>
@@ -449,20 +491,20 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
           ) : null}
 
           {isImage ? null : (
-            <button type="button" className="composer__panelbtn" onClick={() => s.showToast(SOON)}>
+            <button type="button" className="composer__panelbtn" onClick={() => s.showToast(soonText)}>
               <IconSliders size={13} />
-              配置面板
+              {t("composer.panelBtn")}
               <span className="composer__pink" aria-hidden="true" />
             </button>
           )}
 
           {isAudio ? (
             <>
-              <button type="button" className="composer__panelbtn" onClick={() => s.showToast(SOON)}>
+              <button type="button" className="composer__panelbtn" onClick={() => s.showToast(soonText)}>
                 Expressive Narrator
               </button>
-              <button type="button" className="composer__panelbtn" onClick={() => s.showToast(SOON)}>
-                中文（普通话）
+              <button type="button" className="composer__panelbtn" onClick={() => s.showToast(soonText)}>
+                {t("composer.audioLang")}
               </button>
             </>
           ) : null}
@@ -472,11 +514,15 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
               <button
                 type="button"
                 className="composer__model"
-                aria-label={`模型 ${modelName}`}
+                aria-label={t("composer.model.aria", { name: modelName })}
                 aria-expanded={s.pop === "model"}
                 aria-disabled={modelPickable ? undefined : true}
                 data-on={s.pop === "model"}
-                title={modelPickable ? `当前模型 ${modelName}` : `当前模型 ${modelName}（暂无可切换的模型）`}
+                title={
+                  modelPickable
+                    ? t("composer.model.current", { name: modelName })
+                    : t("composer.model.currentLocked", { name: modelName })
+                }
                 onClick={() => (modelPickable ? s.setPop(s.pop === "model" ? null : "model") : undefined)}
               >
                 <span className="composer__model-dot" aria-hidden="true" />
@@ -489,16 +535,16 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
               <button
                 type="button"
                 className="composer__count-chip"
-                aria-label={`数量 ${s.count}`}
+                aria-label={t("composer.count.aria", { n: s.count })}
                 aria-expanded={s.pop === "count"}
                 data-on={s.pop === "count"}
-                title="一次生成几条"
+                title={t("composer.count.title")}
                 onClick={() => s.setPop(s.pop === "count" ? null : "count")}
               >
                 {s.count}
               </button>
               {s.pop === "count" ? (
-                <div className="count-pop" role="listbox" aria-label="数量">
+                <div className="count-pop" role="listbox" aria-label={t("composer.count.listAria")}>
                   {COUNTS.map((n) => (
                     <button
                       key={n}
@@ -520,15 +566,21 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
             <button
               type="button"
               className="composer__send"
-              aria-label="创作"
+              aria-label={t("composer.send")}
               data-busy={s.working}
               disabled={s.working || s.quotaExhausted || s.balanceShort}
               title={
-                s.working ? "正在创作" : s.quotaExhausted ? "今日额度已用完" : s.balanceShort ? "余额可能不够" : "创作"
+                s.working
+                  ? t("composer.send.busy")
+                  : s.quotaExhausted
+                    ? t("composer.send.quota")
+                    : s.balanceShort
+                      ? t("composer.send.balance")
+                      : t("composer.send")
               }
               onClick={send}
             >
-              创作
+              {t("composer.send")}
               <span className="composer__credits">
                 <IconBolt size={11} />
                 {s.sendCredits}
@@ -550,12 +602,13 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
 /** 收起态输入条（交接包 §3）：点任意位置展开为创作面板。 */
 export function ComposerBar() {
   const { openComposer } = useShell();
+  const t = useT();
   return (
     <button type="button" className="bar" onClick={openComposer}>
       <span className="bar__img" aria-hidden="true">
         <IconImage size={17} />
       </span>
-      <span className="bar__text">描述你想创作的内容</span>
+      <span className="bar__text">{t("composer.bar")}</span>
       <span className="bar__send" aria-hidden="true">
         <IconArrowUp size={15} />
       </span>

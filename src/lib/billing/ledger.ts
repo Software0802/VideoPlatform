@@ -2,7 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/lib/env";
 import { withUserLock } from "@/lib/users/lock";
-import type { UserRecord } from "@/lib/users/schema";
+import { subscriptionActive, type UserRecord } from "@/lib/users/schema";
 import { assertUserId, readUser, writeUser } from "@/lib/users/store";
 
 /**
@@ -12,7 +12,28 @@ import { assertUserId, readUser, writeUser } from "@/lib/users/store";
  * 的流水，供对账用——它不参与任何判定，所以一行写失败也不会让余额本身错，但反过来
  * 余额写成功、流水没写上，对账就少一条，因此顺序是「先改余额、再追加流水」，且流水
  * 里记的是改完之后的余额，任何一行都能自证。
+ *
+ * 2026-09-06 起余额有**两个池**（方案 §3.2）：`balanceCny` 是已购池（礼品码 / 管理员
+ * 充值），`memberCreditsCny` 是订阅送的会员积分池（期末清零）。扣款默认先扣会员池、
+ * 不足部分才扣已购池；入账按 `pool` 参数选池。订阅购买是唯一强制只扣已购池的调用方
+ * （`pool: "purchased"`）——否则「订阅送的积分又能拿去买订阅」就是无限套利。
+ *
+ * 默认扣款只认**有效**会员池：订阅到期后（结算是惰性的，记录可能还躺在 user.json 里）
+ * 那笔钱整笔不参与扣款，见 `poolFor`——与 `admission.loadBalanceUsage` 的准入口径同一份判据。
  */
+
+/** 余额的两个池。默认（不传）= 扣款先会员后已购、入账进已购。 */
+export type BalancePool = "purchased" | "member";
+
+export type BalanceChangeOptions = {
+  /**
+   * 指定这一笔只动哪个池。
+   * - 入账（正 delta）：钱进哪个池，缺省进已购池。
+   * - 扣款（负 delta）：`"purchased"` = 绕开会员池只扣已购（订阅购买）；
+   *   `"member"` = 只扣会员池且截在 0（期末清零）；缺省 = 先会员后已购。
+   */
+  pool?: BalancePool;
+};
 
 export const LEDGER_KINDS = ["grant", "charge", "adjust"] as const;
 export type LedgerKind = (typeof LEDGER_KINDS)[number];
@@ -32,8 +53,58 @@ export type LedgerEntry = {
    * 管理员充值没有天然的幂等键，也不需要。
    */
   giftCode?: string;
+  /**
+   * 通用幂等键（2026-09-06 订阅 / 智能体引入）。同一个人、同一 `kind`、同一 `ref` 的行
+   * 最多出现一次——订阅扣款 `sub:<幂等键>`、会员积分入账 `sub:<subId>:p<n>`、每日积分
+   * `sub:<subId>:d<YYYY-MM-DD>`、智能体一轮扣款 `agent:<turnId>` 都靠它保证重放不重复。
+   * 语义与 `jobId` / `giftCode` 完全对称，新增的补扣 / 补入账路径一律用它，不要再加新字段。
+   */
+  ref?: string;
+  /**
+   * 这笔扣款中由会员积分池承担的部分（正数，人民币元），只出现在**扣款行**上
+   * （`charge`，以及会员池清零 / 重置那两条负向 `adjust`——它们同样是「钱从会员池
+   * 出去」，不记这个字段的话那两行会长得像什么都没发生）。
+   * `amountCny` 是总扣款额；`balanceAfterCny` 只反映已购余额池，会员池余量见 `user.json`
+   * 的 `memberCreditsCny`。
+   */
+  memberCny?: number;
   note?: string;
 };
+
+/**
+ * 调用方能写的字段。`balanceAfterCny` / `at` 由内核填；`memberCny` 也是**算出来的**
+ * （由 `options.pool` 与当时的会员池余量决定），谁都不该自己报一个数进来。
+ */
+export type LedgerEntryInput = Omit<LedgerEntry, "at" | "balanceAfterCny" | "memberCny">;
+
+/**
+ * 一次变动怎么落到两个池上。纯函数，方便直接测。
+ *
+ * 会员池永不为负：`pool: "member"` 的扣款截在池子余量（清零时正好扣光），默认扣款
+ * 也只从会员池取它拿得出的部分，剩下的推给已购池——已购池允许为负（见上面的注释）。
+ */
+export function splitAcrossPools(
+  balanceCny: number,
+  memberCreditsCny: number,
+  delta: number,
+  pool?: BalancePool,
+): { balanceCny: number; memberCreditsCny: number; memberCny: number } {
+  const member = Number.isFinite(memberCreditsCny) ? Math.max(0, memberCreditsCny) : 0;
+  if (delta >= 0) {
+    return pool === "member"
+      ? { balanceCny: round2(balanceCny), memberCreditsCny: round2(member + delta), memberCny: 0 }
+      : { balanceCny: round2(balanceCny + delta), memberCreditsCny: round2(member), memberCny: 0 };
+  }
+  const need = -delta;
+  const fromMember = pool === "purchased" ? 0 : round2(Math.min(member, need));
+  // `pool: "member"` 时差额直接抹掉（不转嫁给已购池）：它的用途只有「把会员池清零」。
+  const fromPurchased = pool === "member" ? 0 : round2(need - fromMember);
+  return {
+    balanceCny: round2(balanceCny - fromPurchased),
+    memberCreditsCny: round2(member - fromMember),
+    memberCny: fromMember,
+  };
+}
 
 export function ledgerDir(): string {
   return path.join(dataDir(), "ledger");
@@ -66,9 +137,10 @@ export function ledgerFilePath(userId: string): string {
 export async function applyBalanceChange(
   userId: string,
   delta: number,
-  entry: Omit<LedgerEntry, "at" | "balanceAfterCny">,
+  entry: LedgerEntryInput,
+  options: BalanceChangeOptions = {},
 ): Promise<UserRecord> {
-  return withUserLock(() => applyBalanceChangeLocked(userId, delta, entry));
+  return withUserLock(() => applyBalanceChangeLocked(userId, delta, entry, options));
 }
 
 /**
@@ -83,7 +155,8 @@ export async function applyBalanceChange(
 export async function applyBalanceChangeLocked(
   userId: string,
   delta: number,
-  entry: Omit<LedgerEntry, "at" | "balanceAfterCny">,
+  entry: LedgerEntryInput,
+  options: BalanceChangeOptions = {},
 ): Promise<UserRecord> {
   if (!Number.isFinite(delta)) throw new Error("非法余额变动");
   const user = await readUser(userId);
@@ -96,8 +169,18 @@ export async function applyBalanceChangeLocked(
   if (entry.kind === "grant" && entry.giftCode && (await hasGiftGrantFor(userId, entry.giftCode))) {
     return user;
   }
-  const balanceCny = round2(user.balanceCny + delta);
-  const next = await writeUser({ ...user, balanceCny });
+  // 通用幂等键：同 kind + 同 ref 只记一次。
+  if (entry.ref && (await hasEntryFor(userId, entry.kind, entry.ref))) {
+    return user;
+  }
+  const split = splitAcrossPools(
+    user.balanceCny,
+    user.memberCreditsCny,
+    delta,
+    poolFor(user, delta, options.pool),
+  );
+  const balanceCny = split.balanceCny;
+  const next = await writeUser({ ...user, balanceCny, memberCreditsCny: split.memberCreditsCny });
   await appendLedger(userId, {
     at: new Date().toISOString(),
     kind: entry.kind,
@@ -105,9 +188,34 @@ export async function applyBalanceChangeLocked(
     balanceAfterCny: balanceCny,
     ...(entry.jobId ? { jobId: entry.jobId } : {}),
     ...(entry.giftCode ? { giftCode: entry.giftCode } : {}),
+    ...(entry.ref ? { ref: entry.ref } : {}),
+    ...(split.memberCny > 0 ? { memberCny: split.memberCny } : {}),
     ...(entry.note ? { note: entry.note } : {}),
   });
   return next;
+}
+
+/**
+ * 这一笔实际该动哪个池。
+ *
+ * 只在**默认扣款**（负 delta、调用方没点名池子）这一种情况下动手：订阅已经过期时，
+ * 会员池里剩下的钱是「等着被下一次结算清掉」的死账，不该再拿去付任务——准入那边
+ * （`loadBalanceUsage`）已经不把它算进 `available` 了，扣款这边要是照旧先扣会员池，
+ * 两边就会各说各话：判定按「不够」拒了，真扣起来又从一个不该存在的池子里出了钱。
+ * 过期就整笔落到已购池，与准入口径逐字一致。
+ *
+ * 显式的 `pool` 一律原样放行：`"member"` 正是清零 / 重置那条路（过期时更要能用），
+ * `"purchased"` 是订阅购买的硬约束。
+ */
+function poolFor(user: UserRecord, delta: number, pool: BalancePool | undefined): BalancePool | undefined {
+  if (pool !== undefined || delta >= 0) return pool;
+  return subscriptionActive(user) ? pool : "purchased";
+}
+
+/** 通用幂等键的判据：这个人的流水里是否已有同 `kind` 同 `ref` 的一行。 */
+export async function hasEntryFor(userId: string, kind: LedgerKind, ref: string): Promise<boolean> {
+  const rows = await readLedgerRows(userId);
+  return rows.some((row) => row.kind === kind && row.ref === ref);
 }
 
 /**
@@ -236,6 +344,8 @@ function toEntry(row: Partial<LedgerEntry>): LedgerEntry | null {
     balanceAfterCny: row.balanceAfterCny,
     ...(typeof row.jobId === "string" ? { jobId: row.jobId } : {}),
     ...(typeof row.giftCode === "string" ? { giftCode: row.giftCode } : {}),
+    ...(typeof row.ref === "string" ? { ref: row.ref } : {}),
+    ...(typeof row.memberCny === "number" && Number.isFinite(row.memberCny) ? { memberCny: row.memberCny } : {}),
     ...(typeof row.note === "string" ? { note: row.note } : {}),
   };
 }

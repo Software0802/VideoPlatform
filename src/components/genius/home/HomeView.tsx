@@ -8,7 +8,9 @@ import { isActive } from "@/lib/client/labels";
 import { productNameOf } from "@/lib/client/models";
 import { fetchTemplates, type Template } from "@/lib/client/templates";
 import { IconCheck, IconClose, IconShare, IconStar, IconTrash } from "@/components/genius/icons";
-import { SOON, creditsOf, useShell } from "@/components/genius/ShellContext";
+import { creditsOf, useShell } from "@/components/genius/ShellContext";
+import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
+import type { MessageKey } from "@/lib/i18n/messages";
 
 /*
   主页（交接包 §3）：活动横幅 → 标签页 → 分类芯片 → 瀑布流 → 底部悬浮输入条（在 Dock 里）。
@@ -22,20 +24,24 @@ import { SOON, creditsOf, useShell } from "@/components/genius/ShellContext";
   - 详情浮层：`.work__tag[data-tag]` 多选 + `.work__tag-input` 自定义（`PATCH /api/jobs/:id`）、
     `.work__delete`（二次确认 `.work__confirm`）、`.work__share`（复制 `/s/<token>`）。
   - 模板页签：`.tpl-card[data-template-id]`，点一张把提示词 / 模式 / 时长 / 画幅回填面板。
+
+  多语言：标签（`PRESET_TAGS` 与用户自建的那些）是**落盘的数据**，两种语言下都原样显示；
+  模板名 / 分类同理来自服务端。分类芯片的「全部」是一个哨兵值而不是标签，`data-cat` 保持
+  原值（e2e 与后续筛选逻辑按它取），只有可见文案跟着语言走。
 */
 
 const BANNER = "/lumina/0450bc8d80da9173.webp";
 
-/** 「全部」不是标签，是「不筛」。 */
+/** 「全部」不是标签，是「不筛」。这是 `data-cat` 上的哨兵值，不翻译（见文件头注释）。 */
 const ALL = "全部";
 const CATS = [ALL, ...PRESET_TAGS];
 
 const TABS = [
-  { id: "video", label: "视频", live: true },
-  { id: "image", label: "图片", live: true },
-  { id: "template", label: "模板", live: true },
-  { id: "challenge", label: "挑战", live: false },
-] as const;
+  { id: "video", labelKey: "home.tab.video", live: true },
+  { id: "image", labelKey: "home.tab.image", live: true },
+  { id: "template", labelKey: "home.tab.template", live: true },
+  { id: "challenge", labelKey: "home.tab.challenge", live: false },
+] as const satisfies readonly { id: string; labelKey: MessageKey; live: boolean }[];
 type TabId = (typeof TABS)[number]["id"];
 
 type Kind = "video" | "image";
@@ -59,22 +65,22 @@ type Work = {
 /** 已清理作品的占位图；绝不去请求已删掉的 /api/media/... */
 const PURGED_STILL = "/lumina/purged.svg";
 
-const SAMPLES: { id: string; prompt: string; kind: Kind; ratio: string }[] = [
-  { id: "2e9cde0e2fb0803e", prompt: "玉米田深处，一个穿银色防护服的人走来", kind: "video", ratio: "16:10" },
-  { id: "a72d8b509c55bcd0", prompt: "像素风峡谷日出，河流蜿蜒穿过山谷", kind: "video", ratio: "3:4" },
-  { id: "a1f3319d0d783e66", prompt: "雨夜的外滩，一位穿深青色风衣的女人走向江边", kind: "image", ratio: "9:16" },
-  { id: "f3bfe52263d0656d", prompt: "清晨的山谷薄雾，镜头缓慢推进", kind: "video", ratio: "4:3" },
-  { id: "d99c0972e1f99b67", prompt: "霓虹街道，慢速推轨", kind: "image", ratio: "4:5" },
-  { id: "a9008119d34b8fc1", prompt: "海岸线航拍，日落前", kind: "video", ratio: "9:16" },
-  { id: "5a09f4952b5ad9b6", prompt: "旧仓库里的一束光", kind: "image", ratio: "16:10" },
-  { id: "6f297b60448c30c9", prompt: "雪后的胡同口", kind: "video", ratio: "3:4" },
-  { id: "0450bc8d80da9173", prompt: "黏土星球，缓慢自转", kind: "video", ratio: "1:1" },
-  { id: "5edd8af76572172a", prompt: "水面碎光", kind: "image", ratio: "16:10" },
-  { id: "8c0d9035649bec1f", prompt: "低多边形群岛", kind: "video", ratio: "3:4" },
-  { id: "fd7b4eb5c10483f5", prompt: "童年玩具巨大化", kind: "image", ratio: "4:3" },
+const SAMPLES: { id: string; promptKey: MessageKey; kind: Kind; ratio: string }[] = [
+  { id: "2e9cde0e2fb0803e", promptKey: "home.sample.2e9cde0e2fb0803e", kind: "video", ratio: "16:10" },
+  { id: "a72d8b509c55bcd0", promptKey: "home.sample.a72d8b509c55bcd0", kind: "video", ratio: "3:4" },
+  { id: "a1f3319d0d783e66", promptKey: "home.sample.a1f3319d0d783e66", kind: "image", ratio: "9:16" },
+  { id: "f3bfe52263d0656d", promptKey: "home.sample.f3bfe52263d0656d", kind: "video", ratio: "4:3" },
+  { id: "d99c0972e1f99b67", promptKey: "home.sample.d99c0972e1f99b67", kind: "image", ratio: "4:5" },
+  { id: "a9008119d34b8fc1", promptKey: "home.sample.a9008119d34b8fc1", kind: "video", ratio: "9:16" },
+  { id: "5a09f4952b5ad9b6", promptKey: "home.sample.5a09f4952b5ad9b6", kind: "image", ratio: "16:10" },
+  { id: "6f297b60448c30c9", promptKey: "home.sample.6f297b60448c30c9", kind: "video", ratio: "3:4" },
+  { id: "0450bc8d80da9173", promptKey: "home.sample.0450bc8d80da9173", kind: "video", ratio: "1:1" },
+  { id: "5edd8af76572172a", promptKey: "home.sample.5edd8af76572172a", kind: "image", ratio: "16:10" },
+  { id: "8c0d9035649bec1f", promptKey: "home.sample.8c0d9035649bec1f", kind: "video", ratio: "3:4" },
+  { id: "fd7b4eb5c10483f5", promptKey: "home.sample.fd7b4eb5c10483f5", kind: "image", ratio: "4:3" },
 ];
 
-function workOf(j: JobPublic): Work | null {
+function workOf(j: JobPublic, t: Translate): Work | null {
   if (j.status !== "succeeded" || !j.output) return null;
   const purged = Boolean(j.artifactsPurgedAt);
   const out = j.output;
@@ -85,7 +91,12 @@ function workOf(j: JobPublic): Work | null {
     ...(product ? [product] : []),
     ...(image
       ? [(j.imageResolution ?? "1k").toUpperCase(), j.aspectRatio ?? "16:9"]
-      : [`${j.durationSec}s`, j.aspectRatio ?? "16:9", j.resolution ?? "720p", j.generateAudio ? "有声" : "无声"]),
+      : [
+          `${j.durationSec}s`,
+          j.aspectRatio ?? "16:9",
+          j.resolution ?? "720p",
+          j.generateAudio ? t("common.withAudio") : t("common.silent"),
+        ]),
   ];
   // 售价一律人民币 + 积分（¥1 = 100 积分）：界面上不出现美元，那是我们付给上游的成本口径
   if (j.priceCny > 0) parts.push(`${formatCny(j.priceCny)} · ⚡${creditsOf(j.priceCny)}`);
@@ -94,7 +105,7 @@ function workOf(j: JobPublic): Work | null {
     kind: out.kind,
     still: purged ? PURGED_STILL : image ? out.imageUrl : out.posterUrl,
     media: purged ? "" : image ? out.imageUrl : out.videoUrl,
-    prompt: j.prompt || "（无提示词，以首帧为准）",
+    prompt: j.prompt || t("home.noPrompt"),
     ratio: j.aspectRatio ?? "16:9",
     meta: parts.join(" · "),
     purged,
@@ -125,11 +136,12 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 /** 分享链接的有效期文案。服务端给了 `expiresAt` 就按它说，说不通时回落契约里的 24 小时。 */
-function validFor(expiresAt: string): string {
+function validFor(expiresAt: string, t: Translate): string {
   const ms = Date.parse(expiresAt) - Date.now();
-  if (!Number.isFinite(ms) || ms <= 0) return "24 小时";
+  const fallback = t("home.share.hours", { n: 24 });
+  if (!Number.isFinite(ms) || ms <= 0) return fallback;
   const hours = Math.round(ms / 3_600_000);
-  return hours >= 1 && hours <= 24 * 30 ? `${hours} 小时` : "24 小时";
+  return hours >= 1 && hours <= 24 * 30 ? t("home.share.hours", { n: hours }) : fallback;
 }
 
 export function HomeView() {
@@ -145,11 +157,12 @@ export function HomeView() {
     saveTags,
     removeJob,
   } = useShell();
+  const t = useT();
   const [tab, setTab] = useState<TabId>("video");
   const [cat, setCat] = useState<string>(ALL);
   const [openKey, setOpenKey] = useState<string | null>(null);
 
-  const works = useMemo(() => jobs.map(workOf).filter((w): w is Work => w !== null), [jobs]);
+  const works = useMemo(() => jobs.map((j) => workOf(j, t)).filter((w): w is Work => w !== null), [jobs, t]);
   const empty = works.length === 0;
   const pool: Work[] = empty
     ? SAMPLES.map((s) => ({
@@ -157,9 +170,9 @@ export function HomeView() {
         kind: s.kind,
         still: `/lumina/${s.id}.webp`,
         media: `/lumina/${s.id}.webp`,
-        prompt: s.prompt,
+        prompt: t(s.promptKey),
         ratio: s.ratio,
-        meta: "样片",
+        meta: t("home.sampleMeta"),
         purged: false,
         sample: true,
         tags: [],
@@ -201,21 +214,26 @@ export function HomeView() {
     <>
       <div className="home">
         {/* 活动横幅：交接时是占位槽，这里放交接包样片，接活动图时换掉即可 */}
-        <div className="home__banner" style={{ backgroundImage: `url(${BANNER})` }} role="img" aria-label="活动横幅" />
+        <div
+          className="home__banner"
+          style={{ backgroundImage: `url(${BANNER})` }}
+          role="img"
+          aria-label={t("home.banner")}
+        />
 
-        <div className="home__tabs" role="tablist" aria-label="作品分类">
-          {TABS.map((t) => (
+        <div className="home__tabs" role="tablist" aria-label={t("home.tabs.aria")}>
+          {TABS.map((item) => (
             <button
-              key={t.id}
+              key={item.id}
               type="button"
               role="tab"
               className="home__tab"
-              aria-selected={tab === t.id}
-              aria-disabled={t.live ? undefined : true}
-              data-on={tab === t.id}
-              onClick={() => (t.live ? setTab(t.id) : showToast(SOON))}
+              aria-selected={tab === item.id}
+              aria-disabled={item.live ? undefined : true}
+              data-on={tab === item.id}
+              onClick={() => (item.live ? setTab(item.id) : showToast(t("common.comingSoon")))}
             >
-              {t.label}
+              {t(item.labelKey)}
             </button>
           ))}
         </div>
@@ -232,7 +250,7 @@ export function HomeView() {
                 aria-pressed={cat === c}
                 onClick={() => setCat(c)}
               >
-                {c}
+                {c === ALL ? t("home.cat.all") : c}
               </button>
             ))}
           </div>
@@ -243,11 +261,11 @@ export function HomeView() {
         ) : (
           <>
             {empty ? (
-              <p className="home__empty">还没有作品，下面写一句提示词就能开始。</p>
+              <p className="home__empty">{t("home.empty.noWorks")}</p>
             ) : list.length ? null : cat === ALL ? (
-              <p className="home__empty">还没有{kind === "video" ? "视频" : "图片"}作品。</p>
+              <p className="home__empty">{kind === "video" ? t("home.empty.noVideo") : t("home.empty.noImage")}</p>
             ) : (
-              <p className="home__empty">这一类还没有作品，换个分类看看。</p>
+              <p className="home__empty">{t("home.empty.noneInCat")}</p>
             )}
 
             <div className="masonry">
@@ -264,14 +282,14 @@ export function HomeView() {
                   /* 样片没有任务；真作品带上 id，分页 / 标签 / 删除三条用例才好指名道姓 */
                   data-job-id={w.job?.id}
                   style={{ aspectRatio: aspect(w.ratio), backgroundImage: `url(${w.still})` }}
-                  title={w.purged ? `${w.prompt}（作品已过期清理）` : w.prompt}
+                  title={w.purged ? t("home.purged.title", { prompt: w.prompt }) : w.prompt}
                   onClick={() => setOpenKey(w.key)}
                 >
                   <span className="masonry__title">
                     <IconStar size={11} />
                     {short(w.prompt)}
                   </span>
-                  {w.purged ? <span className="masonry__purged">作品已过期清理</span> : null}
+                  {w.purged ? <span className="masonry__purged">{t("home.purged.badge")}</span> : null}
                 </button>
               ))}
             </div>
@@ -290,7 +308,7 @@ export function HomeView() {
                   disabled={jobsLoading}
                   onClick={() => loadMoreJobs(kind)}
                 >
-                  {jobsLoading ? "加载中…" : "加载更多"}
+                  {jobsLoading ? t("common.loading") : t("home.more")}
                 </button>
               </div>
             ) : null}
@@ -329,6 +347,7 @@ export function HomeView() {
 /* ── 模板页签 ───────────────────────────────────────────────────────── */
 
 function TemplateGrid({ onPick }: { onPick: (t: Template) => void }) {
+  const t = useT();
   const [list, setList] = useState<Template[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -336,12 +355,12 @@ function TemplateGrid({ onPick }: { onPick: (t: Template) => void }) {
     let alive = true;
     void fetchTemplates().then(
       (next) => alive && setList(next),
-      (e: unknown) => alive && setErr(e instanceof Error ? e.message : "暂时读不到模板"),
+      (e: unknown) => alive && setErr(e instanceof Error ? e.message : t("home.tpl.error")),
     );
     return () => {
       alive = false;
     };
-  }, []);
+  }, [t]);
 
   if (err) {
     return (
@@ -350,27 +369,27 @@ function TemplateGrid({ onPick }: { onPick: (t: Template) => void }) {
       </p>
     );
   }
-  if (!list) return <p className="home__empty">读取模板中…</p>;
-  if (!list.length) return <p className="home__empty">还没有可用的模板。</p>;
+  if (!list) return <p className="home__empty">{t("home.tpl.loading")}</p>;
+  if (!list.length) return <p className="home__empty">{t("home.tpl.empty")}</p>;
 
   return (
     <div className="tpl-grid">
-      {list.map((t) => (
+      {list.map((item) => (
         <button
-          key={t.id}
+          key={item.id}
           type="button"
           className="tpl-card"
-          data-template-id={t.id}
-          title={t.prompt}
-          onClick={() => onPick(t)}
+          data-template-id={item.id}
+          title={item.prompt}
+          onClick={() => onPick(item)}
         >
           <span
             className="tpl-card__cover"
-            style={t.cover ? { backgroundImage: `url(${t.cover})` } : undefined}
+            style={item.cover ? { backgroundImage: `url(${item.cover})` } : undefined}
             aria-hidden="true"
           />
-          <span className="tpl-card__name">{t.name}</span>
-          <span className="tpl-card__cat">{t.category}</span>
+          <span className="tpl-card__name">{item.name}</span>
+          <span className="tpl-card__cat">{item.category}</span>
         </button>
       ))}
     </div>
@@ -389,6 +408,7 @@ type DialogProps = {
 };
 
 function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: DialogProps) {
+  const t = useT();
   const job = work.job;
   const [tags, setTags] = useState<string[]>(work.tags);
   const [draft, setDraft] = useState("");
@@ -410,33 +430,33 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
         (e: unknown) => {
           setBusy(false);
           setTags(before);
-          setErr(e instanceof Error ? e.message : "保存标签失败");
+          setErr(e instanceof Error ? e.message : t("home.tags.saveFailed"));
         },
       );
     },
-    [busy, job, onSaveTags, tags],
+    [busy, job, onSaveTags, t, tags],
   );
 
   const toggle = useCallback(
     (tag: string) => {
       if (tags.includes(tag)) {
-        commit(tags.filter((t) => t !== tag));
+        commit(tags.filter((x) => x !== tag));
         return;
       }
       if (tags.length >= MAX_TAGS) {
-        onToast(`最多 ${MAX_TAGS} 个标签`);
+        onToast(t("home.tags.max", { n: MAX_TAGS }));
         return;
       }
       commit([...tags, tag]);
     },
-    [commit, onToast, tags],
+    [commit, onToast, t, tags],
   );
 
   const addDraft = useCallback(() => {
     const value = draft.trim();
     if (!value) return;
     if (tagLength(value) > MAX_TAG_LEN) {
-      onToast(`标签最多 ${MAX_TAG_LEN} 个字`);
+      onToast(t("home.tags.tooLong", { n: MAX_TAG_LEN }));
       return;
     }
     if (tags.includes(value)) {
@@ -444,12 +464,12 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
       return;
     }
     if (tags.length >= MAX_TAGS) {
-      onToast(`最多 ${MAX_TAGS} 个标签`);
+      onToast(t("home.tags.max", { n: MAX_TAGS }));
       return;
     }
     setDraft("");
     commit([...tags, value]);
-  }, [commit, draft, onToast, tags]);
+  }, [commit, draft, onToast, t, tags]);
 
   const share = useCallback(() => {
     if (!job || busy) return;
@@ -461,15 +481,15 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
         const full = `${window.location.origin}${link.url}`;
         const copied = await copyText(full);
         setShared({ url: full, copied });
-        const span = validFor(link.expiresAt);
-        onToast(copied ? `链接已复制，${span}有效` : `链接已生成，${span}有效，请手动复制`);
+        const span = validFor(link.expiresAt, t);
+        onToast(copied ? t("home.share.toastCopied", { span }) : t("home.share.toastManual", { span }));
       },
       (e: unknown) => {
         setBusy(false);
-        setErr(e instanceof Error ? e.message : "生成分享链接失败");
+        setErr(e instanceof Error ? e.message : t("home.share.failed"));
       },
     );
-  }, [busy, job, onToast]);
+  }, [busy, job, onToast, t]);
 
   const doDelete = useCallback(() => {
     if (!job || busy) return;
@@ -480,21 +500,21 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
       (e: unknown) => {
         setBusy(false);
         setConfirming(false);
-        setErr(e instanceof Error ? e.message : "删除失败");
+        setErr(e instanceof Error ? e.message : t("home.delete.failed"));
       },
     );
-  }, [busy, job, onDelete]);
+  }, [busy, job, onDelete, t]);
 
   // 进行中的任务服务端会 409 `job_active`；按钮先自己灰掉，不去撞那一下
   const running = !!job && isActive(job.status);
   const shareable = !!job && job.status === "succeeded" && !work.purged;
 
   return (
-    <div className="work" role="dialog" aria-modal="true" aria-label="作品详情" onClick={onClose}>
+    <div className="work" role="dialog" aria-modal="true" aria-label={t("home.dialog.aria")} onClick={onClose}>
       <div className="work__panel" onClick={(e) => e.stopPropagation()}>
         <div className="work__media">
           {work.purged ? (
-            <p className="work__purged">作品已过期清理，超过留存期的成片与素材已删除，可用这条提示词重新生成。</p>
+            <p className="work__purged">{t("home.purged.note")}</p>
           ) : work.kind === "video" ? (
             <video src={work.media} poster={work.still} controls playsInline preload="metadata" />
           ) : (
@@ -510,29 +530,29 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
 
         {job ? (
           <div className="work__tags">
-            <span className="work__tags-label">标签</span>
-            {[...PRESET_TAGS, ...tags.filter((t) => !(PRESET_TAGS as readonly string[]).includes(t))].map((t) => {
-              const on = tags.includes(t);
+            <span className="work__tags-label">{t("home.tags.label")}</span>
+            {[...PRESET_TAGS, ...tags.filter((x) => !(PRESET_TAGS as readonly string[]).includes(x))].map((tag) => {
+              const on = tags.includes(tag);
               return (
                 <button
-                  key={t}
+                  key={tag}
                   type="button"
                   className="work__tag"
-                  data-tag={t}
+                  data-tag={tag}
                   data-on={on}
                   aria-pressed={on}
                   disabled={busy}
-                  onClick={() => toggle(t)}
+                  onClick={() => toggle(tag)}
                 >
                   {on ? <IconCheck size={11} /> : null}
-                  {t}
+                  {tag}
                 </button>
               );
             })}
             <input
               className="work__tag-input"
-              aria-label="自定义标签"
-              placeholder="自定义标签"
+              aria-label={t("home.tags.custom")}
+              placeholder={t("home.tags.custom")}
               value={draft}
               /* 按码点判长度（上面的 `tagLength`）；`maxLength` 数的是 UTF-16 单元，
                  卡在 16 会让一串 emoji 提前被浏览器截断，所以这里放宽一倍只当兜底。 */
@@ -551,7 +571,7 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
 
         {shared ? (
           <p className="work__shared" data-share-url={shared.url}>
-            {shared.copied ? "链接已复制：" : "请手动复制："}
+            {shared.copied ? t("home.share.copiedPrefix") : t("home.share.manualPrefix")}
             <span className="work__shared-url">{shared.url}</span>
           </p>
         ) : null}
@@ -562,30 +582,30 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
         ) : null}
 
         {confirming ? (
-          <div className="work__confirm" role="alertdialog" aria-label="确认删除">
-            <span className="work__confirm-text">删除后不可恢复，成片与素材一并移除。</span>
+          <div className="work__confirm" role="alertdialog" aria-label={t("home.delete.confirmAria")}>
+            <span className="work__confirm-text">{t("home.delete.confirmText")}</span>
             <button type="button" className="work__btn" disabled={busy} onClick={() => setConfirming(false)}>
-              取消
+              {t("common.cancel")}
             </button>
             <button type="button" className="work__btn work__btn--danger" disabled={busy} onClick={doDelete}>
-              {busy ? "删除中…" : "确认删除"}
+              {busy ? t("home.delete.deleting") : t("home.delete.confirm")}
             </button>
           </div>
         ) : null}
 
         <div className="work__actions">
           <button type="button" className="work__btn" onClick={onReuse}>
-            用这条提示词再生成
+            {t("home.reuse")}
           </button>
           {work.purged || work.sample ? null : (
             <a className="work__btn work__btn--light" href={`${work.media}?download=1`} download>
-              下载
+              {t("common.download")}
             </a>
           )}
           {shareable ? (
             <button type="button" className="work__btn work__share" disabled={busy} onClick={share}>
               <IconShare size={13} />
-              分享
+              {t("common.share")}
             </button>
           ) : null}
           {job ? (
@@ -593,16 +613,16 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
               type="button"
               className="work__btn work__delete"
               disabled={busy || running || confirming}
-              title={running ? "任务进行中，先取消再删除" : "删除这件作品"}
+              title={running ? t("home.delete.running") : t("home.delete.title")}
               onClick={() => setConfirming(true)}
             >
               <IconTrash size={13} />
-              删除
+              {t("common.delete")}
             </button>
           ) : null}
-          <button type="button" className="work__close" aria-label="关闭" onClick={onClose}>
+          <button type="button" className="work__close" aria-label={t("common.close")} onClick={onClose}>
             <IconClose size={15} />
-            关闭
+            {t("common.close")}
           </button>
         </div>
       </div>

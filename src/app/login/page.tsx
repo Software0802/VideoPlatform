@@ -1,13 +1,18 @@
+import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { LoginScreen } from "@/components/genius/LoginScreen";
+import { MESSAGES } from "@/lib/i18n/messages";
+import { resolveLocale } from "@/lib/i18n/server";
 import { SESSION_COOKIE, sessionUserFromValue } from "@/lib/users/session";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = {
-  title: "登录 · Genius",
-};
+/** 标题跟着 Cookie / `Accept-Language` 走，与页面里的文案同源。 */
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await resolveLocale();
+  return { title: MESSAGES[locale]["login.metaTitle"] };
+}
 
 /**
  * `/login` is a page, not `/api/*`, so `src/proxy.ts` never gates it — it is the

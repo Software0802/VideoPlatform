@@ -15,7 +15,9 @@ import { newInviteCode, serverDataDir, writeInvite } from "./invites";
  * Replaces `e2e/lumen.spec.ts` (the old single-screen Genius home). Same mock-mode
  * gate, same funded account: `auth.setup.ts` registers through the real API and
  * tops it up ¥1000 = 100000 积分 (¥1 = 100, AGENTS.md hard rule) before any test
- * here runs, so the very first test can assert an exact credits figure.
+ * here runs. That account is shared with every other spec (`agent.spec.ts` spends
+ * from it too), so credits assertions here are **relative** — a shape check plus a
+ * before/after difference — never a hard-coded absolute figure.
  *
  * Where §7's table doesn't pin a detail, the choice is corroborated against
  * `design_handoff/design_handoff_genius_app/Genius App.dc.html` (the prototype's own
@@ -64,8 +66,18 @@ function taskById(page: Page, jobId: string): Locator {
   return page.locator(`.task[data-job-id="${jobId}"]`);
 }
 
-/** `.top__credits`'s `aria-label="积分 n"` (§7) — a structured read, never a full-string compare. */
+/**
+ * `.top__credits`'s `aria-label="积分 n"` (§7) — a structured read, never a full-string compare.
+ *
+ * 顶栏读数的唯一来源是客户端的 `/api/me`；它落地之前 `ShellContext` 渲染的是 0
+ * （`credits = balance ? … : 0`）。本文件用的账号被 `auth.setup.ts` 充过 ¥1000，永远不会
+ * 真的是 0，所以「读到 0」只可能是还没到——等它，而不是把这个中间态当成余额：那会让
+ * 「失败不扣款」一类的前后差值断言随机变红（`creditsBeforeFail` 读成 0）。
+ */
 async function creditsNow(page: Page): Promise<number> {
+  await expect
+    .poll(async () => (await topCredits(page).getAttribute("aria-label")) ?? "", { timeout: 15_000 })
+    .toMatch(/^积分 [1-9]\d*$/);
   const label = await topCredits(page).getAttribute("aria-label");
   const n = Number(/^积分 (\d+)$/.exec(label ?? "")?.[1]);
   expect(Number.isFinite(n), `.top__credits 的 aria-label 应形如"积分 n"，实际 "${label}"`).toBeTruthy();
@@ -190,11 +202,14 @@ test("空态：壳水合、侧栏五项、顶栏标题与积分、收起态输�
   }
   await expect(nav.getByRole("link", { name: "主页" })).toHaveAttribute("aria-current", "page");
 
-  // 顶栏标题 + 积分。账号是 auth.setup.ts 用 grant-balance.mjs 充值的 ¥1000，
-  // 按 ¥1=100 积分（AGENTS.md 硬约束）换算就是 100000——这是本文件第一条用例，
-  // 后面的用例才开始真的花钱，所以这里可以断言精确值而不是宽松的 ">0"。
+  // 顶栏标题 + 积分。账号是 auth.setup.ts 用 grant-balance.mjs 充值的 ¥1000（¥1=100 积分，
+  // AGENTS.md 硬约束）。这里**不**钉死 100000：账号是全套 e2e 共用的，`agent.spec.ts`
+  // 一类用例可能先跑并真的花掉一部分积分，精确值会因为跨 spec 的执行顺序而红。
+  // 这条用例要证的是「顶栏读的是真余额」——形状对、还有钱，就够了；花掉多少由那条
+  // 「按估价扣积分」的用例用**相对差值**去证。
   await expect(page.locator(".top__title")).toHaveText("主页");
-  await expect(topCredits(page)).toHaveAttribute("aria-label", "积分 100000");
+  await expect(topCredits(page)).toHaveAttribute("aria-label", /^积分 \d+$/);
+  expect(await creditsNow(page)).toBeGreaterThan(0);
 
   // 瀑布流空态（composer 还没打开，"视频/图片"这两个 tab 名不会跟面板内的同名 tab 冲突）
   const main = page.getByRole("main");

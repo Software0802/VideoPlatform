@@ -182,30 +182,42 @@ async function readLedger(userId) {
   return rows;
 }
 
+/**
+ * 一行流水归到哪一列。
+ *
+ * 2026-09-06 起流水里多了两类**与任务无关**的行（订阅、智能体），它们和「任务侧售价」
+ * 是两笔生意，混在一起会让最后那条对账永远对不上：
+ *
+ *  · `charge` 带 `ref`、没有 `jobId` → 订阅费（`sub:*`）或智能体轮次费（`agent:*`）。
+ *    它们不对应任何一条任务，绝不能进「任务侧扣款」那一列。
+ *  · `grant` 的 `ref` 以 `sub:` 开头 → 订阅送的会员积分（进会员池，`pool:"member"`）。
+ *    那不是充值，把它算进「充值」等于把我们自己发的券当成收入。
+ */
+function ledgerColumn(row) {
+  if (row.kind === "grant") return String(row.ref ?? "").startsWith("sub:") ? "member" : "grant";
+  if (row.kind === "charge") return !row.jobId && row.ref ? "nonJob" : "charge";
+  if (row.kind === "adjust") return "adjust";
+  return null;
+}
+
 const ledgerRows = [];
 for (const user of users) {
   if (wantedOwner !== undefined && user.id !== wantedOwner) continue;
   const rows = await readLedger(user.id);
-  let grant = 0;
-  let charge = 0;
-  let adjust = 0;
+  const sums = { grant: 0, member: 0, charge: 0, nonJob: 0, adjust: 0 };
   let counted = 0;
   for (const row of rows) {
     const at = dayKey(row.at);
     if (day !== undefined && at !== day) continue;
-    const amount = Number(row.amountCny) || 0;
-    if (row.kind === "grant") grant += amount;
-    else if (row.kind === "charge") charge += amount;
-    else if (row.kind === "adjust") adjust += amount;
+    const column = ledgerColumn(row);
+    if (column) sums[column] += Number(row.amountCny) || 0;
     counted += 1;
   }
-  if (counted === 0 && grant === 0 && charge === 0 && adjust === 0 && rows.length === 0) continue;
+  if (counted === 0 && rows.length === 0) continue;
   ledgerRows.push({
     email: user.email,
     rows: counted,
-    grant,
-    charge,
-    adjust,
+    ...sums,
     balance: balanceOf.get(user.id) ?? 0,
   });
 }
@@ -299,18 +311,35 @@ table("合计", headersFor(""), [toRow("总计", overall)]);
 
 table(
   "流水核对（data/ledger）",
-  ["账号", "流水行", "充值¥", "扣款¥", "纠正¥", "当前余额¥"],
+  ["账号", "流水行", "充值¥", "会员发放¥", "任务扣款¥", "订阅/智能体¥", "纠正¥", "当前余额¥"],
   ledgerRows
     .sort((a, b) => a.email.localeCompare(b.email))
-    .map((r) => [r.email, String(r.rows), money(r.grant), money(r.charge), money(r.adjust), money(r.balance)]),
+    .map((r) => [
+      r.email,
+      String(r.rows),
+      money(r.grant),
+      money(r.member),
+      money(r.charge),
+      money(r.nonJob),
+      money(r.adjust),
+      money(r.balance),
+    ]),
 );
 
-// 任务侧「成功任务售价之和」应当等于流水侧扣款的绝对值（扣款记负数）。对不上不是
-// 错误——补扣可能还挂着、或者有手工纠正——但它是唯一能自动发现「钱少扣了」的地方。
+// 任务侧「成功任务售价之和」应当等于流水侧**任务扣款**的绝对值（扣款记负数）。订阅费与
+// 智能体轮次费不在这条等式里：它们没有对应的任务，算进来只会让差额恒不为零，把这条
+// 唯一能自动发现「钱少扣了」的线索变成噪音。对不上仍不算错误——补扣可能还挂着、或者
+// 有手工纠正——但它现在真的只反映任务侧。
 const chargedFromLedger = ledgerRows.reduce((sum, r) => sum + r.charge, 0);
+const nonJobCharged = ledgerRows.reduce((sum, r) => sum + r.nonJob, 0);
+const memberGranted = ledgerRows.reduce((sum, r) => sum + r.member, 0);
 const diff = Math.round((overall.cny + chargedFromLedger) * 100) / 100;
 process.stdout.write(
-  `\n对账: 任务侧已计费 ¥${money(overall.cny)} vs 流水侧扣款 ¥${money(-chargedFromLedger)}` +
+  `\n对账: 任务侧已计费 ¥${money(overall.cny)} vs 流水侧任务扣款 ¥${money(-chargedFromLedger)}` +
     (diff === 0 ? "（一致）" : `（差 ¥${money(diff)}，请核对补扣与人工纠正）`) +
     "\n",
+);
+process.stdout.write(
+  `不参与上式: 订阅 / 智能体扣款 ¥${money(-nonJobCharged)}` +
+    `，会员积分发放 ¥${money(memberGranted)}（进会员池，不是充值）\n`,
 );

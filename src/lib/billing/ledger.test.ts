@@ -12,6 +12,7 @@ import type { UserRecord } from "@/lib/users/schema";
 
 let dataRoot = "";
 let applyBalanceChange: typeof import("./ledger").applyBalanceChange;
+let splitAcrossPools: typeof import("./ledger").splitAcrossPools;
 let ledgerFilePath: typeof import("./ledger").ledgerFilePath;
 let hasChargeFor: typeof import("./ledger").hasChargeFor;
 let readLedger: typeof import("./ledger").readLedger;
@@ -21,7 +22,9 @@ let readUser: typeof import("@/lib/users/store").readUser;
 beforeAll(async () => {
   dataRoot = await mkdtemp(path.join(os.tmpdir(), "lumen-ledger-test-"));
   process.env.DATA_DIR = dataRoot;
-  ({ applyBalanceChange, ledgerFilePath, hasChargeFor, readLedger } = await import("./ledger"));
+  ({ applyBalanceChange, ledgerFilePath, hasChargeFor, readLedger, splitAcrossPools } = await import(
+    "./ledger"
+  ));
   ({ writeUser, readUser } = await import("@/lib/users/store"));
 });
 
@@ -34,7 +37,33 @@ function userId(tag: string): string {
   return `usr_${tag.padStart(16, "0")}`;
 }
 
-async function seedUser(id: string, balanceCny: number): Promise<UserRecord> {
+const DAY_MS = 86_400_000;
+
+/** 一份还没到期（或已经到期）的订阅，用来给会员池一个合法的存在理由。 */
+function subscriptionRecord(expiresInDays: number) {
+  const startedAt = new Date(Date.now() - DAY_MS).toISOString();
+  return {
+    id: "sub_00000000000000ff",
+    planId: "standard" as const,
+    cycle: "monthly" as const,
+    startedAt,
+    expiresAt: new Date(Date.now() + expiresInDays * DAY_MS).toISOString(),
+    periodIndex: 0,
+    periodStartedAt: startedAt,
+  };
+}
+
+/**
+ * 有会员积分就顺手配一份**生效中**的订阅：默认扣款只认有效会员池（`poolFor`），
+ * 一个没有订阅撑着的会员池在扣款眼里等于零——那是「孤儿池」，等着下一次结算清掉。
+ * 要验那条路的用例传 `expiresInDays` 为负数。
+ */
+async function seedUser(
+  id: string,
+  balanceCny: number,
+  memberCreditsCny = 0,
+  expiresInDays = 30,
+): Promise<UserRecord> {
   return writeUser({
     id,
     email: `${id}@example.com`,
@@ -42,6 +71,8 @@ async function seedUser(id: string, balanceCny: number): Promise<UserRecord> {
     sessionEpoch: 1,
     plan: "free",
     balanceCny,
+    memberCreditsCny,
+    ...(memberCreditsCny > 0 ? { subscription: subscriptionRecord(expiresInDays) } : {}),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
@@ -178,6 +209,140 @@ describe("applyBalanceChange charge idempotency", () => {
 
     expect((await readUser(id))?.balanceCny).toBe(17);
     expect(await readLedgerLines(id)).toHaveLength(5);
+  });
+});
+
+
+/**
+ * 两个池（订阅方案 §3.2）。会员池是订阅送的、期末清零的那份钱，任务扣款先扣它；
+ * 订阅购买反过来只许扣已购池——否则「买订阅得积分 → 用积分再买订阅」就是无限套利。
+ */
+describe("两个池的扣款与入账", () => {
+  it("扣款先扣会员池，超出的部分才扣已购池，流水记下会员池承担的那一半", async () => {
+    const id = userId("c1");
+    await seedUser(id, 10, 4);
+
+    const next = await applyBalanceChange(id, -6, { kind: "charge", amountCny: -6, jobId: "job_pool" });
+    expect(next.memberCreditsCny).toBe(0);
+    expect(next.balanceCny).toBe(8);
+
+    const line = (await readLedgerLines(id))[0];
+    // balanceAfterCny 只说已购池；会员池承担的部分单独记 memberCny，两个数加起来才是这一笔。
+    expect(line).toMatchObject({ kind: "charge", amountCny: -6, balanceAfterCny: 8, memberCny: 4 });
+  });
+
+  it("会员池够付时一分钱都不动已购池，也不写 memberCny 之外的东西", async () => {
+    const id = userId("c2");
+    await seedUser(id, 10, 5);
+    const next = await applyBalanceChange(id, -3, { kind: "charge", amountCny: -3, jobId: "job_m" });
+    expect(next.memberCreditsCny).toBe(2);
+    expect(next.balanceCny).toBe(10);
+    expect((await readLedgerLines(id))[0]).toMatchObject({ balanceAfterCny: 10, memberCny: 3 });
+  });
+
+  it("pool:purchased 绕开会员池（订阅购买），会员池原封不动", async () => {
+    const id = userId("c3");
+    await seedUser(id, 10, 5);
+    const next = await applyBalanceChange(
+      id,
+      -8,
+      { kind: "charge", amountCny: -8, ref: "sub:sub_1" },
+      { pool: "purchased" },
+    );
+    expect(next.balanceCny).toBe(2);
+    expect(next.memberCreditsCny).toBe(5);
+    expect((await readLedgerLines(id))[0]).not.toHaveProperty("memberCny");
+  });
+
+  it("pool:member 的入账只进会员池，已购池与它的 balanceAfterCny 都不变", async () => {
+    const id = userId("c4");
+    await seedUser(id, 10, 0);
+    const next = await applyBalanceChange(
+      id,
+      12,
+      { kind: "grant", amountCny: 12, ref: "sub:sub_1:p0" },
+      { pool: "member" },
+    );
+    expect(next.memberCreditsCny).toBe(12);
+    expect(next.balanceCny).toBe(10);
+    expect((await readLedgerLines(id))[0]).toMatchObject({ balanceAfterCny: 10, amountCny: 12 });
+  });
+
+  it("pool:member 的扣款截在池子余量，绝不把差额转嫁给已购池", async () => {
+    const id = userId("c5");
+    await seedUser(id, 10, 3);
+    const next = await applyBalanceChange(
+      id,
+      -3,
+      { kind: "adjust", amountCny: -3, ref: "sub:sub_1:end" },
+      { pool: "member" },
+    );
+    expect(next.memberCreditsCny).toBe(0);
+    expect(next.balanceCny).toBe(10);
+  });
+
+  it("同 kind + 同 ref 的重放不重复入账（订阅的每一步都靠它幂等）", async () => {
+    const id = userId("c6");
+    await seedUser(id, 0, 0);
+    for (let i = 0; i < 3; i += 1) {
+      await applyBalanceChange(
+        id,
+        0.6,
+        { kind: "grant", amountCny: 0.6, ref: "sub:sub_1:d2026-09-06" },
+        { pool: "member" },
+      );
+    }
+    expect((await readUser(id))?.memberCreditsCny).toBe(0.6);
+    expect(await readLedgerLines(id)).toHaveLength(1);
+  });
+
+  it("订阅已过期时默认扣款整笔走已购池，一分钱都不从会员池出", async () => {
+    const id = userId("c7");
+    // 昨天就到期了，但结算是惰性的（还没有任何请求读过这个账号），所以会员池还留着 5 元。
+    await seedUser(id, 10, 5, -1);
+    const next = await applyBalanceChange(id, -4, {
+      kind: "charge",
+      amountCny: -4,
+      jobId: "job_expired_member",
+    });
+    // 准入那边已经不把这 5 元算进 available 了；扣款这边要是照旧先扣会员池，
+    // 两边就会各说各话——过期积分照样花得出去。
+    expect(next.balanceCny).toBe(6);
+    expect(next.memberCreditsCny).toBe(5);
+    expect((await readLedgerLines(id))[0]).not.toHaveProperty("memberCny");
+  });
+
+  it("过期之后 pool:member 的清零照样能扣：结算就是靠它把死账扫掉的", async () => {
+    const id = userId("c8");
+    await seedUser(id, 10, 5, -1);
+    const next = await applyBalanceChange(
+      id,
+      -5,
+      { kind: "adjust", amountCny: -5, ref: "sub:sub_00000000000000ff:end" },
+      { pool: "member" },
+    );
+    expect(next.memberCreditsCny).toBe(0);
+    expect(next.balanceCny).toBe(10);
+  });
+
+  it("splitAcrossPools 是纯函数：会员池永不为负，已购池允许为负", () => {
+    expect(splitAcrossPools(10, 4, -6)).toEqual({ balanceCny: 8, memberCreditsCny: 0, memberCny: 4 });
+    expect(splitAcrossPools(1, 0, -3)).toEqual({ balanceCny: -2, memberCreditsCny: 0, memberCny: 0 });
+    expect(splitAcrossPools(10, 4, -6, "purchased")).toEqual({
+      balanceCny: 4,
+      memberCreditsCny: 4,
+      memberCny: 0,
+    });
+    expect(splitAcrossPools(10, 4, -9, "member")).toEqual({
+      balanceCny: 10,
+      memberCreditsCny: 0,
+      memberCny: 4,
+    });
+    expect(splitAcrossPools(10, 4, 5, "member")).toEqual({
+      balanceCny: 10,
+      memberCreditsCny: 9,
+      memberCny: 0,
+    });
   });
 });
 

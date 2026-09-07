@@ -33,6 +33,10 @@ export default defineConfig({
     video: "off",
     ...devices["Desktop Chrome"],
     viewport: { width: 1440, height: 900 },
+    // 多语言（2026-09-06）：站点按 Cookie / Accept-Language 选语言，Chromium 默认 en-US
+    // 会把整站渲染成英文、打红全部中文选择器。固定成简体中文；英文由 e2e/i18n.spec.ts 显式切换验证。
+    locale: "zh-CN",
+    extraHTTPHeaders: { "accept-language": "zh-CN" },
   },
   projects: [
     // `/api/*` needs a session now (plan §4): this project registers/logs in a

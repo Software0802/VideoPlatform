@@ -107,6 +107,9 @@ describe("priceCny rounding", () => {
       extend: 3,
       edit: 4,
       image: { "1k": 0.5, "2k": 1 },
+      // 智能体一轮的售价（2026-09-06 新增档）。这条用例只测视频档的浮点取整，
+      // 但 `PriceTable` 是完整形状，缺一项就编译不过。
+      agent: { turn: 0.05 },
     };
     // 0.1 * 3 is 0.30000000000000004 in raw IEEE754 float arithmetic.
     expect(priceCny({ mode: "text_to_video", durationSec: 5, resolution: "1080p" }, table)).toBe(0.3);

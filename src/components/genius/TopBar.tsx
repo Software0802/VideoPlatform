@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { IconBell, IconBolt, IconGlobe, IconKey, IconLogout, IconTag } from "@/components/genius/icons";
+import { IconBell, IconBolt, IconKey, IconLogout, IconTag } from "@/components/genius/icons";
+import { LanguageSwitch } from "@/components/genius/LanguageSwitch";
 import { PasswordDialog } from "@/components/genius/PasswordDialog";
 import { useShell } from "@/components/genius/ShellContext";
+import { useT } from "@/components/genius/i18n/I18nProvider";
 import { VIEW_TITLE, type ShellView } from "@/components/genius/views";
 
 /*
   顶栏 56px（交接包 §2）。右侧簇：订阅胶囊 → 账户芯片（头像首字 · 账号名 · ⚡积分 · 基础版）
-  → 语言（仅样式）/ 通知（真的）→ 头像（点开小菜单：邮箱 + 修改密码 + 退出）。
+  → 语言（真的，切换即时生效）/ 通知（真的）→ 头像（点开小菜单：邮箱 + 修改密码 + 退出）。
   全部 nowrap + flex:none，簇本身不加 overflow:hidden（交接包 §9.2）。
 
   阶段 B：铃铛接账号级事件流（`GET /api/events`）。红点 = 未读数（`.top__dot[data-count]`），
@@ -20,6 +22,7 @@ import { VIEW_TITLE, type ShellView } from "@/components/genius/views";
 const shortName = (email: string) => email.split("@")[0] || email;
 const initial = (email: string) => (shortName(email)[0] ?? "·").toUpperCase();
 
+/** 月-日 时:分。纯数字，两种语言下读法相同（也避开服务端 / 浏览器 ICU 输出不一致的水合风险）。 */
 function clock(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -50,6 +53,7 @@ function useDismiss(open: boolean, close: () => void) {
 
 export function TopBar({ view }: { view: ShellView }) {
   const { email, credits, signOut, signingOut, showToast, notices, unread, markNoticesRead, openNotice } = useShell();
+  const t = useT();
   const [menu, setMenu] = useState(false);
   const [bell, setBell] = useState(false);
   const [pwd, setPwd] = useState(false);
@@ -58,11 +62,11 @@ export function TopBar({ view }: { view: ShellView }) {
 
   return (
     <header className="top">
-      <span className="top__title">{VIEW_TITLE[view]}</span>
+      <span className="top__title">{t(VIEW_TITLE[view])}</span>
       <div className="top__cluster">
         <Link className="top__sub" href="/subscription">
           <IconTag size={13} />
-          订阅
+          {t("shell.top.subscribe")}
         </Link>
         <div className="top__account">
           <span className="top__chip-avatar" aria-hidden="true">
@@ -72,22 +76,20 @@ export function TopBar({ view }: { view: ShellView }) {
             {shortName(email)}
           </span>
           <span className="top__sep" aria-hidden="true" />
-          <span className="top__credits" aria-label={`积分 ${credits}`}>
+          <span className="top__credits" aria-label={t("common.creditsN", { n: credits })}>
             <IconBolt size={12} />
             {credits}
           </span>
-          <span className="top__plan">基础版</span>
+          <span className="top__plan">{t("shell.top.plan.basic")}</span>
         </div>
-        {/* 语言在窄屏上让位（`.top__icon--lang`）；铃铛不能一起藏——通知是真功能 */}
-        <button type="button" className="top__icon top__icon--lang" aria-label="语言" onClick={() => showToast("即将上线")}>
-          <IconGlobe size={17} />
-        </button>
+        {/* 语言是真功能，窄屏上也留着（旧版只是占位，才让位给别的芯片） */}
+        <LanguageSwitch className="lang--top" />
 
         <div className="top__bell" ref={bellBox}>
           <button
             type="button"
             className="top__icon"
-            aria-label={unread ? `通知 ${unread} 条未读` : "通知"}
+            aria-label={unread ? t("shell.top.notificationsUnread", { n: unread }) : t("shell.top.notifications")}
             aria-expanded={bell}
             onClick={() => {
               setBell((v) => !v);
@@ -99,8 +101,8 @@ export function TopBar({ view }: { view: ShellView }) {
             {unread ? <span className="top__dot" data-count={unread} aria-hidden="true" /> : null}
           </button>
           {bell ? (
-            <div className="notify" role="region" aria-label="通知">
-              <span className="notify__title">通知</span>
+            <div className="notify" role="region" aria-label={t("shell.top.notifications")}>
+              <span className="notify__title">{t("shell.top.notifications")}</span>
               {notices.length ? (
                 <ul className="notify__list">
                   {notices.map((n) => (
@@ -125,7 +127,7 @@ export function TopBar({ view }: { view: ShellView }) {
                   ))}
                 </ul>
               ) : (
-                <p className="notify__empty">还没有新通知。任务完成时会出现在这里。</p>
+                <p className="notify__empty">{t("shell.notify.empty")}</p>
               )}
             </div>
           ) : null}
@@ -135,7 +137,7 @@ export function TopBar({ view }: { view: ShellView }) {
           <button
             type="button"
             className="top__avatar"
-            aria-label="账户"
+            aria-label={t("shell.top.account")}
             aria-expanded={menu}
             onClick={() => setMenu((v) => !v)}
           >
@@ -158,11 +160,11 @@ export function TopBar({ view }: { view: ShellView }) {
                 }}
               >
                 <IconKey size={14} />
-                修改密码
+                {t("shell.top.changePassword")}
               </button>
               <button type="button" className="top__menu-item" disabled={signingOut} onClick={signOut}>
                 <IconLogout size={14} />
-                {signingOut ? "退出中" : "退出"}
+                {signingOut ? t("shell.top.signingOut") : t("shell.top.signOut")}
               </button>
             </div>
           ) : null}

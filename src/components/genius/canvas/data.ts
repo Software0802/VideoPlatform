@@ -2,7 +2,11 @@
  * 画布视图的占位数据。
  * 对应原型 design_handoff/design_handoff_genius_app/Genius App.dc.html 的
  * TOOLS / CANVAS_MODELS / RTE / CTEXT / P 常量。本视图不接后端。
+ *
+ * 多语言之后这里只留**结构与不随语言变的值**（图片、坐标、工具英文名、分类 id）；
+ * 一切给人看的中文文案都挪进了 `src/lib/i18n/messages/<locale>/canvas.ts`，这里存键名。
  */
+import type { MessageKey } from "@/lib/i18n/messages";
 
 const LUMINA_NAMES = [
   "2e9cde0e2fb0803e",
@@ -39,60 +43,49 @@ export const SCENE_H = 620;
 export const FIT_PAD_X = 108;
 export const FIT_PAD_Y = 16;
 
-export type ToolCat = "图像生成" | "视频生成" | "音频与人声" | "实用";
+/** 分类 id 是 ASCII（筛选判据不能跟着语言变），显示名在字典里。 */
+export type ToolCat = "image" | "video" | "audio" | "util";
 
 export type Tool = { name: string; uses: number; cat: ToolCat };
 
-export const TOOL_CATS = ["全部", "图像生成", "视频生成", "音频与人声", "实用"] as const;
+export const TOOL_CAT_ALL = "all" as const;
+export const TOOL_CATS = [TOOL_CAT_ALL, "image", "video", "audio", "util"] as const;
+export type ToolCatFilter = (typeof TOOL_CATS)[number];
 
+export const TOOL_CAT_KEY: Record<ToolCatFilter, MessageKey> = {
+  all: "canvas.cat.all",
+  image: "canvas.cat.image",
+  video: "canvas.cat.video",
+  audio: "canvas.cat.audio",
+  util: "canvas.cat.util",
+};
+
+/** 工具名是原型里刻意保留的英文（`DESIGN.md`「与交接包的有意偏离」），不进字典。 */
 export const TOOLS: Tool[] = [
-  { name: "Flight overhead view", uses: 618, cat: "视频生成" },
-  { name: "Live2D Motion", uses: 313, cat: "视频生成" },
-  { name: "Dutch Angle Motion", uses: 219, cat: "视频生成" },
-  { name: "Character Information", uses: 155, cat: "实用" },
-  { name: "Right Orbit Glide", uses: 101, cat: "视频生成" },
-  { name: "Dove Dissolve Transition", uses: 93, cat: "视频生成" },
-  { name: "Armor POV", uses: 73, cat: "图像生成" },
-  { name: "Storyboard Motion", uses: 65, cat: "实用" },
-  { name: "Photo retouching", uses: 63, cat: "图像生成" },
-  { name: "Suspenseful and thrilling", uses: 63, cat: "音频与人声" },
-  { name: "Character Design Reference", uses: 62, cat: "图像生成" },
+  { name: "Flight overhead view", uses: 618, cat: "video" },
+  { name: "Live2D Motion", uses: 313, cat: "video" },
+  { name: "Dutch Angle Motion", uses: 219, cat: "video" },
+  { name: "Character Information", uses: 155, cat: "util" },
+  { name: "Right Orbit Glide", uses: 101, cat: "video" },
+  { name: "Dove Dissolve Transition", uses: 93, cat: "video" },
+  { name: "Armor POV", uses: 73, cat: "image" },
+  { name: "Storyboard Motion", uses: 65, cat: "util" },
+  { name: "Photo retouching", uses: 63, cat: "image" },
+  { name: "Suspenseful and thrilling", uses: 63, cat: "audio" },
+  { name: "Character Design Reference", uses: 62, cat: "image" },
 ];
 
-export type CanvasModel = { key: string; name: string; full: string; desc: string };
+export type CanvasModel = { key: string; name: string; full: string; descKey: MessageKey };
 
 export const CANVAS_MODELS: CanvasModel[] = [
-  {
-    key: "Claude",
-    name: "Claude",
-    full: "Claude Sonnet 4.6",
-    desc: "擅长复杂推理、长上下文理解和高质量写作",
-  },
-  { key: "Seed", name: "Seed", full: "Seed-2.0-pro", desc: "中文理解能力强，非常适合创意生成和图片任务" },
-  { key: "Qwen", name: "Qwen", full: "Qwen-3-max", desc: "平衡的通用能力，助力高性价比的日常创作" },
+  { key: "Claude", name: "Claude", full: "Claude Sonnet 4.6", descKey: "canvas.model.claude" },
+  { key: "Seed", name: "Seed", full: "Seed-2.0-pro", descKey: "canvas.model.seed" },
+  { key: "Qwen", name: "Qwen", full: "Qwen-3-max", descKey: "canvas.model.qwen" },
 ];
 
 export const RTE_ITEMS = ["H1", "H2", "H3", "¶", "B", "I", "A", "1.", "•", "—"] as const;
 /** 富文本条当前高亮项的下标（原型固定第 4 个「¶」）。 */
 export const RTE_ACTIVE = 3;
-
-/** 文本 1 节点的正文（原型 CTEXT）。 */
-export const NODE_TEXT_1 =
-  "为一款便携式投影仪创作一张 4:5 的社交媒体信息流广告。夜晚的城市屋顶上，三位年轻朋友正在观看投影到白墙上的电影，周围环绕着温暖的串灯。将便携式投影仪置于地面在前景中，清晰展示产品。添加醒目的标题「随时随地，畅享影院」，辅助文案「大屏之夜，随行随实」，并在右下角设置「立刻购买」按钮。写实商业摄影，Instagram 和 Facebook DTC 广告风格，移动端优先构图，版式简洁，文字少而清晰易读。";
-
-/** 空提示词时点发送写入的占位提示词（原型 canvasSend）。 */
-export const SEED_PROMPT = "我要生成一个一家人在家里看恐龙摧毁城市的视频";
-export const VIDEO_SEED_PROMPT = "根据提示词生成视频";
-
-/** 生成完成后节点里渲染的占位结果（原型 nodeDone）。 */
-export const RESULT_BLOCK = {
-  title: "便携投影仪 · 社交媒体广告方案",
-  concept: "广告概念：「家庭恐龙之夜」",
-  sceneLabel: "场景描述",
-  scene:
-    "核心画面：一家三口坐在客厅地板上，投影仪把恐龙横穿城市的画面投到白墙上，孩子伸手去碰投影里的恐龙。",
-  layoutLabel: "广告版式（4:5）",
-};
 
 export const SKELETON_ROWS = ["92%", "78%", "86%", "64%", "90%", "52%"] as const;
 

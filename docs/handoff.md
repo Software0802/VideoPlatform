@@ -2,20 +2,81 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 更新日期 | 2026-09-06 深夜（阶段 B + 架构第二阶段：作品分页/标签/删除/分享/模板/事件流、账号自助改密与运维 CLI、安全限流与请求追踪、稳态索引与轮询阶梯——**工作区未提交改动，叠加在下方 §0g 阶段 A 改动之上**，详见新 §0） |
-| 基线 | `main` @ `ffa29b8` + 本轮工作区未提交改动（§0，架构方案 `docs/plan-architecture-2026-09.md` 阶段二 / 用户方案 `docs/plan-users-quota.md`）。阶段 A「面板补全 + 礼品码」详见 §0g；UI 换壳详见 §0e；此前可灵直连视频详见 §0c；用户系统 / 配额 / 留存清理详见 §0b |
+| 更新日期 | 2026-09-07 凌晨（智能体 · 多语言 · 订阅定价三线并行——**工作区未提交改动，主代理收尾后统一提交并部署**，详见新 §0；此前一轮「阶段 B + 架构第二阶段」降级为 §0h） |
+| 基线 | `main` @ `444def9` + 本轮工作区未提交改动（§0，方案 `docs/plan-agent-i18n-subscription-2026-09.md`）。§0h（此前「阶段 B + 架构第二阶段」，原 §0）、§0g（阶段 A「面板补全 + 礼品码」）、§0e（UI 换壳）、§0c（可灵直连视频）、§0b（用户系统 / 配额 / 留存清理）均已合入基线，两轮以上叠加改动均未提交，无法分别单独回滚 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33，three 0.185 |
-| 门禁状态 | 本轮（§0，工作区未提交）：`pnpm exec tsc --noEmit` 绿、`pnpm exec eslint src` 绿、`pnpm test` 929 通过、`pnpm e2e` 21/21 通过；Codex 跨厂商审查进行中，结论未在任务书中给出，新会话接手前先向主代理确认审查状态。上一轮（阶段 A，§0g）：由 code-reviewer 子智能体审查（Codex 额度受限），13 条 findings，必修 3 条与顺手 9 条均已修复。再上一轮（UI 换壳，§0e）：`tsc --noEmit` 绿、`eslint src` 绿、`pnpm test` 71 文件 / 681 通过、1 条 skip、`pnpm e2e` 12/12 通过 |
-| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新账号余额为 0，提交前需管理员用 `node scripts/grant-balance.mjs <邮箱> <金额> --note "..."` 充值（见下 §0d.一）。首次部署 / 首次跑本轮改动前需 `cp -r data-seed/templates data/templates`（模板 seed，见新 §0「上线检查清单」） |
-| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。**本轮尚未部署**；`scripts/deploy.sh` 已加回滚判定，`scripts/backup.sh` 待首次在服务器手动跑通并加入 cron。步骤见 §0a.4 |
+| 门禁状态 | 本轮（§0，工作区未提交）：`pnpm exec tsc --noEmit` 绿、`pnpm exec eslint src` 绿、`pnpm test` 1036 通过 1 skip、`pnpm e2e` 29/29 通过；由 code-reviewer 子代理审查（Codex 额度耗尽）21 条 findings，必修 9 条已修。上一轮（§0h）：`pnpm test` 929 通过、`pnpm e2e` 21/21 通过；Codex 跨厂商审查进行中，结论未在任务书中给出。再上一轮（阶段 A，§0g）：由 code-reviewer 子智能体审查（Codex 额度受限），13 条 findings，必修 3 条与顺手 9 条均已修复 |
+| 运行 | `pnpm dev` → http://localhost:3000；未登录访问 `/` 会 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`）。无任何生图/视频 key 即 mock 模式；新账号余额为 0，提交前需管理员用 `node scripts/grant-balance.mjs <邮箱> <金额> --note "..."` 充值（见下 §0d.一）。首次部署 / 首次跑本轮改动前需 `cp -r data-seed/templates data/templates`（模板 seed，见 §0h「上线检查清单」）；智能体要真的可用还需单独配 `AGENT_API_KEY`+`AGENT_BASE_URL`，否则回落 `XAI_API_KEY`（`grok-4.6`），两者都没有则智能体接口 503 `agent_unavailable`（不影响生图/视频） |
+| 生产部署 | 阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。**本轮（§0）尚未部署**；`scripts/deploy.sh` 已加回滚判定，`scripts/backup.sh` 待首次在服务器手动跑通并加入 cron。步骤见 §0a.4 |
 
 架构综合审查与治理路线见 `docs/plan-architecture-2026-09.md`（2026-09-06，三维度审查收敛，阶段一已完成，§5 用户已拍板）。
 
-新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，新增 §2d 余额与计费）、`docs/plan-architecture-2026-09.md`（本轮方案与阶段路线）、`DESIGN.md`（UI 规格）。
+新会话先读本文，再按需读 `AGENTS.md`（规则）、`docs/design.md`（后端 as-built，新增 §2h 智能体、§2i 订阅与会员池、§13 多语言）、`docs/plan-agent-i18n-subscription-2026-09.md`（本轮方案）、`docs/plan-architecture-2026-09.md`（阶段路线）、`DESIGN.md`（UI 规格）。
 
 ---
 
-## 0. 本轮（2026-09-06 深夜）：阶段 B + 架构第二阶段——作品管理 / 账号自助 / 稳态与索引
+## 0. 本轮（2026-09-07 凌晨）：智能体 · 多语言 · 订阅定价
+
+方案 `docs/plan-agent-i18n-subscription-2026-09.md`。基线 `main`@`444def9`。用户原话三件事：完成智能体功能模块、完成多语言功能模块、订阅页价格按「上游成本 ÷ (1−15%毛利率)」定价并完成页面开发，三步通过测试后上线。**工作区未提交改动，主代理收尾后统一提交并部署**。
+
+### 已实现
+
+**智能体**（`src/lib/agent/`、`src/app/api/agent/`、`src/components/genius/agent/**`）
+
+- `llm.ts`：OpenAI 兼容 chat，提供方顺序 mock（`isMockMode()`）→ `AGENT_API_KEY`+`AGENT_BASE_URL`（默认 `api.openai.com/v1`，模型 `AGENT_CHAT_MODEL` 默认 `gpt-4o-mini`）→ `XAI_API_KEY`（`grok-4.6`）→ 都没有则 503 `agent_unavailable`，绝不静默落 mock。
+- `skills.ts` 20 个技能定义；`store.ts` 会话落 `data/agent/<userId>/<sessionId>.json`，单用户上限 200。
+- `run-turn.ts`：先判可用 → 扣一轮费 ¥0.05（`priceTable().agent.turn`，`ref:"agent:<turnId>"`）→ LLM 输出 JSON → 每个 action 先过 `POST /api/jobs` 同一个限流桶（新 `src/lib/jobs/rate-limit.ts`）再 `createJob`（幂等 key `agent:<turnId>:<i>`）→ LLM 整体失败时按 `ref:"agent:<turnId>:refund"` 退款。
+- API：`GET/POST /api/agent/sessions`、`GET/PATCH/DELETE /api/agent/sessions/:id`、`POST /api/agent/sessions/:id/messages`（20 次/分钟）、`GET /api/agent/skills`。
+- 前端 `src/components/genius/agent/**` 全接真数据；不可用时置灰「智能体暂未开放」。
+- 生产两家中转（ccgoai / YMan）实测无对话模型，上线时须单独配 `AGENT_API_KEY` 才能真用（见上「运行」行）。
+
+**多语言**（`src/lib/i18n/`、`src/components/genius/i18n/`、`LanguageSwitch.tsx`）
+
+- `zh-CN`/`en` 两语，Cookie `lumen_locale`，`Accept-Language` 兜底；`messages/<locale>/<ns>.ts` 每视图一个命名空间，`zh-CN` 为键的事实源，`en` 类型强制补全（漏译编译期报错）。
+- `I18nProvider`/`useT()` 挂在根布局；`LanguageSwitch.tsx` 出现在顶栏与登录页。
+- 模式/标签的 `data-*` id 已 ASCII 化，DOM 契约（如 `data-mode`）未变。
+- `playwright.config.ts` 钉 `locale: zh-CN` + `accept-language`，保证既有中文断言的 e2e 不受语言切换影响。
+- 服务端错误文案不翻译（已知未做）。
+
+**订阅**（`src/lib/billing/plans.ts`、`subscription.ts`、`src/app/api/subscription/`、`src/components/genius/subscription/`）
+
+- 四档：标准 1200 / 专业 6000 / 尊享 15000 / 至尊 25000 积分每 30 天 + 每日 60；`costRatio = max(默认视频产品 5s 成本÷售价, 默认图片产品 1K 成本÷售价)`，「默认产品」= `VIDEO_PROVIDER_ORDER`/`IMAGE_PROVIDER_ORDER` 首位 provider 在全目录里的第一个产品（不随 provider 耗尽抖动）；月费 = `ceil1(积分/100 × costRatio ÷ (1−0.15))`（向上取 0.1 元），年费 = 12×月费（360 天不打折）。生产配置下 `ratio≈0.54` 对应标准 ¥19.1 / 专业 ¥49.6 / 尊享 ¥106.8 / 至尊 ¥170.3 月费。
+- 会员积分独立池 `user.json.memberCreditsCny`（`ledger.ts` 扣款先扣会员池、再扣已购池；过期会员池不认；流水新增 `memberCny` 字段；`admission.ts` 新增 `effectiveMemberCny`）——**硬约束：订阅只能用已购池购买（否则形成套利），锁序恒为 admission → user**。
+- `purchaseSubscription`（用户锁内）：必填 `idempotencyKey`（订阅 id 由 key 推导）；扣款 `ref:"sub:<key>"` 只扣已购池；可购额 = `balanceCny − max(0, reserved − 有效会员积分)`，余额不足报 402 并带 `purchasableCny`；已有有效订阅 409，同 key 重放 200。
+- `settleSubscription` 惰性结算：到期清零、跨期重置、按日发放，无条件补发本期 grant，走无锁快路径。
+- `GET/POST /api/subscription`（不下发成本比例）；`GET /api/me` 先结算再回 `balance`（含 `memberCreditsCny`）。
+- `scripts/usage.mjs` 对账把 `sub:*`/`agent:*` 扣款与会员发放分列展示。
+- 无支付网关，已购池只靠礼品码 / 管理员 CLI 充值（沿用 §0g 的机制）。
+
+**通用**：`src/lib/billing/ledger.ts` 加通用幂等键 `ref`（供智能体/订阅复用同一套幂等语义）。
+
+### 已知未做 / 待处理
+
+- 生产两家中转（ccgoai / YMan）实测无对话模型，须单独配 `AGENT_API_KEY` 才能让智能体真正可用。
+- 服务端 API 的错误文案不翻译（前端已按错误码映射的继续映射；直接透传中文的保持原样）。
+- 无支付网关，已购池只靠礼品码 / 管理员 CLI，无自助充值入口。
+
+### 设计取舍
+
+| 项 | 取舍 | 原因（本任务书给出） |
+| --- | --- | --- |
+| 「实际价格」口径 | 用**上游成本**（付给 provider 的人民币），不是面向用户的售价表 | 「毛利率」是成本口径的词；售价本身已含毛利，再加成说不通 |
+| 加成算法 | `price = cost / (1 − 0.15)` | 财务口径的毛利率定义，常量 `GROSS_MARGIN` 一处可改 |
+| 订阅积分独立池（会员池，期末清零） | 订阅只能用已购余额购买；订阅送的积分进独立会员池，扣款先扣会员池 | 若送进同一已购池，「低于面值的钱买到面值积分」可无限套利 |
+
+### 门禁
+
+`pnpm exec tsc --noEmit` 绿；`pnpm exec eslint src` 绿；`pnpm test` 1036 通过 1 skip；`pnpm e2e` 29/29 通过。审查改由 code-reviewer 子代理完成（Codex 额度耗尽），21 条 findings，必修 9 条均已修复。
+
+### 上线检查清单（部署前必须过一遍）
+
+- 服务器 `.env` 需加 `AGENT_API_KEY`+`AGENT_BASE_URL`（+可选 `AGENT_CHAT_MODEL`），否则智能体只能回落 `XAI_API_KEY`（若也没配则智能体接口 503，不影响生图/视频）。
+- 备份脚本白名单已补 `agent/`（`data/agent/<userId>/<sessionId>.json`）与 `templates/`（主代理 2026-09-07 收尾时改 `scripts/backup.sh`），服务器侧首次跑 `backup.sh` 时核对包内含这两个目录。
+- §0h 的上线检查清单（分享令牌 / 磁盘告警 / crontab / ECS 快照等环境变量与运维待办）仍然有效，见下 §0h。
+
+---
+
+## 0h. 此前一轮（2026-09-06 深夜）：阶段 B + 架构第二阶段——作品管理 / 账号自助 / 稳态与索引
 
 
 > **部署记录**：`dc922b4` + `9292199`/续行符修复 已于 2026-09-06 深夜部署生产（`bash scripts/deploy.sh`）；远端自动落种 6 条模板到 `data/templates`，`data/jobs/index.json` 已生成；公网 health 匿名只回 `{ok:true}`、`/api/templates` 需会话、伪造分享 token 404、响应带 `x-request-id`；同机 taiyu 正常。生产 `.env` 未新增变量（`MAX_QUEUED_JOBS_PER_USER`、`SHARE_TTL_HOURS`、`UPSTREAM_POLL_MAX_MS`、`YMAN_TASK_TIMEOUT_MS` 均用默认；`ALERT_WEBHOOK_URL` 未配）。
@@ -66,7 +127,7 @@
 - 删除失败任务会让止损阀（`FREE_DAILY_FAILURE_LIMIT`）计数相应减少，余额与预留不受影响——是否符合预期待用户确认。
 - 通知只在当前会话内有效，刷新页面不保留。
 - 模板 cover 图目前是占位图，未接入真实缩略。
-- 订阅页价格数字仍是原型美元占位值，未与人民币计费对齐。
+- 订阅页价格数字对齐人民币计费一事已在 §0（2026-09-07 凌晨）完成，此条不再适用。
 - `ClothVeil.tsx` 与 `src/shaders/` 已确认无任何组件引用，待清理，本轮未删。
 
 ### 设计取舍

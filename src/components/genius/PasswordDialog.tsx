@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { changePassword, passwordErrorMessage } from "@/lib/client/auth";
+import { useT } from "@/components/genius/i18n/I18nProvider";
 
 /*
   修改密码弹窗（阶段 B）：旧密码 / 新密码 / 确认新密码 → `POST /api/auth/password`。
@@ -11,13 +12,15 @@ import { changePassword, passwordErrorMessage } from "@/lib/client/auth";
   `http.ts` 接住并整页跳 `/login`，不需要在这里再猜一遍。
 
   DOM 契约：`.pwd[role="dialog"]`，三个输入框按 `aria-label` 取（当前密码 / 新密码 /
-  确认新密码），错误行 `.pwd__err[role="alert"]`。
+  确认新密码），错误行 `.pwd__err[role="alert"]`。服务端回的错误文案（`passwordErrorMessage`）
+  仍是中文，不在本轮多语言范围内。
 */
 
 /** 与 `LoginScreen` 同一条下限（服务端才是事实源，这里只是不让必被 400 的请求出门）。 */
 const MIN_LEN = 8;
 
 export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDone: (message: string) => void }) {
+  const t = useT();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [again, setAgain] = useState("");
@@ -27,19 +30,19 @@ export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDon
   const submit = useCallback(() => {
     if (busy) return;
     if (!current || !next) {
-      setErr("请填写当前密码与新密码");
+      setErr(t("shell.pwd.err.required"));
       return;
     }
     if (next.length < MIN_LEN) {
-      setErr(`新密码至少 ${MIN_LEN} 位`);
+      setErr(t("shell.pwd.err.short", { n: MIN_LEN }));
       return;
     }
     if (next !== again) {
-      setErr("两次输入的新密码不一致");
+      setErr(t("shell.pwd.err.mismatch"));
       return;
     }
     if (next === current) {
-      setErr("新密码不能与当前密码相同");
+      setErr(t("shell.pwd.err.same"));
       return;
     }
     setBusy(true);
@@ -47,17 +50,17 @@ export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDon
     void changePassword({ currentPassword: current, newPassword: next }).then(
       () => {
         setBusy(false);
-        onDone("密码已修改，其它设备已下线");
+        onDone(t("shell.pwd.done"));
       },
       (e: unknown) => {
         setBusy(false);
         setErr(passwordErrorMessage(e));
       },
     );
-  }, [again, busy, current, next, onDone]);
+  }, [again, busy, current, next, onDone, t]);
 
   return (
-    <div className="pwd" role="dialog" aria-modal="true" aria-label="修改密码" onClick={onClose}>
+    <div className="pwd" role="dialog" aria-modal="true" aria-label={t("shell.pwd.title")} onClick={onClose}>
       <form
         className="pwd__panel"
         onClick={(e) => e.stopPropagation()}
@@ -66,14 +69,14 @@ export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDon
           submit();
         }}
       >
-        <span className="pwd__title">修改密码</span>
-        <p className="pwd__hint">修改成功后，其它设备上的登录会被下线。</p>
+        <span className="pwd__title">{t("shell.pwd.title")}</span>
+        <p className="pwd__hint">{t("shell.pwd.hint")}</p>
         <input
           className="pwd__input"
           type="password"
-          aria-label="当前密码"
+          aria-label={t("shell.pwd.current")}
           autoComplete="current-password"
-          placeholder="当前密码"
+          placeholder={t("shell.pwd.current")}
           value={current}
           autoFocus
           maxLength={200}
@@ -82,9 +85,9 @@ export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDon
         <input
           className="pwd__input"
           type="password"
-          aria-label="新密码"
+          aria-label={t("shell.pwd.next")}
           autoComplete="new-password"
-          placeholder={`新密码（至少 ${MIN_LEN} 位）`}
+          placeholder={t("shell.pwd.nextPlaceholder", { n: MIN_LEN })}
           value={next}
           maxLength={200}
           onChange={(e) => setNext(e.target.value)}
@@ -92,9 +95,9 @@ export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDon
         <input
           className="pwd__input"
           type="password"
-          aria-label="确认新密码"
+          aria-label={t("shell.pwd.again")}
           autoComplete="new-password"
-          placeholder="再输一次新密码"
+          placeholder={t("shell.pwd.againPlaceholder")}
           value={again}
           maxLength={200}
           onChange={(e) => setAgain(e.target.value)}
@@ -106,10 +109,10 @@ export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDon
         ) : null}
         <div className="pwd__actions">
           <button type="button" className="pwd__btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
           <button type="submit" className="pwd__btn pwd__btn--go" disabled={busy}>
-            {busy ? "提交中…" : "确认修改"}
+            {busy ? t("shell.pwd.submitting") : t("shell.pwd.submit")}
           </button>
         </div>
       </form>

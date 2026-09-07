@@ -1,50 +1,63 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { TOOLS, TOOL_CATS, shot } from "./data";
+import { TOOLS, TOOL_CATS, TOOL_CAT_ALL, TOOL_CAT_KEY, shot, type ToolCatFilter } from "./data";
 import { IconClose, IconFilter, IconSearch } from "./icons";
+import { useT } from "@/components/genius/i18n/I18nProvider";
+import type { MessageKey } from "@/lib/i18n/messages";
 
 type Props = {
   onClose: () => void;
   onApply: (toolName: string) => void;
 };
 
-const TABS = ["社区工具", "我的工具"] as const;
+/** 两个页签的 id 是 ASCII，显示名在字典里。 */
+const TABS = [
+  { id: "community", labelKey: "canvas.toolbox.tab.community" },
+  { id: "mine", labelKey: "canvas.toolbox.tab.mine" },
+] as const satisfies readonly { id: string; labelKey: MessageKey }[];
 
 /** 工具箱抽屉（原型图 30）：400 宽，社区 / 我的工具 + 搜索 + 分类芯片 + 工具列表。 */
 export default function CanvasToolbox({ onClose, onApply }: Props) {
-  const [tab, setTab] = useState<string>(TABS[0]);
-  const [cat, setCat] = useState<string>(TOOL_CATS[0]);
+  const t = useT();
+  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("community");
+  const [cat, setCat] = useState<ToolCatFilter>(TOOL_CAT_ALL);
   const [query, setQuery] = useState("");
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const base = tab === "我的工具" ? TOOLS.slice(0, 3) : TOOLS;
+    const base = tab === "mine" ? TOOLS.slice(0, 3) : TOOLS;
     return base.filter(
-      (t) => (cat === "全部" || t.cat === cat) && (q === "" || t.name.toLowerCase().includes(q)),
+      (tool) => (cat === TOOL_CAT_ALL || tool.cat === cat) && (q === "" || tool.name.toLowerCase().includes(q)),
     );
   }, [tab, cat, query]);
 
   return (
-    <aside className="canvas-toolbox" aria-label="工具箱">
+    <aside className="canvas-toolbox" aria-label={t("canvas.toolbox.title")}>
       <div className="canvas-toolbox__head">
-        <span className="canvas-toolbox__title">工具箱</span>
-        <button type="button" className="canvas-toolbox__close" aria-label="关闭工具箱" onClick={onClose}>
+        <span className="canvas-toolbox__title">{t("canvas.toolbox.title")}</span>
+        <button
+          type="button"
+          className="canvas-toolbox__close"
+          aria-label={t("canvas.toolbox.close")}
+          onClick={onClose}
+        >
           <IconClose />
         </button>
       </div>
 
       <div className="canvas-toolbox__tabs">
-        {TABS.map((t) => (
+        {TABS.map((item) => (
           <button
             type="button"
-            key={t}
+            key={item.id}
             className="canvas-toolbox__tab"
-            aria-pressed={t === tab}
-            data-on={t === tab ? "true" : undefined}
-            onClick={() => setTab(t)}
+            data-tab={item.id}
+            aria-pressed={item.id === tab}
+            data-on={item.id === tab ? "true" : undefined}
+            onClick={() => setTab(item.id)}
           >
-            {t}
+            {t(item.labelKey)}
           </button>
         ))}
       </div>
@@ -55,12 +68,12 @@ export default function CanvasToolbox({ onClose, onApply }: Props) {
           <input
             className="canvas-toolbox__input"
             value={query}
-            aria-label="搜索工具"
-            placeholder="搜索工具"
+            aria-label={t("canvas.toolbox.search")}
+            placeholder={t("canvas.toolbox.search")}
             onChange={(e) => setQuery(e.target.value)}
           />
         </span>
-        <button type="button" className="canvas-toolbox__filter" aria-label="筛选">
+        <button type="button" className="canvas-toolbox__filter" aria-label={t("canvas.toolbox.filter")}>
           <IconFilter />
         </button>
       </div>
@@ -71,29 +84,30 @@ export default function CanvasToolbox({ onClose, onApply }: Props) {
             type="button"
             key={c}
             className="canvas-toolbox__cat"
+            data-cat={c}
             aria-pressed={c === cat}
             data-on={c === cat ? "true" : undefined}
             onClick={() => setCat(c)}
           >
-            {c}
+            {t(TOOL_CAT_KEY[c])}
           </button>
         ))}
       </div>
 
       <div className="canvas-toolbox__list">
-        {rows.map((t, i) => (
-          <div className="canvas-tool" key={t.name}>
+        {rows.map((tool, i) => (
+          <div className="canvas-tool" key={tool.name}>
             <span className="canvas-tool__shot" style={{ backgroundImage: `url(${shot(i)})` }} />
             <span className="canvas-tool__body">
-              <span className="canvas-tool__name">{t.name}</span>
-              <span className="canvas-tool__meta">{t.uses} 次使用 · 作者 hu…</span>
+              <span className="canvas-tool__name">{tool.name}</span>
+              <span className="canvas-tool__meta">{t("canvas.toolbox.uses", { n: tool.uses })}</span>
             </span>
-            <button type="button" className="canvas-tool__apply" onClick={() => onApply(t.name)}>
-              应用到画布
+            <button type="button" className="canvas-tool__apply" onClick={() => onApply(tool.name)}>
+              {t("canvas.toolbox.apply")}
             </button>
           </div>
         ))}
-        {rows.length === 0 ? <p className="canvas-toolbox__empty">没有匹配的工具。</p> : null}
+        {rows.length === 0 ? <p className="canvas-toolbox__empty">{t("canvas.toolbox.empty")}</p> : null}
       </div>
     </aside>
   );

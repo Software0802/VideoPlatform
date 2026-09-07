@@ -216,6 +216,34 @@ flowchart TB
 
 **UI**:顶栏账号名旁显示「余额 ¥x」(≤520px 与账号名一起隐藏);提交面板显示「本次约 ¥x · 余额 ¥y」,当前配置超出可用余额时提示「当前配置,余额可能不够,请充值」并禁用发送;卡片(作品环 / 最近成片 / 工作室详情)显示售价(元)与「有声/无声」标签而不是美元成本(`costUsdActual` 只留管理员对账用)。视频 provider 是否真的支持音轨由 `/api/health` 与 `page.tsx` 下发的 `audioAvailable` 判定(可灵读 `KLING_VIDEO_AUDIO`,grok/mock 恒真);实例不支持时「有声」芯片锁死在无声并标「暂不可用」,不隐藏入口。
 
+## 2h. 智能体(2026-09-07 凌晨,as-built)
+
+方案 `docs/plan-agent-i18n-subscription-2026-09.md`。用户在智能体首页输入想法,进入会话;每一轮智能体用 LLM 回复并**按需真的创建生成任务**(文生图 / 文生视频,走与 `POST /api/jobs` 相同的服务层)。
+
+- LLM 客户端 `src/lib/agent/llm.ts`:OpenAI 兼容 `chat.completions`,提供方顺序 mock(`isMockMode()`)→ `AGENT_API_KEY`+`AGENT_BASE_URL`(默认 `api.openai.com/v1`,模型 `AGENT_CHAT_MODEL` 默认 `gpt-4o-mini`)→ `XAI_API_KEY`(`grok-4.6`)→ 都没有则 503 `agent_unavailable`,**绝不静默落 mock**。生产已配的 ccgoai / YMan 两家中转实测没有对话模型,须单独配 `AGENT_API_KEY` 才能真用。
+- 技能 `src/lib/agent/skills.ts`:20 个真实技能定义(id、中英文名与描述、system prompt 片段)。
+- 会话存储 `src/lib/agent/store.ts`:`data/agent/<userId>/<sessionId>.json`,`ownerId` 校验非本人 404,单用户上限 200 条,列表按 `updatedAt` 倒序。
+- 一轮定价 `src/lib/agent/run-turn.ts`:先判可用 → 扣一轮费 ¥0.05(`priceTable().agent.turn`,`applyBalanceChange` 幂等键 `ref:"agent:<turnId>"`)→ LLM 输出 JSON(`{ reply, actions[] }`,每轮最多 2 个 action)→ 每个 action 先过 `POST /api/jobs` 同一个限流桶(`src/lib/jobs/rate-limit.ts`)再 `createJob`(幂等 key `agent:<turnId>:<i>`),单个 action 失败(余额不足/校验 400)写进回复消息里而不是让整轮失败;LLM 调用本身失败则整轮退款(`ref:"agent:<turnId>:refund"`)。
+- API:`GET/POST /api/agent/sessions`、`GET/PATCH/DELETE /api/agent/sessions/:id`、`POST /api/agent/sessions/:id/messages`(20 次/分钟/用户)、`GET /api/agent/skills`。
+- 前端 `src/components/genius/agent/**` 全接真数据,不可用时置灰「智能体暂未开放」。
+
+## 2i. 订阅与会员积分池(2026-09-07 凌晨,as-built)
+
+方案 `docs/plan-agent-i18n-subscription-2026-09.md`。用户原话:订阅价格 = 上游成本 × 加成(毛利率 15%)。
+
+**定价** `src/lib/billing/plans.ts`:四档 1200/6000/15000/25000 积分每 30 天,每档每日另赠 60 积分。`costRatio = max(默认视频产品 5 秒档成本÷售价, 默认图片产品 1K 成本÷售价)`;「默认产品」= 产品目录中、provider 排在 `VIDEO_PROVIDER_ORDER`/`IMAGE_PROVIDER_ORDER` 首位的那个(与路由第一落点一致,不随 provider 耗尽抖动)。月费 `= ceil1( 积分/100 × costRatio ÷ (1 − 0.15) )`(向上取到 0.1 元,`GROSS_MARGIN=0.15`);年费 `= 12 × 月费`,360 天不打折。生产配置下 `costRatio≈0.54` 对应标准 ¥19.1 / 专业 ¥49.6 / 尊享 ¥106.8 / 至尊 ¥170.3 月费。
+
+**会员积分池**(`user.json.memberCreditsCny`,与已购余额 `balanceCny` 独立):
+
+- **硬约束**:订阅只能用**已购池**购买(`purchaseSubscription` 只看 `balanceCny`),否则「低于面值的钱买到面值积分」形成无限套利;订阅送的积分进独立会员池,到期或跨期清零。
+- 扣款(`src/lib/billing/ledger.ts`)顺序固定:先扣会员池,不足部分再扣已购池,流水行记 `memberCny` 字段;`admission.ts` 新增 `effectiveMemberCny` 供准入判定读取「有效(未过期)会员积分」。
+- 锁序恒为 admission → user,不得颠倒。
+- `purchaseSubscription`(用户锁内):必填 `idempotencyKey`(订阅 id 由 key 推导);扣款 `ref:"sub:<key>"`;可购额 `= balanceCny − max(0, reserved − 有效会员积分)`,不足报 402 `insufficient_balance` 并带 `purchasableCny`;已有有效订阅报 409 `subscription_active`;同一 key 重放返回 200。
+- `settleSubscription`(惰性结算,`GET /api/me`/`GET /api/subscription` 前调用):到期清零、跨 30 天期重置为本期积分、按 Asia/Shanghai 自然日无条件补发当日积分;无变更时走无锁快路径。
+- API:`GET/POST /api/subscription`(不下发 `costRatio` 等成本口径);`GET /api/me` 的 `balance` 含 `memberCreditsCny`。
+- `scripts/usage.mjs` 对账把 `sub:*`(订阅扣款/发放)与 `agent:*`(智能体扣款/退款)分列展示。
+- 无支付网关,已购余额只能靠礼品码(§12.6 之前的机制)或管理员 `scripts/grant-balance.mjs` 充值。
+
 ## 3. Job 生命周期
 
 状态:`queued → submitting → pending → persisting → succeeded`,终态另有 `failed | expired | canceled`。t2i 同步返回,submit 后直接 `persisting`。长片(30/45/60)走 `queued → directing → keyframing → generating_shots → qc → stitching → persisting → succeeded`,由 orchestrator 推进,runner 只接手最后的 persisting。
@@ -252,6 +280,8 @@ flowchart TB
 | `POST /api/uploads/from-job`(阶段 A) | `{ jobId, role }`;把调用者自己一条 `succeeded` 且未清理的图片任务产物复制成一次新上传(走与手动上传相同的 `preprocessImage`),`role ∈ start|last|reference`;别人的/不存在的/非图片/已清理的任务分别 404/400 |
 | `GET /api/me/ledger`(阶段 A) | `?before=&limit=&kind=`;读 `data/ledger/<userId>.jsonl` 倒序游标分页,`limit≤200`,坏行跳过 |
 | `POST /api/me/redeem`(阶段 A) | `{ code }`;礼品码认领 + 入账同一临界区(§5);成功 `{ amountCny, balance }`;404 无效 / 409 已用 / 429(IP+用户各一桶,5 次/分钟) |
+| `GET/POST /api/subscription`(2026-09-07,§2i) | `GET` 返回当前订阅状态(先惰性结算);`POST { planId, cycle }` 购买/续订,只扣已购池,`idempotencyKey` 必填;402 `insufficient_balance`(带 `purchasableCny`)/409 `subscription_active` |
+| `GET/POST /api/agent/sessions`、`GET/PATCH/DELETE /api/agent/sessions/:id`、`POST /api/agent/sessions/:id/messages`、`GET /api/agent/skills`(2026-09-07,§2h) | 会话增删改查与发消息(消息 20 次/分钟/用户);LLM 不可用时消息接口 503 `agent_unavailable` |
 | `GET /api/media/:jobId/:file` | 白名单 `video.mp4|poster.jpg|image.jpg`;`jobId` 经 `assertSafeId`;先做 owner 校验(§12.2)再看缓存头;`Cache-Control: private, no-cache` + 弱 ETag(size+mtime)+ `Last-Modified`,`If-None-Match` 命中在 owner 校验**之后**评估、回 304(§9);Range/206;支持 suffix range `bytes=-N`,416 带 `Content-Range: bytes */size`;`?download=1` 加 attachment |
 | `GET /api/health` | ffmpeg 二进制/字体/dataDir 可写/upstream kind/队列深度;新增 `audioAvailable`(当前视频 provider 会不会真的出音轨,§2d);缺 ffmpeg → `ok:false`(匿名可访问) |
 | `POST /api/auth/register` | 邮箱 + 密码(≥8 位) + 一次性邀请码;成功即写会话 Cookie 并返回 `MePublic` |
@@ -283,14 +313,15 @@ data/
     usr_xxx/user.json                   # 事实源:email、密码哈希、disabled、sessionEpoch、balanceCny(2026-09-06)
   invites/<code>.json                   # 一次性邀请码:{ code, createdAt, note?, usedBy?, usedAt? }
   gift-codes/<code>.json                # 2026-09-06 夜(阶段 A):礼品码,{ code, amountCny, createdAt, note?, usedBy?, usedAt?, creditedAt? }
-  ledger/<userId>.jsonl                 # 2026-09-06:余额流水,只增;{at,kind,amountCny,balanceAfterCny,jobId?,note?}
+  ledger/<userId>.jsonl                 # 2026-09-06:余额流水,只增;{at,kind,amountCny,balanceAfterCny,jobId?,note?};2026-09-07 起新增通用幂等键 ref 与 memberCny 字段
+  agent/<userId>/<sessionId>.json       # 2026-09-07:智能体会话记录,ownerId 校验,单用户上限 200 条(§2h)
   templates/*.json                      # 2026-09-06 深夜:创作模板,首次部署需 cp -r data-seed/templates data/templates
                                          # (data-seed/templates 提供六条示例种子,不随代码自动生成)
 ```
 
 `MediaStore` 接口(`storage/types.ts`)由 `LocalFsMediaStore` 实现,id 白名单 `[A-Za-z0-9_-]+`、rel 路径解析后必须落在 jobDir 内;后期 `S3MediaStore` 同接口替换。
 
-生产实例(阿里云)另有 `/opt/genius/backups/genius-data-<时间戳>.tgz`(`scripts/backup.sh`,每份只含 `users/ invites/ gift-codes/ ledger/ jobs/*/job.json` 白名单——`gift-codes/` 于 2026-09-06 夜阶段 A 补入,不含产物,保留最近 14 份,`chmod 600`)与阿里云 ECS 控制台配置的整盘自动快照(每日一份、保留 7 天),两层数据安全见 §10.2。
+生产实例(阿里云)另有 `/opt/genius/backups/genius-data-<时间戳>.tgz`(`scripts/backup.sh`,每份只含 `users/ invites/ gift-codes/ ledger/ jobs/*/job.json` 白名单——`gift-codes/` 于 2026-09-06 夜阶段 A 补入,不含产物,保留最近 14 份,`chmod 600`)与阿里云 ECS 控制台配置的整盘自动快照(每日一份、保留 7 天),两层数据安全见 §10.2。2026-09-07 新增的 `agent/` 与 `templates/` 已列入 `scripts/backup.sh` 白名单。
 
 ## 6. 前端与场景层(2026-09-05 晚按 Genius 交接包重建为深色单屏)
 
@@ -457,4 +488,16 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 ### 12.6 账号自助与运维 CLI(2026-09-06 深夜,as-built)
 
 - `POST /api/auth/password` 是用户自助改密(此前只能靠管理员用 CLI 重置):要求带旧密码,校验通过后写新哈希并把 `sessionEpoch+1`——发起改密的这台设备当次会话不掉线(靠请求里已验证的会话直接续用),其余设备的旧会话因 `sessionEpoch` 不匹配而失效。退出登录同样递增 `sessionEpoch`。
-- 新增三个管理 CLI(与 `scripts/grant-balance.mjs`/`scripts/mint-invites.mjs` 同一套风格,均走 `scripts/lib/users-store.mjs`):`scripts/reset-password.mjs`(管理员强制重置某账号密码)、`scripts/disable-user.mjs`(封禁/解封账号,写 `disabled`)、`scripts/usage.mjs`(按天/用户/provider 维度统计用量并与流水对账)。`scripts/lib/users-store.mjs` 的 scrypt 参数与哈希逻辑必须与服务端 `src/lib/users/service.ts` 逐字一致,脚本自带自检,改一边要同步改另一边(与既有的 `grant-balance.mjs` 那条约束同源)。
+- 新增三个管理 CLI(与 `scripts/grant-balance.mjs`/`scripts/mint-invites.mjs` 同一套风格,均走 `scripts/lib/users-store.mjs`):`scripts/reset-password.mjs`(管理员强制重置某账号密码)、`scripts/disable-user.mjs`(封禁/解封账号,写 `disabled`)、`scripts/usage.mjs`(按天/用户/provider 维度统计用量并与流水对账,2026-09-07 起把 `sub:*`/`agent:*` 扣款与会员积分发放分列展示)。`scripts/lib/users-store.mjs` 的 scrypt 参数与哈希逻辑必须与服务端 `src/lib/users/service.ts` 逐字一致,脚本自带自检,改一边要同步改另一边(与既有的 `grant-balance.mjs` 那条约束同源)。
+
+## 13. 多语言(i18n,2026-09-07 凌晨,as-built)
+
+方案 `docs/plan-agent-i18n-subscription-2026-09.md` §2。目标:整站支持 `zh-CN`/`en` 两语,不新增后端多语言业务逻辑,只做前端文案层。
+
+- `src/lib/i18n/locales.ts`:两种 locale,读取顺序 Cookie `lumen_locale` → 请求头 `Accept-Language` → 默认 `zh-CN`。
+- `src/lib/i18n/messages/<locale>/<namespace>.ts`:命名空间按视图划分(`shell/home/composer/create/canvas/login/share/common/agent/subscription`),`zh-CN` 是键的事实源,`en` 类型由它推导,英文漏译在编译期报错(不是运行时兜底)。
+- `I18nProvider` + `useT()` 挂在根布局(`src/app/layout.tsx`),全部客户端组件经 `useT("ns.key")` 取文案,不写死字符串。
+- `src/components/genius/LanguageSwitch.tsx` 出现在顶栏与登录页,写 Cookie 切换语言并刷新。
+- DOM 契约(`data-mode`、`data-dur` 等状态值)保持 ASCII,不随语言变化,e2e 选择器不受影响。
+- 服务端 API 的错误文案**不翻译**——前端已按错误码映射的继续映射,直接透传服务端中文原文的保持原样(已知未做)。
+- `playwright.config.ts` 钉 `locale: zh-CN` + `accept-language` 头,保证既有中文断言的 e2e 不因语言切换而失败;新增 `e2e/i18n.spec.ts` 覆盖语言切换本身。

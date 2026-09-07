@@ -2,24 +2,14 @@ import { z } from "zod";
 import { jsonError } from "@/lib/http";
 import { createJob } from "@/lib/jobs/create";
 import { listJobsPage, MAX_PAGE_LIMIT } from "@/lib/jobs/list";
+import { consumeJobCreation } from "@/lib/jobs/rate-limit";
 import { createJobBodySchema } from "@/lib/jobs/schema";
 import { toPublic } from "@/lib/jobs/store";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { withRequestContext } from "@/lib/request-context";
-import { consumeRateLimit } from "@/lib/users/rate-limit";
 import { requireUser } from "@/lib/users/session";
 
 export const runtime = "nodejs";
-
-/**
- * 每人每分钟能提交多少次任务（方案 §3.2「安全收口」）。
- *
- * 与余额、配额、在途上限各管一件事：余额管「一共能花多少钱」，在途上限管「同时能占
- * 几个执行槽」，这一条管「按键的速度」——它挡的是脚本，而脚本正是把前两条一次性撞满
- * 的东西。键只按用户不按 IP：会话已经把请求绑到账号上了，再按 IP 分桶只会误伤同一个
- * 出口后面的几个人。
- */
-const JOBS_RATE_LIMIT = 10;
 
 /**
  * 列表查询（方案 §1.4）。`before` 是上一页返回的 `nextBefore`（ISO `createdAt`），
@@ -64,7 +54,9 @@ async function list(request: Request) {
 async function create(request: Request) {
   try {
     const user = await requireUser(request);
-    const gate = consumeRateLimit([`jobs:user:${user.id}`], { limit: JOBS_RATE_LIMIT });
+    // 桶的定义在 `@/lib/jobs/rate-limit`：智能体那条路径（`run-turn.ts`）绕过 HTTP 直接
+    // 调 `createJob`，必须消费**同一个**桶，否则它就是这条限流的绕过路径。
+    const gate = consumeJobCreation(user.id);
     if (!gate.allowed) {
       throw new ProviderHttpError(
         429,

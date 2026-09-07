@@ -7,88 +7,72 @@ import {
   redeemGiftCode,
   type LedgerEntry,
 } from "@/lib/client/auth";
+import { newIdempotencyKey } from "@/lib/client/jobs";
+import {
+  fetchSubscription,
+  purchaseSubscription,
+  subscriptionErrorCode,
+  subscriptionErrorFallback,
+  type MySubscription,
+  type PlanCycle,
+  type SubscriptionPlan,
+  type SubscriptionState,
+} from "@/lib/client/subscription";
 import { creditsOf, useShell } from "@/components/genius/ShellContext";
+import { useT } from "@/components/genius/i18n/I18nProvider";
+import type { MessageKey } from "@/lib/i18n/messages";
 
-type Plan = {
-  name: string;
-  off: string;
-  monthly: number;
-  yearly: number;
-  popular?: boolean;
-  features: string[];
-};
+/**
+ * 订阅视图（方案 `docs/plan-agent-i18n-subscription-2026-09.md` §3.3）。
+ *
+ * 四档价格不再是原型的美元占位：它们由 `GET /api/subscription` 按平台成本加固定毛利率
+ * 实时算出来（`src/lib/billing/plans.ts`），所以这一页必须先取数再渲染卡片。脚注只说
+ * 「价格是这么来的」，**不摆**成本比例与毛利率的数字——那是进货价，不下发到浏览器。
+ *
+ * 两个池的区别是这一页最要讲清楚的事：订阅**只能用已购积分**买（礼品码 / 管理员充值
+ * 进来的那些），订阅送的会员积分只能用于生成、期末清零。混为一谈就会有人问「我明明
+ * 有 3000 积分为什么买不了订阅」。
+ */
 
-/** 四档方案（原型 PLANS）。价格为原型占位值，未与后端人民币计费对齐。 */
-const PLANS: Plan[] = [
-  {
-    name: "标准版",
-    off: "立减 20%",
-    monthly: 9,
-    yearly: 7,
-    features: [
-      "每日更新积分 60",
-      "1200 积分每 30 天重置",
-      "无水印 · 无广告",
-      "最高 720P 输出",
-      "3 路并发生成",
-      "预览模式节省 20% 积分",
-    ],
-  },
-  {
-    name: "专业版",
-    off: "立减 20%",
-    monthly: 29,
-    yearly: 23,
-    features: [
-      "每日更新积分 60",
-      "6000 积分每 30 天重置",
-      "无水印 · 无广告",
-      "最高 4K 输出",
-      "5 路并发生成",
-      "错峰模式节省 30% 积分",
-      "批量生成",
-    ],
-  },
-  {
-    name: "尊享版",
-    off: "立减 20%",
-    monthly: 59,
-    yearly: 47,
-    features: [
-      "每日更新积分 60",
-      "15000 积分每 30 天重置",
-      "无水印 · 无广告",
-      "最高 4K 输出",
-      "8 路并发生成",
-      "错峰模式节省 50% 积分",
-      "批量生成 · 优先队列",
-    ],
-  },
-  {
-    name: "至尊版",
-    off: "立减 40%",
-    monthly: 149,
-    yearly: 89,
-    popular: true,
-    features: [
-      "每日更新积分 60",
-      "25000 积分每 30 天重置",
-      "无水印 · 无广告",
-      "最高 4K 输出",
-      "8 路并发生成",
-      "错峰模式无限次生成",
-      "批量生成 · 专属支持",
-    ],
-  },
-];
-
-/** 方案名的渐变文字（原型 NAME_GRAD）。 */
+/** 方案名的渐变文字（原型 NAME_GRAD），按卡片次序取。 */
 const NAME_GRADS = [
   "linear-gradient(90deg,#f0f0f2,#a9abb4)",
   "linear-gradient(90deg,#8ec5ff,#5b8cff)",
   "linear-gradient(90deg,#ffc48a,#ff8a3d)",
   "linear-gradient(90deg,#ff8a3d,#ff4d8d 60%,#a855f7)",
 ];
+
+/**
+ * 档位 id → 显示名的 i18n 键。服务端只下发 id 与一个中文兜底名（它不翻译文案），
+ * 认得的 id 走字典，认不出的（服务端加了新档而前端还没更新）原样用兜底名。
+ */
+const PLAN_NAME_KEYS: Record<string, MessageKey> = {
+  standard: "subscription.plan.standard",
+  pro: "subscription.plan.pro",
+  premium: "subscription.plan.premium",
+  ultimate: "subscription.plan.ultimate",
+};
+
+/** 服务端下发的功能行键名白名单（与 `plans.ts` 的 `PLAN_FEATURE_KEYS` 同一张表）。 */
+const FEATURE_KEYS = [
+  "subscription.featureCredits",
+  "subscription.featureDaily",
+  "subscription.featureMemberFirst",
+  "subscription.featureAllProducts",
+] as const satisfies readonly MessageKey[];
+
+type FeatureKey = (typeof FEATURE_KEYS)[number];
+
+function isFeatureKey(key: string): key is FeatureKey {
+  return (FEATURE_KEYS as readonly string[]).includes(key);
+}
+
+/** 流水条目的 `kind` → i18n 键（`src/lib/billing/ledger.ts` 的三种）。 */
+const LEDGER_KIND_KEYS: Record<string, MessageKey> = {
+  grant: "subscription.ledger.grant",
+  charge: "subscription.ledger.charge",
+  adjust: "subscription.ledger.adjust",
+};
 
 function BoltIcon({ size = 17 }: { size?: number }) {
   return (
@@ -117,12 +101,11 @@ function CheckIcon() {
   );
 }
 
-/** 流水条目的 `kind` → 中文（`src/lib/billing/ledger.ts` 的三种）。认不出的码原样显示。 */
-const LEDGER_KIND: Record<string, string> = {
-  grant: "充值 / 兑换",
-  charge: "任务扣款",
-  adjust: "人工调整",
-};
+/** ¥ 金额：整数不带小数点，其余一位小数（价格本来就向上取到 0.1 元）。 */
+function money(n: number): string {
+  const value = Number.isFinite(n) ? n : 0;
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
 
 function clock(iso: string): string {
   const d = new Date(iso);
@@ -131,19 +114,35 @@ function clock(iso: string): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** 抽屉的两种口径：全部流水（积分使用详情）/ 只看充值（账单记录）。 */
-type Drawer = null | { title: string; kind?: string };
+/** 只到日：到期日不需要精确到分。 */
+function day(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
-/**
- * 订阅视图（交接包 §7，原型图 16-subscription）。
- * 我的方案卡的 ⚡ 读真实积分；「兑换礼品码」「积分使用详情」「账单记录」接真后端
- * （阶段 A §7），四档订阅卡仍是占位，按钮只弹「即将上线」。
- */
+/** 抽屉的两种口径：全部流水（积分使用详情）/ 只看充值（账单记录）。 */
+type Drawer = null | { titleKey: MessageKey; kind?: string };
+
 export default function SubscriptionView({ credits }: { credits: number }) {
-  const { refreshMe } = useShell();
-  const [yearly, setYearly] = useState(true);
+  const { me, refreshMe } = useShell();
+  const t = useT();
+  const [yearly, setYearly] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* 订阅档位与我的订阅 */
+  const [state, setState] = useState<SubscriptionState | null>(null);
+  const [stateErr, setStateErr] = useState<string | null>(null);
+  const [pending, setPending] = useState<SubscriptionPlan | null>(null);
+  const [buying, setBuying] = useState(false);
+  /**
+   * 一次购买一个幂等键（与 `ShellContext` 的提交同一套路）。带上 `planId`/`cycle` 一起记，
+   * 是因为换了档位或周期就是**另一次**购买——沿用同一个 key 会被服务端判成重放，用户
+   * 会拿回上一档的订阅而不是他刚点的那档。提交成功才清空。
+   */
+  const purchaseKey = useRef<{ key: string; planId: string; cycle: PlanCycle } | null>(null);
 
   /* 兑换礼品码 */
   const [redeemOpen, setRedeemOpen] = useState(false);
@@ -165,10 +164,26 @@ export default function SubscriptionView({ credits }: { credits: number }) {
     [],
   );
 
+  // 取一次档位。失败不致命：我的方案卡照常显示（它读的是壳里的 `/api/me`）。
+  useEffect(() => {
+    let alive = true;
+    void fetchSubscription().then(
+      (next) => {
+        if (alive) setState(next);
+      },
+      () => {
+        if (alive) setStateErr("failed");
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const notify = useCallback((text: string) => {
     setToast(text);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setToast(null), 2200);
+    timer.current = setTimeout(() => setToast(null), 2600);
   }, []);
 
   /** 拉一页流水。`before` 为空是第一页（换口径时要把上一次的结果丢掉）。 */
@@ -182,9 +197,9 @@ export default function SubscriptionView({ credits }: { credits: number }) {
         setEntries((prev) => (before ? [...prev, ...page.entries] : page.entries));
         setNextBefore(page.nextBefore);
       },
-      (e: unknown) => {
+      () => {
         setLoading(false);
-        setLedgerErr(e instanceof Error ? e.message : "读取失败，请稍后再试");
+        setLedgerErr("failed");
       },
     );
   }, []);
@@ -211,14 +226,56 @@ export default function SubscriptionView({ credits }: { credits: number }) {
         setCode("");
         // 余额是壳的 `/api/me` 说了算：兑换回执只用来报数，真读数等重拉回来
         refreshMe();
-        notify(`兑换成功，到账 ⚡${creditsOf(result.amountCny)}`);
+        notify(t("subscription.redeem.success", { credits: creditsOf(result.amountCny) }));
       },
       (e: unknown) => {
         setRedeeming(false);
         setRedeemErr(redeemErrorMessage(e));
       },
     );
-  }, [code, notify, redeeming, refreshMe]);
+  }, [code, notify, redeeming, refreshMe, t]);
+
+  const buy = useCallback(
+    (plan: SubscriptionPlan) => {
+      if (buying) return;
+      setBuying(true);
+      const cycle: PlanCycle = yearly ? "yearly" : "monthly";
+      const held = purchaseKey.current;
+      const key =
+        held && held.planId === plan.id && held.cycle === cycle ? held.key : newIdempotencyKey();
+      purchaseKey.current = { key, planId: plan.id, cycle };
+      void purchaseSubscription(plan.id, cycle, key).then(
+        (result) => {
+          setBuying(false);
+          setPending(null);
+          purchaseKey.current = null;
+          setState((prev) => (prev ? { ...prev, mine: result.mine } : prev));
+          // 余额与会员积分都由壳的 `/api/me` 说了算，回执只是顺手带的。
+          refreshMe();
+          notify(t("subscription.toast.success"));
+        },
+        (e: unknown) => {
+          setBuying(false);
+          setPending(null);
+          const code = subscriptionErrorCode(e);
+          if (code === "insufficient_balance") notify(t("subscription.toast.insufficient"));
+          else if (code === "subscription_active") notify(t("subscription.toast.active"));
+          else notify(subscriptionErrorFallback(e) || t("subscription.toast.failed"));
+        },
+      );
+    },
+    [buying, notify, refreshMe, t, yearly],
+  );
+
+  const mine: MySubscription | null = state?.mine ?? null;
+  const balance = me?.balance;
+  const memberCredits = creditsOf(balance?.memberCreditsCny ?? mine?.memberCreditsCny ?? 0);
+  const purchasedCredits = creditsOf(balance?.balanceCny ?? 0);
+  const planName = (plan: { id: string; name: string }): string => {
+    const key = PLAN_NAME_KEYS[plan.id];
+    return key ? t(key) : plan.name;
+  };
+  const minePlan = state?.plans.find((p) => p.id === mine?.planId);
 
   return (
     <div className="sub-view">
@@ -226,39 +283,70 @@ export default function SubscriptionView({ credits }: { credits: number }) {
       <div className="sub-view__body">
         <section className="sub-mine">
           <div className="sub-mine__head">
-            <span className="sub-mine__title">我的方案</span>
+            <span className="sub-mine__title">{t("subscription.mine.title")}</span>
             <button
               type="button"
               className="sub-mine__link"
-              onClick={() => openDrawer({ title: "积分使用详情" })}
+              onClick={() => openDrawer({ titleKey: "subscription.mine.usage" })}
             >
-              积分使用详情
+              {t("subscription.mine.usage")}
             </button>
             <button
               type="button"
               className="sub-mine__link sub-mine__link--end"
               // 账单只看充值 / 兑换那一类（消费明细在「积分使用详情」里）
-              onClick={() => openDrawer({ title: "账单记录", kind: "grant" })}
+              onClick={() => openDrawer({ titleKey: "subscription.mine.bills", kind: "grant" })}
             >
-              账单记录
+              {t("subscription.mine.bills")}
             </button>
           </div>
           <div className="sub-mine__body">
-            <span className="sub-mine__plan">基础版</span>
+            <div className="sub-mine__ident">
+              <span className="sub-mine__plan" data-plan={mine?.planId ?? "none"}>
+                {mine ? (minePlan ? planName(minePlan) : planName({ id: mine.planId, name: mine.planId })) : t("subscription.mine.none")}
+              </span>
+              {mine ? (
+                <span className="sub-mine__meta">
+                  {t(
+                    mine.cycle === "yearly"
+                      ? "subscription.mine.cycleYearly"
+                      : "subscription.mine.cycleMonthly",
+                  )}
+                  {" · "}
+                  {t("subscription.mine.expiresAt", { date: day(mine.expiresAt) })}
+                </span>
+              ) : null}
+            </div>
             <div className="sub-mine__stack">
-              <span className="sub-mine__credits" aria-label={`积分 ${credits}`}>
+              <span
+                className="sub-mine__credits"
+                aria-label={t("subscription.mine.creditsAria", { n: credits })}
+              >
                 <BoltIcon />
                 {credits}
               </span>
               <div className="sub-mine__breakdown">
                 <span>
-                  每日积分 <span className="sub-mine__num">0</span>
+                  {t("subscription.mine.daily")}{" "}
+                  <span className="sub-mine__num">
+                    {mine
+                      ? t(
+                          mine.dailyGrantedToday
+                            ? "subscription.mine.dailyGranted"
+                            : "subscription.mine.dailyPending",
+                        )
+                      : 0}
+                  </span>
                 </span>
                 <span>
-                  会员积分 <span className="sub-mine__num">0</span>
+                  {t("subscription.mine.member")}{" "}
+                  <span className="sub-mine__num" data-member-credits={memberCredits}>
+                    {memberCredits}
+                  </span>
                 </span>
                 <span>
-                  已购积分 <span className="sub-mine__num">{credits}</span>
+                  {t("subscription.mine.purchased")}{" "}
+                  <span className="sub-mine__num">{purchasedCredits}</span>
                 </span>
               </div>
             </div>
@@ -271,98 +359,172 @@ export default function SubscriptionView({ credits }: { credits: number }) {
               setRedeemOpen(true);
             }}
           >
-            兑换礼品码
+            {t("subscription.mine.redeem")}
           </button>
         </section>
 
         <div className="sub-plans__head">
-          <h2 className="sub-plans__title">订阅方案</h2>
-          <div className="sub-cycle" role="group" aria-label="计费周期">
+          <h2 className="sub-plans__title">{t("subscription.plans.title")}</h2>
+          <div className="sub-cycle" role="group" aria-label={t("subscription.plans.cycleAria")}>
             <button
               type="button"
               className="sub-cycle__btn"
               aria-pressed={yearly}
+              data-cycle="yearly"
               data-on={yearly ? "true" : undefined}
               onClick={() => setYearly(true)}
             >
-              按年支付
-              <span className="sub-cycle__badge">立减 40%</span>
+              {t("subscription.plans.yearly")}
             </button>
             <button
               type="button"
               className="sub-cycle__btn"
               aria-pressed={!yearly}
+              data-cycle="monthly"
               data-on={!yearly ? "true" : undefined}
               onClick={() => setYearly(false)}
             >
-              按月支付
+              {t("subscription.plans.monthly")}
             </button>
           </div>
         </div>
 
-        <div className="sub-grid">
-          {PLANS.map((p, i) => {
-            const price = yearly ? p.yearly : p.monthly;
-            return (
-              <div className="sub-card" key={p.name} data-popular={p.popular ? "true" : undefined}>
-                {p.popular ? <span className="sub-card__popular">最受欢迎</span> : null}
-                <div className="sub-card__top">
-                  <div className="sub-card__name-row">
-                    <span className="sub-card__name" style={{ backgroundImage: NAME_GRADS[i] }}>
-                      {p.name}
-                    </span>
-                    {yearly ? <span className="sub-card__off">{p.off}</span> : null}
-                  </div>
-                  {/*
-                    用户可见的价格一律人民币（AGENTS.md：售价是 CNY，¥1 = 100 积分）。
-                    原型这几个数字是 $ 占位，符号换成 ¥ 但数值原样留着——真实档位由用户定，
-                    在这里替他编一个人民币价才是更大的错。
-                  */}
-                  <div className="sub-card__price-row">
-                    <span className="sub-card__price">¥{price}</span>
-                    <span className="sub-card__unit">/月</span>
-                    {yearly ? <span className="sub-card__was">¥{p.monthly}</span> : null}
-                  </div>
-                  <span className="sub-card__total">
-                    {yearly ? `年付费用为 ¥${price * 12}` : "按月支付，可随时取消"}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="sub-card__cta"
-                  onClick={() => notify(`${p.name}订阅即将上线`)}
+        {state ? (
+          <div className="sub-grid">
+            {state.plans.map((plan, i) => {
+              const current = mine?.planId === plan.id;
+              return (
+                <div
+                  className="sub-card"
+                  key={plan.id}
+                  data-plan={plan.id}
+                  data-popular={plan.popular ? "true" : undefined}
                 >
-                  订阅
-                </button>
-                <div className="sub-card__features">
-                  {p.features.map((f) => (
-                    <span className="sub-feature" key={f}>
-                      <CheckIcon />
-                      {f}
+                  {plan.popular ? (
+                    <span className="sub-card__popular">{t("subscription.plan.popular")}</span>
+                  ) : null}
+                  <div className="sub-card__top">
+                    <div className="sub-card__name-row">
+                      <span
+                        className="sub-card__name"
+                        style={{ backgroundImage: NAME_GRADS[i % NAME_GRADS.length] }}
+                      >
+                        {planName(plan)}
+                      </span>
+                    </div>
+                    {/* 价格恒定是「折合每月」：年付不打折，所以两个周期的月度数字相同，
+                        差别写在下面那行（年付总额）与确认弹窗里的实扣金额上。 */}
+                    <div className="sub-card__price-row">
+                      <span className="sub-card__price">¥{money(plan.monthlyCny)}</span>
+                      <span className="sub-card__unit">{t("subscription.card.perMonth")}</span>
+                    </div>
+                    <span className="sub-card__total">
+                      {yearly
+                        ? t("subscription.card.yearlyNote", {
+                            total: money(plan.yearlyCny),
+                            monthly: money(plan.monthlyCny),
+                          })
+                        : t("subscription.card.monthlyNote")}
                     </span>
-                  ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="sub-card__cta"
+                    disabled={buying || current}
+                    onClick={() => setPending(plan)}
+                  >
+                    {current
+                      ? t("subscription.card.current")
+                      : buying
+                        ? t("subscription.card.busy")
+                        : t("subscription.card.subscribe")}
+                  </button>
+                  <div className="sub-card__features">
+                    {plan.features.map((key) => (
+                      <span className="sub-feature" key={key}>
+                        <CheckIcon />
+                        {isFeatureKey(key)
+                          ? t(key, { credits: plan.credits, daily: plan.dailyCredits })
+                          : key}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="sub-plans__hint" role="status">
+            {stateErr ? t("subscription.plans.error") : t("subscription.plans.loading")}
+          </p>
+        )}
+
+        <p className="sub-basis">
+          <span>{t("subscription.basis.note")}</span>
+          <span>{t("subscription.basis.payFrom")}</span>
+        </p>
       </div>
+
+      {pending ? (
+        <div
+          className="redeem sub-confirm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("subscription.confirm.title")}
+          onClick={() => (buying ? undefined : setPending(null))}
+        >
+          <div className="redeem__panel" onClick={(e) => e.stopPropagation()}>
+            <span className="redeem__title">{t("subscription.confirm.title")}</span>
+            <p className="redeem__hint">
+              {t("subscription.confirm.body", {
+                plan: planName(pending),
+                cycle: t(
+                  yearly ? "subscription.mine.cycleYearly" : "subscription.mine.cycleMonthly",
+                ),
+                price: money(yearly ? pending.yearlyCny : pending.monthlyCny),
+              })}
+            </p>
+            <p className="redeem__hint">
+              {t("subscription.confirm.credits", { credits: pending.credits })}{" "}
+              {t("subscription.confirm.balance", { credits: purchasedCredits })}
+            </p>
+            <div className="redeem__actions">
+              <button
+                type="button"
+                className="redeem__btn"
+                disabled={buying}
+                onClick={() => setPending(null)}
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="button"
+                className="redeem__btn redeem__btn--go"
+                disabled={buying}
+                onClick={() => buy(pending)}
+              >
+                {buying ? t("subscription.card.busy") : t("subscription.confirm.go")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {redeemOpen ? (
         <div
           className="redeem"
           role="dialog"
           aria-modal="true"
-          aria-label="兑换礼品码"
+          aria-label={t("subscription.redeem.title")}
           onClick={() => setRedeemOpen(false)}
         >
           <div className="redeem__panel" onClick={(e) => e.stopPropagation()}>
-            <span className="redeem__title">兑换礼品码</span>
-            <p className="redeem__hint">输入礼品码，积分立即到账（¥1 = 100 积分）。</p>
+            <span className="redeem__title">{t("subscription.redeem.title")}</span>
+            <p className="redeem__hint">{t("subscription.redeem.hint")}</p>
             <input
               className="redeem__input"
-              aria-label="礼品码"
-              placeholder="例如 GIFT-XXXX-XXXX"
+              aria-label={t("subscription.redeem.label")}
+              placeholder={t("subscription.redeem.placeholder")}
               value={code}
               autoFocus
               maxLength={64}
@@ -381,7 +543,7 @@ export default function SubscriptionView({ credits }: { credits: number }) {
             ) : null}
             <div className="redeem__actions">
               <button type="button" className="redeem__btn" onClick={() => setRedeemOpen(false)}>
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -389,7 +551,7 @@ export default function SubscriptionView({ credits }: { credits: number }) {
                 disabled={redeeming || !code.trim()}
                 onClick={redeem}
               >
-                {redeeming ? "兑换中…" : "兑换"}
+                {redeeming ? t("subscription.redeem.busy") : t("subscription.redeem.go")}
               </button>
             </div>
           </div>
@@ -397,11 +559,22 @@ export default function SubscriptionView({ credits }: { credits: number }) {
       ) : null}
 
       {drawer ? (
-        <div className="ledger" role="dialog" aria-modal="true" aria-label={drawer.title} onClick={() => setDrawer(null)}>
+        <div
+          className="ledger"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t(drawer.titleKey)}
+          onClick={() => setDrawer(null)}
+        >
           <div className="ledger__panel" onClick={(e) => e.stopPropagation()}>
             <div className="ledger__head">
-              <span className="ledger__title">{drawer.title}</span>
-              <button type="button" className="ledger__close" aria-label="关闭" onClick={() => setDrawer(null)}>
+              <span className="ledger__title">{t(drawer.titleKey)}</span>
+              <button
+                type="button"
+                className="ledger__close"
+                aria-label={t("common.close")}
+                onClick={() => setDrawer(null)}
+              >
                 ✕
               </button>
             </div>
@@ -410,31 +583,38 @@ export default function SubscriptionView({ credits }: { credits: number }) {
                 <ul className="ledger__list">
                   {entries.map((e, i) => {
                     const n = creditsOf(e.amountCny);
+                    const kindKey = LEDGER_KIND_KEYS[e.kind];
                     return (
                       <li className="ledger__item" key={`${e.at}-${i}`} data-kind={e.kind}>
                         <span className="ledger__when">{clock(e.at)}</span>
-                        <span className="ledger__kind">{LEDGER_KIND[e.kind] ?? e.kind}</span>
+                        <span className="ledger__kind">{kindKey ? t(kindKey) : e.kind}</span>
                         <span className="ledger__note">{e.note ?? e.jobId ?? ""}</span>
                         <span className="ledger__amount" data-sign={n >= 0 ? "plus" : "minus"}>
                           {n >= 0 ? `+${n}` : n}
                         </span>
-                        <span className="ledger__after">余 {creditsOf(e.balanceAfterCny)}</span>
+                        <span className="ledger__after">
+                          {t("subscription.ledger.after", { credits: creditsOf(e.balanceAfterCny) })}
+                        </span>
                       </li>
                     );
                   })}
                 </ul>
               ) : loading ? null : (
-                <p className="ledger__empty">还没有记录。</p>
+                <p className="ledger__empty">{t("subscription.ledger.empty")}</p>
               )}
               {ledgerErr ? (
                 <p className="ledger__err" role="alert">
-                  {ledgerErr}
+                  {t("subscription.ledger.error")}
                 </p>
               ) : null}
-              {loading ? <p className="ledger__empty">读取中…</p> : null}
+              {loading ? <p className="ledger__empty">{t("subscription.ledger.loading")}</p> : null}
               {nextBefore && !loading ? (
-                <button type="button" className="ledger__more" onClick={() => loadLedger(drawer, nextBefore)}>
-                  加载更多
+                <button
+                  type="button"
+                  className="ledger__more"
+                  onClick={() => loadLedger(drawer, nextBefore)}
+                >
+                  {t("subscription.ledger.more")}
                 </button>
               ) : null}
             </div>

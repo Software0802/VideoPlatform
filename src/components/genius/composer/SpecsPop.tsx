@@ -1,6 +1,7 @@
 "use client";
 
 import { IMAGE_RES_LABEL, RES_LABEL, useShell } from "@/components/genius/ShellContext";
+import { useT } from "@/components/genius/i18n/I18nProvider";
 
 /*
   规格弹层（交接包 §4.1 图 5）：向上弹出的三块卡——分辨率 / 宽高比 / 时长。
@@ -39,12 +40,13 @@ export function SpecsPop() {
     setDur,
     durs,
   } = useShell();
+  const t = useT();
   const isImage = tab === "image";
 
   return (
     <div className="specs-pop">
       <div className="specs-pop__card">
-        <span className="specs-pop__title">分辨率</span>
+        <span className="specs-pop__title">{t("composer.specs.resolution")}</span>
         <div className="specs-pop__res">
           {isImage
             ? imageResolutions.map((r) => (
@@ -62,7 +64,7 @@ export function SpecsPop() {
 
       {ratioUsable ? (
         <div className="specs-pop__card">
-          <span className="specs-pop__title">宽高比</span>
+          <span className="specs-pop__title">{t("composer.specs.ratio")}</span>
           <div className="specs-pop__grid">
             {ratios.map((r) => {
               const [w, h] = FRAME[r] ?? [20, 20];
@@ -86,7 +88,7 @@ export function SpecsPop() {
 
       {isImage ? null : (
         <div className="specs-pop__card">
-          <span className="specs-pop__title">时长</span>
+          <span className="specs-pop__title">{t("composer.specs.duration")}</span>
           <div className="specs-pop__durs">
             {durs.map((d) => (
               <button key={d} type="button" data-dur={d} aria-pressed={dur === d} onClick={() => setDur(d)}>

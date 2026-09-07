@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { IconClose, IconUpload } from "@/components/genius/icons";
-import { useShell } from "@/components/genius/ShellContext";
+import { useShell, type SlotTarget } from "@/components/genius/ShellContext";
+import { useT } from "@/components/genius/i18n/I18nProvider";
+import type { MessageKey } from "@/lib/i18n/messages";
 
 /*
   素材选择弹窗（交接包 §4.1 图 13–15）。阶段 A 起两个页签都是真的：
@@ -14,37 +16,48 @@ import { useShell } from "@/components/genius/ShellContext";
   弹窗服务的是「当前槽位」（首帧 / 尾帧 / 参考），由 `openPicker(target)` 设定，标题跟着变。
 */
 
-const TITLE = { start: "选择首帧", last: "选择尾帧", reference: "选择参考图" } as const;
+const TITLE: Record<SlotTarget, MessageKey> = {
+  start: "composer.picker.title.start",
+  last: "composer.picker.title.last",
+  reference: "composer.picker.title.reference",
+};
 
 export function AssetPicker({ onUpload }: { onUpload: () => void }) {
   const { jobs, setPop, slotTarget, pickCreated } = useShell();
+  const t = useT();
   const [tab, setTab] = useState<"made" | "uploaded">("uploaded");
 
   const made = jobs.filter((j) => j.status === "succeeded" && j.output?.kind === "image" && !j.artifactsPurgedAt);
 
   return (
-    <div className="picker" role="dialog" aria-modal="true" aria-label="选择图片" onClick={() => setPop(null)}>
+    <div
+      className="picker"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("composer.picker.aria")}
+      onClick={() => setPop(null)}
+    >
       <div className="picker__panel" onClick={(e) => e.stopPropagation()}>
         <div className="picker__head">
-          <span className="picker__title">{TITLE[slotTarget]}</span>
-          <button type="button" className="picker__close" aria-label="关闭" onClick={() => setPop(null)}>
+          <span className="picker__title">{t(TITLE[slotTarget])}</span>
+          <button type="button" className="picker__close" aria-label={t("common.close")} onClick={() => setPop(null)}>
             <IconClose size={15} />
           </button>
         </div>
         <div className="picker__tabs">
-          <span className="picker__filter">全部</span>
+          <span className="picker__filter">{t("common.all")}</span>
           <button type="button" className="picker__tab" data-on={tab === "made"} onClick={() => setTab("made")}>
-            已创建
+            {t("composer.picker.tab.made")}
           </button>
           <button type="button" className="picker__tab" data-on={tab === "uploaded"} onClick={() => setTab("uploaded")}>
-            已上传
+            {t("composer.picker.tab.uploaded")}
           </button>
         </div>
         <div className="picker__body">
           {tab === "uploaded" ? (
             <button type="button" className="picker__drop" onClick={onUpload}>
               <IconUpload size={20} />
-              <span>点击 / 拖拽 / 粘贴</span>
+              <span>{t("composer.picker.drop")}</span>
             </button>
           ) : made.length ? (
             <div className="picker__grid">
@@ -54,21 +67,24 @@ export function AssetPicker({ onUpload }: { onUpload: () => void }) {
                   type="button"
                   className="picker__item"
                   data-job-id={j.id}
-                  title={j.prompt || "无提示词"}
+                  title={j.prompt || t("composer.picker.noPrompt")}
                   onClick={() => pickCreated(j)}
                 >
                   {/* 已生成的图片走 /api/media（owner 校验 + private,no-cache），本地 <img> 足够 */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={j.output?.kind === "image" ? j.output.imageUrl : ""} alt={j.prompt || "已创建图片"} />
+                  <img
+                    src={j.output?.kind === "image" ? j.output.imageUrl : ""}
+                    alt={j.prompt || t("composer.picker.alt")}
+                  />
                 </button>
               ))}
             </div>
           ) : (
-            <p className="picker__empty">还没有已创建的图片</p>
+            <p className="picker__empty">{t("composer.picker.empty")}</p>
           )}
         </div>
         <button type="button" className="picker__ok" onClick={() => setPop(null)}>
-          确认
+          {t("common.confirm")}
         </button>
       </div>
     </div>

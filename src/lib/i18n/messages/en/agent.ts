@@ -1,0 +1,70 @@
+import type { agent as zh } from "../zh-CN/agent";
+
+/** English strings for `agent`; the type forces every zh-CN key to exist here. */
+export const agent: Record<keyof typeof zh, string> = {
+  // 尾随空格是有意的：标题是「前半句 + 渐变色的后半句」两个节点拼起来的，
+  // 中文之间不需要空格，英文需要，而那个空格只能属于前半句。
+  "agent.heroLead": "It all starts with ",
+  "agent.heroAccent": "one idea",
+  "agent.askLabel": "Agent prompt",
+  "agent.askPlaceholder": "Describe your idea and I'll generate images or video",
+  "agent.addAsset": "Add asset",
+  "agent.send": "Send",
+  "agent.picksTitle": "Start with a skill",
+  "agent.unavailable": "Agent is not available yet",
+
+  "agent.tier.fast": "Auto · Fast",
+  "agent.tier.balanced": "Auto · Balanced",
+  "agent.tier.quality": "Auto · Crafted",
+
+  "agent.imageChip": "Image: {name}",
+  "agent.videoChip": "Video: {name}",
+  "agent.auto": "Auto",
+  "agent.autoDesc": "The agent picks the best model for this request",
+  "agent.creditsEach": "~{n} credits",
+  "agent.skill": "Skill",
+  "agent.skillNone": "No skill",
+  "agent.manageSkills": "Manage skills",
+
+  "agent.history": "History",
+  "agent.historyAria": "Agent history",
+  "agent.drawerTitle": "Agent",
+  "agent.collapseHistory": "Collapse history",
+  "agent.newChat": "New chat",
+  "agent.tasksLabel": "Chats",
+  "agent.noSessions": "No chats yet",
+  "agent.deleteSession": "Delete chat {title}",
+
+  "agent.plazaTitle": "Skill library",
+  "agent.back": "Back to agent",
+  "agent.filterAll": "All",
+  "agent.filterOn": "Enabled",
+  "agent.filterOff": "Disabled",
+  "agent.plazaEmpty": "No skills match this filter.",
+  "agent.enableSkill": "Enable skill {name}",
+  "agent.author": "@Genius",
+
+  "agent.chatInputLabel": "Chat input",
+  "agent.chatPlaceholder": "Describe what you want to create, or ask a question",
+  "agent.thinking": "Thinking…",
+  "agent.usedSkill": "Skill used",
+  "agent.credits": "{n} credits",
+  "agent.jobFailed": "Could not start",
+  "agent.jobRateLimited": "Too many generations just now — ask me again in a moment",
+  "agent.assets": "Assets",
+  "agent.assetsAll": "All",
+  "agent.assetsImage": "Images",
+  "agent.assetsVideo": "Video",
+  "agent.assetsEmpty": "No results in this chat yet",
+  "agent.assetAria": "Result {n}",
+  "agent.closePreview": "Close preview",
+  "agent.loading": "Loading…",
+
+  "agent.statusQueued": "Queued",
+  "agent.statusRunning": "Generating",
+  "agent.statusSucceeded": "Done",
+  "agent.statusFailed": "Failed",
+  "agent.statusCanceled": "Canceled",
+  "agent.statusExpired": "Expired",
+  "agent.statusPurged": "Cleaned up",
+};

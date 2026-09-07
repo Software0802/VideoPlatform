@@ -85,10 +85,20 @@
   flex-wrap: wrap;
   padding: 18px 0 4px;
 }
+/* 档位名 + 周期/到期日两行一列：无订阅时只有第一行（「未订阅」）。 */
+.sub-mine__ident {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 96px;
+}
 .sub-mine__plan {
   font-size: 14px;
   font-weight: 600;
-  min-width: 64px;
+}
+.sub-mine__meta {
+  font-size: 11.5px;
+  color: var(--sb-weak);
 }
 .sub-mine__stack {
   display: flex;
@@ -170,19 +180,21 @@
   color: var(--sb-fg);
   background: var(--sb-chip-on);
 }
-.sub-cycle__badge {
-  height: 19px;
-  padding: 0 7px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  font-size: 11px;
-  font-weight: 700;
-  color: #15161a;
-  background: var(--sb-badge);
+
+/* 档位还没取回来 / 取失败时的一行提示，占住卡片网格的位置。 */
+.sub-plans__hint {
+  margin: 0;
+  padding: 28px 0 8px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--sb-weak);
 }
 
 /* ---------- 四档卡片 ---------- */
+
+/* 原型的 .sub-card__off / .sub-cycle__badge（「立减 20/40%」徽标）与 .sub-card__was
+   （划掉的原价）已随年付不打折一起删除：毛利率固定就没有折扣可打，留着一个永远不会
+   出现的徽标只会让下一个人以为忘了接。 */
 
 .sub-grid {
   display: grid;
@@ -234,17 +246,6 @@
   background-clip: text;
   color: transparent;
 }
-.sub-card__off {
-  height: 19px;
-  padding: 0 7px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  font-size: 11px;
-  font-weight: 700;
-  color: #15161a;
-  background: var(--sb-badge);
-}
 .sub-card__price-row {
   display: flex;
   align-items: baseline;
@@ -259,11 +260,6 @@
 .sub-card__unit {
   font-size: 13px;
   color: var(--sb-fg-5);
-}
-.sub-card__was {
-  font-size: 13px;
-  color: var(--sb-dim);
-  text-decoration: line-through;
 }
 .sub-card__total {
   font-size: 11.5px;
@@ -280,6 +276,11 @@
 }
 .sub-card__cta:hover {
   filter: brightness(1.06);
+}
+.sub-card__cta:disabled {
+  opacity: 0.55;
+  cursor: default;
+  filter: none;
 }
 .sub-card[data-popular="true"] .sub-card__cta {
   background: var(--sb-grad);
@@ -301,6 +302,19 @@
 .sub-feature__tick {
   flex: none;
   margin-top: 2px;
+}
+
+/* ---------- 定价说明脚注 ---------- */
+
+/* 价格是算出来的（上游成本 ÷ 0.85），不写清楚就只是四个凭空的数字。 */
+.sub-basis {
+  margin: 26px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--sb-dim);
 }
 
 /* ---------- 轻提示 ---------- */
@@ -326,7 +340,10 @@
   animation: sub-pop-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* ---------- 兑换礼品码（模态） ---------- */
+/* ---------- 兑换礼品码 / 订阅确认（模态） ---------- */
+
+/* 订阅确认弹窗与兑换弹窗是同一个模态外壳（标题 + 说明 + 两个按钮），复用 .redeem
+   的一整套样式；.sub-confirm 只是给它一个可区分的钩子，不额外定义外观。 */
 
 .redeem {
   position: fixed;

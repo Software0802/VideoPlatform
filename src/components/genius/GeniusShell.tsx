@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/genius/Sidebar";
 import { TopBar } from "@/components/genius/TopBar";
 import { ShellProvider, useShell, type ShellCaps } from "@/components/genius/ShellContext";
 import { Dock } from "@/components/genius/composer/Dock";
+import { useT } from "@/components/genius/i18n/I18nProvider";
 import { viewOfPath } from "@/components/genius/views";
 
 /*
@@ -26,6 +27,7 @@ function Frame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const view = viewOfPath(pathname ?? "/");
   const { toast, noticeToast, openNotice, dismissNoticeToast, open } = useShell();
+  const t = useT();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -62,7 +64,12 @@ function Frame({ children }: { children: React.ReactNode }) {
               <span className="notice-toast__title">{noticeToast.title}</span>
               <span className="notice-toast__detail">{noticeToast.detail}</span>
             </button>
-            <button type="button" className="notice-toast__x" aria-label="关闭通知" onClick={dismissNoticeToast}>
+            <button
+              type="button"
+              className="notice-toast__x"
+              aria-label={t("shell.notify.dismiss")}
+              onClick={dismissNoticeToast}
+            >
               ✕
             </button>
           </div>

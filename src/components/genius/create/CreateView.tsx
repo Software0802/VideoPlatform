@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { formatCny } from "@/lib/billing/prices";
-// 六种模式的中文名用共享那份：本地只列三种时，参考 / 编辑 / 延长会原样露出英文枚举
+// 六种模式的展示名用共享那份（存的是键名，取文案在这里做）
 import { MODE_LABEL, formatElapsed, isActive, isFailed, isTerminal } from "@/lib/client/labels";
 import { productNameOf } from "@/lib/client/models";
 import { IconBolt } from "@/components/genius/icons";
 import { creditsOf, useShell } from "@/components/genius/ShellContext";
+import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
+import type { MessageKey } from "@/lib/i18n/messages";
 
 /*
   创作页（方案 §5）：上部「当前任务」承接旧展览区（阶段 / 百分比 / 分镜 n/m / 成片 /
@@ -16,38 +18,46 @@ import { creditsOf, useShell } from "@/components/genius/ShellContext";
   重试的两道闸（方案 §5）：`retryBlocked` 非空时显示它的 message 并**隐藏**「重新生成」
   （上游可能已接单计费，不可重发）；`artifactsPurgedAt` 非空同样禁止重试。
   `ShellContext.retry` 里还有一层同样的守卫。
+
+  服务端直接透传的错误文案（`job.error.message` / `job.retryBlocked.message`）保持原样，
+  不在本轮多语言范围内。
 */
 
-const STAGE_LABEL: Record<JobPublic["status"], string> = {
-  queued: "排队中",
-  submitting: "已提交",
-  pending: "生成中",
-  persisting: "写入中",
-  directing: "分镜",
-  keyframing: "锁帧",
-  generating_shots: "生成分镜",
-  qc: "质检",
-  stitching: "拼接",
-  succeeded: "完成",
-  failed: "失败",
-  expired: "已过期",
-  canceled: "已取消",
+const STAGE_LABEL: Record<JobPublic["status"], MessageKey> = {
+  queued: "create.stage.queued",
+  submitting: "create.stage.submitting",
+  pending: "create.stage.pending",
+  persisting: "create.stage.persisting",
+  directing: "create.stage.directing",
+  keyframing: "create.stage.keyframing",
+  generating_shots: "create.stage.generating_shots",
+  qc: "create.stage.qc",
+  stitching: "create.stage.stitching",
+  succeeded: "create.stage.succeeded",
+  failed: "create.stage.failed",
+  expired: "create.stage.expired",
+  canceled: "create.stage.canceled",
 };
 
-function jobMeta(j: JobPublic): string {
+function jobMeta(j: JobPublic, t: Translate): string {
   const image = j.mode === "text_to_image";
   // 产品名（`/api/models` 的对外命名）排在最前；老任务没有这个字段，就还是原来那行
   const product = productNameOf(j);
   const parts = [
     ...(product ? [product] : []),
-    MODE_LABEL[j.mode] ?? j.mode,
+    MODE_LABEL[j.mode] ? t(MODE_LABEL[j.mode]) : j.mode,
     image ? (j.imageResolution ?? "1k").toUpperCase() : `${j.durationSec}s · ${j.resolution ?? "720p"}`,
     j.aspectRatio ?? "16:9",
   ];
-  if (!image) parts.push(j.generateAudio ? "有声" : "无声");
+  if (!image) parts.push(j.generateAudio ? t("common.withAudio") : t("common.silent"));
   return parts.join(" · ");
 }
 
+/*
+  月-日 时:分。刻意**不**走 `toLocaleDateString`：这一段在服务端也渲染（首屏 40 条任务
+  由 `(shell)/layout.tsx` 下发），Node 与浏览器的 ICU 输出不保证一模一样，差一个空格就是
+  一次水合失配。纯数字格式两种语言下读法相同，也就不需要进字典。
+*/
 function clockTime(iso: string): string {
   const d = new Date(iso);
   const p = (n: number) => n.toString().padStart(2, "0");
@@ -56,6 +66,7 @@ function clockTime(iso: string): string {
 
 export function CreateView() {
   const { jobs, currentJob, setCurrentJob, busy, cancel, retry } = useShell();
+  const t = useT();
   const [now, setNow] = useState<number | null>(null);
 
   const job = currentJob;
@@ -64,10 +75,10 @@ export function CreateView() {
   useEffect(() => {
     if (!active) return;
     const t0 = window.setTimeout(() => setNow(Date.now()), 0);
-    const t = window.setInterval(() => setNow(Date.now()), 500);
+    const timer = window.setInterval(() => setNow(Date.now()), 500);
     return () => {
       window.clearTimeout(t0);
-      window.clearInterval(t);
+      window.clearInterval(timer);
     };
   }, [active]);
 
@@ -77,14 +88,14 @@ export function CreateView() {
   const pct = job ? Math.round(done ? 100 : job.progress) : 0;
   const shotsDone = job?.shots ? job.shots.filter((s) => s.status === "succeeded").length : 0;
   const stage = !job
-    ? "还没有任务"
+    ? t("create.noTask")
     : job.status === "generating_shots" && job.shots
-      ? `生成分镜 ${shotsDone}/${job.shots.length}`
-      : STAGE_LABEL[job.status];
+      ? t("create.shots", { done: shotsDone, total: job.shots.length })
+      : t(STAGE_LABEL[job.status]);
   const elapsed = job ? formatElapsed(job.createdAt, isTerminal(job.status) ? new Date(job.updatedAt).getTime() : now) : "00:00";
   const purged = !!job?.artifactsPurgedAt;
   const canRetry = !!job && (job.status === "failed" || job.status === "expired") && !job.retryBlocked && !purged;
-  const retryLabel = job?.shots?.length ? "重做失败分镜" : "重新生成";
+  const retryLabel = job?.shots?.length ? t("create.retryShots") : t("create.retry");
 
   const recent = jobs.slice(0, 12);
 
@@ -98,7 +109,7 @@ export function CreateView() {
         aria-live="polite"
       >
         <div className="task__head">
-          <span className="task__label">当前任务</span>
+          <span className="task__label">{t("create.currentTask")}</span>
           <span className="task__stage">
             {stage}
             {job ? ` · ${elapsed}` : ""}
@@ -108,7 +119,7 @@ export function CreateView() {
 
         {job ? <div className="task__bar" style={{ width: `${pct}%` }} aria-hidden="true" /> : null}
 
-        {!job ? <p className="task__idle">写一句提示词，从下面的面板开始创作。</p> : null}
+        {!job ? <p className="task__idle">{t("create.idle")}</p> : null}
 
         {done && job?.output && !purged ? (
           <div className="task__media">
@@ -116,7 +127,7 @@ export function CreateView() {
               <video key={job.id} src={job.output.videoUrl} poster={job.output.posterUrl} controls playsInline preload="metadata" />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img key={job.id} src={job.output.imageUrl} alt={job.prompt || "生成图像"} />
+              <img key={job.id} src={job.output.imageUrl} alt={job.prompt || t("create.imageAlt")} />
             )}
           </div>
         ) : null}
@@ -131,14 +142,14 @@ export function CreateView() {
             {job.retryBlocked.message}
           </p>
         ) : null}
-        {purged ? <p className="task__purged">作品已过期清理，无法重新生成这一条，请重新提交。</p> : null}
+        {purged ? <p className="task__purged">{t("create.purged")}</p> : null}
 
         {job ? (
           <div className="task__actions">
-            <span className="task__meta">{jobMeta(job)}</span>
+            <span className="task__meta">{jobMeta(job, t)}</span>
             {active ? (
               <button type="button" className="task__btn" disabled={busy} onClick={cancel}>
-                取消
+                {t("common.cancel")}
               </button>
             ) : null}
             {canRetry ? (
@@ -152,18 +163,18 @@ export function CreateView() {
                 href={`${job.output.kind === "video" ? job.output.videoUrl : job.output.imageUrl}?download=1`}
                 download
               >
-                下载
+                {t("common.download")}
               </a>
             ) : null}
             <button type="button" className="task__btn task__btn--dim" onClick={() => setCurrentJob(null)}>
-              关闭
+              {t("common.close")}
             </button>
           </div>
         ) : null}
       </section>
 
       <section className="recent">
-        <h2 className="recent__title">最近任务</h2>
+        <h2 className="recent__title">{t("create.recent")}</h2>
         {recent.length ? (
           <ul className="recent__list">
             {recent.map((j) => {
@@ -180,7 +191,7 @@ export function CreateView() {
                     type="button"
                     className="recent__hit"
                     onClick={() => setCurrentJob(j)}
-                    title={j.prompt || "首帧起始"}
+                    title={j.prompt || t("create.firstFrame")}
                   >
                     <span
                       className="recent__thumb"
@@ -188,9 +199,9 @@ export function CreateView() {
                       aria-hidden="true"
                     />
                     <span className="recent__body">
-                      <span className="recent__prompt">{j.prompt || "首帧起始"}</span>
+                      <span className="recent__prompt">{j.prompt || t("create.firstFrame")}</span>
                       <span className="recent__meta">
-                        {STAGE_LABEL[j.status]} · {clockTime(j.createdAt)} · {jobMeta(j)}
+                        {t(STAGE_LABEL[j.status])} · {clockTime(j.createdAt)} · {jobMeta(j, t)}
                       </span>
                     </span>
                     {j.priceCny > 0 ? (
@@ -205,7 +216,7 @@ export function CreateView() {
             })}
           </ul>
         ) : (
-          <p className="recent__empty">还没有任务记录。</p>
+          <p className="recent__empty">{t("create.recentEmpty")}</p>
         )}
       </section>
     </div>
