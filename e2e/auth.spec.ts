@@ -98,27 +98,31 @@ test("未登录被送到登录页；注册后进首页、头像菜单显示账�
     expect(await jobsRes.json()).toEqual({ jobs: [] });
 
     // 8. 顶栏积分：`/api/me` 给了 balance 就换算成 ⚡ 积分显示（¥1=100 积分，AGENTS.md
-    //    硬约束）。新账号余额是 0，这里同时验证「不够就禁用提交」，UI 与后端各查一遍。
+    //    硬约束）。新账号注册即送 ¥5（`SIGNUP_BONUS_CNY`）= 500 积分：默认规格（5 秒 720p
+    //    ¥2）买得起，创作按钮可用；超出 ¥5 的规格（10 秒 1080p 有声 ¥7）后端必须 402。
     const me = (await (await page.request.get("/api/me")).json()) as {
       email: string;
       balance?: { availableCny: number };
     };
     expect(me.email).toBe(EMAIL);
     if (me.balance) {
-      expect(me.balance.availableCny).toBe(0);
-      await expect(page.locator(".top__credits")).toHaveAttribute("aria-label", "积分 0");
+      expect(me.balance.availableCny).toBe(5);
+      await expect(page.locator(".top__credits")).toHaveAttribute("aria-label", "积分 500");
 
       await page.getByRole("button", { name: "描述你想创作的内容" }).click();
       await expect(page.locator(".composer")).toHaveAttribute("data-open", "true");
       await page.getByRole("textbox", { name: "提示词" }).fill("随便试一下");
-      // 按钮名恒为「创作」（§7），不像旧版会把可访问名换成警示文案；用 disabled + 错误行判断。
-      await expect(page.getByRole("button", { name: "创作", exact: true })).toBeDisabled();
-      await expect(page.locator(".composer__error")).toHaveAttribute("role", "alert");
-      await expect(page.locator(".composer__error")).toContainText(/余额|充值/);
+      await expect(page.getByRole("button", { name: "创作", exact: true })).toBeEnabled();
 
-      // 同一条硬约束在后端的独立验证：绕开 UI 直接打 API 也必须是 402，不能只是前端好看。
+      // 余额硬约束在后端的独立验证：绕开 UI 直接打 API，超出赠送额度的规格必须是 402。
       const denied = await page.request.post("/api/jobs", {
-        data: { mode: "text_to_video", prompt: "随便试一下" },
+        data: {
+          mode: "text_to_video",
+          prompt: "随便试一下",
+          durationSec: 10,
+          resolution: "1080p",
+          generateAudio: true,
+        },
       });
       expect(denied.status()).toBe(402);
       expect(await denied.json()).toMatchObject({

@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { applyBalanceChangeLocked } from "@/lib/billing/ledger";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { isInviteUsable, markInviteUsed, readInvite } from "@/lib/users/invites";
 import { withUserLock } from "@/lib/users/lock";
@@ -43,6 +44,9 @@ async function pickFreeUserId(): Promise<string> {
  * invite write-back. A crash after the first write leaves an account the index
  * does not know about; the startup scan heals it.
  */
+/** 新账号注册即送的余额（人民币元，用户 2026-09-07 决定）。¥5 ≈ 两条 5 秒 720p 视频或十张 1K 图。 */
+export const SIGNUP_BONUS_CNY = 5;
+
 export async function registerUser(input: {
   email: string;
   password: string;
@@ -62,15 +66,14 @@ export async function registerUser(input: {
 
     const now = new Date().toISOString();
     const id = await pickFreeUserId();
-    const user = await writeUser({
+    await writeUser({
       id,
       email,
       passwordHash,
       sessionEpoch: 1,
       plan: "free",
-      // 新账号余额为 0（方案 §5 的决策）：充值走管理员 CLI `scripts/grant-balance.mjs`，
-      // 支付网关在第三阶段。写显式的 0 而不是靠 schema 的 default，是为了让「新用户
-      // 一分钱都没有」这件事在注册这一处能读出来。
+      // 余额先写 0，注册赠送（`SIGNUP_BONUS_CNY`）紧接着走流水入账，让这笔钱在
+      // `data/ledger/` 里有一行可对账的凭据，而不是凭空出现在 user.json 里。
       balanceCny: 0,
       inviteCode: invite.code,
       createdAt: now,
@@ -78,7 +81,13 @@ export async function registerUser(input: {
     });
     await setIndexEntry(email, id);
     await markInviteUsed(invite, id);
-    return user;
+    // 已在用户锁内，必须用 Locked 版本（外壳会死锁）。`ref:"signup"` 保证同一账号只送一次。
+    return applyBalanceChangeLocked(id, SIGNUP_BONUS_CNY, {
+      kind: "grant",
+      amountCny: SIGNUP_BONUS_CNY,
+      ref: "signup",
+      note: "新用户赠送",
+    });
   });
 }
 

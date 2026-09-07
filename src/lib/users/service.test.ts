@@ -7,7 +7,8 @@ import { createInvite, readInvite } from "./invites";
 import { verifyPassword } from "./password";
 import { INVITE_CODE_RE } from "./schema";
 import { issueSessionValue, sessionUser } from "./session";
-import { changeUserPassword, changeUserPasswordWithCurrent, loginUser, registerUser } from "./service";
+import { changeUserPassword, changeUserPasswordWithCurrent, loginUser, registerUser, SIGNUP_BONUS_CNY } from "./service";
+import { readLedger } from "@/lib/billing/ledger";
 import { findUserByEmail, loadUserIndex, resetUserIndexCache, writeUser } from "./store";
 
 let dataRoot = "";
@@ -51,6 +52,11 @@ describe("registration", () => {
     expect(user.sessionEpoch).toBe(1);
     expect(user.inviteCode).toBe(invite.code);
     expect(await verifyPassword("hunter2-hunter2", user.passwordHash)).toBe(true);
+    // 注册赠送 ¥5：余额与流水各一份，流水带 `ref:"signup"` 幂等键。
+    expect(user.balanceCny).toBe(SIGNUP_BONUS_CNY);
+    const ledger = await readLedger(user.id);
+    expect(ledger.entries).toHaveLength(1);
+    expect(ledger.entries[0]).toMatchObject({ kind: "grant", amountCny: SIGNUP_BONUS_CNY, ref: "signup" });
 
     const consumed = await readInvite(invite.code);
     expect(consumed?.usedBy).toBe(user.id);

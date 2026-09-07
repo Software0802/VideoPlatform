@@ -2,6 +2,14 @@
 
 面向已经读过 `docs/handoff.md`（当前状态）与 `docs/design.md`（as-built）的人，是「出了事怎么办」的操作清单，不重复讲设计。生产实例：阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。
 
+## 管理 CLI 的运行身份
+
+`genius.service` 以 root 运行，`/opt/genius/data` 整棵树归 root。所有 `scripts/*.mjs`（铸邀请码 / 礼品码、充值、重置密码、停用账号、用量统计）都直接写 `data/`，**必须以 root 或 `sudo` 执行**，普通用户（如 `admin`）会报 `EACCES: permission denied`：
+
+```bash
+cd /opt/genius && sudo node scripts/mint-invites.mjs 1
+```
+
 ## 部署
 
 完整打包与踩坑步骤见 `docs/handoff.md` §0a.4 与 `docs/design.md` §10.1（Turbopack 别名软链、`output: "standalone"` 为何在 Windows→Linux 不可用）。日常发布：
