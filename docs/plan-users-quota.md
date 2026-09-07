@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 状态 | v2，已按 Codex 评审（BLOCK，6×P1 + 1×P2）修订；**§9 五步实施顺序已全部完成**（`integrate/users2` @ `9211324`），详见 `docs/handoff.md` §0 |
+| 状态 | 已实施并部署生产，as-built 见 `docs/design.md` §12；本文正文为历史方案，不再维护 |
 | 日期 | 2026-09-06 |
 | 前置 | `d028578`（生图 provider + 生产部署已完成） |
 | 影响面 | `src/lib/jobs/`、`src/app/api/`、`src/proxy.ts`（AGENTS.md 列的高风险区） |

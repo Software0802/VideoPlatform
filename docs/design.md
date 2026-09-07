@@ -18,30 +18,33 @@
 ```mermaid
 flowchart TB
   subgraph browser [浏览器]
-    Shell["shell/StudioShell(状态所有者)"]
-    Scene["scene/SceneHost + shaders/warp-field"]
-    Studio["studio/ 表单·进度·画廊"]
+    Shell["genius/GeniusShell + ShellContext(状态所有者)"]
+    Views["五视图:主页/创作/智能体/画布/订阅"]
   end
   subgraph next [Next.js 单进程]
     RH["/api/* Route Handlers"]
+    Proxy["proxy.ts(会话网关)"]
     Runner["JobRunner(instrumentation 启动,globalThis 单例)"]
-    Router["ProviderRouter(mock ↔ grok)"]
-    Grok["GrokNativeProvider"]
-    Mock["MockProvider(ffmpeg 水印片)"]
+    Router["ProviderRouter(能力+优先级路由)"]
+    Providers["grok / kling / yman / openai-image / mock"]
     Harness["HarnessOrchestrator(HARNESS_ENABLED 开关)"]
+    Billing["billing/(余额·订阅·会员积分池)"]
+    Agent["agent/(LLM 编排)"]
     FS["LocalFsMediaStore data/"]
   end
   subgraph upstream [上游]
-    XAI["官方 api.x.ai/v1"]
-    S2A["Sub2API 反代 /v1(拼车)"]
+    XAI["xAI api.x.ai/v1"]
+    Kling["可灵 api-*.klingai.com"]
+    YMan["YMan vip.yman.cc/v1"]
+    OpenAI["OpenAI 官方 / 兼容中转"]
   end
-  Shell --> Scene & Studio
-  Studio --> RH
+  Shell --> Views --> Proxy --> RH
   RH --> FS
-  Runner --> Router --> Grok & Mock
+  RH --> Billing
+  RH --> Agent
+  Runner --> Router --> Providers
   Runner -.-> Harness
-  Grok --> XAI
-  Grok --> S2A
+  Providers --> XAI & Kling & YMan & OpenAI
   Runner --> FS
 ```
 
@@ -175,8 +178,6 @@ flowchart TB
 
 - `sd-2.5-30秒` 这个模型名的 30 秒档与 harness 的 30 秒长片档撞车,当前不可达。
 - `retryJob` 对图片任务仍沿用旧的估价逻辑,未针对换家场景重新验证。
-- Codex 跨厂商审查进行中,结论未在提交时给出。
-- 本轮未部署到生产(见 `docs/handoff.md` 顶部表)。
 
 ## 2f. 产品目录与模型选择(2026-09-06 夜,阶段 A,as-built)
 
@@ -323,17 +324,17 @@ data/
 
 生产实例(阿里云)另有 `/opt/genius/backups/genius-data-<时间戳>.tgz`(`scripts/backup.sh`,每份只含 `users/ invites/ gift-codes/ ledger/ jobs/*/job.json` 白名单——`gift-codes/` 于 2026-09-06 夜阶段 A 补入,不含产物,保留最近 14 份,`chmod 600`)与阿里云 ECS 控制台配置的整盘自动快照(每日一份、保留 7 天),两层数据安全见 §10.2。2026-09-07 新增的 `agent/` 与 `templates/` 已列入 `scripts/backup.sh` 白名单。
 
-## 6. 前端与场景层(2026-09-05 晚按 Genius 交接包重建为深色单屏)
+## 6. 前端(2026-09-06 晚起:侧栏 + 五视图 Genius App 壳,as-built)
 
-- 结构:`app/page.tsx`(server,读 `listJobRecords` 前 40 条)→ `components/lumen/LumenHome.tsx`(client,唯一状态所有者)。整站一个 100vh 单屏,三个视图:首页(标题 + 输入卡 + 最近 6 张成片缩略)→ 工作室(textarea 首次非空或点发送即转场:左「操作台」四组提示词芯片、右「展览区」进度 / 成片、输入卡落到右下)→ 作品(`mountRingDark` 环形画廊,视频 / 图片分栏,底部元信息 + 「用这条提示词再生成」「下载」)。
-- 设计来源:`design_handoff/design_handoff_genius_home/`(README 为像素级规格,`Lumen v2.dc.html` 为定稿原型);落地摘要与有意偏离见根目录 `DESIGN.md`。视觉语言:页面 `#0a0d12`、卡片 `rgba(28,30,36,.92)`、描边 `rgba(214,228,255,.12)`、强调 `#DDE1E8`,圆角 26 / 22 / 12 / 9,Manrope + Noto Sans SC。品牌名 Genius,文案全中文。
-- 路径收窄:UI 只暴露 `text_to_video / image_to_video / text_to_image`(内部 `t2v / i2v / t2i`)。首帧 `startUploadId`(回形针上传,自动切图生视频)。尾帧入口已从 UI 移除(API 的 `lastUploadId` 仍在)。`reference_to_video / edit_video / extend_video` 仍保留在 API 与 provider 层。
-- **时长 / 画幅 / 音频芯片由服务端按 provider 能力下发**(2026-09-06 晚起,见 §2e):`router.ts` 的 `videoDurationsFor(providerId)`(读 `capabilities().durations`,不声明则默认 `[4,6,8,10]`,开启 harness 时追加 30/45/60)、`videoAspectRatios()`(`VIDEO_PROVIDER_ORDER` 里所有有 key 的 provider 支持画幅的并集,不声明画幅的 provider 直接给全集 16:9/9:16/1:1)、`audioAvailableFor(providerId)`(可灵读 `KLING_VIDEO_AUDIO`,YMan 恒 `false`——建任务接口无音频参数,不可控而非一定无声,grok/mock 恒真)经 `/api/health` 与 `page.tsx` 解析一次下发给 `LumenHome`;前端不再写死档位或按 provider 名特判。
-- API 边界不变:`lib/client/jobs.ts`(upload / create / cancel / retry / 幂等 key)、`lib/client/useJobLive.ts`(SSE + 2s 轮询)、`lib/client/labels.ts`(终态判断 / 计时)。401 由 `LumenHome` 弹 `components/shell/AccessTokenPrompt`,顶栏「登录」也打开它。
-- 场景层:`lib/scene/lumen-three.ts` 是纯 three.js(无 R3F)的两个 mount 函数——`mountDawn`(全屏 quad shader 黎明河面,pixelRatio ≤ 1.5,`setEnergy` 随任务进行提亮)、`mountRingDark`(真图 + 倒影的环,`R = max(2.6, n×0.58)`,平面原色不透明、悬停放大 1.04,拖拽 `setScroll` + 0.003 圈/秒自动慢转,raycast hover / click,`onTurn` 回报角度)。`components/scene/SceneHost.tsx` 在 `useEffect` 中挂载并 dispose;mount 抛错时静默留白。
-- 成片来源:作品环与缩略直接用 `JobPublic.output`(视频取 `posterUrl`,图片取 `imageUrl`),按 `output.kind` 分视频 / 图片;无成片时回落 `public/lumina/*.webp` 八张样片。展览区成片用 `<video controls>` / `<img>`,`object-fit: contain`。
-- 依赖:`three@0.185` 单一版本;`@react-three/fiber`、`@react-three/drei`、`@phosphor-icons/react` 已卸载;字体经 `next/font/google`(Manrope / Noto Sans SC)。
-- `/gallery`、`/jobs/[id]`、`/studio/*` 保留为跳转到 `/`。2026-09-02 的 Agent 会话页(`components/agent/*`)已删除,其决策记录见 `docs/review-2026-09-02.md`;2026-09-05 日间的 Mono-Color Blueprint 首页(`marks.tsx`、`mountReel / mountWall / mountDotField`)已被本节替代,记录见 `docs/handoff.md`。
+**2026-09-06 晚起,整站已换成「侧栏 + 五视图 + 悬浮创作面板」的 Genius App 壳**(`docs/plan-ui-genius-app.md`),取代了本节曾经描述的单屏三视图(首页/工作室/作品)+ three.js 场景层设计——那一版的 `app/page.tsx`(旧,单文件)、`components/lumen/LumenHome.tsx`、`components/shell/AccessTokenPrompt.tsx` 已从仓库删除。**完整 UI 规格、DOM 契约、颜色/字体/圆角令牌、与交接包的有意偏离见根目录 `DESIGN.md`**,本节只记后端如何与前端交接:
+
+- 路由 `src/app/(shell)/`:`layout.tsx`(服务端校验会话、下发 provider 能力)+ `page.tsx`(主页)/`create/page.tsx`/`agent/page.tsx`/`canvas/page.tsx`/`subscription/page.tsx`,五个路由共享同一个 `GeniusShell`(`src/components/genius/GeniusShell.tsx`);唯一客户端状态所有者是 `ShellContext.tsx`(`useShell()`)。
+- 路径收窄:创作面板只暴露 `text_to_video / image_to_video / text_to_image`(内部 `t2v / i2v / t2i`);首帧 `startUploadId`,可灵档另有尾帧槽(`lastUploadId`,§2c);`reference_to_video / edit_video / extend_video` 仍保留在 API 与 provider 层,UI 置灰。
+- **时长 / 画幅 / 音频芯片由服务端按 provider 能力下发**(见 §2e):`router.ts` 的 `videoDurationsFor(providerId)`(读 `capabilities().durations`,不声明则默认 `[4,6,8,10]`,开启 harness 时追加 30/45/60)、`videoAspectRatios()`(`VIDEO_PROVIDER_ORDER` 里所有有 key 的 provider 支持画幅的并集)、`audioAvailableFor(providerId)`(可灵读 `KLING_VIDEO_AUDIO`,YMan 恒 `false`,grok/mock 恒真)经 `/api/health` 与 `(shell)/layout.tsx` 解析一次下发给 `ShellContext`;前端不再写死档位或按 provider 名特判。选中具体产品(§2f)时,规格弹层进一步收窄到该产品自己的能力。
+- API 边界:`src/lib/client/{jobs,auth,agent,subscription,templates,models}.ts`(create/cancel/retry/幂等 key)、`useJobLive.ts`(SSE + 轮询)、`useEvents.ts`(全局通知)、`labels.ts`(终态判断/计时)。401 由 `client/http.ts` 整页跳转 `/login`。
+- 成片来源:主页瀑布流与详情浮层直接用 `JobPublic.output`(视频取 `posterUrl`,图片取 `imageUrl`),按 `output.kind` 分视频/图片;`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡。
+- 依赖:`three`/`@react-three/fiber`/`@react-three/drei`/`@phosphor-icons/react` 均已卸载(旧场景层的遗留代码 `src/lib/scene/`、`src/shaders/`、`src/components/lumen/ClothVeil.tsx`、`src/components/scene/SceneHost.tsx` 已无任何组件引用,仍留在仓库待清理,见 `docs/handoff.md` §3);字体经 `next/font/google`(Manrope + Noto Sans SC)。
+- 画布 `/canvas` 是像素复刻 + 本地交互的原型,不发请求(占位数据);智能体 `/agent`(§2h)与订阅 `/subscription`(§2i)已接真实后端。
 
 ## 7. Harness 一致性管线 **[Phase 2 详设 — 产品核心]**
 
@@ -418,7 +419,7 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 5. 反代入口借用同机已有的 taiyu Caddy 容器,新增站点块 `genius.homeaistack.online → reverse_proxy 10.255.1.1:3000`(`taiyu_default` 网络网关,不是 docker0 的 10.255.0.1);Caddyfile 改前备份。
 6. 健康检查:`curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/api/health`。
 
-详细操作步骤见 `docs/handoff.md` §0a.4;DNS/HTTPS 尚未完成,3000 端口不对外(安全组只开 22/80/443)。
+详细操作步骤见 `docs/handoff.md`;生产已挂 `https://genius.homeaistack.online`(经同机 taiyu 的 Caddy 反代终结 TLS),3000 端口本身不对外(安全组只开 22/80/443)。
 
 ### 10.2 部署回滚与 CI(2026-09-06 阶段一,as-built)
 
@@ -445,6 +446,7 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 
 ### 12.1 用户存储与会话
 
+- 注册成功即入账 `SIGNUP_BONUS_CNY`(常量,¥5,`src/lib/users/service.ts`,流水 `ref:"signup"`)——不是环境变量,改动需要改代码。
 - `data/users/usr_xxx/user.json` 是唯一事实源(email、scrypt 密码哈希及其自描述参数、`disabled`、`sessionEpoch`);`data/users/index.json` 是 email→id 的派生缓存,启动时校验并按需从 `user.json` 目录重建。
 - 密码用 scrypt,参数自描述以便未来调参不破坏旧哈希;`burnPasswordTiming` 在用户不存在时仍烧一次等量耗时,防止靠响应延迟枚举邮箱。
 - 会话是 HMAC-SHA256 签名 Cookie(`usr_xxx.<过期时间戳>.<签名>`),密钥 `LUMEN_SESSION_SECRET`(必需,未设置服务启动即报错),`timingSafeEqual` 校验。签名与校验分居两处:`src/lib/users/session-token.ts` 是零 I/O 纯函数供 `src/proxy.ts` 网关层用;`src/lib/users/session.ts` 额外读一次 `user.json` 校验 `disabled` 与 `sessionEpoch`(改密即令旧 Cookie 失效)。无服务端会话表,故不能单点撤销会话,只能靠这两个字段或轮换密钥(全体登出)。
@@ -483,7 +485,7 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 
 ### 12.5 登录 / 注册
 
-新路由 `/login`(`src/app/login/`、`src/components/lumen/LoginScreen.tsx`):登录/注册两个 tab,注册多一栏邀请码,视觉复用既有玻璃语言与 `mountDawn` 背景,不引组件库。未登录访问 `/` 由页面服务端 307 到 `/login`;登录成功后整页跳转 `/`(而非客户端路由),保证 SSR 首屏带上新会话。顶栏原「登录」按钮改为账号名 + 「退出」(窄屏 ≤520px 隐藏账号名节省空间)。旧 `AccessTokenPrompt` 弹窗与 `POST/DELETE /api/auth/session` 端点已删除;`src/lib/client/http.ts` 收到 401 时整页跳转登录页而非弹窗。
+路由 `/login`(`src/app/login/page.tsx`、`src/components/genius/LoginScreen.tsx`):登录/注册两个 tab,注册多一栏邀请码,顶栏新增 `LanguageSwitch.tsx` 语言切换(§13),不引组件库。未登录访问 `(shell)` 任意路由由服务端 307 到 `/login`;登录成功后整页跳转,保证 SSR 首屏带上新会话。顶栏账号菜单(disclosure)显示完整邮箱 + 「退出」(窄屏收窄,见 `DESIGN.md`)。`src/lib/client/http.ts` 收到 401 时整页跳转登录页。
 
 ### 12.6 账号自助与运维 CLI(2026-09-06 深夜,as-built)
 

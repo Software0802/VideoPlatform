@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 状态 | 已实施并上线（`bcad123`，2026-09-06）；Codex 方案审查未做（额度）；`pnpm e2e` 未跑。真实冒烟已跑通两条，详见 `docs/handoff.md` §0c |
+| 状态 | 已实施并部署生产，as-built 见 `docs/design.md` §2c；本文正文为历史方案，不再维护 |
 | 日期 | 2026-09-06 |
 | 前置 | `main` @ `c5e92ed`（用户系统 / 配额 / 留存清理已上线） |
 | 影响面 | `src/lib/providers/`（新目录 `kling/`）、`src/lib/providers/router.ts`、`src/lib/jobs/create.ts`、`src/lib/jobs/schema.ts`、`src/lib/cost.ts`、`src/lib/env.ts`、`/api/health`、`LumenHome.tsx` 时长芯片；**不改** `src/lib/jobs/runner.ts` 状态机与 `src/lib/harness/` |

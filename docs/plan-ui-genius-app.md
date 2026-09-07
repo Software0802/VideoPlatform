@@ -1,5 +1,7 @@
 # 方案：前端换壳为 Genius App（侧栏 + 五视图 + 悬浮创作面板）
 
+> 状态：已实施并部署生产，as-built 见 `DESIGN.md`、`docs/design.md` §6；本文正文为历史方案，不再维护。
+
 日期 2026-09-06。依据 `design_handoff/design_handoff_genius_app/README.md`（规格）与 `Genius App.dc.html`（原型，两者冲突以原型为准）。取代此前 `design_handoff_genius_home` 的单屏三视图设计（已从工作区删除）。
 
 用户 2026-09-06 拍板：
