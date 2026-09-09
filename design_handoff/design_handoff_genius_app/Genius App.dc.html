@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <script src="./image-slot.js"></script>
+  <style>
+    html,body{margin:0;height:100%;background:#0a0a0b;color:#fff;font-family:Manrope,"Noto Sans SC",-apple-system,"PingFang SC",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+    body{overflow:hidden}
+    a{color:#fff;text-decoration:none}a:hover{color:#ff8a3d}
+    button,textarea,input{font:inherit;color:inherit;background:none;border:0}
+    textarea::placeholder,input::placeholder{color:#6f7075}
+    :focus{outline:none}:focus-visible{outline:2px solid #ff8a3d;outline-offset:2px;border-radius:6px}
+    ::-webkit-scrollbar{width:10px;height:10px}
+    ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:8px;border:3px solid transparent;background-clip:padding-box}
+    ::-webkit-scrollbar-track{background:transparent}
+    input[type=range]{-webkit-appearance:none;height:3px;border-radius:2px;background:rgba(255,255,255,.18)}
+    input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:#e9e9ec}
+    @keyframes fade-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+    @keyframes pop-in{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
+    @keyframes slide-in{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:none}}
+    @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important}}
+  </style>
+</helmet>
+<div style="display:flex;height:100vh;overflow:hidden;background:#0a0a0b;color:#fff">
+
+  <aside style="width:212px;flex:none;display:flex;flex-direction:column;background:#0c0c0d;border-right:1px solid rgba(255,255,255,.07)">
+    <div style="display:flex;align-items:center;gap:9px;height:56px;padding:0 18px;flex:none">
+      <span style="width:16px;height:16px;border-radius:5px 5px 5px 1px;background:linear-gradient(140deg,#ff8a3d,#ff4d8d 55%,#a855f7)"></span>
+      <span style="font-size:16px;font-weight:700;letter-spacing:-.02em">Genius</span>
+    </div>
+    <nav style="display:flex;flex-direction:column;gap:2px;padding:10px 10px 0">
+      <button type="button" onClick="{{ goHome }}" style="display:flex;align-items:center;gap:11px;height:40px;padding:0 12px;border-radius:10px;font-size:13.5px;font-weight:500;cursor:pointer;text-align:left;color:{{ navHomeFg }};background:{{ navHomeBg }};box-shadow:{{ navHomeRing }};transition:background .16s ease,color .16s ease" style-hover="background:rgba(255,255,255,.05)">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="{{ navHomeIcon }}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 12 3l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"></path><path d="M9 21v-7h6v7"></path></svg>主页
+      </button>
+      <button type="button" onClick="{{ goCreate }}" style="display:flex;align-items:center;gap:11px;height:40px;padding:0 12px;border-radius:10px;font-size:13.5px;font-weight:500;cursor:pointer;text-align:left;color:{{ navCreateFg }};background:{{ navCreateBg }};box-shadow:{{ navCreateRing }};transition:background .16s ease,color .16s ease" style-hover="background:rgba(255,255,255,.05)">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="{{ navCreateIcon }}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z"></path><path d="M18.5 16.5l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"></path></svg>创作
+      </button>
+      <button type="button" onClick="{{ goAgent }}" style="display:flex;align-items:center;gap:11px;height:40px;padding:0 12px;border-radius:10px;font-size:13.5px;font-weight:500;cursor:pointer;text-align:left;color:{{ navAgentFg }};background:{{ navAgentBg }};box-shadow:{{ navAgentRing }};transition:background .16s ease,color .16s ease" style-hover="background:rgba(255,255,255,.05)">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="{{ navAgentIcon }}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 4v4M9 14h.01M15 14h.01M2 13v3M22 13v3"></path></svg>智能体
+      </button>
+      <button type="button" onClick="{{ goCanvas }}" style="display:flex;align-items:center;gap:11px;height:40px;padding:0 12px;border-radius:10px;font-size:13.5px;font-weight:500;cursor:pointer;text-align:left;color:{{ navCanvasFg }};background:{{ navCanvasBg }};box-shadow:{{ navCanvasRing }};transition:background .16s ease,color .16s ease" style-hover="background:rgba(255,255,255,.05)">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="{{ navCanvasIcon }}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20 10.5 4l6.5 16"></path><path d="M7 14h9"></path></svg>画布
+      </button>
+      <button type="button" onClick="{{ goSub }}" style="display:flex;align-items:center;gap:11px;height:40px;padding:0 12px;border-radius:10px;font-size:13.5px;font-weight:500;cursor:pointer;text-align:left;color:{{ navSubFg }};background:{{ navSubBg }};box-shadow:{{ navSubRing }};transition:background .16s ease,color .16s ease" style-hover="background:rgba(255,255,255,.05)">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="{{ navSubIcon }}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h16l-8 12z"></path><path d="M8 4h8l4 4H4z"></path></svg>订阅
+      </button>
+    </nav>
+    <div style="margin-top:auto;padding:16px 18px;font-size:11px;color:#6f7075;display:flex;flex-direction:column;gap:4px">
+      <span>条款 · 隐私</span><span>© Genius 2026</span>
+    </div>
+  </aside>
+
+  <div style="position:relative;flex:1;min-width:0;display:flex;flex-direction:column">
+    <header style="height:56px;flex:none;display:flex;align-items:center;gap:12px;padding:0 20px;border-bottom:1px solid rgba(255,255,255,.07)">
+      <span style="font-size:14px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;flex:none">{{ viewTitle }}</span>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+        <button type="button" onClick="{{ goSub }}" style="display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex:none;color:#ff8fb0;background:rgba(255,141,176,.1);box-shadow:inset 0 0 0 1px rgba(255,141,176,.28);transition:background .16s ease" style-hover="background:rgba(255,141,176,.18)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2a2 2 0 0 1-.6-1.4V4a1 1 0 0 1 1-1h8a2 2 0 0 1 1.4.6l7.4 7.4a2 2 0 0 1 0 2.4z"></path><path d="M7.5 7.5h.01"></path></svg>订阅</button>
+        <div style="display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:9px;font-size:12.5px;white-space:nowrap;flex:none;background:rgba(255,255,255,.06)">
+          <span style="width:18px;height:18px;border-radius:50%;background:linear-gradient(140deg,#3a3b42,#1b1c21);display:grid;place-items:center;font-size:9px;color:#c9c9ce">志</span>
+          <span style="color:#e4e4e8;white-space:nowrap">个人</span>
+          <span style="width:1px;height:14px;background:rgba(255,255,255,.14)"></span>
+          <span style="display:inline-flex;align-items:center;gap:4px;font-weight:600;color:#f0d9a8"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"></path></svg>39</span>
+          <span style="height:18px;padding:0 6px;border-radius:5px;display:inline-flex;align-items:center;font-size:10.5px;color:#c9c9ce;background:rgba(255,255,255,.09);white-space:nowrap">基础版</span>
+        </div>
+        <button type="button" title="语言" style="width:30px;height:30px;flex:none;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#a9aab0;transition:background .16s ease,color .16s ease" style-hover="background:rgba(255,255,255,.08);color:#fff"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18"></path></svg></button>
+        <button type="button" title="通知" style="position:relative;width:30px;height:30px;flex:none;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#a9aab0;transition:background .16s ease,color .16s ease" style-hover="background:rgba(255,255,255,.08);color:#fff"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15V10a6 6 0 1 0-12 0v5l-1.5 3h15z"></path><path d="M10 21h4"></path></svg><span style="position:absolute;top:5px;right:6px;width:5px;height:5px;border-radius:50%;background:#ff4d4d"></span></button>
+        <span style="width:28px;height:28px;border-radius:50%;background:linear-gradient(140deg,#3a3b42,#1b1c21);display:grid;place-items:center;font-size:11px;font-weight:600;color:#c9c9ce">志</span>
+      </div>
+    </header>
+
+    <main style="flex:1;min-height:0;position:relative;overflow:{{ mainOverflow }}">
+
+      <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:18px 20px 24px;animation:fade-up .35s ease both">
+          <div style="position:relative;width:100%;height:clamp(170px,24vh,300px);border-radius:16px;overflow:hidden;background:#111114">
+            <image-slot id="genius-home-banner" shape="rounded" radius="16" placeholder="活动横幅 — 拖入图片"></image-slot>
+          </div>
+          <div style="display:flex;gap:22px;padding:22px 2px 0;font-size:14px">
+            <sc-for list="{{ homeTabs }}" as="t" hint-placeholder-count="3">
+              <button type="button" onClick="{{ t.pick }}" style="padding:0 0 8px;font-size:14px;font-weight:600;cursor:pointer;color:{{ t.fg }};border-bottom:2px solid {{ t.line }};transition:color .16s ease" style-hover="color:#fff">{{ t.label }}</button>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:7px;padding:14px 0 18px">
+            <sc-for list="{{ cats }}" as="c" hint-placeholder-count="9">
+              <button type="button" onClick="{{ c.pick }}" style="height:30px;padding:0 13px;border-radius:9px;font-size:12.5px;font-weight:500;cursor:pointer;white-space:nowrap;color:{{ c.fg }};background:{{ c.bg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff">{{ c.label }}</button>
+            </sc-for>
+          </div>
+          <div style="columns:220px 5;column-gap:10px">
+            <sc-for list="{{ works }}" as="w" hint-placeholder-count="12">
+              <button type="button" style="display:block;width:100%;margin:0 0 10px;padding:0;border-radius:12px;overflow:hidden;position:relative;cursor:pointer;break-inside:avoid;aspect-ratio:{{ w.ratio }};background:#141417 {{ w.bg }} center / cover no-repeat;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);transition:transform .25s cubic-bezier(.22,1,.36,1)" style-hover="transform:translateY(-3px)">
+                <span style="position:absolute;left:9px;top:9px;display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:7px;font-size:11px;font-weight:500;color:#fff;background:rgba(10,10,12,.62)"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z"></path></svg>{{ w.title }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isCreate }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:14px 20px 24px;animation:fade-up .35s ease both">
+          <div style="display:flex;align-items:center;gap:22px">
+            <sc-for list="{{ createTabs }}" as="t" hint-placeholder-count="5">
+              <button type="button" onClick="{{ t.pick }}" style="padding:0 0 8px;font-size:13.5px;font-weight:600;cursor:pointer;color:{{ t.fg }};border-bottom:2px solid {{ t.line }};transition:color .16s ease" style-hover="color:#fff">{{ t.label }}</button>
+            </sc-for>
+            <button type="button" style="margin-left:auto;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#8b8b91" style-hover="color:#fff;background:rgba(255,255,255,.07)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4.3-4.3"></path></svg></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:14px 0 18px;border-top:1px solid rgba(255,255,255,.07);margin-top:-1px">
+            <button type="button" style="display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:9px;font-size:12.5px;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.06);min-width:120px" style-hover="background:rgba(255,255,255,.1)">全部<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-left:auto"><path d="m6 9 6 6 6-6"></path></svg></button>
+            <sc-for list="{{ sourceTabs }}" as="s" hint-placeholder-count="2">
+              <button type="button" onClick="{{ s.pick }}" style="height:32px;padding:0 13px;border-radius:9px;font-size:12.5px;font-weight:500;cursor:pointer;color:{{ s.fg }};background:{{ s.bg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff">{{ s.label }}</button>
+            </sc-for>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <button type="button" style="display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:9px;font-size:12.5px;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.06)" style-hover="background:rgba(255,255,255,.1)">最近 30 天<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+              <button type="button" style="display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:9px;font-size:12.5px;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.06)" style-hover="background:rgba(255,255,255,.1)">全部模型<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+              <div style="display:flex;gap:2px;padding:3px;border-radius:10px;background:rgba(255,255,255,.06)">
+                <button type="button" onClick="{{ pickDens0 }}" style="width:28px;height:26px;border-radius:7px;display:grid;place-items:center;cursor:pointer;color:{{ dens0Fg }};background:{{ dens0Bg }};transition:background .16s ease,color .16s ease"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4" width="8" height="16" rx="1.5"></rect><rect x="13" y="4" width="8" height="16" rx="1.5"></rect></svg></button>
+                <button type="button" onClick="{{ pickDens1 }}" style="width:28px;height:26px;border-radius:7px;display:grid;place-items:center;cursor:pointer;color:{{ dens1Fg }};background:{{ dens1Bg }};transition:background .16s ease,color .16s ease"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1.5"></rect><rect x="9.5" y="4" width="5" height="16" rx="1.5"></rect><rect x="16" y="4" width="5" height="16" rx="1.5"></rect></svg></button>
+                <button type="button" onClick="{{ pickDens2 }}" style="width:28px;height:26px;border-radius:7px;display:grid;place-items:center;cursor:pointer;color:{{ dens2Fg }};background:{{ dens2Bg }};transition:background .16s ease,color .16s ease"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4" width="3.6" height="16" rx="1.2"></rect><rect x="8" y="4" width="3.6" height="16" rx="1.2"></rect><rect x="13" y="4" width="3.6" height="16" rx="1.2"></rect><rect x="18" y="4" width="3.6" height="16" rx="1.2"></rect></svg></button>
+              </div>
+              <button type="button" style="display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px;border-radius:9px;font-size:12.5px;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.06)" style-hover="background:rgba(255,255,255,.1)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect></svg>选择</button>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax({{ cardMin }},1fr));gap:14px">
+            <sc-for list="{{ history }}" as="h" hint-placeholder-count="3">
+              <div style="border-radius:12px;overflow:hidden;background:#131316;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07)">
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:2px;padding:26px 12px;background:#0f0f12">
+                  <sc-for list="{{ h.frames }}" as="f" hint-placeholder-count="9">
+                    <span style="display:block;aspect-ratio:16/10;border-radius:2px;background:#1a1a1f {{ f.bg }} center / cover no-repeat"></span>
+                  </sc-for>
+                </div>
+                <div style="display:flex;align-items:flex-start;gap:8px;padding:12px 13px 13px">
+                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px">
+                    <span style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ h.title }}</span>
+                    <span style="font-size:11.5px;color:#7d7e84;font-variant-numeric:tabular-nums">{{ h.date }}</span>
+                  </div>
+                  <button type="button" style="width:24px;height:24px;flex:none;border-radius:7px;display:grid;place-items:center;cursor:pointer;color:#8b8b91" style-hover="color:#fff;background:rgba(255,255,255,.08)"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5.5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="18.5" r="1.4"></circle></svg></button>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isAgent }}" hint-placeholder-val="{{ false }}">
+        <div style="animation:fade-up .35s ease both">
+          <div style="position:absolute;left:20px;top:14px;z-index:3">
+            <button type="button" onClick="{{ toggleHistory }}" style="display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 13px;border-radius:9px;font-size:12.5px;font-weight:500;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.06);transition:background .16s ease" style-hover="background:rgba(255,255,255,.1);color:#fff"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg>历史记录</button>
+          </div>
+          <div style="position:relative;padding:clamp(48px,9vh,96px) 20px clamp(36px,6vh,64px);background:radial-gradient(70% 120% at 50% -10%,rgba(168,85,247,.3),rgba(255,77,141,.1) 45%,transparent 72%)">
+            <h1 style="margin:0 0 clamp(24px,4vh,40px);text-align:center;font-size:clamp(26px,3.4vw,44px);font-weight:600;letter-spacing:-.02em;line-height:1.15">一切，始于<span style="background:linear-gradient(90deg,#ff8a3d,#ff4d8d 55%,#a855f7);-webkit-background-clip:text;background-clip:text;color:transparent">一个想法</span></h1>
+            <div style="position:relative;max-width:680px;margin:0 auto;border-radius:16px;background:rgba(255,255,255,.045);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);padding:18px 16px 12px;display:flex;flex-direction:column;gap:20px">
+              <textarea rows="2" value="{{ agentPrompt }}" onChange="{{ setAgentPrompt }}" placeholder="为这个角色生成一组多镜头场景" style="width:100%;resize:none;padding:0 2px;font-size:14.5px;line-height:1.5;color:#fff"></textarea>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <button type="button" style="width:30px;height:30px;flex:none;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.07)" style-hover="background:rgba(255,255,255,.12);color:#fff"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></button>
+                <div style="position:relative">
+                  <button type="button" onClick="{{ openAText }}" style="display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:9px;font-size:12.5px;cursor:pointer;color:#e4e4e8;background:{{ aTextBg }};box-shadow:{{ aTextRing }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.12)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 11V6a4 4 0 0 1 8 0v5"></path><rect x="5" y="11" width="14" height="9" rx="2"></rect></svg>{{ aText }}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+                  <sc-if value="{{ popAText }}" hint-placeholder-val="{{ false }}">
+                    <div style="position:absolute;left:0;top:calc(100% + 8px);width:250px;max-height:250px;overflow:auto;border-radius:12px;background:rgba(28,28,33,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.55);padding:6px;z-index:4;animation:pop-in .2s ease both">
+                      <sc-for list="{{ textModels }}" as="m" hint-placeholder-count="6">
+                        <button type="button" onClick="{{ m.pick }}" style="display:flex;align-items:center;gap:9px;width:100%;height:38px;padding:0 10px;border-radius:9px;font-size:13px;font-weight:500;cursor:pointer;text-align:left;color:#e4e4e8;background:{{ m.bg }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.07)"><span style="width:14px;height:14px;border-radius:4px;background:rgba(255,255,255,.14)"></span>{{ m.label }}</button>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+                <div style="position:relative">
+                  <button type="button" onClick="{{ openAImg }}" style="display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:9px;font-size:12.5px;cursor:pointer;color:#e4e4e8;background:{{ aImgBg }};box-shadow:{{ aImgRing }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.12)">图片: {{ aImg }}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+                  <sc-if value="{{ popAImg }}" hint-placeholder-val="{{ false }}">
+                    <div style="position:absolute;left:0;top:calc(100% + 8px);width:320px;max-height:280px;overflow:auto;border-radius:12px;background:rgba(28,28,33,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.55);padding:6px;z-index:4;animation:pop-in .2s ease both">
+                      <sc-for list="{{ imgModels }}" as="m" hint-placeholder-count="5">
+                        <button type="button" onClick="{{ m.pick }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:10px;cursor:pointer;text-align:left;background:{{ m.bg }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.07)">
+                          <span style="width:30px;height:30px;flex:none;border-radius:8px;background:{{ m.icon }}"></span>
+                          <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px"><span style="font-size:12.5px;font-weight:600">{{ m.name }}</span><span style="font-size:11.5px;color:#7d7e84;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.desc }}</span></span>
+                          <sc-if value="{{ m.auto }}" hint-placeholder-val="{{ false }}"><span style="height:19px;padding:0 8px;border-radius:6px;display:inline-flex;align-items:center;font-size:11px;color:#c9c9ce;background:rgba(255,255,255,.1)">自动</span></sc-if>
+                        </button>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+                <div style="position:relative">
+                  <button type="button" onClick="{{ openAVid }}" style="display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:9px;font-size:12.5px;cursor:pointer;color:#e4e4e8;background:{{ aVidBg }};box-shadow:{{ aVidRing }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.12)">视频: {{ aVid }}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+                  <sc-if value="{{ popAVid }}" hint-placeholder-val="{{ false }}">
+                    <div style="position:absolute;left:0;top:calc(100% + 8px);width:340px;max-height:300px;overflow:auto;border-radius:12px;background:rgba(28,28,33,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.55);padding:6px;z-index:4;animation:pop-in .2s ease both">
+                      <sc-for list="{{ vidModels }}" as="m" hint-placeholder-count="6">
+                        <button type="button" onClick="{{ m.pick }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:10px;cursor:pointer;text-align:left;background:{{ m.bg }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.07)">
+                          <span style="width:30px;height:30px;flex:none;border-radius:8px;background:{{ m.icon }}"></span>
+                          <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px"><span style="font-size:12.5px;font-weight:600">{{ m.name }}</span><span style="font-size:11.5px;color:#7d7e84;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.desc }}</span></span>
+                          <sc-if value="{{ m.auto }}" hint-placeholder-val="{{ false }}"><span style="height:19px;padding:0 8px;border-radius:6px;display:inline-flex;align-items:center;font-size:11px;color:#c9c9ce;background:rgba(255,255,255,.1)">自动</span></sc-if>
+                        </button>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+                <div style="position:relative">
+                  <button type="button" onClick="{{ openASkill }}" style="display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:9px;font-size:12.5px;cursor:pointer;color:#e4e4e8;background:{{ aSkillBg }};box-shadow:{{ aSkillRing }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.12)">技能<span style="height:18px;padding:0 6px;border-radius:5px;display:inline-flex;align-items:center;font-size:11px;color:#c9c9ce;background:rgba(255,255,255,.1)">41</span></button>
+                  <sc-if value="{{ popASkill }}" hint-placeholder-val="{{ false }}">
+                    <div style="position:absolute;left:0;top:calc(100% + 8px);display:flex;align-items:flex-start;gap:12px;z-index:4;animation:pop-in .2s ease both">
+                      <div style="width:290px;border-radius:12px;background:rgba(28,28,33,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.55);padding:6px;display:flex;flex-direction:column">
+                        <div style="max-height:250px;overflow:auto;display:flex;flex-direction:column;gap:2px">
+                          <sc-for list="{{ skillList }}" as="s" hint-placeholder-count="6">
+                            <button type="button" onMouseEnter="{{ s.hover }}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;text-align:left;background:{{ s.bg }};transition:background .16s ease">
+                              <span style="width:28px;height:28px;flex:none;border-radius:8px;display:grid;place-items:center;color:#c9c9ce;background:rgba(255,255,255,.08)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 4v3M12 17v3M4 12h3M17 12h3"></path></svg></span>
+                              <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.name }}</span><span style="font-size:11px;color:#7d7e84;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.desc }}</span></span>
+                            </button>
+                          </sc-for>
+                        </div>
+                        <button type="button" onClick="{{ goPlaza }}" style="display:flex;align-items:center;gap:9px;margin-top:4px;padding:10px;border-radius:10px;cursor:pointer;font-size:12.5px;color:#e4e4e8;border-top:1px solid rgba(255,255,255,.07)" style-hover="background:rgba(255,255,255,.07)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>管理工具<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-left:auto"><path d="m9 6 6 6-6 6"></path></svg></button>
+                      </div>
+                      <div style="width:250px;border-radius:12px;overflow:hidden;background:rgba(28,28,33,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.55)">
+                        <span style="display:block;width:100%;aspect-ratio:16/9;background:#1a1a1f {{ skillPreviewBg }} center / cover no-repeat"></span>
+                        <span style="display:flex;flex-direction:column;gap:6px;padding:12px 14px 14px"><span style="font-size:13px;font-weight:700">{{ skillPreviewName }}</span><span style="font-size:11.5px;color:#a9aab0;line-height:1.5">{{ skillPreviewDesc }}</span></span>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+                <button type="button" style="margin-left:auto;width:32px;height:32px;flex:none;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#15161a;background:linear-gradient(140deg,#ff8a3d,#ff4d8d 60%,#a855f7);transition:filter .16s ease" style-hover="filter:brightness(1.08)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg></button>
+              </div>
+            </div>
+          </div>
+          <div style="padding:0 20px 40px">
+            <h2 style="margin:0 0 14px;font-size:14px;font-weight:600">选择一个技能开始</h2>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px">
+              <sc-for list="{{ skills }}" as="s" hint-placeholder-count="12">
+                <button type="button" style="display:flex;flex-direction:column;padding:0;text-align:left;border-radius:12px;overflow:hidden;cursor:pointer;background:#131316;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);transition:transform .25s cubic-bezier(.22,1,.36,1)" style-hover="transform:translateY(-3px)">
+                  <span style="display:block;width:100%;aspect-ratio:16/9;background:#1a1a1f {{ s.bg }} center / cover no-repeat"></span>
+                  <span style="display:flex;flex-direction:column;gap:5px;padding:12px 13px 14px">
+                    <span style="font-size:13.5px;font-weight:600">{{ s.name }}</span>
+                    <span style="font-size:12px;color:#7d7e84;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.desc }}</span>
+                  </span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+        <sc-if value="{{ historyOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;left:0;top:0;bottom:0;width:290px;z-index:4;background:#0d0d0f;border-right:1px solid rgba(255,255,255,.08);padding:14px;display:flex;flex-direction:column;gap:14px;animation:slide-in .28s cubic-bezier(.22,1,.36,1) both">
+            <div style="display:flex;align-items:center">
+              <span style="font-size:14px;font-weight:700">智能体</span>
+              <button type="button" onClick="{{ toggleHistory }}" style="margin-left:auto;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:#8b8b91" style-hover="color:#fff;background:rgba(255,255,255,.08)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></button>
+            </div>
+            <button type="button" style="display:flex;align-items:center;gap:9px;height:38px;padding:0 12px;border-radius:10px;font-size:13px;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.06)" style-hover="background:rgba(255,255,255,.1);color:#fff"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h5l11-11-5-5L4 15z"></path><path d="M14 5l5 5"></path></svg>新建对话</button>
+            <span style="font-size:11.5px;color:#7d7e84;padding-left:2px">任务</span>
+            <button type="button" onClick="{{ openChat }}" style="display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border-radius:9px;font-size:12.5px;cursor:pointer;text-align:left;color:#e4e4e8;background:rgba(255,255,255,.06)" style-hover="background:rgba(255,255,255,.1)"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ chatTitle }}</span><span style="color:#8b8b91">⋯</span></button>
+          </div>
+        </sc-if>
+      </sc-if>
+
+      <sc-if value="{{ isChat }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;display:flex;overflow:auto;animation:fade-up .3s ease both">
+          <div style="width:400px;flex:none;display:flex;flex-direction:column;border-right:1px solid rgba(255,255,255,.07);padding:14px 16px 16px">
+            <div style="display:flex;align-items:center;gap:10px;padding-bottom:16px">
+              <button type="button" onClick="{{ backToAgent }}" style="width:26px;height:26px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:#c9c9ce" style-hover="background:rgba(255,255,255,.08);color:#fff"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m14 6-6 6 6 6"></path></svg></button>
+              <span style="flex:1;min-width:0;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ chatTitle }}</span>
+              <span style="color:#8b8b91">⋮</span>
+            </div>
+            <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:22px">
+              <span style="align-self:flex-end;max-width:300px;padding:11px 14px;border-radius:12px;font-size:13px;line-height:1.6;background:rgba(255,255,255,.07)">{{ chatUser }}</span>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <span style="font-size:13px;line-height:1.7;color:#e4e4e8">{{ chatReply }}</span>
+                <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#7d7e84">已调用技能
+                  <span style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:7px;color:#e4e4e8;background:rgba(255,255,255,.07)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 4v3M12 17v3M4 12h3M17 12h3"></path></svg>电影叙事</span>
+                </div>
+                <span style="font-size:13px;line-height:1.7;color:#e4e4e8">{{ chatPrompt }}</span>
+                <span style="align-self:flex-start;display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:8px;font-size:11.5px;color:#f0d9a8;background:rgba(255,255,255,.06)"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"></path></svg>21 积分</span>
+              </div>
+            </div>
+            <div style="margin-top:16px;border-radius:14px;background:rgba(255,255,255,.045);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);padding:14px 12px 10px;display:flex;flex-direction:column;gap:14px">
+              <input placeholder="描述你想创建的内容，或提出问题" style="width:100%;font-size:13px;color:#fff">
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <button type="button" style="width:28px;height:28px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.07)" style-hover="color:#fff"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></button>
+                <span style="height:28px;padding:0 10px;border-radius:8px;display:inline-flex;align-items:center;font-size:12px;color:#c9c9ce;background:rgba(255,255,255,.07)">自动 · 均衡</span>
+                <span style="height:28px;padding:0 10px;border-radius:8px;display:inline-flex;align-items:center;font-size:12px;color:#c9c9ce;background:rgba(255,255,255,.07)">图片: 自动</span>
+                <span style="height:28px;padding:0 10px;border-radius:8px;display:inline-flex;align-items:center;font-size:12px;color:#c9c9ce;background:rgba(255,255,255,.07)">视频: 自动</span>
+                <button type="button" style="margin-left:auto;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#15161a;background:linear-gradient(140deg,#ff8a3d,#ff4d8d 60%,#a855f7)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg></button>
+              </div>
+            </div>
+          </div>
+          <div style="flex:1;min-width:400px;padding:14px 18px 20px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:13px;font-weight:600">资产</span>
+              <span style="font-size:12px;color:#7d7e84">9</span>
+              <div style="display:flex;gap:6px;margin-left:14px">
+                <span style="height:26px;padding:0 11px;border-radius:8px;display:inline-flex;align-items:center;font-size:12px;color:#fff;background:rgba(255,255,255,.14)">最终产物</span>
+                <span style="height:26px;padding:0 11px;border-radius:8px;display:inline-flex;align-items:center;font-size:12px;color:#a9aab0;background:rgba(255,255,255,.06)">图片</span>
+                <span style="height:26px;padding:0 11px;border-radius:8px;display:inline-flex;align-items:center;font-size:12px;color:#a9aab0;background:rgba(255,255,255,.06)">2K</span>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+              <sc-for list="{{ assets }}" as="a" hint-placeholder-count="9">
+                <span style="position:relative;display:block;aspect-ratio:16/9;border-radius:8px;background:#141417 {{ a.bg }} center / cover no-repeat;box-shadow:{{ a.ring }}">
+                  <span style="position:absolute;left:8px;bottom:6px;font-size:11px;color:rgba(255,255,255,.75);font-variant-numeric:tabular-nums">{{ a.n }}</span>
+                </span>
+              </sc-for>
+            </div>
+            <div style="width:210px;border-radius:10px;background:#111114;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);padding:10px 12px;display:flex;flex-direction:column;gap:26px">
+              <span style="font-size:11.5px;color:#7d7e84">视频</span>
+              <span style="align-self:center;font-size:12px;color:#8b8b91">失败</span>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isPlaza }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:16px 20px 40px;animation:fade-up .3s ease both">
+          <div style="display:flex;align-items:center;gap:14px;padding-bottom:18px">
+            <button type="button" onClick="{{ backToAgent }}" style="width:32px;height:32px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.07)" style-hover="background:rgba(255,255,255,.12);color:#fff"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m14 6-6 6 6 6"></path></svg></button>
+            <span style="flex:1;text-align:center;font-size:14px;font-weight:700">技能广场</span>
+            <button type="button" style="display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 13px;border-radius:9px;font-size:12.5px;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.07)" style-hover="background:rgba(255,255,255,.12)">全部<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px">
+            <sc-for list="{{ plaza }}" as="p" hint-placeholder-count="10">
+              <div style="border-radius:12px;overflow:hidden;background:#101013;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07)">
+                <span style="display:block;width:100%;aspect-ratio:16/9;background:#1a1a1f {{ p.bg }} center / cover no-repeat"></span>
+                <div style="display:flex;flex-direction:column;gap:6px;padding:12px 13px 10px">
+                  <span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.name }}</span>
+                  <span style="font-size:11.5px;color:#7d7e84;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.desc }}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;padding:0 13px 12px">
+                  <span style="font-size:11.5px;color:#7d7e84">@Genius · {{ p.uses }}</span>
+                  <button type="button" onClick="{{ p.toggle }}" style="margin-left:auto;width:34px;height:19px;border-radius:99px;padding:2px;display:flex;justify-content:{{ p.pos }};cursor:pointer;background:{{ p.track }};transition:background .18s ease"><span style="width:15px;height:15px;border-radius:50%;background:#fff"></span></button>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isCanvas }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;overflow:hidden;background-color:#0e0e10;background-image:radial-gradient(rgba(255,255,255,.075) 1px,transparent 1px);background-size:{{ dotSize }} {{ dotSize }};animation:fade-up .35s ease both">
+
+          <sc-if value="{{ canvasEmpty }}" hint-placeholder-val="{{ true }}">
+            <div style="position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:26px">
+              <div style="display:flex;align-items:center;gap:20px">
+                <div style="position:relative;width:96px;height:62px;flex:none">
+                  <span style="position:absolute;top:0;left:0;width:62px;height:60px;border-radius:8px;transform:rotate(-13deg);background:#1a1a1f {{ cardA }} center / cover;box-shadow:0 6px 18px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,255,255,.1)"></span>
+                  <span style="position:absolute;top:2px;right:0;width:62px;height:60px;border-radius:8px;transform:rotate(9deg);background:#1a1a1f {{ cardB }} center / cover;box-shadow:0 6px 18px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,255,255,.1)"></span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:7px;align-items:flex-start">
+                  <span style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:8px;font-size:11.5px;color:#c9c9ce;background:rgba(255,255,255,.07)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 8-6 1.5L11 19z"></path></svg>右键</span>
+                  <span style="font-size:19px;font-weight:600;letter-spacing:-.015em">在画布上放下第一个节点</span>
+                  <span style="font-size:12.5px;color:#7d7e84">从这里开始搭建你的镜头流程</span>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:11px">
+                <button type="button" onClick="{{ startFlow }}" style="display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:11px;font-size:13px;font-weight:500;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);transition:background .16s ease" style-hover="background:rgba(255,255,255,.1)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8b8b91" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m6 16 4-4.5 3 3L16 11l2 3"></path><circle cx="9" cy="9" r="1.2"></circle></svg>生图</button>
+                <button type="button" onClick="{{ startFlow }}" style="display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:11px;font-size:13px;font-weight:500;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);transition:background .16s ease" style-hover="background:rgba(255,255,255,.1)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8b8b91" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="m11 10 4 2-4 2z"></path></svg>故事视频</button>
+                <button type="button" onClick="{{ startFlow }}" style="display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:11px;font-size:13px;font-weight:500;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);transition:background .16s ease" style-hover="background:rgba(255,255,255,.1)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8b8b91" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M9 10h.01M15 10h.01M9 15c1.8 1.4 4.2 1.4 6 0"></path></svg>三视图</button>
+                <button type="button" onClick="{{ startFlow }}" style="display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:11px;font-size:13px;font-weight:500;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);transition:background .16s ease" style-hover="background:rgba(255,255,255,.1)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8b8b91" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18M15 3v18M3 9h18M3 15h18"></path></svg>九宫格</button>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ canvasScene }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;inset:0;overflow:auto;padding:8px 8px 8px 100px">
+            <div style="position:relative;width:900px;height:620px;flex:none;transform:scale({{ sceneScale }});transform-origin:0 0;transition:transform .25s ease">
+              <svg viewBox="0 0 900 620" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"><g fill="none" stroke="rgba(255,255,255,.22)" stroke-width="1.2"><path d="M296 196 C 340 196 340 128 384 128"></path><path d="M296 212 C 380 212 400 232 470 232"></path><path d="M250 430 C 290 430 300 430 336 430"></path><path d="M436 442 C 470 442 452 292 470 262"></path></g></svg>
+
+              <div style="position:absolute;left:24px;top:150px;width:264px" onMouseEnter="{{ hoverText1 }}" onMouseLeave="{{ leaveText1 }}">
+                <span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8b8b91;padding-bottom:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h12M4 17h8"></path></svg>文本 1</span>
+                <div style="position:relative;height:150px;border-radius:10px;background:#141417;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);padding:11px 12px;font-size:11px;line-height:1.65;color:#c9c9ce;overflow:hidden">{{ canvasText1 }}
+                  <sc-if value="{{ text1Hover }}" hint-placeholder-val="{{ false }}">
+                    <button type="button" style="position:absolute;left:-27px;top:50%;transform:translateY(-50%);width:18px;height:18px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#c9c9ce;background:#1c1c21;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)" style-hover="color:#fff;background:#26262c"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></button>
+                    <button type="button" onClick="{{ openNodeMenu }}" style="position:absolute;right:-27px;top:50%;transform:translateY(-50%);width:18px;height:18px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#c9c9ce;background:#1c1c21;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)" style-hover="color:#fff;background:#26262c"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></button>
+                  </sc-if>
+                </div>
+              </div>
+
+              <div style="position:absolute;left:384px;top:74px;width:200px">
+                <span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8b8b91;padding-bottom:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m6 16 4-4.5 3 3L16 11l2 3"></path></svg>图片 1</span>
+                <span style="display:block;width:100%;aspect-ratio:16/9;border-radius:8px;background:#1a1a1f {{ cardA }} center / cover no-repeat;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09)"></span>
+              </div>
+
+              <sc-if value="{{ nodeMenuOpen }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;left:300px;top:224px;width:158px;border-radius:12px;background:rgba(24,24,28,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.55);padding:6px;z-index:3;animation:pop-in .18s ease both">
+                  <button type="button" onClick="{{ addTextNode }}" style="display:flex;align-items:center;gap:10px;width:100%;height:38px;padding:0 11px;border-radius:9px;font-size:13px;cursor:pointer;text-align:left;color:#e4e4e8" style-hover="background:rgba(255,255,255,.08)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M4 12h12M4 17h8"></path></svg>文本</button>
+                  <button type="button" onClick="{{ closeNodeMenu }}" style="display:flex;align-items:center;gap:10px;width:100%;height:38px;padding:0 11px;border-radius:9px;font-size:13px;cursor:pointer;text-align:left;color:#e4e4e8" style-hover="background:rgba(255,255,255,.08)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m6 16 4-4.5 3 3L16 11l2 3"></path></svg>图片</button>
+                  <button type="button" onClick="{{ addVideoNode }}" style="display:flex;align-items:center;gap:10px;width:100%;height:38px;padding:0 11px;border-radius:9px;font-size:13px;cursor:pointer;text-align:left;color:#e4e4e8" style-hover="background:rgba(255,255,255,.08)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="m11 10 4 2-4 2z"></path></svg>视频</button>
+                  <button type="button" onClick="{{ closeNodeMenu }}" style="display:flex;align-items:center;gap:10px;width:100%;height:38px;padding:0 11px;border-radius:9px;font-size:13px;cursor:pointer;text-align:left;color:#e4e4e8" style-hover="background:rgba(255,255,255,.08)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 12h2l2-5 2 10 2-8 2 6 2-3h2"></path></svg>音频</button>
+                  <button type="button" onClick="{{ closeNodeMenu }}" style="display:flex;align-items:center;gap:10px;width:100%;height:38px;padding:0 11px;border-radius:9px;font-size:13px;cursor:pointer;text-align:left;color:#e4e4e8" style-hover="background:rgba(255,255,255,.08)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 12h18M12 4v16"></path></svg>分镜表</button>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ textNodeAdded }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;left:470px;top:150px;width:270px;animation:pop-in .22s ease both">
+                  <div style="display:flex;align-items:center;gap:4px;padding:6px 8px;margin-bottom:8px;border-radius:10px;background:rgba(28,28,33,.97);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);width:max-content">
+                    <sc-for list="{{ rte }}" as="r" hint-placeholder-count="8">
+                      <span style="min-width:24px;height:24px;padding:0 5px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:600;color:{{ r.fg }};background:{{ r.bg }}">{{ r.label }}</span>
+                    </sc-for>
+                  </div>
+                  <span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8b8b91;padding-bottom:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h12M4 17h8"></path></svg>文本 3</span>
+                  <div style="position:relative;min-height:150px;border-radius:10px;background:#141417;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);padding:11px 12px">
+                    <sc-if value="{{ nodeIdle }}" hint-placeholder-val="{{ true }}"><span style="font-size:11px;color:#6f7075">请输入内容…</span></sc-if>
+                    <sc-if value="{{ nodeBusy }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex;flex-direction:column;gap:7px;padding:2px 0 18px">
+                        <sc-for list="{{ skeleton }}" as="s" hint-placeholder-count="6">
+                          <span style="display:block;height:5px;border-radius:3px;width:{{ s.w }};background:rgba(255,255,255,.12)"></span>
+                        </sc-for>
+                      </div>
+                      <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+                        <span style="font-size:11.5px;font-weight:600;color:#e4e4e8;font-variant-numeric:tabular-nums">50%</span>
+                        <span style="width:170px;height:3px;border-radius:2px;background:rgba(255,255,255,.14)"><span style="display:block;width:50%;height:3px;border-radius:2px;background:linear-gradient(90deg,#ff8a3d,#ff4d8d 60%,#a855f7)"></span></span>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ nodeDone }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex;flex-direction:column;gap:7px;font-size:11px;line-height:1.65;color:#c9c9ce">
+                        <span style="color:#e4e4e8;font-weight:700">便携投影仪 · 社交媒体广告方案</span>
+                        <span style="color:#a9aab0">广告概念：「家庭恐龙之夜」</span>
+                        <span style="height:1px;background:rgba(255,255,255,.08)"></span>
+                        <span style="color:#a9aab0">场景描述</span>
+                        <span>核心画面：一家三口坐在客厅地板上，投影仪把恐龙横穿城市的画面投到白墙上，孩子伸手去碰投影里的恐龙。</span>
+                        <span style="height:1px;background:rgba(255,255,255,.08)"></span>
+                        <span style="color:#a9aab0">广告版式（4:5）</span>
+                      </div>
+                    </sc-if>
+                  </div>
+                </div>
+
+                <div style="position:absolute;left:440px;top:{{ promptTop }};width:340px;border-radius:14px;background:rgba(26,26,31,.97);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09),0 20px 50px rgba(0,0,0,.5);padding:12px;animation:pop-in .24s ease both">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <sc-if value="{{ refsAdded }}" hint-placeholder-val="{{ false }}">
+                      <span style="width:30px;height:30px;border-radius:8px;background:#1a1a1f {{ refBg }} center / cover no-repeat;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)"></span>
+                    </sc-if>
+                    <button type="button" style="width:30px;height:30px;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.1)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M4 12h12M4 17h8"></path></svg></button>
+                    <button type="button" style="width:30px;height:30px;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.06)" style-hover="color:#fff;background:rgba(255,255,255,.1)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></button>
+                    <button type="button" onClick="{{ openToolbox }}" title="从工具箱选择参考" style="width:30px;height:30px;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)" style-hover="color:#fff;background:rgba(255,255,255,.1)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"></rect><path d="M8 7V5h8v2"></path></svg></button>
+                    <span style="margin-left:auto;color:#8b8b91"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6"></path></svg></span>
+                  </div>
+                  <div style="padding:12px 4px 16px;min-height:48px;font-size:12.5px;line-height:1.6;color:{{ canvasPromptFg }}">{{ canvasPrompt }}</div>
+                  <div style="position:relative;display:flex;align-items:center;gap:8px">
+                    <button type="button" onClick="{{ openCanvasModel }}" style="display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border-radius:9px;font-size:12px;font-weight:600;cursor:pointer;color:#e4e4e8;background:{{ cModelBg }};box-shadow:{{ cModelRing }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.1)"><span style="width:12px;height:12px;border-radius:4px;background:linear-gradient(140deg,#e08fc8,#a855f7)"></span>{{ canvasModel }}</button>
+                    <sc-if value="{{ isVideoNode }}" hint-placeholder-val="{{ false }}">
+                      <span style="display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 11px;border-radius:9px;font-size:12px;color:#c9c9ce;background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)">参考 · 16:9 · 540p · 3秒<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 9v6h3l4 3V6L7 9z"></path><path d="M16 9.5a3.5 3.5 0 0 1 0 5"></path></svg></span>
+                    </sc-if>
+                    <span style="margin-left:auto;font-size:11.5px;color:#7d7e84;font-variant-numeric:tabular-nums">{{ canvasChars }}/5000</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:#f0d9a8"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"></path></svg>{{ canvasCost }}</span>
+                    <button type="button" onClick="{{ canvasSend }}" style="width:30px;height:30px;flex:none;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#15161a;background:linear-gradient(140deg,#ff8a3d,#ff4d8d 60%,#a855f7);transition:filter .16s ease" style-hover="filter:brightness(1.08)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg></button>
+                    <sc-if value="{{ popCanvasModel }}" hint-placeholder-val="{{ false }}">
+                      <div style="position:absolute;left:0;bottom:calc(100% + 8px);width:330px;border-radius:12px;background:rgba(28,28,33,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.55);padding:12px;animation:pop-in .2s ease both">
+                        <span style="display:block;font-size:12.5px;font-weight:600;padding:0 2px 10px">模型</span>
+                        <sc-for list="{{ canvasModels }}" as="m" hint-placeholder-count="3">
+                          <button type="button" onClick="{{ m.pick }}" style="display:flex;gap:10px;width:100%;padding:9px 10px;border-radius:10px;cursor:pointer;text-align:left;background:{{ m.bg }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.07)">
+                            <span style="width:30px;height:30px;flex:none;border-radius:8px;background:{{ m.icon }}"></span>
+                            <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px"><span style="font-size:12.5px;font-weight:700">{{ m.name }}</span><span style="font-size:11.5px;color:#7d7e84;line-height:1.4">{{ m.desc }}</span></span>
+                          </button>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ refsAdded }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;left:24px;top:340px;width:130px;animation:pop-in .24s ease both">
+                  <span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8b8b91;padding-bottom:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m6 16 4-4.5 3 3L16 11l2 3"></path></svg>Upload a picture</span>
+                  <span style="display:block;width:100%;aspect-ratio:3/4;border-radius:8px;background:#1a1a1f {{ refBg }} center / cover no-repeat;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09)"></span>
+                </div>
+                <div style="position:absolute;left:180px;top:340px;width:130px;animation:pop-in .3s ease both">
+                  <span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8b8b91;padding-bottom:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="m11 10 4 2-4 2z"></path></svg>Output Results</span>
+                  <div style="position:relative;width:100%;aspect-ratio:3/4;border-radius:8px;overflow:hidden;background:#1a1a1f {{ outBg }} center / cover no-repeat;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);cursor:pointer">
+                    <span style="position:absolute;left:0;right:0;bottom:0;height:22px;display:flex;align-items:center;gap:6px;padding:0 7px;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.7))">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="#fff"><path d="m8 5 11 7-11 7z"></path></svg>
+                      <span style="flex:1;height:2px;border-radius:2px;background:rgba(255,255,255,.3)"><span style="display:block;width:0;height:2px;border-radius:2px;background:#fff;transition:width 6s linear" style-hover="width:100%"></span></span>
+                      <span style="font-size:8.5px;color:#fff;font-variant-numeric:tabular-nums">00:05</span>
+                    </span>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ videoNodeAdded }}" hint-placeholder-val="{{ false }}">
+                <div style="position:absolute;left:600px;top:300px;width:250px;animation:pop-in .24s ease both">
+                  <span style="display:flex;align-items:center;gap:6px;font-size:13px;color:#8b8b91;padding-bottom:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="m11 10 4 2-4 2z"></path></svg>视频 2</span>
+                  <span style="display:grid;place-items:center;width:100%;aspect-ratio:16/9;border-radius:8px;background:#141417;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);font-size:11px;color:#6f7075">生成视频</span>
+                </div>
+              </sc-if>
+            </div>
+            </div>
+          </sc-if>
+
+          <div style="position:absolute;right:18px;top:14px;display:flex;align-items:center;gap:8px;z-index:2">
+            <button type="button" style="display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:9px;font-size:12.5px;cursor:pointer;white-space:nowrap;flex:none;color:#c9c9ce;background:rgba(255,255,255,.06)" style-hover="background:rgba(255,255,255,.1);color:#fff"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"></path><path d="M20 4 10 14"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>分享</button>
+          <button type="button" style="display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:9px;font-size:12.5px;cursor:pointer;white-space:nowrap;flex:none;color:#c9c9ce;background:rgba(255,255,255,.06)" style-hover="background:rgba(255,255,255,.1);color:#fff"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 4v4M9 14h.01M15 14h.01"></path></svg>智能助手</button>
+          </div>
+          <div style="position:absolute;left:18px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:10px;z-index:2">
+            <button type="button" onClick="{{ openNodeMenu }}" style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#15161a;background:#f0f0f2;box-shadow:0 6px 18px rgba(0,0,0,.4);transition:transform .18s ease" style-hover="transform:scale(1.06)"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></button>
+            <div style="display:flex;flex-direction:column;gap:2px;padding:6px;border-radius:14px;background:rgba(24,24,28,.9);box-shadow:inset 0 0 0 1px rgba(255,255,255,.07)">
+              <button type="button" title="选择" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.1)" style-hover="background:rgba(255,255,255,.14);color:#fff"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 8-6 1.5L11 19z"></path></svg></button>
+              <button type="button" title="素材" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#8b8b91" style-hover="background:rgba(255,255,255,.09);color:#fff"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg></button>
+              <button type="button" onClick="{{ openToolbox }}" title="工具箱" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:{{ toolboxFg }};background:{{ toolboxBg }}" style-hover="background:rgba(255,255,255,.09);color:#fff"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"></rect><path d="M8 7V5h8v2"></path></svg></button>
+              <button type="button" title="撤销" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#8b8b91" style-hover="background:rgba(255,255,255,.09);color:#fff"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"></path><path d="M4 9h9a6 6 0 0 1 0 12H8"></path></svg></button>
+              <button type="button" title="重做" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#8b8b91" style-hover="background:rgba(255,255,255,.09);color:#fff"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"></path><path d="M20 9h-9a6 6 0 0 0 0 12h5"></path></svg></button>
+            </div>
+          </div>
+
+          <sc-if value="{{ toolboxOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;left:0;top:0;bottom:0;width:400px;z-index:5;background:#101013;border-right:1px solid rgba(255,255,255,.09);display:flex;flex-direction:column;padding:16px 16px 12px;gap:14px;animation:slide-in .28s cubic-bezier(.22,1,.36,1) both">
+              <div style="display:flex;align-items:center">
+                <span style="font-size:14px;font-weight:700">工具箱</span>
+                <button type="button" onClick="{{ closeToolbox }}" style="margin-left:auto;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:#8b8b91" style-hover="color:#fff;background:rgba(255,255,255,.08)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+              </div>
+              <div style="display:flex;gap:20px;border-bottom:1px solid rgba(255,255,255,.08)">
+                <sc-for list="{{ toolTabs }}" as="t" hint-placeholder-count="2">
+                  <button type="button" onClick="{{ t.pick }}" style="padding:0 0 9px;font-size:13px;font-weight:600;cursor:pointer;color:{{ t.fg }};border-bottom:2px solid {{ t.line }};transition:color .16s ease" style-hover="color:#fff">{{ t.label }}</button>
+                </sc-for>
+              </div>
+              <div style="display:flex;gap:8px">
+                <span style="flex:1;display:flex;align-items:center;gap:8px;height:34px;padding:0 11px;border-radius:9px;background:rgba(255,255,255,.06);color:#6f7075;font-size:12.5px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4.3-4.3"></path></svg>搜索工具</span>
+                <button type="button" style="width:34px;height:34px;border-radius:9px;display:grid;place-items:center;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.06)" style-hover="color:#fff"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M7 12h10M10 17h4"></path></svg></button>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <sc-for list="{{ toolCats }}" as="c" hint-placeholder-count="5">
+                  <button type="button" onClick="{{ c.pick }}" style="height:28px;padding:0 12px;border-radius:8px;font-size:12px;font-weight:500;cursor:pointer;color:{{ c.fg }};background:{{ c.bg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff">{{ c.label }}</button>
+                </sc-for>
+              </div>
+              <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px">
+                <sc-for list="{{ tools }}" as="t" hint-placeholder-count="8">
+                  <div style="display:flex;align-items:center;gap:11px;padding:9px;border-radius:11px;background:rgba(255,255,255,.045);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)">
+                    <span style="width:64px;height:46px;flex:none;border-radius:7px;background:#1a1a1f {{ t.bg }} center / cover no-repeat"></span>
+                    <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+                      <span style="font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.name }}</span>
+                      <span style="font-size:11px;color:#7d7e84">{{ t.meta }}</span>
+                    </span>
+                    <button type="button" onClick="{{ t.apply }}" style="flex:none;height:30px;padding:0 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.09);transition:background .16s ease" style-hover="background:rgba(255,255,255,.16);color:#fff">应用到画布</button>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <div style="position:absolute;left:18px;bottom:18px;display:flex;align-items:center;gap:14px;height:36px;padding:0 14px;border-radius:12px;background:rgba(24,24,28,.9);box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);z-index:2">
+            <button type="button" title="面板" style="display:grid;place-items:center;cursor:pointer;color:#8b8b91;transition:color .16s ease" style-hover="color:#fff"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4" width="7" height="16" rx="1.5"></rect><rect x="14" y="4" width="7" height="16" rx="1.5"></rect></svg></button>
+            <button type="button" title="适应画布" style="display:grid;place-items:center;cursor:pointer;color:#8b8b91;transition:color .16s ease" style-hover="color:#fff"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"></path></svg></button>
+            <button type="button" title="缩略图" style="display:grid;place-items:center;cursor:pointer;color:#8b8b91;transition:color .16s ease" style-hover="color:#fff"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m9 4 6 2 6-2v14l-6 2-6-2-6 2V6z"></path><path d="M9 4v14M15 6v14"></path></svg></button>
+            <span style="width:1px;height:16px;background:rgba(255,255,255,.12)"></span>
+            <input type="range" min="20" max="200" value="{{ zoom }}" onChange="{{ setZoom }}" style="width:90px;cursor:pointer">
+            <span style="font-size:12px;color:#8b8b91;font-variant-numeric:tabular-nums;min-width:38px">{{ zoomLabel }}</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSub }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:18px 20px 60px;animation:fade-up .35s ease both">
+          <div style="border-radius:14px;background:#101013;box-shadow:inset 0 0 0 1px rgba(255,255,255,.07);padding:20px 22px">
+            <div style="display:flex;align-items:baseline;gap:16px">
+              <span style="font-size:15px;font-weight:700">我的方案</span>
+              <a href="#" style="font-size:12px;color:#7d7e84">积分使用详情</a>
+              <a href="#" style="margin-left:auto;font-size:12px;color:#7d7e84">账单记录</a>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:34px;flex-wrap:wrap;padding:18px 0 4px">
+              <span style="font-size:14px;font-weight:600;min-width:64px">基础版</span>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span style="display:inline-flex;align-items:center;gap:8px;font-size:22px;font-weight:700;font-variant-numeric:tabular-nums"><svg width="17" height="17" viewBox="0 0 24 24" fill="#f0d9a8"><path d="M13 2 4 14h6l-1 8 9-12h-6z"></path></svg>39</span>
+                <div style="display:flex;gap:18px;font-size:12px;color:#7d7e84">
+                  <span>每日积分 <span style="color:#e4e4e8">0</span></span><span>会员积分 <span style="color:#e4e4e8">0</span></span><span>已购积分 <span style="color:#e4e4e8">39</span></span>
+                </div>
+              </div>
+            </div>
+            <button type="button" style="margin-top:16px;height:32px;padding:0 14px;border-radius:9px;font-size:12.5px;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.07)" style-hover="background:rgba(255,255,255,.12);color:#fff">兑换礼品码</button>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:18px;padding:44px 0 26px">
+            <h2 style="margin:0;font-size:19px;font-weight:700">订阅方案</h2>
+            <div style="display:inline-flex;gap:4px;padding:4px;border-radius:12px;background:rgba(255,255,255,.06)">
+              <sc-for list="{{ cycles }}" as="c" hint-placeholder-count="2">
+                <button type="button" onClick="{{ c.pick }}" style="display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 18px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;color:{{ c.fg }};background:{{ c.bg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff">{{ c.label }}<sc-if value="{{ c.badge }}" hint-placeholder-val="{{ false }}"><span style="height:19px;padding:0 7px;border-radius:6px;display:inline-flex;align-items:center;font-size:11px;font-weight:700;color:#15161a;background:linear-gradient(90deg,#ff8a3d,#ff4d8d)">{{ c.badgeText }}</span></sc-if></button>
+              </sc-for>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(238px,1fr));gap:16px;align-items:start">
+            <sc-for list="{{ plans }}" as="p" hint-placeholder-count="4">
+              <div style="position:relative;border-radius:14px;background:#101013;box-shadow:{{ p.ring }};padding:22px 20px 24px;display:flex;flex-direction:column;gap:18px">
+                <sc-if value="{{ p.popular }}" hint-placeholder-val="{{ false }}">
+                  <span style="position:absolute;right:0;top:0;height:22px;padding:0 10px;border-radius:0 14px 0 8px;display:inline-flex;align-items:center;font-size:11px;font-weight:700;color:#15161a;background:linear-gradient(90deg,#ff8a3d,#ff4d8d)">最受欢迎</span>
+                </sc-if>
+                <div style="display:flex;flex-direction:column;gap:12px">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="font-size:15px;font-weight:700;background:{{ p.nameGrad }};-webkit-background-clip:text;background-clip:text;color:transparent">{{ p.name }}</span>
+                    <span style="height:19px;padding:0 7px;border-radius:6px;display:inline-flex;align-items:center;font-size:11px;font-weight:700;color:#15161a;background:linear-gradient(90deg,#ff8a3d,#ff4d8d)">{{ p.off }}</span>
+                  </div>
+                  <div style="display:flex;align-items:baseline;gap:8px">
+                    <span style="font-size:30px;font-weight:700;letter-spacing:-.02em">{{ p.price }}</span>
+                    <span style="font-size:13px;color:#8b8b91">{{ p.unit }}</span>
+                    <span style="font-size:13px;color:#6f7075;text-decoration:line-through">{{ p.was }}</span>
+                  </div>
+                  <span style="font-size:11.5px;color:#7d7e84">{{ p.total }}</span>
+                </div>
+                <button type="button" style="height:42px;border-radius:10px;font-size:13.5px;font-weight:700;cursor:pointer;color:{{ p.ctaFg }};background:{{ p.ctaBg }};transition:filter .16s ease" style-hover="filter:brightness(1.06)">订阅</button>
+                <div style="display:flex;flex-direction:column;gap:11px;padding-top:4px;border-top:1px solid rgba(255,255,255,.07)">
+                  <sc-for list="{{ p.features }}" as="f" hint-placeholder-count="7">
+                    <span style="display:flex;gap:9px;font-size:12.5px;line-height:1.45;color:#d4d4d8"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8b8b91" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><path d="m5 13 4 4L19 7"></path></svg>{{ f }}</span>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+    </main>
+    <sc-if value="{{ showBar }}" hint-placeholder-val="{{ true }}">
+      <div style="position:absolute;left:0;right:0;bottom:0;padding:0 20px 22px;pointer-events:none">
+        <div onClick="{{ openComposer }}" style="max-width:760px;margin:0 auto;display:flex;align-items:center;gap:12px;height:60px;padding:0 12px 0 14px;border-radius:16px;cursor:text;background:#191a1e;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09),0 18px 48px rgba(0,0,0,.6);pointer-events:auto">
+          <span style="width:38px;height:38px;flex:none;border-radius:10px;display:grid;place-items:center;background:rgba(255,255,255,.06);color:#8b8b91"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="m5 17 4.5-5 3.5 3.5L16 12l3 4"></path><circle cx="9" cy="9.5" r="1.4"></circle></svg></span>
+          <span style="flex:1;font-size:14px;color:#6f7075">描述你想创作的内容</span>
+          <span style="width:34px;height:34px;flex:none;border-radius:10px;display:grid;place-items:center;color:#15161a;background:linear-gradient(140deg,#ff8a3d,#ff4d8d 60%,#a855f7)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg></span>
+        </div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ showComposer }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;left:0;right:0;bottom:0;padding:0 20px 20px;pointer-events:none;animation:pop-in .3s cubic-bezier(.22,1,.36,1) both">
+        <div style="position:relative;max-width:980px;margin:0 auto;pointer-events:auto">
+
+          <sc-if value="{{ popBuddy }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;left:0;right:0;bottom:calc(100% + 10px);border-radius:14px;background:rgba(20,20,24,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 24px 60px rgba(0,0,0,.55);padding:14px 16px 16px;display:flex;flex-direction:column;gap:12px;animation:pop-in .22s ease both">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:13.5px;font-weight:600">创作搭子</span>
+                <button type="button" style="margin-left:auto;width:26px;height:26px;border-radius:7px;display:grid;place-items:center;cursor:pointer;color:#8b8b91" style-hover="color:#fff;background:rgba(255,255,255,.08)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h6l10-10-6-6L4 14z"></path><path d="M14 4l6 6"></path></svg></button>
+                <button type="button" onClick="{{ closePop }}" style="width:26px;height:26px;border-radius:7px;display:grid;place-items:center;cursor:pointer;color:#8b8b91" style-hover="color:#fff;background:rgba(255,255,255,.08)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+              </div>
+              <div style="height:200px;border-radius:11px;background:#0f0f12;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;font-size:13px;line-height:1.7">
+                <span style="color:#ff8fb0">你好，我是你的创作搭子</span>
+                <span style="color:#e08fc8">一个词、一个想法，或者一张图片</span>
+                <span style="color:#c48ee0">发给我，我会把它写成</span>
+                <span style="color:#a88ef0">一条好用的提示词</span>
+              </div>
+              <div style="display:flex;align-items:flex-end;gap:10px;padding-top:2px">
+                <span style="width:46px;height:46px;flex:none;border-radius:10px;display:grid;place-items:center;color:#7d7e84;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="m5 17 4.5-5 3.5 3.5L16 12l3 4"></path></svg></span>
+                <input placeholder="从一句话或一张图片开始，我来帮你写提示词" style="flex:1;min-width:0;height:34px;font-size:13px;color:#fff">
+                <button type="button" style="width:32px;height:32px;flex:none;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.1)" style-hover="background:rgba(255,255,255,.16);color:#fff"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg></button>
+              </div>
+            </div>
+          </sc-if>
+
+          <div style="display:flex;gap:4px;padding-left:14px">
+            <button type="button" onClick="{{ pickCVideo }}" style="display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:11px 11px 0 0;font-size:12.5px;font-weight:600;cursor:pointer;color:{{ cVideoFg }};background:{{ cVideoBg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="m11 10 4 2-4 2z"></path></svg>视频</button>
+            <button type="button" onClick="{{ pickCImage }}" style="display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:11px 11px 0 0;font-size:12.5px;font-weight:600;cursor:pointer;color:{{ cImageFg }};background:{{ cImageBg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m6 16 4-4.5 3 3L16 11l2 3"></path></svg>图片</button>
+            <button type="button" onClick="{{ pickCAudio }}" style="display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:11px 11px 0 0;font-size:12.5px;font-weight:600;cursor:pointer;color:{{ cAudioFg }};background:{{ cAudioBg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"></path><circle cx="7" cy="18" r="2"></circle><circle cx="17" cy="16" r="2"></circle></svg>音频</button>
+            <sc-if value="{{ collapsed }}" hint-placeholder-val="{{ false }}">
+              <span style="margin-left:auto;align-self:center;font-size:11.5px;color:#8b8b91;padding-right:6px">收起面板</span>
+            </sc-if>
+          </div>
+
+          <div style="position:relative;border-radius:0 14px 14px 14px;background:#16161a;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09),0 20px 56px rgba(0,0,0,.65);padding:12px 14px">
+
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.07)">
+              <sc-if value="{{ isVideoTab }}" hint-placeholder-val="{{ true }}">
+                <sc-for list="{{ modes }}" as="m" hint-placeholder-count="8">
+                  <button type="button" onClick="{{ m.pick }}" style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:8px;font-size:12px;font-weight:500;cursor:{{ m.cursor }};white-space:nowrap;color:{{ m.fg }};background:{{ m.bg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff">{{ m.label }}</button>
+                </sc-for>
+              </sc-if>
+              <sc-if value="{{ isImageTab }}" hint-placeholder-val="{{ false }}">
+                <span style="display:inline-flex;align-items:center;gap:7px;height:28px;font-size:12.5px;font-weight:600;color:#e4e4e8"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m6 16 4-4.5 3 3L16 11l2 3"></path></svg>默认</span>
+              </sc-if>
+              <sc-if value="{{ isAudioTab }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ audioSubs }}" as="a" hint-placeholder-count="2">
+                  <button type="button" onClick="{{ a.pick }}" style="height:28px;padding:0 10px;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;color:{{ a.fg }};background:{{ a.bg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff">{{ a.label }}</button>
+                </sc-for>
+              </sc-if>
+              <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+                <sc-if value="{{ isVideoTab }}" hint-placeholder-val="{{ true }}">
+                  <button type="button" onClick="{{ openBuddy }}" title="创作搭子" style="width:28px;height:28px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:{{ buddyFg }};background:{{ buddyBg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff;background:rgba(255,255,255,.1)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h5l11-11-5-5L4 15z"></path><path d="M14 5l5 5"></path></svg></button>
+                </sc-if>
+                <button type="button" title="清空" style="width:28px;height:28px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:#8b8b91" style-hover="color:#fff;background:rgba(255,255,255,.1)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h6l10-10-6-6L4 14z"></path><path d="M14 4l6 6"></path></svg></button>
+                <button type="button" onClick="{{ toggleCollapse }}" title="收起面板" style="width:28px;height:28px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:#8b8b91;transform:{{ chevronT }};transition:transform .2s ease" style-hover="color:#fff;background:rgba(255,255,255,.1)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+              </div>
+            </div>
+
+            <sc-if value="{{ showBody }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;gap:12px;padding:14px 0 12px">
+                <sc-if value="{{ slotOne }}" hint-placeholder-val="{{ true }}">
+                  <button type="button" onClick="{{ openImgPicker }}" style="width:66px;height:66px;flex:none;border-radius:10px;display:grid;place-items:center;cursor:pointer;color:#7d7e84;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);transition:color .16s ease,background .16s ease" style-hover="color:#fff;background:rgba(255,255,255,.09)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"></rect><path d="m5 17 4.5-5 3.5 3.5L16 12l3 4"></path><circle cx="9" cy="9.5" r="1.4"></circle></svg></button>
+                </sc-if>
+                <sc-if value="{{ slotArrow }}" hint-placeholder-val="{{ false }}">
+                  <span style="align-self:center;color:#6f7075;flex:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="m8 5 9 7-9 7z"></path></svg></span>
+                </sc-if>
+                <sc-if value="{{ slotTwo }}" hint-placeholder-val="{{ false }}">
+                  <button type="button" onClick="{{ openVidPicker }}" style="width:66px;height:66px;flex:none;border-radius:10px;display:grid;place-items:center;cursor:pointer;color:#7d7e84;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.09);transition:color .16s ease,background .16s ease" style-hover="color:#fff;background:rgba(255,255,255,.09)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="m11 10 4 2-4 2z"></path></svg></button>
+                </sc-if>
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+                  <textarea rows="{{ rows }}" value="{{ prompt }}" onChange="{{ setPrompt }}" placeholder="{{ placeholder }}" style="width:100%;resize:none;font-size:14px;line-height:1.5;color:#fff"></textarea>
+                  <sc-if value="{{ isAudioTab }}" hint-placeholder-val="{{ false }}">
+                    <span style="align-self:flex-end;font-size:11.5px;color:#6f7075;font-variant-numeric:tabular-nums">{{ audioCount }}</span>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ collapsed }}" hint-placeholder-val="{{ false }}">
+              <div style="padding:12px 0 10px">
+                <input value="{{ prompt }}" onChange="{{ setPrompt }}" placeholder="{{ placeholder }}" style="width:100%;font-size:14px;color:#fff">
+              </div>
+            </sc-if>
+
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ true }}">
+              <div style="position:relative">
+                <button type="button" onClick="{{ openSpecs }}" style="display:inline-flex;align-items:center;height:28px;border-radius:8px;overflow:hidden;background:{{ specsBg }};font-size:12px;color:#c9c9ce;cursor:pointer;box-shadow:{{ specsRing }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.1)">
+                  <span style="padding:0 9px">{{ res }}</span>
+                  <sc-if value="{{ showRatio }}" hint-placeholder-val="{{ true }}"><span style="width:1px;height:14px;background:rgba(255,255,255,.14)"></span><span style="padding:0 9px">{{ ratio }}</span></sc-if>
+                  <sc-if value="{{ showDur }}" hint-placeholder-val="{{ true }}"><span style="width:1px;height:14px;background:rgba(255,255,255,.14)"></span><span style="padding:0 9px">{{ dur }}</span></sc-if>
+                </button>
+                <sc-if value="{{ popSpecs }}" hint-placeholder-val="{{ false }}">
+                  <div style="position:absolute;left:0;bottom:calc(100% + 8px);width:330px;display:flex;flex-direction:column;gap:10px;animation:pop-in .2s ease both">
+                    <div style="border-radius:12px;background:rgba(24,24,28,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.5);padding:14px">
+                      <div style="display:flex;align-items:center;gap:10px;padding-bottom:12px">
+                        <span style="font-size:12.5px;font-weight:600">分辨率</span>
+                        <span style="margin-left:auto;font-size:11.5px;color:#8b8b91">预览模式</span>
+                        <button type="button" onClick="{{ togglePreview }}" style="width:30px;height:17px;border-radius:99px;padding:2px;display:flex;justify-content:{{ previewPos }};cursor:pointer;background:{{ previewTrack }};transition:background .18s ease"><span style="width:13px;height:13px;border-radius:50%;background:#fff"></span></button>
+                      </div>
+                      <div style="display:flex;gap:6px;flex-wrap:wrap">
+                        <sc-for list="{{ resList }}" as="r" hint-placeholder-count="4">
+                          <button type="button" onClick="{{ r.pick }}" style="height:30px;padding:0 14px;border-radius:8px;font-size:12.5px;font-weight:500;cursor:pointer;color:{{ r.fg }};background:{{ r.bg }};transition:background .16s ease" style-hover="color:#fff">{{ r.label }}</button>
+                        </sc-for>
+                      </div>
+                      <span style="display:block;padding-top:10px;text-align:center;font-size:11.5px;color:#ff8fb0">剩余 3 次试用</span>
+                    </div>
+                    <sc-if value="{{ showRatio }}" hint-placeholder-val="{{ true }}">
+                      <div style="border-radius:12px;background:rgba(24,24,28,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.5);padding:14px">
+                        <span style="display:block;font-size:12.5px;font-weight:600;padding-bottom:12px">宽高比</span>
+                        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">
+                          <sc-for list="{{ ratioList }}" as="r" hint-placeholder-count="8">
+                            <button type="button" onClick="{{ r.pick }}" style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:7px 0;border-radius:9px;cursor:pointer;background:{{ r.bg }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.09)">
+                              <span style="width:{{ r.w }};height:{{ r.h }};border-radius:3px;box-shadow:inset 0 0 0 1.5px {{ r.stroke }}"></span>
+                              <span style="font-size:11.5px;color:{{ r.fg }}">{{ r.label }}</span>
+                            </button>
+                          </sc-for>
+                        </div>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ showDur }}" hint-placeholder-val="{{ true }}">
+                      <div style="border-radius:12px;background:rgba(24,24,28,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.5);padding:14px">
+                        <span style="display:block;font-size:12.5px;font-weight:600;padding-bottom:12px">时长</span>
+                        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">
+                          <sc-for list="{{ durList }}" as="d" hint-placeholder-count="15">
+                            <button type="button" onClick="{{ d.pick }}" style="height:30px;border-radius:8px;font-size:12.5px;cursor:pointer;color:{{ d.fg }};background:{{ d.bg }};transition:background .16s ease" style-hover="color:#fff">{{ d.label }}</button>
+                          </sc-for>
+                        </div>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-if>
+              </div>
+              </sc-if>
+
+              <sc-if value="{{ showAudioToggle }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ toggleAudio }}" style="display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 9px 0 11px;border-radius:8px;font-size:12px;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.06)" style-hover="color:#fff">音频<span style="width:26px;height:15px;border-radius:99px;padding:2px;display:flex;justify-content:{{ audioPos }};background:{{ audioTrack }};transition:background .18s ease"><span style="width:11px;height:11px;border-radius:50%;background:#fff"></span></span></button>
+              </sc-if>
+              <sc-if value="{{ showMultiToggle }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ toggleMulti }}" style="display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 9px 0 11px;border-radius:8px;font-size:12px;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.06)" style-hover="color:#fff">多镜头<span style="width:26px;height:15px;border-radius:99px;padding:2px;display:flex;justify-content:{{ multiPos }};background:{{ multiTrack }};transition:background .18s ease"><span style="width:11px;height:11px;border-radius:50%;background:#fff"></span></span></button>
+              </sc-if>
+              <sc-if value="{{ showPanelBtn }}" hint-placeholder-val="{{ true }}">
+                <button type="button" style="display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 11px;border-radius:8px;font-size:12px;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.06)" style-hover="color:#fff"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>配置面板<span style="width:5px;height:5px;border-radius:50%;background:#ff8fb0"></span></button>
+              </sc-if>
+              <sc-if value="{{ isAudioTab }}" hint-placeholder-val="{{ false }}">
+                <button type="button" style="display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 11px;border-radius:8px;font-size:12px;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.06)" style-hover="color:#fff"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v8"></path></svg>Expressive Narrator</button>
+                <button type="button" style="display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 11px;border-radius:8px;font-size:12px;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.06)" style-hover="color:#fff"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="M8 15l4-7 4 7M9.5 13h5"></path></svg>中文（普通话）</button>
+              </sc-if>
+
+              <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+                <div style="position:relative">
+                  <button type="button" onClick="{{ openModel }}" style="display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:9px;font-size:12px;font-weight:600;cursor:pointer;color:#e4e4e8;background:{{ modelBg }};box-shadow:{{ modelRing }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.1)"><span style="width:12px;height:12px;border-radius:4px;background:linear-gradient(140deg,#ff8a3d,#ff4d8d)"></span>{{ modelName }}</button>
+                  <sc-if value="{{ popModel }}" hint-placeholder-val="{{ false }}">
+                    <div style="position:absolute;right:0;bottom:calc(100% + 8px);width:360px;max-height:420px;overflow:auto;border-radius:12px;background:rgba(24,24,28,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 18px 44px rgba(0,0,0,.55);padding:12px;animation:pop-in .2s ease both">
+                      <span style="display:block;font-size:12.5px;font-weight:600;padding:2px 4px 10px">模型</span>
+                      <div style="display:flex;flex-direction:column;gap:2px">
+                        <sc-for list="{{ modelList }}" as="m" hint-placeholder-count="8">
+                          <button type="button" onClick="{{ m.pick }}" style="display:flex;gap:10px;padding:9px 10px;border-radius:10px;cursor:pointer;text-align:left;background:{{ m.bg }};transition:background .16s ease" style-hover="background:rgba(255,255,255,.07)">
+                            <span style="width:30px;height:30px;flex:none;border-radius:8px;background:{{ m.icon }}"></span>
+                            <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                              <span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600">{{ m.name }}
+                                <sc-if value="{{ m.tag }}" hint-placeholder-val="{{ false }}"><span style="height:15px;padding:0 5px;border-radius:4px;display:inline-flex;align-items:center;font-size:9.5px;font-weight:700;color:#15161a;background:linear-gradient(90deg,#ff8a3d,#ff4d8d)">NEW</span></sc-if>
+                                <sc-if value="{{ m.sec }}" hint-placeholder-val="{{ false }}"><span style="height:15px;padding:0 5px;border-radius:4px;display:inline-flex;align-items:center;font-size:9.5px;color:#c9c9ce;background:rgba(255,255,255,.09)">{{ m.secLabel }}</span></sc-if>
+                                <sc-if value="{{ m.pro }}" hint-placeholder-val="{{ false }}"><span style="height:15px;padding:0 5px;border-radius:4px;display:inline-flex;align-items:center;font-size:9.5px;font-weight:700;color:#f0d9a8;background:rgba(240,217,168,.14)">PRO+</span></sc-if>
+                              </span>
+                              <span style="font-size:11.5px;color:#7d7e84;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.desc }}</span>
+                            </span>
+                          </button>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+                <span style="display:inline-flex;align-items:center;height:30px;padding:0 10px;border-radius:9px;font-size:12px;color:#c9c9ce;background:rgba(255,255,255,.06);font-variant-numeric:tabular-nums">1</span>
+                <button type="button" style="display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;color:#15161a;background:linear-gradient(90deg,#ff8a3d,#ff4d8d 60%,#a855f7);transition:filter .16s ease" style-hover="filter:brightness(1.08)">创作<span style="display:inline-flex;align-items:center;gap:3px;font-weight:600"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"></path></svg>{{ credits }}</span></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ popPicker }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closePop }}" style="position:absolute;inset:0;z-index:5;background:rgba(6,6,8,.62);display:grid;place-items:center;padding:24px;animation:pop-in .22s ease both">
+        <div style="width:min(1060px,100%);max-height:78%;display:flex;flex-direction:column;gap:16px;border-radius:16px;background:rgba(30,30,35,.98);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 30px 70px rgba(0,0,0,.6);padding:22px">
+          <div style="display:flex;align-items:center">
+            <span style="font-size:15px;font-weight:700">{{ pickerTitle }}</span>
+            <button type="button" onClick="{{ closePop }}" style="margin-left:auto;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.09)" style-hover="background:rgba(255,255,255,.16);color:#fff"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <button type="button" style="display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;color:#e4e4e8;background:rgba(255,255,255,.08);min-width:130px" style-hover="background:rgba(255,255,255,.12)">全部<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-left:auto"><path d="m6 9 6 6 6-6"></path></svg></button>
+            <sc-for list="{{ pickerTabs }}" as="t" hint-placeholder-count="3">
+              <button type="button" onClick="{{ t.pick }}" style="height:32px;padding:0 14px;border-radius:9px;font-size:12.5px;font-weight:500;cursor:pointer;color:{{ t.fg }};background:{{ t.bg }};transition:background .16s ease,color .16s ease" style-hover="color:#fff">{{ t.label }}</button>
+            </sc-for>
+          </div>
+          <div style="flex:1;min-height:0;overflow:auto">
+            <sc-if value="{{ pickerUpload }}" hint-placeholder-val="{{ false }}">
+              <button type="button" style="width:186px;height:116px;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;color:#c9c9ce;background:rgba(255,255,255,.07)" style-hover="background:rgba(255,255,255,.11);color:#fff"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"></path><path d="m6 11 6-6 6 6"></path></svg><span style="font-size:12.5px">点击 / 拖拽 / 粘贴</span></button>
+            </sc-if>
+            <sc-if value="{{ pickerGrid }}" hint-placeholder-val="{{ true }}">
+              <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(174px,1fr));gap:12px">
+                <sc-for list="{{ pickerItems }}" as="p" hint-placeholder-count="10">
+                  <button type="button" style="position:relative;height:116px;border-radius:10px;cursor:pointer;background:rgba(255,255,255,.06);display:grid;place-items:center;transition:background .16s ease" style-hover="background:rgba(255,255,255,.11)">
+                    <span style="width:56px;height:96px;border-radius:4px;background:#1a1a1f {{ p.bg }} center / cover no-repeat"></span>
+                    <span style="position:absolute;left:9px;bottom:9px;font-size:11px;color:#e4e4e8;font-variant-numeric:tabular-nums">{{ p.dur }}</span>
+                  </button>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+          <button type="button" onClick="{{ closePop }}" style="align-self:flex-end;height:34px;padding:0 20px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;color:#15161a;background:#f0f0f2" style-hover="filter:brightness(1.05)">确认</button>
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#5b8cff&quot;,&quot;options&quot;:[&quot;#ff8a3d&quot;,&quot;#ff4d8d&quot;,&quot;#a855f7&quot;,&quot;#5b8cff&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;主题&quot;}}">
+const A = 'assets/lumina/';
+const P = ['2e9cde0e2fb0803e','a72d8b509c55bcd0','a1f3319d0d783e66','f3bfe52263d0656d','d99c0972e1f99b67','a9008119d34b8fc1','5a09f4952b5ad9b6','6f297b60448c30c9','0450bc8d80da9173','5edd8af76572172a','8c0d9035649bec1f','fd7b4eb5c10483f5'].map(n => A + n + '.webp');
+const bg = (s) => 'url(' + s + ')';
+const CHIP = 'rgba(255,255,255,.06)', ON = 'rgba(255,255,255,.14)', RING = 'inset 0 0 0 1px rgba(255,255,255,.18)';
+const GRAD = 'linear-gradient(90deg,#ff8a3d,#ff4d8d 60%,#a855f7)';
+const ICONS = ['linear-gradient(140deg,#ff8a3d,#ff4d8d)','linear-gradient(140deg,#5b8cff,#a855f7)','linear-gradient(140deg,#3fd4a0,#1f8f6a)','linear-gradient(140deg,#f0d9a8,#c9a25e)','linear-gradient(140deg,#e08fc8,#8b5cf6)','linear-gradient(140deg,#8b8b91,#4a4a52)'];
+const WORKS = [
+  { t: '童年玩具巨大化', r: '16/10' }, { t: '雨夜追逐', r: '3/4' }, { t: '低多边形群岛', r: '9/16' },
+  { t: '黏土星球', r: '4/3' }, { t: '清晨的旧城', r: '4/5' }, { t: '霓虹街拍', r: '9/16' },
+  { t: '水面碎光', r: '16/10' }, { t: '雪后胡同', r: '3/4' }, { t: '玉米田', r: '1/1' },
+  { t: '海岸线航拍', r: '16/10' }, { t: '仓库里的一束光', r: '3/4' }, { t: '峡谷日出', r: '4/3' },
+];
+const SKILLS = [
+  { n: '汽车广告', d: '多机位车身特写与环境合成' }, { n: '电影叙事', d: '15 秒短片，剧情 / 动画 / 纪实' },
+  { n: '游戏 CG', d: '角色与场景驱动的过场动画' }, { n: '游戏预告', d: '氛围向概念预告与玩法演示' },
+  { n: '动作教学', d: '分解动作、纠正姿态的教学镜头' }, { n: '生活方式广告', d: '模特与场景驱动的日常向广告' },
+  { n: 'Logo 演绎', d: '标识动态演绎与品牌片头' }, { n: '电商短片', d: '竖屏带货与 UGC 风格口播' },
+  { n: '音乐 MV', d: '演出、舞蹈与视觉专辑' }, { n: '产品广告', d: '产品主体或达人出镜的品牌片' },
+  { n: '空间漫游', d: '15 秒空间走位与分层运镜' }, { n: '竖屏短剧', d: '分集短剧，反转 / 情感 / 悬疑' },
+];
+const PLAZA_EXTRA = [
+  { n: '电商前后对比', d: '并排呈现使用前后的效果差异', u: '1.7k' }, { n: '电商创意概念', d: '大胆美术方向的产品概念视觉', u: '95' },
+  { n: '电商细节微距', d: '突出材质、纹理与做工细节', u: '56' }, { n: '设备样机', d: '把界面放进真实设备场景', u: '33' },
+  { n: '结构爆炸图', d: '拆解产品结构，逐层展示', u: '35' }, { n: '平铺构图', d: '整洁背景下的产品与道具平铺', u: '11' },
+  { n: '无人模特', d: '干净的隐形模特服装呈现', u: '30' }, { n: '主图海报', d: '可直接上架的主图与横幅', u: '104' },
+];
+const VID_MODELS = [
+  { n: 'Genius V6', d: '原生音效，导演级运镜，真实物理反馈' },
+  { n: 'Genius C1', d: '为影视而生，打斗 / 特效升级，多宫格分镜叙事' },
+  { n: 'Seedance 2.5', d: '顶尖视频模型，最长支持 30 秒', tag: 1, pro: 1 },
+  { n: 'MiniMax H3', d: '新一代视频生成模型', tag: 1, pro: 1, sec: '120秒' },
+  { n: 'FLUX 3', d: '可通过文本或图片生成带原生音频的视频', pro: 1 },
+  { n: 'Wan 3.0', d: '全能视频模型，支持最长 30 秒与多模态参考', tag: 1, pro: 1 },
+  { n: 'Gemini Omni Flash', d: '全模态模型，可将文本、图片转为带同步声音的视频', sec: '120秒', pro: 1 },
+  { n: '可灵 O3', d: '支持最长 15 秒智能多镜头、参考锁定、多说话人音频', sec: '120秒', pro: 1 },
+  { n: 'Grok Imagine 1.5', d: '原生音视频生成', sec: '60秒', pro: 1 },
+  { n: 'Veo 3.1', d: '快速、高性价比的视频生成，适用于快速原型', sec: '200秒', pro: 1 },
+  { n: 'Sora 2', d: '电影级视频生成标准', sec: '300秒', pro: 1 },
+];
+const IMG_MODELS = [
+  { n: '自动', d: '智能体将为此请求选择最佳模型', auto: 1 },
+  { n: 'Qwen-image', d: '价格实惠，性能均衡' }, { n: 'GPT Image 2', d: '下一代高保真图片模型' },
+  { n: 'Nano Banana Pro', d: '先进的图片生成和编辑模型' }, { n: 'Seedream 4.0', d: '中文语义理解强，构图稳定' },
+];
+const AUDIO_MODELS = [{ n: 'Genius Speech 2.8 HD', d: '高保真人声合成，情绪自然' }, { n: 'Genius Music 1.5', d: '风格化配乐生成' }];
+const TEXT_MODELS = ['自动 · 极速', '自动 · 均衡', '自动 · 精创', 'GPT-5.6 Sol', 'GPT-5.6 Terra', 'GPT-5.6 Luna'];
+const CANVAS_MODELS = [
+  { n: 'Claude', d: '擅长复杂推理、长上下文理解和高质量写作' },
+  { n: 'Seed', d: '中文理解能力强，非常适合创意生成和图片任务' },
+  { n: 'Qwen', d: '平衡的通用能力，助力高性价比的日常创作' },
+];
+const TOOLS = [
+  { n: 'Flight overhead view', u: 618 }, { n: 'Live2D Motion', u: 313 }, { n: 'Dutch Angle Motion', u: 219 },
+  { n: 'Character Information', u: 155 }, { n: 'Right Orbit Glide', u: 101 }, { n: 'Dove Dissolve Transition', u: 93 },
+  { n: 'Armor POV', u: 73 }, { n: 'Storyboard Motion', u: 65 }, { n: 'Photo retouching', u: 63 },
+  { n: 'Suspenseful and thrilling', u: 63 }, { n: 'Character Design Reference', u: 62 },
+];
+const MODES = ['图文', '参考', '模板', '首尾帧', '编辑', '动作模仿', '续写', '人声'];
+const RES = ['360P', '540P', '720P', '1080P'];
+const RATIOS = [['16:9', 26, 15], ['4:3', 22, 16], ['1:1', 18, 18], ['3:4', 15, 20], ['9:16', 12, 21], ['21:9', 28, 12], ['3:2', 24, 16], ['2:3', 15, 22]];
+const CTEXT = '为一款便携式投影仪创作一张 4:5 的社交媒体信息流广告。夜晚的城市屋顶上，三位年轻朋友正在观看投影到白墙上的电影，周围环绕着温暖的串灯。将便携式投影仪置于地面在前景中，清晰展示产品。添加醒目的标题「随时随地，畅享影院」，辅助文案「大屏之夜，随行随实」，并在右下角设置「立刻购买」按钮。写实商业摄影，Instagram 和 Facebook DTC 广告风格，移动端优先构图，版式简洁，文字少而清晰易读。';
+const PLANS = [
+  { name: '标准版', off: '立减 20%', m: 9, y: 7, popular: false, f: ['每日更新积分 60', '1200 积分每 30 天重置', '无水印 · 无广告', '最高 720P 输出', '3 路并发生成', '预览模式节省 20% 积分'] },
+  { name: '专业版', off: '立减 20%', m: 29, y: 23, popular: false, f: ['每日更新积分 60', '6000 积分每 30 天重置', '无水印 · 无广告', '最高 4K 输出', '5 路并发生成', '错峰模式节省 30% 积分', '批量生成'] },
+  { name: '尊享版', off: '立减 20%', m: 59, y: 47, popular: false, f: ['每日更新积分 60', '15000 积分每 30 天重置', '无水印 · 无广告', '最高 4K 输出', '8 路并发生成', '错峰模式节省 50% 积分', '批量生成 · 优先队列'] },
+  { name: '至尊版', off: '立减 40%', m: 149, y: 89, popular: true, f: ['每日更新积分 60', '25000 积分每 30 天重置', '无水印 · 无广告', '最高 4K 输出', '8 路并发生成', '错峰模式无限次生成', '批量生成 · 专属支持'] },
+];
+const NAME_GRAD = ['linear-gradient(90deg,#f0f0f2,#a9abb4)', 'linear-gradient(90deg,#8ec5ff,#5b8cff)', 'linear-gradient(90deg,#ffc48a,#ff8a3d)', GRAD];
+const RTE = ['H1', 'H2', 'H3', '¶', 'B', 'I', 'A', '1.', '•', '—'];
+
+class Component extends DCLogic {
+  state = {
+    view: 'home', homeTab: '视频', cat: '全部', prompt: '', createTab: '图片', source: '历史创作', density: 1,
+    composerOpen: false, tab: '视频', mode: '图文', audioSub: '人声', collapsed: false, pop: null,
+    res: '720P', ratio: '16:9', dur: '5s', preview: false, audio: true, multi: true,
+    vidModel: 'Genius V6', imgModel: 'Qwen-image', audioModel: 'Genius Speech 2.8 HD', pickerTab: '示例',
+    agentPrompt: '', aPop: null, aText: '自动 · 均衡', aImg: '自动', aVid: '自动', skillHover: 0,
+    historyOpen: false, plazaOff: {},
+    zoom: 100, cStage: 0, text1Hover: false, nodeMenu: false, nodeKind: null, nodeState: 'idle',
+    fit: 0.5, wide: true, toolbox: false, toolTab: '社区工具', toolCat: '全部', refs: false, cModel: 'Claude Sonnet 4.6', cModelPop: false, cPrompt: '',
+  };
+  componentDidMount() {
+    this.measure = () => {
+      const w = innerWidth - 212 - 108, h = innerHeight - 56 - 16;
+      const fit = Math.max(0.4, Math.min(1.4, Math.min(w / 900, h / 620)));
+      const wide = innerWidth >= 1120;
+      if (Math.abs(fit - this.state.fit) > 0.01 || wide !== this.state.wide) this.setState({ fit, wide });
+    };
+    this.measure(); addEventListener('resize', this.measure);
+  }
+  componentWillUnmount() { clearTimeout(this.t); removeEventListener('resize', this.measure); }
+  set(k, v) { this.setState({ [k]: v }); }
+  renderVals() {
+    const s = this.state, v = s.view;
+    const tab = (list, cur, key) => list.map(l => ({ label: l, fg: l === cur ? '#fff' : '#7d7e84', line: l === cur ? '#fff' : 'transparent', pick: () => this.set(key, l) }));
+    const chip = (list, cur, key) => list.map(l => ({ label: l, fg: l === cur ? '#fff' : '#a9aab0', bg: l === cur ? ON : CHIP, pick: () => this.set(key, l) }));
+    const accent = this.props.accent ?? '#ff8a3d';
+    const navItem = (id) => ({ fg: v === id ? '#fff' : '#a9aab0', bg: v === id ? 'rgba(255,255,255,.07)' : 'transparent', ring: v === id ? 'inset 0 0 0 1px rgba(255,255,255,.08)' : 'none', icon: v === id ? accent : '#8b8b91' });
+    const n = { home: navItem('home'), create: navItem('create'), agent: navItem('agent'), canvas: navItem('canvas'), sub: navItem('sub') };
+    const isAgentish = v === 'agent' || v === 'chat' || v === 'plaza';
+    const isVideoTab = s.tab === '视频', isImageTab = s.tab === '图片', isAudioTab = s.tab === '音频';
+    const showComposer = (v === 'home' && s.composerOpen) || v === 'create';
+    const mode = s.mode, firstLast = isVideoTab && mode === '首尾帧', mimic = isVideoTab && mode === '动作模仿';
+    const models = isImageTab ? IMG_MODELS : isAudioTab ? AUDIO_MODELS : VID_MODELS;
+    const modelName = isImageTab ? s.imgModel : isAudioTab ? s.audioModel : mimic ? 'Genius V5.6' : s.vidModel;
+    const credits = isAudioTab ? 0 : isImageTab ? 5 : mimic ? 0 : s.audio ? 50 : 40;
+    const cycleY = s.cycle !== '月';
+    const skillsAll = SKILLS.concat(PLAZA_EXTRA.map(x => ({ n: x.n, d: x.d })));
+    const hov = skillsAll[s.skillHover] || skillsAll[0];
+    const stage = s.cStage;
+    return {
+      // nav
+      goHome: () => this.setState({ view: 'home' }), goCreate: () => this.setState({ view: 'create' }),
+      goAgent: () => this.setState({ view: 'agent', aPop: null }), goCanvas: () => this.setState({ view: 'canvas' }), goSub: () => this.setState({ view: 'sub' }),
+      navHomeFg: n.home.fg, navHomeBg: n.home.bg, navHomeRing: n.home.ring, navHomeIcon: n.home.icon,
+      navCreateFg: n.create.fg, navCreateBg: n.create.bg, navCreateRing: n.create.ring, navCreateIcon: n.create.icon,
+      navAgentFg: isAgentish ? '#fff' : '#a9aab0', navAgentBg: isAgentish ? 'rgba(255,255,255,.07)' : 'transparent', navAgentRing: isAgentish ? 'inset 0 0 0 1px rgba(255,255,255,.08)' : 'none', navAgentIcon: isAgentish ? accent : '#8b8b91',
+      navCanvasFg: n.canvas.fg, navCanvasBg: n.canvas.bg, navCanvasRing: n.canvas.ring, navCanvasIcon: n.canvas.icon,
+      navSubFg: n.sub.fg, navSubBg: n.sub.bg, navSubRing: n.sub.ring, navSubIcon: n.sub.icon,
+      isHome: v === 'home', isCreate: v === 'create', isAgent: v === 'agent', isCanvas: v === 'canvas', isSub: v === 'sub', isChat: v === 'chat', isPlaza: v === 'plaza',
+      viewTitle: v === 'home' ? '主页' : v === 'create' ? '创作' : v === 'canvas' ? 'Canvas 2026-09-06 15:00' : v === 'sub' ? '订阅' : v === 'plaza' ? '技能广场' : '智能体',
+      mainOverflow: v === 'canvas' || v === 'chat' ? 'hidden' : 'auto',
+      // home
+      homeTabs: tab(['视频', '模板', '挑战'], s.homeTab, 'homeTab'),
+      cats: chip(['全部', '广告', '电影叙事', '风格艺术', '动物剧场', '特效', '数字人', '动漫游戏', '情绪特写', '音乐'], s.cat, 'cat'),
+      works: WORKS.map((w, i) => ({ title: w.t, ratio: w.r, bg: bg(P[i % P.length]) })),
+      showBar: v === 'home' && !s.composerOpen, openComposer: () => this.setState({ composerOpen: true }),
+      // create list
+      createTabs: tab(['视频', '图片', '音频', '快应用', '已保存'], s.createTab, 'createTab'),
+      sourceTabs: chip(['历史创作', '历史上传'], s.source, 'source'),
+      dens0Fg: s.density === 0 ? '#fff' : '#8b8b91', dens0Bg: s.density === 0 ? ON : 'transparent', pickDens0: () => this.set('density', 0),
+      dens1Fg: s.density === 1 ? '#fff' : '#8b8b91', dens1Bg: s.density === 1 ? ON : 'transparent', pickDens1: () => this.set('density', 1),
+      dens2Fg: s.density === 2 ? '#fff' : '#8b8b91', dens2Bg: s.density === 2 ? ON : 'transparent', pickDens2: () => this.set('density', 2),
+      cardMin: [300, 240, 190][s.density] + 'px',
+      history: [0, 1, 2].map(k => ({ title: '多镜头分镜 · 海边黄昏 ' + (k + 1), date: '09-06  14:' + (15 + k), frames: P.slice(0, 9).map((x, i) => ({ bg: bg(P[(i + k * 3) % P.length]) })) })),
+      // composer
+      showComposer, isVideoTab, isImageTab, isAudioTab, collapsed: s.collapsed, showBody: !s.collapsed,
+      cVideoFg: isVideoTab ? '#fff' : '#b9b9bf', cVideoBg: isVideoTab ? '#16161a' : 'rgba(16,16,19,.92)', pickCVideo: () => this.setState({ tab: '视频', pop: null }),
+      cImageFg: isImageTab ? '#fff' : '#b9b9bf', cImageBg: isImageTab ? '#16161a' : 'rgba(16,16,19,.92)', pickCImage: () => this.setState({ tab: '图片', pop: null }),
+      cAudioFg: isAudioTab ? '#fff' : '#b9b9bf', cAudioBg: isAudioTab ? '#16161a' : 'rgba(16,16,19,.92)', pickCAudio: () => this.setState({ tab: '音频', pop: null }),
+      modes: MODES.map(m => { const dis = m === '人声', on = m === mode; return { label: m, fg: dis ? '#4f5056' : on ? '#fff' : '#909093', bg: on ? ON : CHIP, cursor: dis ? 'not-allowed' : 'pointer', pick: () => { if (!dis) this.setState({ mode: m, pop: null }); } }; }),
+      audioSubs: chip(['人声', '音乐'], s.audioSub, 'audioSub'),
+      toggleCollapse: () => this.setState({ collapsed: !s.collapsed, pop: null }), chevronT: s.collapsed ? 'rotate(180deg)' : 'none',
+      openBuddy: () => this.setState({ pop: s.pop === 'buddy' ? null : 'buddy' }), popBuddy: s.pop === 'buddy',
+      buddyFg: s.pop === 'buddy' ? '#fff' : '#8b8b91', buddyBg: s.pop === 'buddy' ? ON : 'transparent',
+      closePop: () => this.set('pop', null),
+      slotOne: (isVideoTab && mode !== '续写') || isImageTab, slotArrow: firstLast, slotTwo: firstLast || mimic,
+      openImgPicker: () => this.set('pop', 'img'), openVidPicker: () => this.set('pop', 'vid'),
+      popPicker: s.pop === 'img' || s.pop === 'vid', pickerTitle: s.pop === 'vid' ? '视频' : '图片',
+      pickerTabs: chip(s.pop === 'vid' ? ['已创建', '已上传', '示例'] : ['已创建', '已上传'], s.pickerTab, 'pickerTab'),
+      pickerUpload: s.pickerTab === '已上传', pickerGrid: s.pickerTab !== '已上传',
+      pickerItems: P.concat(P.slice(0, 2)).map((src, i) => ({ bg: bg(src), dur: '0:0' + (8 + (i % 3)) })),
+      rows: isAudioTab ? 3 : mimic || firstLast ? 2 : 3,
+      prompt: s.prompt, setPrompt: (e) => this.set('prompt', e.target.value),
+      placeholder: isAudioTab ? '输入你想让 Genius AI 转换为语音的文本' : isImageTab ? '描述你想用 Genius AI 创作的图片，例如：一张具有高级感的香水产品海报' : firstLast ? '描述你想让 Genius AI 在首帧和尾帧之间创作的内容' : mimic ? '上传角色图片和动作视频，让 Genius AI 为角色制作动画' : '描述你想用 Genius AI 创作的内容',
+      audioCount: (s.prompt.length) + '/10000',
+      openSpecs: () => this.setState({ pop: s.pop === 'specs' ? null : 'specs' }), popSpecs: s.pop === 'specs',
+      specsBg: s.pop === 'specs' ? ON : CHIP, specsRing: s.pop === 'specs' ? RING : 'none',
+      showSpecs: !isAudioTab, res: s.res, ratio: s.ratio, dur: s.dur, showRatio: !firstLast && !mimic, showDur: isVideoTab && !mimic,
+      resList: RES.map(r => ({ label: r, fg: r === s.res ? '#fff' : '#a9aab0', bg: r === s.res ? ON : CHIP, pick: () => this.set('res', r) })),
+      ratioList: RATIOS.map(([label, w, h]) => ({ label, w: w + 'px', h: h + 'px', fg: label === s.ratio ? '#fff' : '#a9aab0', bg: label === s.ratio ? ON : CHIP, stroke: label === s.ratio ? '#fff' : '#8b8b91', pick: () => this.set('ratio', label) })),
+      durList: Array.from({ length: 15 }, (_, i) => (i + 1) + 's').map(d => ({ label: d, fg: d === s.dur ? '#fff' : '#a9aab0', bg: d === s.dur ? ON : CHIP, pick: () => this.set('dur', d) })),
+      togglePreview: () => this.set('preview', !s.preview), previewPos: s.preview ? 'flex-end' : 'flex-start', previewTrack: s.preview ? GRAD : 'rgba(255,255,255,.16)',
+      showAudioToggle: isVideoTab && !mimic, showMultiToggle: isVideoTab && !mimic && !firstLast, showPanelBtn: isVideoTab || isAudioTab,
+      toggleAudio: () => this.set('audio', !s.audio), audioPos: s.audio ? 'flex-end' : 'flex-start', audioTrack: s.audio ? GRAD : 'rgba(255,255,255,.16)',
+      toggleMulti: () => this.set('multi', !s.multi), multiPos: s.multi ? 'flex-end' : 'flex-start', multiTrack: s.multi ? GRAD : 'rgba(255,255,255,.16)',
+      openModel: () => this.setState({ pop: s.pop === 'model' ? null : 'model' }), popModel: s.pop === 'model',
+      modelBg: s.pop === 'model' ? ON : CHIP, modelRing: s.pop === 'model' ? RING : 'none', modelName, credits,
+      modelList: models.map((m, i) => ({
+        name: m.n, desc: m.d, tag: !!m.tag, pro: !!m.pro, sec: !!m.sec, secLabel: m.sec || '', icon: ICONS[i % ICONS.length],
+        bg: m.n === modelName ? 'rgba(255,255,255,.09)' : 'transparent',
+        pick: () => this.setState({ pop: null, vidModel: isVideoTab ? m.n : s.vidModel, imgModel: isImageTab ? m.n : s.imgModel, audioModel: isAudioTab ? m.n : s.audioModel }),
+      })),
+      // agent
+      agentPrompt: s.agentPrompt, setAgentPrompt: (e) => this.set('agentPrompt', e.target.value),
+      aText: s.aText, aImg: s.aImg, aVid: s.aVid,
+      openAText: () => this.set('aPop', s.aPop === 'text' ? null : 'text'), popAText: s.aPop === 'text', aTextBg: s.aPop === 'text' ? ON : 'rgba(255,255,255,.07)', aTextRing: s.aPop === 'text' ? RING : 'none',
+      openAImg: () => this.set('aPop', s.aPop === 'img' ? null : 'img'), popAImg: s.aPop === 'img', aImgBg: s.aPop === 'img' ? ON : 'rgba(255,255,255,.07)', aImgRing: s.aPop === 'img' ? RING : 'none',
+      openAVid: () => this.set('aPop', s.aPop === 'vid' ? null : 'vid'), popAVid: s.aPop === 'vid', aVidBg: s.aPop === 'vid' ? ON : 'rgba(255,255,255,.07)', aVidRing: s.aPop === 'vid' ? RING : 'none',
+      openASkill: () => this.set('aPop', s.aPop === 'skill' ? null : 'skill'), popASkill: s.aPop === 'skill', aSkillBg: s.aPop === 'skill' ? ON : 'rgba(255,255,255,.07)', aSkillRing: s.aPop === 'skill' ? RING : 'none',
+      textModels: TEXT_MODELS.map(t => ({ label: t, bg: t === s.aText ? 'rgba(255,255,255,.09)' : 'transparent', pick: () => this.setState({ aText: t, aPop: null }) })),
+      imgModels: IMG_MODELS.map((m, i) => ({ name: m.n, desc: m.d, auto: !!m.auto, icon: ICONS[i % ICONS.length], bg: m.n === s.aImg ? 'rgba(255,255,255,.09)' : 'transparent', pick: () => this.setState({ aImg: m.n, aPop: null }) })),
+      vidModels: [{ n: '自动', d: '智能体将为此请求选择最佳模型', auto: 1 }].concat(VID_MODELS).map((m, i) => ({ name: m.n, desc: m.d, auto: !!m.auto, icon: ICONS[i % ICONS.length], bg: m.n === s.aVid ? 'rgba(255,255,255,.09)' : 'transparent', pick: () => this.setState({ aVid: m.n, aPop: null }) })),
+      skillList: skillsAll.slice(0, 10).map((k, i) => ({ name: k.n, desc: k.d, bg: i === s.skillHover ? 'rgba(255,255,255,.09)' : 'transparent', hover: () => { if (i !== s.skillHover) this.set('skillHover', i); } })),
+      skillPreviewBg: bg(P[s.skillHover % P.length]), skillPreviewName: hov.n, skillPreviewDesc: hov.d,
+      skills: SKILLS.map((k, i) => ({ name: k.n, desc: k.d, bg: bg(P[i % P.length]) })),
+      goPlaza: () => this.setState({ view: 'plaza', aPop: null }), backToAgent: () => this.setState({ view: 'agent', aPop: null }),
+      toggleHistory: () => this.set('historyOpen', !s.historyOpen), historyOpen: s.historyOpen,
+      openChat: () => this.setState({ view: 'chat', historyOpen: false }),
+      chatTitle: '生成一组海边黄昏的多镜头分镜',
+      chatUser: '生成一组海边黄昏的多镜头分镜，镜头由下往上缓慢环绕主角',
+      chatReply: '我接住这个海边黄昏的设定，先把画面氛围与镜头运动方向整理出来。',
+      chatPrompt: '生成一支海滩氛围短片：主角身着轻薄外套，以自信从容的眼神看向同行者，镜头从低角度缓慢环绕上升，保持优雅、克制的构图。',
+      assets: P.slice(0, 9).map((src, i) => ({ bg: bg(src), n: 14 + i, ring: i === 2 ? 'inset 0 0 0 1.5px #f0d9a8' : 'inset 0 0 0 1px rgba(255,255,255,.07)' })),
+      plaza: skillsAll.map((k, i) => {
+        const off = !!s.plazaOff[i];
+        return { name: k.n, desc: k.d, uses: (PLAZA_EXTRA[i % PLAZA_EXTRA.length].u || '40'), bg: bg(P[i % P.length]),
+          pos: off ? 'flex-start' : 'flex-end', track: off ? 'rgba(255,255,255,.16)' : 'linear-gradient(90deg,#7c5cff,#a855f7)',
+          toggle: () => this.setState({ plazaOff: { ...s.plazaOff, [i]: !off } }) };
+      }),
+      // canvas
+      sceneScale: (s.fit * s.zoom / 100).toFixed(3),
+      dotSize: Math.round(22 * s.fit * s.zoom / 100) + 'px', zoom: s.zoom, zoomLabel: Math.round(s.fit * s.zoom) + '%', setZoom: (e) => this.set('zoom', +e.target.value),
+      cardA: bg(P[3]), cardB: bg(P[5]), refBg: bg(P[1]), outBg: bg(P[6]),
+      canvasEmpty: stage === 0, canvasScene: stage > 0,
+      startFlow: () => this.setState({ cStage: 1 }),
+      hoverText1: () => this.set('text1Hover', true), leaveText1: () => this.set('text1Hover', false), text1Hover: s.text1Hover,
+      openNodeMenu: () => this.setState({ cStage: Math.max(1, stage), nodeMenu: true }), closeNodeMenu: () => this.set('nodeMenu', false), nodeMenuOpen: s.nodeMenu,
+      addTextNode: () => this.setState({ nodeMenu: false, nodeKind: 'text', nodeState: 'idle', cStage: 2 }),
+      addVideoNode: () => this.setState({ nodeMenu: false, nodeKind: 'video', nodeState: 'idle', cStage: 2, cPrompt: '根据提示词生成视频' }),
+      textNodeAdded: stage >= 2 && s.nodeKind === 'text', videoNodeAdded: stage >= 2 && s.nodeKind === 'video', isVideoNode: s.nodeKind === 'video',
+      nodeIdle: s.nodeState === 'idle', nodeBusy: s.nodeState === 'busy', nodeDone: s.nodeState === 'done',
+      skeleton: ['92%', '78%', '86%', '64%', '90%', '52%'].map(w => ({ w })),
+      canvasText1: CTEXT,
+      promptTop: s.nodeKind === 'video' ? '430px' : '330px',
+      canvasPrompt: s.cPrompt || '描述您想要生成的任何内容…', canvasPromptFg: s.cPrompt ? '#fff' : '#6f7075',
+      canvasChars: s.cPrompt.length, canvasCost: s.nodeKind === 'video' ? 23 : 8,
+      canvasModel: s.nodeKind === 'video' ? 'Genius V6' : s.cModel,
+      openCanvasModel: () => this.set('cModelPop', !s.cModelPop), popCanvasModel: s.cModelPop,
+      cModelBg: s.cModelPop ? ON : CHIP, cModelRing: s.cModelPop ? RING : 'none',
+      canvasModels: CANVAS_MODELS.map((m, i) => ({ name: m.n, desc: m.d, icon: ICONS[i % ICONS.length], bg: s.cModel.indexOf(m.n) === 0 ? 'rgba(255,255,255,.09)' : 'transparent', pick: () => this.setState({ cModel: m.n === 'Claude' ? 'Claude Sonnet 4.6' : m.n === 'Seed' ? 'Seed-2.0-pro' : 'Qwen-3-max', cModelPop: false }) })),
+      canvasSend: () => {
+        if (!s.cPrompt) { this.setState({ cPrompt: '我要生成一个一家人在家里看恐龙摧毁城市的视频' }); return; }
+        this.setState({ nodeState: 'busy' });
+        clearTimeout(this.t); this.t = setTimeout(() => this.setState({ nodeState: 'done' }), 1600);
+      },
+      openToolbox: () => this.setState({ toolbox: true, cStage: Math.max(1, stage) }), closeToolbox: () => this.set('toolbox', false), toolboxOpen: s.toolbox,
+      toolboxFg: s.toolbox ? '#fff' : '#8b8b91', toolboxBg: s.toolbox ? 'rgba(255,255,255,.1)' : 'transparent',
+      toolTabs: tab(['社区工具', '我的工具'], s.toolTab, 'toolTab'),
+      toolCats: chip(['全部', '图像生成', '视频生成', '音频与人声', '实用'], s.toolCat, 'toolCat'),
+      tools: TOOLS.map((t, i) => ({ name: t.n, meta: t.u + ' 次使用 · 作者 hu…', bg: bg(P[i % P.length]), apply: () => this.setState({ refs: true, toolbox: false, cStage: Math.max(2, stage), nodeKind: s.nodeKind || 'text' }) })),
+      refsAdded: s.refs,
+      rte: RTE.map((r, i) => ({ label: r, fg: i === 3 ? '#fff' : '#a9aab0', bg: i === 3 ? 'rgba(255,255,255,.12)' : 'transparent' })),
+      // sub
+      cycles: [{ l: '按年支付', b: true }, { l: '按月支付', b: false }].map(c => ({ label: c.l, badge: c.b, badgeText: '立减 40%', fg: (c.l === '按年支付') === cycleY ? '#fff' : '#8b8b91', bg: (c.l === '按年支付') === cycleY ? ON : 'transparent', pick: () => this.set('cycle', c.l === '按年支付' ? '年' : '月') })),
+      plans: PLANS.map((p, i) => {
+        const price = cycleY ? p.y : p.m;
+        return { name: p.name, off: p.off, price: '$' + price, unit: '/月', was: '$' + p.m,
+          total: cycleY ? '年付费用为 $' + price * 12 : '按月支付，可随时取消',
+          popular: p.popular, features: p.f, nameGrad: NAME_GRAD[i],
+          ring: p.popular ? 'inset 0 0 0 1.5px #ff8a3d' : 'inset 0 0 0 1px rgba(255,255,255,.07)',
+          ctaBg: p.popular ? GRAD : '#f0f0f2', ctaFg: '#15161a' };
+      }),
+    };
+  }
+}
+</script>
+</body>
+</html>
