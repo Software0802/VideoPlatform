@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n, useT } from "@/components/genius/i18n/I18nProvider";
 import {
+  approveAgentTurn,
   createAgentSession,
   deleteAgentSession,
   fetchAgentSession,
@@ -10,7 +11,9 @@ import {
   fetchAgentSkills,
   isJobPending,
   newAgentTurnId,
+  rejectAgentTurn,
   sendAgentMessage,
+  setAgentSessionBudget,
   type AgentSessionDetail,
   type AgentSessionSummary,
   type AgentSkill,
@@ -113,18 +116,22 @@ export default function AgentView() {
     fetchAgentSessions().then((list) => alive.current && setSessions(list), say);
   }, [say]);
 
-  /* 会话里还有任务没跑完时才轮询；全终态就停下来，别对着一个不会变的东西每 3 秒问一次。 */
+  /* 会话里还有任务没跑完、或有轮次停在 thinking/executing 时才轮询；
+     全终态就停下来，别对着一个不会变的东西每 3 秒问一次。 */
   const sessionId = session?.id ?? null;
   const pendingJobs = Boolean(session?.jobs.some(isJobPending));
+  const activeTurns = Boolean(
+    session?.turns.some((x) => x.status === "thinking" || x.status === "executing"),
+  );
   useEffect(() => {
-    if (!sessionId || !pendingJobs) return;
+    if (!sessionId || (!pendingJobs && !activeTurns)) return;
     const timer = setInterval(() => {
       fetchAgentSession(sessionId).then((next) => {
         if (alive.current) setSession((cur) => (cur && cur.id === next.id ? next : cur));
       }, () => undefined);
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [sessionId, pendingJobs]);
+  }, [sessionId, pendingJobs, activeTurns]);
 
   const turnBody = useCallback(
     (text: string): AgentTurnBody => ({
@@ -208,6 +215,59 @@ export default function AgentView() {
       }
     },
     [say],
+  );
+
+  /** 批准提案：批准那一刻才真的创建任务（B 包默认批准制）。 */
+  const approve = useCallback(
+    async (turnId: string) => {
+      if (!session || busy) return;
+      setError(null);
+      setBusy(true);
+      try {
+        const next = await approveAgentTurn(session.id, turnId);
+        if (alive.current) setSession(next);
+      } catch (e) {
+        say(e);
+      } finally {
+        if (alive.current) setBusy(false);
+      }
+    },
+    [busy, say, session],
+  );
+
+  const reject = useCallback(
+    async (turnId: string) => {
+      if (!session || busy) return;
+      setError(null);
+      setBusy(true);
+      try {
+        const next = await rejectAgentTurn(session.id, turnId);
+        if (alive.current) setSession(next);
+      } catch (e) {
+        say(e);
+      } finally {
+        if (alive.current) setBusy(false);
+      }
+    },
+    [busy, say, session],
+  );
+
+  /** 设 / 解除会话预算（元）；非正数与 NaN 不入网。 */
+  const setBudget = useCallback(
+    async (cny: number | null) => {
+      if (!session) return;
+      if (cny !== null && (!Number.isFinite(cny) || cny <= 0)) {
+        say(new Error(t("agent.budgetSet")));
+        return;
+      }
+      try {
+        const next = await setAgentSessionBudget(session.id, cny);
+        if (alive.current) setSession(next);
+      } catch (e) {
+        say(e);
+      }
+    },
+    [say, session, t],
   );
 
   const remove = useCallback(
@@ -398,6 +458,9 @@ export default function AgentView() {
             setError(null);
           }}
           onDelete={() => (session ? void remove(session.id) : undefined)}
+          onApprove={(turnId) => void approve(turnId)}
+          onReject={(turnId) => void reject(turnId)}
+          onBudget={(cny) => void setBudget(cny)}
         />
       ) : null}
     </div>

@@ -221,14 +221,16 @@ flowchart TB
 
 ## 2h. 智能体(2026-09-07 凌晨,as-built)
 
-方案 `docs/plan-agent-i18n-subscription-2026-09.md`。用户在智能体首页输入想法,进入会话;每一轮智能体用 LLM 回复并**按需真的创建生成任务**(文生图 / 文生视频,走与 `POST /api/jobs` 相同的服务层)。
+方案 `docs/plan-agent-i18n-subscription-2026-09.md`。用户在智能体首页输入想法,进入会话;每一轮智能体用 LLM 回复并**给出报价提案**,用户批准后才真的创建生成任务(文生图 / 文生视频 / 图生视频,走与 `POST /api/jobs` 相同的服务层)。2026-09-11 起为「默认批准制」。
 
-- LLM 客户端 `src/lib/agent/llm.ts`:OpenAI 兼容 `chat.completions`,提供方顺序 mock(`isMockMode()`)→ `AGENT_API_KEY`+`AGENT_BASE_URL`(默认 `api.openai.com/v1`,模型 `AGENT_CHAT_MODEL` 默认 `gpt-4o-mini`)→ `XAI_API_KEY`(`grok-4.6`)→ 都没有则 503 `agent_unavailable`,**绝不静默落 mock**。生产已配的 ccgoai / YMan 两家中转实测没有对话模型,须单独配 `AGENT_API_KEY` 才能真用。
-- 技能 `src/lib/agent/skills.ts`:20 个真实技能定义(id、中英文名与描述、system prompt 片段)。
-- 会话存储 `src/lib/agent/store.ts`:`data/agent/<userId>/<sessionId>.json`,`ownerId` 校验非本人 404,单用户上限 200 条,列表按 `updatedAt` 倒序。
-- 一轮定价 `src/lib/agent/run-turn.ts`:先判可用 → 扣一轮费 ¥0.05(`priceTable().agent.turn`,`applyBalanceChange` 幂等键 `ref:"agent:<turnId>"`)→ LLM 输出 JSON(`{ reply, actions[] }`,每轮最多 2 个 action)→ 每个 action 先过 `POST /api/jobs` 同一个限流桶(`src/lib/jobs/rate-limit.ts`)再 `createJob`(幂等 key `agent:<turnId>:<i>`),单个 action 失败(余额不足/校验 400)写进回复消息里而不是让整轮失败;LLM 调用本身失败则整轮退款(`ref:"agent:<turnId>:refund"`,经 `refundOf` 按原扣款的 `memberCny` 拆回原池——R02)。请求体可带 `turnId`(`msg_*`,客户端每次发送生成,HTTP 层重试原样带回——R08):会话里已有该 turnId 的 assistant 消息且上一条用户文本一致时整轮原样交回(不重复扣款、不再调 LLM);文本不同或该轮此前已失败退款时 409 `idempotency_conflict`;`appendTurn` 按消息 id 去重兜住并发双写。缺省 `turnId` 时服务端自取(老客户端/测试直调),不重放。
-- API:`GET/POST /api/agent/sessions`、`GET/PATCH/DELETE /api/agent/sessions/:id`、`POST /api/agent/sessions/:id/messages`(20 次/分钟/用户)、`GET /api/agent/skills`。
-- 前端 `src/components/genius/agent/**` 全接真数据,不可用时置灰「智能体暂未开放」。
+- LLM 客户端 `src/lib/agent/llm.ts`:OpenAI 兼容 `chat.completions`,提供方顺序 mock(`isMockMode()`)→ `AGENT_API_KEY`+`AGENT_BASE_URL`(默认 `api.openai.com/v1`,模型 `AGENT_CHAT_MODEL` 默认 `gpt-4o-mini`)→ `XAI_API_KEY`(`grok-4.6`)→ 都没有则 503 `agent_unavailable`,**绝不静默落 mock**。生产已配的 ccgoai / YMan 两家中转实测没有对话模型,须单独配 `AGENT_API_KEY` 才能真用。`runTurn` 接收 `locale`(路由经 `localeFromRequest` 解析 `lumen_locale` Cookie / `Accept-Language`),reply 语言随 locale。
+- 技能 `src/lib/agent/skills.ts`:20 个真实技能定义(id、中英文名与描述、system prompt 片段);可声明 `kinds:["image"]/["video"]` 限定产物类型,越界 action 被丢弃。
+- 会话存储 `src/lib/agent/store.ts`:`data/agent/<userId>/<sessionId>.json`,`ownerId` 校验非本人 404,单用户上限 200 条,列表按 `updatedAt` 倒序;`updateSession` 提供锁内读-改-写。
+- Turn 实体(`session.turns[]`,与消息同一文件原子写):状态机 `thinking → awaiting_approval → executing → succeeded/failed/rejected`;字段含 `requestHash`(请求体规范化 sha256)、`priceCny`、`chargeRef`(`agent:<turnId>`)、`refundRef`、`proposal`、`jobIds`。同 turnId 重放语义:同参交回现状、异参 409 `idempotency_conflict`、`thinking` 续跑补完、超 2 分钟的 thinking 在详情/单轮读取时惰性退款置 `failed`(`ref:"agent:<turnId>:refund"`,经 `refundOf` 按原扣款 `memberCny` 拆回原池——R02)。
+- 一轮定价 `src/lib/agent/run-turn.ts`:先判可用 → 扣一轮费 ¥0.05(`priceTable().agent.turn`)→ LLM 输出 JSON(`{ reply, actions[] }`,每轮最多 2 个)→ 有 action 时落 `proposal`(每条带 `priceCny` 报价快照、`totalCny`、`expiresAt` 30 分钟),助手消息带 `approval:"pending"`,turn 停 `awaiting_approval`,**不建任务**。批准(`POST .../turns/:turnId/approve`)才逐条经 `POST /api/jobs` 同一个限流桶走 `createJob`(幂等 key `agent:<turnId>:<i>`,任务 `priceCny` 按提案快照),turn → `executing` → `succeeded`;批准幂等(succeeded 重放交回现状)、过期 409 `proposal_expired`、`rejected` 终态不可再批。拒绝(`POST .../reject`)落 `rejected` 不建任务、不退轮次费(对话已交付)。action 可带 `imageRef.uploadId`(`up_*` sidecar,owner 校验),video + imageRef 即图生视频。
+- 会话预算:`session.budget {limitCny, spentCny}`(PATCH `budgetCny` 正数设定 / `null` 解除,spent 保留);轮次费前与批准时各核一次,超额 402 `budget_exhausted`;批准时把提案总额计入 spent。
+- API:`GET/POST /api/agent/sessions`、`GET/PATCH/DELETE /api/agent/sessions/:id`(PATCH 收 `title`/`budgetCny`)、`POST /api/agent/sessions/:id/messages`(20 次/分钟/用户)、`GET /api/agent/sessions/:id/turns/:turnId`、`POST .../turns/:turnId/approve|reject`、`GET /api/agent/skills`(下发 `kinds`)。
+- 前端 `src/components/genius/agent/**` 全接真数据:待批提案渲染报价卡(每条 ⚡价 + 合计 + 批准/拒绝),批准后照常轮询任务;预算芯片可设/解除;不可用时置灰「智能体暂未开放」。
 
 ## 2i. 订阅与会员积分池(2026-09-07 凌晨,as-built)
 
@@ -246,6 +248,16 @@ flowchart TB
 - API:`GET/POST /api/subscription`(不下发 `costRatio` 等成本口径);`GET /api/me` 的 `balance` 含 `memberCreditsCny`。
 - `scripts/usage.mjs` 对账把 `sub:*`(订阅扣款/发放)与 `agent:*`(智能体扣款/退款)分列展示。
 - 无支付网关,已购余额只能靠礼品码(§12.6 之前的机制)或管理员 `scripts/grant-balance.mjs` 充值。
+
+## 2j. 画布(2026-09-11,as-built)
+
+`/canvas` 从纯本地原型升级为持久化画布(`src/lib/canvas/`)。
+
+- **存储** `store.ts`:`data/canvases/<userId>/<canvasId>.json`,一文件一画布;`ownerId` 校验非本人 404,`updatedAt` 倒序列表;全部写路径原子(tmp+rename)+ 单画布锁内读-改-写。
+- **文档**:四类节点 `text`(内容便签)/ `material`(一份 `uploadId`)/ `gen_image` / `gen_video`,加上 `edges {from,to}`;整篇 `revision` 是乐观并发戳——`PATCH /api/canvases/:id` 必带 `expectedRevision`,对不上 409 `revision_conflict`,冲突方重拉最新文档再合,双标签页不互相静默覆盖。
+- **运行** `run.ts`:`POST /api/canvases/:id/nodes/:nodeId/run` 把 `gen_*` 节点变成一次真实 `createJob`——同一套准入、计价、预留与限流,不另起炉灶。提示词 = 连入 text 节点内容(按画布顺序)+ 节点自身 prompt;`gen_video` 有图片输入(material 的 `uploadId`,或上游 `gen_image` 节点已成功的 `outputs/image.jpg` 复制成的 `start` 上传——与 `/api/uploads/from-job` 同链路)即 `image_to_video`,否则 `text_to_video`;`gen_image` 恒 `text_to_image`。幂等键 `canvas:<canvasId>:<nodeId>:<runSeq>`,runSeq 在任务写回后才自增——「建了任务没写回」之间崩溃,重试按同 seq 命中映射;节点已有未终态任务时直接交回,重复点击不重建。
+- **API**:`GET/POST /api/canvases`、`GET/PATCH/DELETE /api/canvases/:id`、`POST /api/canvases/:id/nodes/:nodeId/run`;另有 `GET /api/uploads/:id` 读本人上传素材(owner 校验 + `private, no-cache`,素材节点刷新重显用)。
+- **前端** `CanvasView.tsx`:右键菜单加四类节点、拖拽定位、文本/提示词防抖 600ms 落盘、素材上传走 `POST /api/uploads`、生成节点轮询 `jobId` 恢复产物;冲突时 toast + 自动刷新到最新版本。
 
 ## 3. Job 生命周期
 
@@ -326,7 +338,9 @@ data/
   ledger/<userId>.jsonl                 # 2026-09-06:余额流水;{at,kind,amountCny,balanceAfterCny,jobId?,ref?,memberCny?,note?}
                                          # 工作区版本起降级为 billing 快照的派生导出物(整体重建,不再追加写);
                                          # 与快照不一致时读写均失败关闭(billing_export_corrupt)
-  agent/<userId>/<sessionId>.json       # 2026-09-07:智能体会话记录,ownerId 校验,单用户上限 200 条(§2h)
+  agent/<userId>/<sessionId>.json       # 2026-09-07:智能体会话记录,ownerId 校验,单用户上限 200 条(§2h);
+                                        # 2026-09-11 起内嵌 turns[](轮次状态机)与 budget
+  canvases/<userId>/<canvasId>.json     # 2026-09-11:画布文档,ownerId 校验,revision 乐观并发(§2j)
   templates/*.json                      # 2026-09-06 深夜:创作模板,首次部署需 cp -r data-seed/templates data/templates
                                          # (data-seed/templates 提供六条示例种子,不随代码自动生成)
 ```
@@ -345,7 +359,7 @@ data/
 - API 边界:`src/lib/client/{jobs,auth,agent,subscription,templates,models}.ts`(create/cancel/retry/幂等 key)、`useJobLive.ts`(SSE + 轮询)、`useEvents.ts`(全局通知)、`labels.ts`(终态判断/计时)。401 由 `client/http.ts` 整页跳转 `/login`。
 - 成片来源:主页瀑布流与详情浮层直接用 `JobPublic.output`(视频取 `posterUrl`,图片取 `imageUrl`),按 `output.kind` 分视频/图片;`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡。
 - 依赖:`three`/`@types/three`/`raw-loader` 与旧场景层代码(`src/lib/scene/`、`src/shaders/`、`ClothVeil.tsx`、`SceneHost.tsx`)已于 2026-09-07 一并移除,`next.config.ts` 不再有 `*.html` raw-loader 规则;前端不含任何 WebGL 依赖。
-- 画布 `/canvas` 是像素复刻 + 本地交互的原型,不发请求(占位数据);智能体 `/agent`(§2h)与订阅 `/subscription`(§2i)已接真实后端。
+- 画布 `/canvas` 与智能体 `/agent`(§2h)、订阅 `/subscription`(§2i)均已接真实后端(画布见 §2j)。
 
 ## 7. Harness 一致性管线 **[Phase 2 详设 — 产品核心]**
 

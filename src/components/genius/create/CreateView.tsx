@@ -65,7 +65,7 @@ function clockTime(iso: string): string {
 }
 
 export function CreateView() {
-  const { jobs, currentJob, setCurrentJob, busy, cancel, retry } = useShell();
+  const { jobs, currentJob, setCurrentJob, busy, cancel, retry, reconcile } = useShell();
   const t = useT();
   const [now, setNow] = useState<number | null>(null);
 
@@ -155,6 +155,11 @@ export function CreateView() {
             {canRetry ? (
               <button type="button" className="task__btn" disabled={busy} onClick={retry}>
                 {retryLabel}
+              </button>
+            ) : null}
+            {job.retryBlocked?.code === "uncertain_submit" ? (
+              <button type="button" className="task__btn" disabled={busy} onClick={reconcile}>
+                {t("create.verify")}
               </button>
             ) : null}
             {done && job.output && !purged ? (

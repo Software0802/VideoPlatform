@@ -29,6 +29,9 @@ let GET_SESSION: typeof import("./sessions/[id]/route").GET;
 let PATCH_SESSION: typeof import("./sessions/[id]/route").PATCH;
 let DELETE_SESSION: typeof import("./sessions/[id]/route").DELETE;
 let POST_MESSAGE: typeof import("./sessions/[id]/messages/route").POST;
+let GET_TURN: typeof import("./sessions/[id]/turns/[turnId]/route").GET;
+let POST_APPROVE: typeof import("./sessions/[id]/turns/[turnId]/approve/route").POST;
+let POST_REJECT: typeof import("./sessions/[id]/turns/[turnId]/reject/route").POST;
 
 beforeAll(async () => {
   dataRoot = await mkdtemp(path.join(os.tmpdir(), "lumen-agent-routes-test-"));
@@ -46,6 +49,9 @@ beforeAll(async () => {
   ({ GET: GET_SESSIONS, POST: POST_SESSIONS } = await import("./sessions/route"));
   ({ GET: GET_SESSION, PATCH: PATCH_SESSION, DELETE: DELETE_SESSION } = await import("./sessions/[id]/route"));
   ({ POST: POST_MESSAGE } = await import("./sessions/[id]/messages/route"));
+  ({ GET: GET_TURN } = await import("./sessions/[id]/turns/[turnId]/route"));
+  ({ POST: POST_APPROVE } = await import("./sessions/[id]/turns/[turnId]/approve/route"));
+  ({ POST: POST_REJECT } = await import("./sessions/[id]/turns/[turnId]/reject/route"));
 });
 
 afterAll(async () => {
@@ -117,6 +123,23 @@ function ctxFor(id: string) {
   return { params: Promise.resolve({ id }) };
 }
 
+function turnCtxFor(id: string, turnId: string) {
+  return { params: Promise.resolve({ id, turnId }) };
+}
+
+type SessionJson = {
+  id: string;
+  messages: {
+    id: string;
+    role: string;
+    approval?: string;
+    jobs?: { jobId?: string; priceCny?: number }[];
+    priceCny?: number;
+  }[];
+  turns: { id: string; status: string }[];
+  jobs: { id: string; mode: string }[];
+};
+
 describe("GET /api/agent/skills", () => {
   it("needs a session", async () => {
     const res = await GET_SKILLS(req("http://localhost/api/agent/skills", undefined));
@@ -135,7 +158,7 @@ describe("GET /api/agent/skills", () => {
 });
 
 describe("agent sessions", () => {
-  it("opens a session, runs the first turn and files a real job", async () => {
+  it("opens a session, proposes a job and files it on approval", async () => {
     const user = await seedUser("usr_0000000000000202");
     const res = await POST_SESSIONS(
       jsonReq("http://localhost/api/agent/sessions", user, "POST", {
@@ -143,24 +166,43 @@ describe("agent sessions", () => {
       }),
     );
     expect(res.status).toBe(201);
-    const { session } = (await res.json()) as {
-      session: {
-        id: string;
-        title: string;
-        messages: { role: string; jobs?: { jobId?: string }[]; priceCny?: number }[];
-        jobs: { id: string; mode: string }[];
-      };
-    };
+    const { session } = (await res.json()) as { session: SessionJson & { title: string } };
     expect(session.id).toMatch(/^ses_[0-9a-f]{16}$/);
     expect(session.title).toContain("海报");
     expect(session.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
 
     const assistant = session.messages[1];
     expect(assistant.priceCny).toBe(0.05);
-    // 「海报」触发 mock 的 image action，任务是普通的 text_to_image。
-    expect(assistant.jobs?.[0].jobId).toBeTruthy();
-    expect(session.jobs[0].mode).toBe("text_to_image");
-    expect(session.jobs[0].id).toBe(assistant.jobs?.[0].jobId);
+    // 「海报」触发 mock 的 image action——默认批准制下它只是提案：待批、带报价、还没建任务。
+    expect(assistant.approval).toBe("pending");
+    expect(assistant.jobs?.[0].jobId).toBeUndefined();
+    expect(assistant.jobs?.[0].priceCny).toBeGreaterThan(0);
+    expect(session.jobs).toHaveLength(0);
+    expect(session.turns[0].status).toBe("awaiting_approval");
+
+    // 批准那一刻才创建任务：任务是普通的 text_to_image。
+    const approved = await POST_APPROVE(
+      req(`http://localhost/api/agent/sessions/${session.id}/turns/${assistant.id}/approve`, user, {
+        method: "POST",
+      }),
+      turnCtxFor(session.id, assistant.id),
+    );
+    expect(approved.status).toBe(200);
+    const after = (await approved.json()) as { session: SessionJson };
+    const done = after.session.messages[1];
+    expect(done.approval).toBe("approved");
+    expect(done.jobs?.[0].jobId).toBeTruthy();
+    expect(after.session.jobs[0].mode).toBe("text_to_image");
+    expect(after.session.jobs[0].id).toBe(done.jobs?.[0].jobId);
+    expect(after.session.turns[0].status).toBe("succeeded");
+
+    // 单轮读取：刷新后拿 turn 状态恢复界面。
+    const turnRes = await GET_TURN(
+      req(`http://localhost/api/agent/sessions/${session.id}/turns/${assistant.id}`, user),
+      turnCtxFor(session.id, assistant.id),
+    );
+    expect(turnRes.status).toBe(200);
+    expect(((await turnRes.json()) as { turn: { status: string } }).turn.status).toBe("succeeded");
   });
 
   it("continues an existing session and lists it newest first", async () => {
@@ -177,13 +219,59 @@ describe("agent sessions", () => {
       ctxFor(session.id),
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { session: { messages: unknown[]; jobs: { mode: string }[] } };
+    const body = (await res.json()) as { session: SessionJson };
     expect(body.session.messages).toHaveLength(4);
-    expect(body.session.jobs[0].mode).toBe("text_to_video");
+    const proposal = body.session.messages[3];
+    expect(proposal.approval).toBe("pending");
+
+    const approved = await POST_APPROVE(
+      req(`http://localhost/api/agent/sessions/${session.id}/turns/${proposal.id}/approve`, user, {
+        method: "POST",
+      }),
+      turnCtxFor(session.id, proposal.id),
+    );
+    const after = (await approved.json()) as { session: SessionJson };
+    expect(after.session.jobs[0].mode).toBe("text_to_video");
 
     const listed = await GET_SESSIONS(req("http://localhost/api/agent/sessions", user));
     const list = (await listed.json()) as { sessions: { id: string }[] };
     expect(list.sessions[0].id).toBe(session.id);
+  });
+
+  it("rejects a proposal without filing any job", async () => {
+    const user = await seedUser("usr_000000000000020a");
+    const created = await POST_SESSIONS(
+      jsonReq("http://localhost/api/agent/sessions", user, "POST", { text: "生成一张海报" }),
+    );
+    const { session } = (await created.json()) as { session: SessionJson };
+    const proposal = session.messages[1];
+    expect(proposal.approval).toBe("pending");
+
+    const rejected = await POST_REJECT(
+      req(`http://localhost/api/agent/sessions/${session.id}/turns/${proposal.id}/reject`, user, {
+        method: "POST",
+      }),
+      turnCtxFor(session.id, proposal.id),
+    );
+    expect(rejected.status).toBe(200);
+    const body = (await rejected.json()) as { session: SessionJson };
+    expect(body.session.messages[1].approval).toBe("rejected");
+    expect(body.session.jobs).toHaveLength(0);
+    expect(body.session.turns[0].status).toBe("rejected");
+
+    // 已拒绝的轮次不能再批准；不存在的轮次 404。
+    const late = await POST_APPROVE(
+      req(`http://localhost/api/agent/sessions/${session.id}/turns/${proposal.id}/approve`, user, {
+        method: "POST",
+      }),
+      turnCtxFor(session.id, proposal.id),
+    );
+    expect(late.status).toBe(409);
+    const missing = await GET_TURN(
+      req(`http://localhost/api/agent/sessions/${session.id}/turns/msg_ffffffffffffffff`, user),
+      turnCtxFor(session.id, "msg_ffffffffffffffff"),
+    );
+    expect(missing.status).toBe(404);
   });
 
   it("hides another user's session behind the same 404 as a missing one", async () => {

@@ -30,6 +30,13 @@ const inputSchema = z.object({
      * 也不许转成永久已购余额），其余进已购池。与 `pool` 互斥。
      */
     refundOf: text.optional(),
+    /**
+     * 会员池抽取上限（Reservation earmark）：负 delta 时最多从会员池出这么多。
+     * 任务的预留分配在准入那一刻冻结；不封顶的话「会员池优先」扣款会动到别的
+     * 在途任务 earmark 留在池里的钱，破坏「会员池余额 ≥ Σ 在途 earmark」不变量。
+     * 与 `pool` / `refundOf` 互斥，且只允许负 delta。
+     */
+    memberMaxCny: money.nonnegative().optional(),
   }).strict(),
 }).strict();
 export const baselineSchema = z.object({
@@ -81,14 +88,15 @@ export function round2(value) {
   return Object.is(rounded, -0) ? 0 : rounded;
 }
 
-export function splitAcrossPools(balanceCny, memberCreditsCny, delta, selectedPool) {
+export function splitAcrossPools(balanceCny, memberCreditsCny, delta, selectedPool, memberMaxCny) {
   const member = Number.isFinite(memberCreditsCny) ? Math.max(0, memberCreditsCny) : 0;
   if (delta >= 0) {
     return selectedPool === "member"
       ? { balanceCny: round2(balanceCny), memberCreditsCny: round2(member + delta), memberCny: 0 }
       : { balanceCny: round2(balanceCny + delta), memberCreditsCny: round2(member), memberCny: 0 };
   }
-  const fromMember = selectedPool === "purchased" ? 0 : round2(Math.min(member, -delta));
+  const memberCap = memberMaxCny === undefined ? -delta : Math.min(-delta, memberMaxCny);
+  const fromMember = selectedPool === "purchased" ? 0 : round2(Math.min(member, memberCap));
   const fromPurchased = selectedPool === "member" ? 0 : round2(-delta - fromMember);
   return {
     balanceCny: round2(balanceCny - fromPurchased),
@@ -107,6 +115,10 @@ export function normalizeInput(input) {
   if (delta !== amountCny) throw billingError("billing_amount_mismatch");
   if (parsed.options.refundOf !== undefined && (parsed.options.pool !== undefined || delta <= 0)) {
     throw billingError("billing_invalid_refund");
+  }
+  if (parsed.options.memberMaxCny !== undefined &&
+      (parsed.options.pool !== undefined || parsed.options.refundOf !== undefined || delta >= 0)) {
+    throw billingError("billing_invalid_member_cap");
   }
   return { delta, entry: { ...parsed.entry, amountCny }, options: parsed.options };
 }
@@ -209,7 +221,7 @@ export function validateSnapshot(record) {
     const split = input.options.refundOf
       ? refundSplit(rows, input.options.refundOf, current, input.delta)
       : splitAcrossPools(current.balanceCny, current.memberCreditsCny, input.delta,
-        op.effectivePool === "auto" ? undefined : op.effectivePool);
+        op.effectivePool === "auto" ? undefined : op.effectivePool, input.options.memberMaxCny);
     const after = balances(split);
     const row = makeEntry(input, op.ledgerEntry.at, split);
     if (!sameValue(after, op.after) || !sameValue(row, op.ledgerEntry)) throw billingError("billing_broken_chain");
@@ -265,6 +277,9 @@ export function prepareChange(record, rawInput, context) {
     return record;
   }
   const effectivePool = input.options.refundOf ? "refund"
+    // earmark 的会员份额不因订阅到期而失效（预留时就承诺了它走会员池），
+    // 所以带 memberMaxCny 的扣款恒为 auto，不做「到期整笔落已购池」的退化。
+    : input.options.memberMaxCny !== undefined ? "auto"
     : input.options.pool ?? (input.delta >= 0 ? "purchased"
     : Date.parse(record.subscription?.expiresAt ?? "") > Date.parse(context.at) ? "auto" : "purchased");
   const before = balances(record);
@@ -272,7 +287,7 @@ export function prepareChange(record, rawInput, context) {
   const split = input.options.refundOf
     ? refundSplit(rows, input.options.refundOf, before, input.delta)
     : splitAcrossPools(before.balanceCny, before.memberCreditsCny, input.delta,
-      effectivePool === "auto" ? undefined : effectivePool);
+      effectivePool === "auto" ? undefined : effectivePool, input.options.memberMaxCny);
   const after = balances(split);
   const op = {
     seq: billing.operations.length + 1, operationId: context.operationId,

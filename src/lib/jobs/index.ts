@@ -69,6 +69,17 @@ export type JobIndexEntry = {
    * 时候，恢复路径扫索引就能找到「这个 key 建了哪条任务」，不用回读每个 job.json。
    */
   idempotencyKey?: string;
+  /**
+   * 资金预留的分池分配额（A 包）。进索引的理由与 `idempotencyKey` 一致：余额准入
+   * 与订阅结算都要按「在途 earmark 之和」算账，为它回读每份 job.json 就白建了索引。
+   * 老任务没有这个字段——那时在途预留就是 `priceCny` 全额、不分池。
+   */
+  reservation?: {
+    amountCny: number;
+    memberCny: number;
+    subscriptionId?: string;
+    periodIndex?: number;
+  };
 };
 
 const jobIndexEntrySchema = z.object({
@@ -84,6 +95,14 @@ const jobIndexEntrySchema = z.object({
   provider: jobPublicSchema.shape.provider,
   outputKind: z.enum(["video", "image"]).optional(),
   idempotencyKey: z.string().optional(),
+  reservation: z
+    .object({
+      amountCny: z.number(),
+      memberCny: z.number(),
+      subscriptionId: z.string().optional(),
+      periodIndex: z.number().int().min(0).optional(),
+    })
+    .optional(),
 });
 
 const jobIndexFileSchema = z.record(z.string(), jobIndexEntrySchema);
@@ -189,6 +208,14 @@ export function toIndexEntry(rec: JobRecord): JobIndexEntry {
   const kind = outputKindOf(rec);
   if (kind) entry.outputKind = kind;
   if (rec.idempotency?.key) entry.idempotencyKey = rec.idempotency.key;
+  if (rec.reservation) {
+    entry.reservation = {
+      amountCny: rec.reservation.amountCny,
+      memberCny: rec.reservation.memberCny,
+      ...(rec.reservation.subscriptionId ? { subscriptionId: rec.reservation.subscriptionId } : {}),
+      ...(rec.reservation.periodIndex !== undefined ? { periodIndex: rec.reservation.periodIndex } : {}),
+    };
+  }
   return entry;
 }
 

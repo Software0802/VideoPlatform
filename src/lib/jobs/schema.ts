@@ -168,6 +168,44 @@ export function clampProgress(value: number): number {
 export const UPLOAD_ID_RE = /^up_[0-9a-f]{16}$/;
 export const uploadIdSchema = z.string().regex(UPLOAD_ID_RE);
 
+export const RESERVATION_ID_RE = /^res_[0-9a-f]{16}$/;
+
+/**
+ * 资金预留（A 包）：准入那一刻冻结的分池分配额，存在 `job.json` 上与任务同生死——
+ * 预留和任务在同一次原子写里诞生，不存在「钱占住了、任务没落盘」或反过来的窗口。
+ *
+ * 状态不单独存：`held` 就是「任务非终态」，`settled` 就是 `billing.chargedAt` 已盖，
+ * `released` 就是其余终态。三态全部由 `status` 派生，所以永远不可能出现「任务已经
+ * 终态、预留还占着钱」这类两个事实源打架的情况。
+ *
+ * `memberCny` 是会员池 earmark，维护的不变量：**会员池账面余额在任何时候不得低于
+ * 所有在途任务 earmark 之和**——期次重置 / 到期清零 / 换订阅重置都先保住这个数再动
+ * 池子（`subscription.ts` 的 `heldMemberEarmarksCny`）。任务进终态后 earmark 随
+ * 「非终态」标签一起消失，下一次惰性结算把没被承诺的部分冲销——过期会员额就此作废，
+ * 不转成已购余额。结算扣款带 `memberMaxCny = memberCny` 上限（`protocol.mjs`），
+ * 保证扣这条任务的钱不会动到别的在途任务 earmark 进池的部分。
+ */
+export type JobReservation = {
+  /** `res_<16hex>`。 */
+  id: string;
+  /** 预留总额，人民币元——与 `priceCny` 同值，写死不改。 */
+  amountCny: number;
+  /** 会员池 earmark：结算时最多从会员池出这么多。 */
+  memberCny: number;
+  /** 已购池承诺额 = `amountCny − memberCny`。 */
+  purchasedCny: number;
+  /** earmark 出自哪份订阅的哪一期（诊断与审计归属；老记录没有这两个字段）。 */
+  subscriptionId?: string;
+  periodIndex?: number;
+  createdAt: string;
+  /**
+   * 释放处理已完成的时刻（ISO）：任务进了非成功终态、earmark 该溶解还是该冲销
+   * 已经做过判定（当期 earmark 直接溶解不写流水；过期 earmark 写 `res:<id>:release`
+   * 冲销行）。没盖这个戳就还会被 `updateJob` 反复补偿，与 `chargedAt` 同一个模式。
+   */
+  releasedAt?: string;
+};
+
 export const createJobBodySchema = z.object({
   mode: nativeModeSchema,
   /**
@@ -312,6 +350,11 @@ export type JobRecord = Omit<
    * 映射文件里，只能按归属信映射。
    */
   idempotency?: { key: string; requestHash: string };
+  /**
+   * 资金预留（A 包，见 `JobReservation` 的注释）。缺省 = 升级前创建的任务：在途预留
+   * 按 `priceCny` 全额计（与旧口径一致），结算按「会员池优先」扣款、不戴 earmark 上限。
+   */
+  reservation?: JobReservation;
   /**
    * How many times an upstream refusal that is nobody's fault (rate limit, platform
    * balance) sent this job back to `queued` instead of failing it. Absent on records

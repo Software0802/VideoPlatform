@@ -7,6 +7,7 @@ export const create = {
   "create.purged": "作品已过期清理，无法重新生成这一条，请重新提交。",
   "create.retry": "重新生成",
   "create.retryShots": "重做失败分镜",
+  "create.verify": "核验上游",
   "create.imageAlt": "生成图像",
   "create.recent": "最近任务",
   "create.recentEmpty": "还没有任务记录。",

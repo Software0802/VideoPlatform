@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { access, cp, mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { estimateCostUsd, estimateHarnessCostUsd, type ImagePricingHint } from "@/lib/cost";
-import { assertBalance } from "@/lib/billing/admission";
+import { reserveJobFunds } from "@/lib/billing/admission";
 import { priceCny } from "@/lib/billing/prices";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { harnessEnabled, maxQueuedJobs, maxQueuedJobsPerUser } from "@/lib/env";
@@ -293,9 +293,10 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
   };
 
   // 余额是主闸门（方案 §3.2），配额退居防滥用兜底。判定与下面的 `writeJob` 必须在
-  // 同一个 `withAdmissionLock` 临界区里：预留是「在途任务的售价之和」，只有那次写盘
-  // 落地后才对下一个请求可见。放在认领素材之前，被拒时磁盘上不留半个任务目录。
-  await assertBalance(ownerId, rec.priceCny);
+  // 同一个 `withAdmissionLock` 临界区里：只有那次写盘落地后，这条任务的预留才对
+  // 下一个请求可见。放在认领素材之前，被拒时磁盘上不留半个任务目录。
+  // 预留的分池分配额在这一刻冻结（A 包）：会员池 earmark 从此被这条任务钉住。
+  rec.reservation = await reserveJobFunds(ownerId, rec.priceCny);
 
   await mkdir(path.join(mediaStore.jobDir(id), "inputs"), { recursive: true });
   if (start) rec.assets.start = await claim(id, start, "inputs/start.jpg");
@@ -444,8 +445,9 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     voiceIds: source.voiceIds,
   };
 
-  // 同一个判官、同一把锁（方案 §3.2）：重试和首次提交花的是一样的钱。
-  await assertBalance(ownerId, rec.priceCny);
+  // 同一个判官、同一把锁（方案 §3.2）：重试和首次提交花的是一样的钱——
+  // 也一样在准入这一刻冻结自己的分池预留。
+  rec.reservation = await reserveJobFunds(ownerId, rec.priceCny);
 
   const srcInputs = path.join(mediaStore.jobDir(source.id), "inputs");
   const destInputs = path.join(mediaStore.jobDir(id), "inputs");

@@ -111,7 +111,7 @@ describe("loadBalanceUsage", () => {
   it("reports the full balance available when there is nothing in flight", async () => {
     const id = userId("1");
     await seedUser(id, 100);
-    expect(await loadBalanceUsage(id)).toEqual({ balanceCny: 100, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 0, availableCny: 100 });
+    expect(await loadBalanceUsage(id)).toEqual({ balanceCny: 100, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 0, heldMemberCny: 0, heldPurchasedCny: 0, spendableMemberCny: 0, availableCny: 100 });
   });
 
   it("reserves the price of every non-terminal job this user owns", async () => {
@@ -119,7 +119,7 @@ describe("loadBalanceUsage", () => {
     await seedUser(id, 100);
     await writeJob(job(id, "pending", 30));
     await writeJob(job(id, "queued", 12));
-    expect(await loadBalanceUsage(id)).toEqual({ balanceCny: 100, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 42, availableCny: 58 });
+    expect(await loadBalanceUsage(id)).toEqual({ balanceCny: 100, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 42, heldMemberCny: 0, heldPurchasedCny: 42, spendableMemberCny: 0, availableCny: 58 });
   });
 
   it("rounds a sum of reservations that would otherwise carry float noise", async () => {
@@ -138,7 +138,7 @@ describe("loadBalanceUsage", () => {
     for (const status of ["succeeded", "failed", "canceled", "expired"] as const) {
       await writeJob(job(id, status, 25));
     }
-    expect(await loadBalanceUsage(id)).toEqual({ balanceCny: 100, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 0, availableCny: 100 });
+    expect(await loadBalanceUsage(id)).toEqual({ balanceCny: 100, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 0, heldMemberCny: 0, heldPurchasedCny: 0, spendableMemberCny: 0, availableCny: 100 });
   });
 
   it("does not reserve another user's in-flight job", async () => {
@@ -147,7 +147,7 @@ describe("loadBalanceUsage", () => {
     await seedUser(id, 100);
     await seedUser(other, 100);
     await writeJob(job(other, "pending", 50));
-    expect(await loadBalanceUsage(id)).toEqual({ balanceCny: 100, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 0, availableCny: 100 });
+    expect(await loadBalanceUsage(id)).toEqual({ balanceCny: 100, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 0, heldMemberCny: 0, heldPurchasedCny: 0, spendableMemberCny: 0, availableCny: 100 });
   });
 
   it("never reserves an ownerless legacy job — not even for the administrator", async () => {
@@ -155,7 +155,7 @@ describe("loadBalanceUsage", () => {
     await seedUser(admin, 100);
     process.env.LUMEN_ADMIN_USER_ID = admin;
     await writeJob(job(undefined, "pending", 40));
-    expect(await loadBalanceUsage(admin)).toEqual({ balanceCny: 100, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 0, availableCny: 100 });
+    expect(await loadBalanceUsage(admin)).toEqual({ balanceCny: 100, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 0, heldMemberCny: 0, heldPurchasedCny: 0, spendableMemberCny: 0, availableCny: 100 });
   });
 
   it("counts the member credit pool as available money alongside the purchased balance", async () => {
@@ -166,6 +166,9 @@ describe("loadBalanceUsage", () => {
       memberCreditsCny: 6,
       effectiveMemberCny: 6,
       reservedCny: 0,
+      heldMemberCny: 0,
+      heldPurchasedCny: 0,
+      spendableMemberCny: 6,
       availableCny: 10,
     });
   });
@@ -188,13 +191,40 @@ describe("loadBalanceUsage", () => {
       // 判定用的是这个 0，不是上面那个 6——两个数都摆出来，读数的人才看得出发生了什么。
       effectiveMemberCny: 0,
       reservedCny: 0,
+      heldMemberCny: 0,
+      heldPurchasedCny: 0,
+      spendableMemberCny: 0,
       availableCny: 4,
     });
   });
 
   it("treats a user with no user.json as a zero balance rather than throwing", async () => {
     const id = userId("8");
-    expect(await loadBalanceUsage(id)).toEqual({ balanceCny: 0, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 0, availableCny: 0 });
+    expect(await loadBalanceUsage(id)).toEqual({ balanceCny: 0, memberCreditsCny: 0, effectiveMemberCny: 0, reservedCny: 0, heldMemberCny: 0, heldPurchasedCny: 0, spendableMemberCny: 0, availableCny: 0 });
+  });
+
+  it("显式预留把在途额拆成会员 earmark 与已购池承诺两部分（A 包）", async () => {
+    const id = userId("f1");
+    await seedUser(id, 10, 8);
+    const j = job(id, "pending", 7);
+    j.reservation = {
+      id: "res_00000000000000a1",
+      amountCny: 7,
+      memberCny: 5,
+      purchasedCny: 2,
+      subscriptionId: "sub_00000000000000aa",
+      periodIndex: 0,
+      createdAt: new Date().toISOString(),
+    };
+    await writeJob(j);
+    expect(await loadBalanceUsage(id)).toMatchObject({
+      reservedCny: 7,
+      heldMemberCny: 5,
+      heldPurchasedCny: 2,
+      // 8 元有效会员池被 earmark 占住 5 元，还能 earmark 给新任务的只剩 3 元。
+      spendableMemberCny: 3,
+      availableCny: 11,
+    });
   });
 });
 
@@ -249,34 +279,39 @@ describe("assertBalance", () => {
 
 describe("purchasableCny", () => {
   /** `loadBalanceUsage` 的返回形状，只填这几个数就够算了。 */
-  const usage = (balanceCny: number, effectiveMemberCny: number, reservedCny: number) => ({
+  const usage = (balanceCny: number, heldMemberCny = 0, heldPurchasedCny = 0, effectiveMemberCny = 0) => ({
     balanceCny,
     memberCreditsCny: effectiveMemberCny,
     effectiveMemberCny,
-    reservedCny,
-    availableCny: balanceCny + effectiveMemberCny - reservedCny,
+    reservedCny: heldMemberCny + heldPurchasedCny,
+    heldMemberCny,
+    heldPurchasedCny,
+    spendableMemberCny: Math.max(0, effectiveMemberCny - heldMemberCny),
+    availableCny: balanceCny + effectiveMemberCny - heldMemberCny - heldPurchasedCny,
   });
 
   it("没有在途任务时就是已购余额本身", () => {
-    expect(purchasableCny(usage(50, 0, 0))).toBe(50);
-    expect(purchasableCny(usage(50, 12, 0))).toBe(50);
+    expect(purchasableCny(usage(50))).toBe(50);
+    expect(purchasableCny(usage(50, 0, 0, 12))).toBe(50);
   });
 
-  it("在途预留先由有效会员积分顶，顶不住的那部分才从可购额里扣", () => {
-    // 预留 10，会员积分 12 顶得住 → 已购池一分不占。
-    expect(purchasableCny(usage(50, 12, 10))).toBe(50);
-    // 预留 20，会员积分只顶得住 12，剩下 8 落在已购池上。
-    expect(purchasableCny(usage(50, 12, 20))).toBe(42);
-    // 没有会员积分时预留全部落在已购池上。
+  it("只减在途预留里承诺由已购池出的那部分", () => {
+    // 预留 10 全部 earmark 在会员池 → 已购池一分不占。
+    expect(purchasableCny(usage(50, 10, 0, 12))).toBe(50);
+    // 预留 20 = 会员 12 + 已购 8 → 只扣已购承诺的 8。
+    expect(purchasableCny(usage(50, 12, 8, 12))).toBe(42);
+    // 没有会员 earmark 时预留全部落在已购池上。
     expect(purchasableCny(usage(50, 0, 20))).toBe(30);
+    // earmark 之后又发了日积分：会员池变大，但已购承诺额不变，可购额不受干扰。
+    expect(purchasableCny(usage(50, 3, 8, 8))).toBe(42);
   });
 
-  it("过期的会员积分顶不了预留（`effectiveMemberCny` 已经是 0 了）", () => {
+  it("过期的会员积分顶不了预留（earmark 之外的部分已经是死账）", () => {
     expect(purchasableCny({ ...usage(50, 0, 20), memberCreditsCny: 12 })).toBe(30);
   });
 
   it("预留吃穿已购池时如实报负数，不截成 0", () => {
-    // 已购 5、预留 20、无会员积分 → 可购 −15。报负数是有意的：它说明这个账号已经
+    // 已购 5、已购承诺 20 → 可购 −15。报负数是有意的：它说明这个账号已经
     // 超支了，把它截成 0 只会让「为什么买不了」变得更难解释。
     expect(purchasableCny(usage(5, 0, 20))).toBe(-15);
   });

@@ -23,6 +23,7 @@ vi.mock("@/lib/jobs/runner", () => ({ enqueue: vi.fn(), activeCount: async () =>
  */
 vi.mock("@/lib/billing/admission", () => ({
   assertBalance: async () => {},
+  reserveJobFunds: async () => undefined,
   loadBalanceUsage: async () => ({ balanceCny: 0, reservedCny: 0, availableCny: 0 }),
 }));
 

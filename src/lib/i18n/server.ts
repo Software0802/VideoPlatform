@@ -12,3 +12,13 @@ export async function resolveLocale(): Promise<Locale> {
   const h = await headers();
   return localeFromAcceptLanguage(h.get("accept-language"));
 }
+
+/**
+ * Route handler 版：`next/headers` 的 `cookies()` 只在请求域里可用（测试里直接调
+ * handler 会抛），这里从 `Request` 的 cookie / accept-language 头自己解析，口径相同。
+ */
+export function localeFromRequest(request: Request): Locale {
+  const raw = /(?:^|;\s*)lumen_locale=([^\s;]+)/.exec(request.headers.get("cookie") ?? "")?.[1];
+  if (isLocale(raw)) return raw;
+  return localeFromAcceptLanguage(request.headers.get("accept-language"));
+}

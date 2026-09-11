@@ -1,5 +1,6 @@
 import { jsonError } from "@/lib/http";
 import { withRequestContext } from "@/lib/request-context";
+import { localeFromRequest } from "@/lib/i18n/server";
 import { requireUser } from "@/lib/users/session";
 import { toPublicSession } from "@/lib/agent/public";
 import { assertAgentRate } from "@/lib/agent/rate-limit";
@@ -28,7 +29,7 @@ async function send(request: Request, ctx: Ctx): Promise<Response> {
     }
     assertAgentRate(user.id);
     const body = agentTurnBodySchema.parse(await request.json());
-    const { session: next } = await runTurn(session, { ownerId: user.id, ...body });
+    const { session: next } = await runTurn(session, { ownerId: user.id, locale: localeFromRequest(request), ...body });
     return Response.json({ session: await toPublicSession(next) });
   } catch (e) {
     return jsonError(e);

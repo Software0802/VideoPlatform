@@ -178,6 +178,19 @@ export async function retryJob(id: string): Promise<JobPublic> {
   return parseAuthed<JobPublic>(res, "重试失败");
 }
 
+/* ── 恢复中心（A 包）：`POST /api/jobs/:id/recovery/*` ── */
+
+export type ReconcileResult = { job: JobPublic; outcome: "resumed" | "not_found" };
+
+/**
+ * 向上游核验一条 `uncertain_submit` 的任务：`resumed` = 上游认领了单子、任务接管成
+ * 进行中；`not_found` = 上游确认没收到，重试随之解锁。查询失败抛 409。
+ */
+export async function reconcileJob(id: string): Promise<ReconcileResult> {
+  const res = await fetch(`/api/jobs/${id}/recovery/reconcile`, { method: "POST" });
+  return parseAuthed<ReconcileResult>(res, "核验失败");
+}
+
 export function newIdempotencyKey(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()

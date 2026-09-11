@@ -96,6 +96,10 @@ test("智能体：一句想法 → 真实会话 + 助手回复 + 生成任务 + 
   await expect(answer).not.toHaveAttribute("data-thinking", "true");
   await expect(answer.locator(".agent-chat__text").first()).not.toBeEmpty();
 
+  // 默认批准制：先出提案卡（带报价），批准那一刻才真的建任务。
+  await expect(answer.locator(".agent-chat__proposal")).toBeVisible();
+  await answer.getByRole("button", { name: "批准生成" }).click();
+
   // 这一轮真的建了一条任务：消息里的任务卡与右侧资产栏说的是同一个 job id。
   const jobCard = page.locator(".agent-chat__job").first();
   await expect(jobCard).toBeVisible();
@@ -116,6 +120,9 @@ test("智能体：历史抽屉列出真实会话，点进去能读回对话", as
   await idea(page).fill(IDEA);
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.locator(".agent-chat__answer").last()).toBeVisible({ timeout: 60_000 });
+  // 提案 → 批准 → 任务卡。
+  const answer = page.locator(".agent-chat__answer").last();
+  await answer.getByRole("button", { name: "批准生成" }).click();
   await expect(page.locator(".agent-chat__job").first()).toBeVisible();
   await noteJob(page);
 

@@ -1,6 +1,6 @@
 import type { JobPublic } from "@/lib/jobs/schema";
 import { readJobForUser, toPublic } from "@/lib/jobs/store";
-import type { AgentMessage, AgentSession } from "@/lib/agent/schema";
+import type { AgentMessage, AgentSession, AgentTurn } from "@/lib/agent/schema";
 
 /**
  * 会话的对外投影。
@@ -20,6 +20,10 @@ export type AgentSessionPublic = {
   imageProduct?: string;
   videoProduct?: string;
   messages: AgentMessage[];
+  /** 各轮的执行账（B 包）：待批准 / 执行中的轮次靠它恢复，刷新后界面能接着等。 */
+  turns: AgentTurn[];
+  /** 会话预算闸门（B 包）；缺省 = 不限。 */
+  budget?: AgentSession["budget"];
   jobs: JobPublic[];
   createdAt: string;
   updatedAt: string;
@@ -37,6 +41,8 @@ export async function toPublicSession(session: AgentSession): Promise<AgentSessi
     ...(session.imageProduct ? { imageProduct: session.imageProduct } : {}),
     ...(session.videoProduct ? { videoProduct: session.videoProduct } : {}),
     messages: session.messages,
+    turns: session.turns ?? [],
+    ...(session.budget ? { budget: session.budget } : {}),
     jobs: records.filter((r) => r !== null).map((r) => toPublic(r)),
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,

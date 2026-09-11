@@ -31,6 +31,11 @@ type Props = {
   onSend: (text: string) => void;
   onBack: () => void;
   onDelete: () => void;
+  /** 批准 / 拒绝一条提案（B 包默认批准制）：入参是轮次 id（= 提案消息 id）。 */
+  onApprove: (turnId: string) => void;
+  onReject: (turnId: string) => void;
+  /** 设 / 解除会话预算（元）；`null` 解除。 */
+  onBudget: (cny: number | null) => void;
 };
 
 const TABS = ["all", "image", "video"] as const;
@@ -58,12 +63,17 @@ export default function AgentChat(props: Props) {
     onSend,
     onBack,
     onDelete,
+    onApprove,
+    onReject,
+    onBudget,
   } = props;
   const t = useT();
   const { locale } = useI18n();
   const [draft, setDraft] = useState("");
   const [tab, setTab] = useState<Tab>("all");
   const [picked, setPicked] = useState<string | null>(null);
+  const [budgetEdit, setBudgetEdit] = useState(false);
+  const [budgetDraft, setBudgetDraft] = useState("");
   const logRef = useRef<HTMLDivElement | null>(null);
 
   const messages = session?.messages ?? [];
@@ -128,8 +138,54 @@ export default function AgentChat(props: Props) {
                     </span>
                   </div>
                 ) : null}
-                {m.jobs?.length ? (
-                  <div className="agent-chat__jobs">
+                {m.approval === "pending" ? (
+                  /* 提案（B 包默认批准制）：批准那一刻才创建任务、才扣任务钱。
+                     turn 已进 executing 的显示「生成中」占位而不是按钮。 */
+                  <div className="agent-chat__proposal" data-turn-id={m.id}>
+                    <span className="agent-chat__proposal-label">{t("agent.proposal")}</span>
+                    {m.jobs?.map((ref, i) => (
+                      <span className="agent-chat__proposal-item" key={`${m.id}-${i}`} data-kind={ref.kind}>
+                        <span className="agent-chat__job-prompt">{ref.prompt}</span>
+                        {ref.priceCny ? (
+                          <span className="agent-chat__proposal-price">⚡{creditsOf(ref.priceCny)}</span>
+                        ) : null}
+                      </span>
+                    ))}
+                    {m.jobs?.some((r) => r.priceCny) ? (
+                      <span className="agent-chat__proposal-total">
+                        {t("agent.proposalTotal", {
+                          n: creditsOf(m.jobs!.reduce((sum, r) => sum + (r.priceCny ?? 0), 0)),
+                        })}
+                      </span>
+                    ) : null}
+                    {session?.turns.find((x) => x.id === m.id)?.status === "executing" ? (
+                      <span className="agent-chat__proposal-state">{t("agent.approved")}</span>
+                    ) : (
+                      <span className="agent-chat__proposal-actions">
+                        <button
+                          type="button"
+                          className="agent-chat__approve"
+                          disabled={busy}
+                          onClick={() => onApprove(m.id)}
+                        >
+                          {t("agent.approve")}
+                        </button>
+                        <button
+                          type="button"
+                          className="agent-chat__reject"
+                          disabled={busy}
+                          onClick={() => onReject(m.id)}
+                        >
+                          {t("agent.reject")}
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                ) : m.jobs?.length ? (
+                  <div className="agent-chat__jobs" data-rejected={m.approval === "rejected" ? "true" : undefined}>
+                    {m.approval === "rejected" ? (
+                      <span className="agent-chat__proposal-state">{t("agent.rejected")}</span>
+                    ) : null}
                     {m.jobs.map((ref, i) => {
                       const job = ref.jobId ? jobs.find((j) => j.id === ref.jobId) : undefined;
                       return (
@@ -216,6 +272,43 @@ export default function AgentChat(props: Props) {
             <span className="agent-chat__tag">{t(TIER_KEY[tier])}</span>
             <span className="agent-chat__tag">{t("agent.imageChip", { name: imageName })}</span>
             <span className="agent-chat__tag">{t("agent.videoChip", { name: videoName })}</span>
+            {budgetEdit ? (
+              <input
+                className="agent-chat__budget-input"
+                value={budgetDraft}
+                autoFocus
+                placeholder={t("agent.budgetSet")}
+                aria-label={t("agent.budgetSet")}
+                onChange={(e) => setBudgetDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setBudgetEdit(false);
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const value = budgetDraft.trim();
+                    onBudget(value === "" ? null : Number(value));
+                    setBudgetEdit(false);
+                  }
+                }}
+                onBlur={() => setBudgetEdit(false)}
+              />
+            ) : (
+              <button
+                type="button"
+                className="agent-chat__tag"
+                data-budget={session?.budget ? "set" : undefined}
+                onClick={() => {
+                  setBudgetDraft(session?.budget ? String(session.budget.limitCny) : "");
+                  setBudgetEdit(true);
+                }}
+              >
+                {session?.budget
+                  ? t("agent.budgetSpent", {
+                      spent: creditsOf(session.budget.spentCny),
+                      limit: creditsOf(session.budget.limitCny),
+                    })
+                  : t("agent.budgetLabel")}
+              </button>
+            )}
             <button
               type="button"
               className="agent-chat__send"

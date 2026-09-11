@@ -14,8 +14,12 @@ import type { AgentCompleter } from "./llm";
 
 let dataRoot = "";
 let runTurn: typeof import("./run-turn").runTurn;
+let approveTurn: typeof import("./run-turn").approveTurn;
+let rejectTurn: typeof import("./run-turn").rejectTurn;
+let readTurn: typeof import("./run-turn").readTurn;
 let createSession: typeof import("./store").createSession;
 let readSession: typeof import("./store").readSession;
+let patchSession: typeof import("./store").patchSession;
 let hasEntryFor: typeof import("@/lib/billing/ledger").hasEntryFor;
 let readUser: typeof import("@/lib/users/store").readUser;
 let writeUser: typeof import("@/lib/users/store").writeUser;
@@ -80,8 +84,8 @@ beforeAll(async () => {
   dataRoot = await mkdtemp(path.join(os.tmpdir(), "lumen-agent-turn-test-"));
   process.env.DATA_DIR = dataRoot;
   process.env.LUMEN_FORCE_MOCK = "1";
-  ({ runTurn } = await import("./run-turn"));
-  ({ createSession, readSession } = await import("./store"));
+  ({ runTurn, approveTurn, rejectTurn, readTurn } = await import("./run-turn"));
+  ({ createSession, readSession, patchSession } = await import("./store"));
   ({ hasEntryFor } = await import("@/lib/billing/ledger"));
   ({ readUser, writeUser } = await import("@/lib/users/store"));
 });
@@ -189,12 +193,12 @@ describe("agentLlmConfig", () => {
 });
 
 describe("runTurn", () => {
-  it("charges the turn once under an idempotent ref and files a real job", async () => {
+  it("charges the turn once under an idempotent ref; the job is only filed after approval", async () => {
     const owner = "usr_0000000000000101";
     await seedUser(owner, 100);
     const session = await createSession(owner, { title: "海报" });
 
-    const { assistant, session: next } = await runTurn(
+    const first = await runTurn(
       session,
       { ownerId: owner, text: "生成一张海边黄昏的海报" },
       {
@@ -205,16 +209,28 @@ describe("runTurn", () => {
       },
     );
 
-    expect(assistant.role).toBe("assistant");
-    expect(assistant.priceCny).toBe(TURN_PRICE);
-    expect(assistant.jobs).toHaveLength(1);
-    expect(assistant.jobs?.[0].jobId).toMatch(/^job_[0-9a-f]{12}$/);
-    expect(assistant.jobs?.[0].error).toBeUndefined();
+    // 默认批准制：actions 不再直接建任务——提案停在 awaiting_approval，消息带 pending 报价。
+    expect(first.turn.status).toBe("awaiting_approval");
+    expect(first.turn.proposal?.actions).toHaveLength(1);
+    expect(first.turn.proposal!.totalCny).toBeGreaterThan(0);
+    expect(first.assistant?.approval).toBe("pending");
+    expect(first.assistant?.jobs?.[0].jobId).toBeUndefined();
+    expect(first.session.jobIds).toEqual([]);
+
+    // 批准那一刻才创建任务、才扣任务钱。
+    const { session: next, assistant } = await approveTurn(owner, session.id, first.turn.id);
+    expect(assistant?.role).toBe("assistant");
+    expect(assistant?.priceCny).toBe(TURN_PRICE);
+    expect(assistant?.approval).toBe("approved");
+    expect(assistant?.jobs).toHaveLength(1);
+    expect(assistant?.jobs?.[0].jobId).toMatch(/^job_[0-9a-f]{12}$/);
+    expect(assistant?.jobs?.[0].error).toBeUndefined();
     // 会话里既留下了对话，也留下了这条任务的 id（资产栏读的就是它）。
     expect(next.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
-    expect(next.jobIds).toEqual([assistant.jobs?.[0].jobId]);
+    expect(next.jobIds).toEqual([assistant?.jobs?.[0].jobId]);
+    expect(next.turns?.find((x) => x.id === first.turn.id)?.status).toBe("succeeded");
 
-    const ref = `agent:${assistant.id}`;
+    const ref = `agent:${first.turn.id}`;
     await expect(hasEntryFor(owner, "charge", ref)).resolves.toBe(true);
 
     // 幂等键真的注册上了：同 kind + 同 ref + 同输入的重放是空操作
@@ -236,7 +252,7 @@ describe("runTurn", () => {
     await seedUser(owner, 0.7);
     const session = await createSession(owner, { title: "两张图" });
 
-    const { assistant } = await runTurn(
+    const { turn } = await runTurn(
       session,
       { ownerId: owner, text: "生成两张海报" },
       {
@@ -249,13 +265,14 @@ describe("runTurn", () => {
         }),
       },
     );
+    const { assistant } = await approveTurn(owner, session.id, turn.id);
 
-    expect(assistant.jobs).toHaveLength(2);
-    expect(assistant.jobs?.[0].jobId).toBeTruthy();
-    expect(assistant.jobs?.[1].jobId).toBeUndefined();
+    expect(assistant?.jobs).toHaveLength(2);
+    expect(assistant?.jobs?.[0].jobId).toBeTruthy();
+    expect(assistant?.jobs?.[1].jobId).toBeUndefined();
     // 用户要看得到「这条为什么没出来」，而不是整轮失败。
-    expect(assistant.jobs?.[1].error).toBeTruthy();
-    expect(assistant.text).toBe("出两版。");
+    expect(assistant?.jobs?.[1].error).toBeTruthy();
+    expect(assistant?.text).toBe("出两版。");
   });
 
   it("caps a turn at two actions no matter how many the model returns", async () => {
@@ -263,7 +280,7 @@ describe("runTurn", () => {
     await seedUser(owner, 100);
     const session = await createSession(owner, { title: "贪心的模型" });
 
-    const { assistant } = await runTurn(
+    const { turn, assistant } = await runTurn(
       session,
       { ownerId: owner, text: "生成海报" },
       {
@@ -273,7 +290,9 @@ describe("runTurn", () => {
         }),
       },
     );
-    expect(assistant.jobs).toHaveLength(2);
+    // 上限落在提案上：挂出去的报价最多两条。
+    expect(turn.proposal?.actions).toHaveLength(2);
+    expect(assistant?.jobs).toHaveLength(2);
   });
 
   it("refunds the turn when the model never returns a usable reply", async () => {
@@ -295,8 +314,11 @@ describe("runTurn", () => {
 
     // 「上游挂了不该用户掏钱」：钱已经扣了，所以这里必须退回去。
     expect((await readUser(owner))?.balanceCny).toBe(10);
-    // 会话里不留下半轮对话。
-    await expect(readSession(owner, session.id)).resolves.toMatchObject({ messages: [] });
+    // B 包：用户消息与 turn 账本在扣款那一刻已落盘——留下「问了但没答上」的痕迹，
+    // turn 标 failed 且带退款引用，下一轮（新 turnId）照常能发。
+    const stored = await readSession(owner, session.id);
+    expect(stored?.messages.map((m) => m.role)).toEqual(["user"]);
+    expect(stored?.turns?.[0]).toMatchObject({ status: "failed", refundRef: expect.stringContaining(":refund") });
   });
 
   it("R02：整轮失败退款按原扣款的分池原路退回，会员积分不转成已购余额", async () => {
@@ -391,8 +413,8 @@ describe("runTurn", () => {
       { ownerId: owner, text: "生成一张海报", turnId },
       { complete: completerReturning({ reply: "不该被走到", actions: [] }) },
     );
-    expect(again.assistant.id).toBe(first.assistant.id);
-    expect(again.assistant.text).toBe("这就来。");
+    expect(again.assistant?.id).toBe(first.assistant?.id);
+    expect(again.assistant?.text).toBe("这就来。");
     expect(again.session.messages).toHaveLength(2);
     expect(llmCalls).toBe(1);
     expect((await readUser(owner))?.balanceCny).toBe(balanceAfterFirst);
@@ -436,7 +458,7 @@ describe("runTurn", () => {
         expect(consumeJobCreation(owner).allowed).toBe(true);
       }
 
-      const { assistant } = await runTurn(
+      const { turn } = await runTurn(
         session,
         { ownerId: owner, text: "再来一张" },
         {
@@ -446,14 +468,15 @@ describe("runTurn", () => {
           }),
         },
       );
+      const { assistant } = await approveTurn(owner, session.id, turn.id);
 
-      expect(assistant.jobs).toHaveLength(1);
-      expect(assistant.jobs?.[0].jobId).toBeUndefined();
+      expect(assistant?.jobs).toHaveLength(1);
+      expect(assistant?.jobs?.[0].jobId).toBeUndefined();
       // 码而不是文案：翻译是前端字典的事（`agent.jobRateLimited`）。
-      expect(assistant.jobs?.[0].error).toBe("rate_limited");
+      expect(assistant?.jobs?.[0].error).toBe("rate_limited");
       // 整轮没有失败：回复照常出，钱也照常按一轮收。
-      expect(assistant.text).toBe("这就来。");
-      expect(assistant.priceCny).toBe(TURN_PRICE);
+      expect(assistant?.text).toBe("这就来。");
+      expect(assistant?.priceCny).toBe(TURN_PRICE);
     } finally {
       resetRateLimits();
     }
@@ -505,5 +528,278 @@ describe("runTurn", () => {
       ),
     ).rejects.toMatchObject({ status: 402, code: "insufficient_balance" });
     expect(called).toBe(false);
+  });
+
+  it("B：拒绝提案不建任务、不退轮次费，重放拒绝是幂等的", async () => {
+    const owner = "usr_000000000000010b";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "拒绝" });
+    const { turn } = await runTurn(
+      session,
+      { ownerId: owner, text: "来一张图" },
+      {
+        complete: completerReturning({
+          reply: "提案在这。",
+          actions: [{ type: "image", prompt: "一张图，保持色板不变" }],
+        }),
+      },
+    );
+
+    const first = await rejectTurn(owner, session.id, turn.id);
+    expect(first.turn.status).toBe("rejected");
+    expect(first.assistant?.approval).toBe("rejected");
+    expect(first.session.jobIds).toEqual([]);
+
+    // 重放拒绝：同一份结果，不炸。
+    const again = await rejectTurn(owner, session.id, turn.id);
+    expect(again.turn.status).toBe("rejected");
+
+    // 不能再批准：rejected 是终态。
+    await expect(approveTurn(owner, session.id, turn.id)).rejects.toMatchObject({ status: 409 });
+    // 轮次费照扣（对话已交付），任务钱一分没动。
+    expect((await readUser(owner))?.balanceCny).toBe(10 - TURN_PRICE);
+  });
+
+  it("B：批准的重复调用幂等——重放交回同一批任务，不再建第二条", async () => {
+    const owner = "usr_000000000000010c";
+    await seedUser(owner, 100);
+    const session = await createSession(owner, { title: "重复批准" });
+    const { turn } = await runTurn(
+      session,
+      { ownerId: owner, text: "一张图" },
+      {
+        complete: completerReturning({
+          reply: "来。",
+          actions: [{ type: "image", prompt: "一张图，保持色板不变" }],
+        }),
+      },
+    );
+
+    const first = await approveTurn(owner, session.id, turn.id);
+    const jobId = first.assistant?.jobs?.[0].jobId;
+    expect(jobId).toBeTruthy();
+
+    const again = await approveTurn(owner, session.id, turn.id);
+    expect(again.turn.status).toBe("succeeded");
+    expect(again.session.jobIds).toEqual([jobId]);
+  });
+
+  it("B：thinking 中的同 turnId 重放接着把 LLM 补跑完，不重复扣款", async () => {
+    const owner = "usr_000000000000010d";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "续跑" });
+    const turnId = "msg_aabbccddeeff0022";
+
+    // 模拟「第一次请求死在 LLM 中途」：手工把一个 thinking 轮次钉进会话。
+    const { updateSession } = await import("./store");
+    const { hashTurnRequest } = await import("./run-turn");
+    const input = { ownerId: owner, text: "画一张图", turnId };
+    await updateSession(owner, session.id, (s) => ({
+      ...s,
+      turns: [
+        ...(s.turns ?? []),
+        {
+          id: turnId,
+          requestHash: hashTurnRequest(input),
+          status: "thinking" as const,
+          priceCny: TURN_PRICE,
+          chargeRef: `agent:${turnId}`,
+          jobIds: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    }));
+
+    let calls = 0;
+    const res = await runTurn(
+      session,
+      input,
+      {
+        complete: async () => {
+          calls += 1;
+          return JSON.stringify({ reply: "补跑完成。", actions: [] });
+        },
+      },
+    );
+    expect(calls).toBe(1);
+    expect(res.turn.status).toBe("succeeded");
+    // 只补了一条扣款行（ref 幂等），没有第二条。
+    const { readLedger } = await import("@/lib/billing/ledger");
+    const { entries } = await readLedger(owner);
+    expect(entries.filter((e) => e.ref === `agent:${turnId}`)).toHaveLength(1);
+  });
+
+  it("B：会话预算见底时轮次费 402 且净额为 0（扣了又退）", async () => {
+    const owner = "usr_000000000000010e";
+    await seedUser(owner, 100);
+    const session = await createSession(owner, { title: "预算" });
+    // 上限 0.03 < 轮次费 0.05：这轮根本进不了门。
+    await patchSession(owner, session.id, { budgetCny: 0.03 });
+
+    let called = false;
+    await expect(
+      runTurn(
+        session,
+        { ownerId: owner, text: "来一张" },
+        {
+          complete: async () => {
+            called = true;
+            return JSON.stringify({ reply: "不该走到", actions: [] });
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ status: 402, code: "budget_exhausted" });
+    expect(called).toBe(false);
+    // 扣了即退，余额回到原样。
+    expect((await readUser(owner))?.balanceCny).toBe(100);
+  });
+
+  it("B：批准前按提案总额核对预算，超了 402 且不建任务", async () => {
+    const owner = "usr_000000000000010f";
+    await seedUser(owner, 100);
+    const session = await createSession(owner, { title: "提案预算" });
+    // 轮次费能过、提案过不了：上限 = 轮次费（0.05）+ 比一张图（0.5）少一点。
+    await patchSession(owner, session.id, { budgetCny: 0.4 });
+
+    const { turn } = await runTurn(
+      session,
+      { ownerId: owner, text: "来一张图" },
+      {
+        complete: completerReturning({
+          reply: "提案。",
+          actions: [{ type: "image", prompt: "一张图，保持色板不变" }],
+        }),
+      },
+    );
+    expect(turn.status).toBe("awaiting_approval");
+
+    await expect(approveTurn(owner, session.id, turn.id)).rejects.toMatchObject({
+      status: 402,
+      code: "budget_exhausted",
+    });
+    const stored = await readSession(owner, session.id);
+    expect(stored?.jobIds).toEqual([]);
+    // 提案还在原状等批——预算调高后还能批。
+    expect(stored?.turns?.[0].status).toBe("awaiting_approval");
+  });
+
+  it("B：技能能力过滤——只出图的技能丢掉模型给的 video 动作", async () => {
+    const owner = "usr_0000000000000110";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "能力过滤", skillId: "ecom-hero" });
+    const { turn, assistant } = await runTurn(
+      session,
+      { ownerId: owner, text: "顺带也来个视频" },
+      {
+        complete: completerReturning({
+          reply: "只出图。",
+          actions: [
+            { type: "image", prompt: "主图海报，保持色板不变" },
+            { type: "video", prompt: "不该出现的视频动作" },
+          ],
+        }),
+      },
+    );
+    // video 动作被丢：提案只剩那一条图的。
+    expect(turn.proposal?.actions).toHaveLength(1);
+    expect(turn.proposal?.actions[0].type).toBe("image");
+    expect(assistant?.jobs).toHaveLength(1);
+  });
+
+  it("B：过期提案拒绝批准（409 proposal_expired）", async () => {
+    const owner = "usr_0000000000000111";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "过期" });
+    const { turn } = await runTurn(
+      session,
+      { ownerId: owner, text: "一张图" },
+      {
+        complete: completerReturning({
+          reply: "来。",
+          actions: [{ type: "image", prompt: "一张图，保持色板不变" }],
+        }),
+      },
+    );
+    // 把提案有效期拨到过去：报价失效，必须重新发一轮。
+    const { updateSession } = await import("./store");
+    await updateSession(owner, session.id, (s) => ({
+      ...s,
+      turns: s.turns!.map((x) =>
+        x.id === turn.id && x.proposal
+          ? { ...x, proposal: { ...x.proposal, expiresAt: new Date(Date.now() - 1000).toISOString() } }
+          : x,
+      ),
+    }));
+    await expect(approveTurn(owner, session.id, turn.id)).rejects.toMatchObject({
+      status: 409,
+      code: "proposal_expired",
+    });
+  });
+
+  it("B：awaiting_approval 的同参重放交回待批状态，不重扣、不调 LLM", async () => {
+    const owner = "usr_0000000000000112";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "重放待批" });
+    const turnId = "msg_0011223344556699";
+    let calls = 0;
+    const input = { ownerId: owner, text: "画一张海报", turnId };
+    const first = await runTurn(session, input, {
+      complete: async () => {
+        calls += 1;
+        return JSON.stringify({
+          reply: "提案。",
+          actions: [{ type: "image", prompt: "海报，保持色板不变" }],
+        });
+      },
+    });
+    expect(first.turn.status).toBe("awaiting_approval");
+
+    const again = await runTurn(session, input, {
+      complete: completerReturning({ reply: "不该被走到", actions: [] }),
+    });
+    expect(again.turn.status).toBe("awaiting_approval");
+    expect(again.assistant?.approval).toBe("pending");
+    expect(calls).toBe(1);
+  });
+
+  it("B：readTurn 惰性结算死掉的 thinking 轮次——退款 + failed", async () => {
+    const owner = "usr_0000000000000113";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "陈旧轮次" });
+    const turnId = "msg_00112233445566aa";
+
+    const { updateSession } = await import("./store");
+    const { hashTurnRequest } = await import("./run-turn");
+    const old = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    await updateSession(owner, session.id, (s) => ({
+      ...s,
+      turns: [
+        ...(s.turns ?? []),
+        {
+          id: turnId,
+          requestHash: hashTurnRequest({ text: "画一张图" }),
+          status: "thinking" as const,
+          priceCny: TURN_PRICE,
+          chargeRef: `agent:${turnId}`,
+          jobIds: [],
+          createdAt: old,
+          updatedAt: old,
+        },
+      ],
+    }));
+    // 手工把「已扣款」的账补上：结算退的是这笔钱。
+    const { applyBalanceChange } = await import("@/lib/billing/ledger");
+    await applyBalanceChange(owner, -TURN_PRICE, {
+      kind: "charge",
+      amountCny: -TURN_PRICE,
+      ref: `agent:${turnId}`,
+      note: "智能体对话",
+    });
+
+    const found = await readTurn(owner, session.id, turnId);
+    expect(found?.turn.status).toBe("failed");
+    expect(found?.turn.refundRef).toBe(`agent:${turnId}:refund`);
+    expect((await readUser(owner))?.balanceCny).toBe(10);
   });
 });

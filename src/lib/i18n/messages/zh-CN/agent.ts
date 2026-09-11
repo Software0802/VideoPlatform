@@ -64,6 +64,18 @@ export const agent = {
   "agent.closePreview": "关闭预览",
   "agent.loading": "加载中…",
 
+  /* 提案审批（B 包默认批准制）：批准那一刻才创建任务、才扣任务钱 */
+  "agent.proposal": "提案",
+  "agent.proposalTotal": "合计约 {n} 积分",
+  "agent.approve": "批准生成",
+  "agent.reject": "不用了",
+  "agent.approved": "已批准，生成中",
+  "agent.rejected": "已取消提案",
+  "agent.budgetLabel": "预算",
+  "agent.budgetSet": "预算上限",
+  "agent.budgetClear": "解除预算",
+  "agent.budgetSpent": "已用 {spent} / {limit}",
+
   /* 任务状态（只分用户看得懂的几档，不逐个映射后端状态机） */
   "agent.statusQueued": "排队中",
   "agent.statusRunning": "生成中",

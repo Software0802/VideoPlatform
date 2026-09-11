@@ -973,3 +973,91 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- 持久化画布（C 包）：节点编辑控件 ---------- */
+
+.canvas-node__del {
+  border: 0;
+  background: none;
+  color: rgba(255,255,255,.4);
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: auto;
+  display: inline-flex;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.canvas-node:hover .canvas-node__del { opacity: 1; }
+.canvas-node__del:hover { color: #fff; }
+.canvas-node__textarea {
+  width: 100%;
+  border: 0;
+  resize: none;
+  background: rgba(255,255,255,.04);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #e4e4e8;
+  font-size: 12px;
+  line-height: 1.5;
+  outline: none;
+}
+.canvas-node__textarea:focus { box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
+.canvas-node__select {
+  width: 100%;
+  margin-top: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255,255,255,.06);
+  color: #c9c9ce;
+  font-size: 11.5px;
+  padding: 5px 8px;
+}
+.canvas-node__runrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.canvas-node__run {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(140deg,#ff8a3d,#ff4d8d 60%,#a855f7);
+  cursor: pointer;
+}
+.canvas-node__run:disabled { opacity: .5; cursor: default; }
+.canvas-node__state { font-size: 11px; color: #8b8b91; }
+.canvas-node__err { font-size: 11px; color: #f87171; margin-top: 4px; display: block; }
+.canvas-node__img {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  border-radius: 8px;
+}
+.canvas-node__video {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  border-radius: 8px;
+}
+.canvas-node__upload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 120px;
+  border: 1px dashed rgba(255,255,255,.15);
+  border-radius: 10px;
+  background: none;
+  color: #8b8b91;
+  font-size: 12px;
+  cursor: pointer;
+}
+.canvas-node__upload:hover { color: #fff; border-color: rgba(255,255,255,.3); }

@@ -208,8 +208,8 @@ export const mockCompleter: AgentCompleter = async (request) => {
     });
   }
   const reply = actions.length
-    ? `我按你的想法整理了画面方向，已经开始生成 ${actions.length} 条内容，右侧资产栏可以看到进度。`
-    : "我记下了这个想法。再说一句你想要图片还是视频，我就直接开始生成。";
+    ? `我按你的想法整理了画面方向，提案里有 ${actions.length} 条内容，批准后就开始生成。`
+    : "我记下了这个想法。再说一句你想要图片还是视频，我就给你提案。";
   return JSON.stringify({ reply, actions: actions.slice(0, MAX_ACTIONS_PER_TURN) });
 };
 

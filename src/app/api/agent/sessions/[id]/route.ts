@@ -2,6 +2,7 @@ import { jsonError } from "@/lib/http";
 import { withRequestContext } from "@/lib/request-context";
 import { requireUser } from "@/lib/users/session";
 import { toPublicSession } from "@/lib/agent/public";
+import { settleStaleTurns } from "@/lib/agent/run-turn";
 import { agentPatchBodySchema } from "@/lib/agent/schema";
 import { deleteSession, patchSession, readSession } from "@/lib/agent/store";
 
@@ -23,19 +24,24 @@ async function detail(request: Request, ctx: Ctx): Promise<Response> {
     const { id } = await ctx.params;
     const session = await readSession(user.id, id);
     if (!session) return notFound();
-    return Response.json({ session: await toPublicSession(session) });
+    // 惰性结算：上次请求死在 LLM 半途的轮次在这里退款 + 标 failed（B 包）。
+    const settled = await settleStaleTurns(user.id, session);
+    return Response.json({ session: await toPublicSession(settled) });
   } catch (e) {
     return jsonError(e);
   }
 }
 
-/** 改标题。会话头是用户自己的归类，任何时候都能改。 */
+/** 改标题与预算上限（B 包）。会话头是用户自己的归类，任何时候都能改。 */
 async function rename(request: Request, ctx: Ctx): Promise<Response> {
   try {
     const user = await requireUser(request);
     const { id } = await ctx.params;
-    const { title } = agentPatchBodySchema.parse(await request.json());
-    const next = await patchSession(user.id, id, { title });
+    const body = agentPatchBodySchema.parse(await request.json());
+    const next = await patchSession(user.id, id, {
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.budgetCny !== undefined ? { budgetCny: body.budgetCny } : {}),
+    });
     if (!next) return notFound();
     return Response.json({ session: await toPublicSession(next) });
   } catch (e) {

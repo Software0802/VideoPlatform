@@ -60,6 +60,18 @@ export const agent: Record<keyof typeof zh, string> = {
   "agent.closePreview": "Close preview",
   "agent.loading": "Loading…",
 
+  /* Proposal approval (approval-first): jobs are only created — and charged — on approve */
+  "agent.proposal": "Proposal",
+  "agent.proposalTotal": "About {n} credits total",
+  "agent.approve": "Approve & generate",
+  "agent.reject": "No thanks",
+  "agent.approved": "Approved, generating",
+  "agent.rejected": "Proposal dismissed",
+  "agent.budgetLabel": "Budget",
+  "agent.budgetSet": "Budget cap",
+  "agent.budgetClear": "Remove budget",
+  "agent.budgetSpent": "Spent {spent} / {limit}",
+
   "agent.statusQueued": "Queued",
   "agent.statusRunning": "Generating",
   "agent.statusSucceeded": "Done",

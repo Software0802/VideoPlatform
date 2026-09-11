@@ -9,6 +9,7 @@ import {
   planPrices,
 } from "@/lib/billing/plans";
 import { withAdmissionLock } from "@/lib/jobs/admission";
+import { listJobIndex } from "@/lib/jobs/index";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { withUserLock } from "@/lib/users/lock";
 import type {
@@ -144,8 +145,22 @@ export async function settleSubscription(
   // 锁内还会再判一次，所以这条快路径最多是「白判一次」，不会漏结算。
   const user = await readUser(userId);
   if (!user) return null;
-  if (!needsSettling(user, now) && !(await periodGrantMissing(user))) return user;
+  if (!(await needsSettling(user, now)) && !(await periodGrantMissing(user))) return user;
   return withUserLock(() => settleSubscriptionLocked(userId, now));
+}
+
+/**
+ * 这个账号的在途任务从会员池 earmark 走了多少（A 包）。
+ *
+ * 「会员池账面 ≥ Σ 在途 earmark」是清零路径要守的不变量：期次重置、订阅到期、
+ * 无订阅扫地出门、换订阅重置，都要先保住 earmark 再动池子——那部分是已经承诺给
+ * 在途任务结算用的，清掉等于让一条付了钱的任务在结算时改从已购池出钱。
+ */
+async function heldMemberEarmarksCny(userId: string): Promise<number> {
+  const entries = await listJobIndex({ ownerId: userId, nonTerminal: true });
+  let sum = 0;
+  for (const entry of entries) sum += entry.reservation?.memberCny ?? 0;
+  return round2(sum);
 }
 
 /**
@@ -163,9 +178,11 @@ async function periodGrantMissing(user: UserRecord): Promise<boolean> {
 }
 
 /** 这一刻还有没有结算动作要做（到期 / 跨期 / 今天的日积分 / 孤儿会员积分）。 */
-function needsSettling(user: UserRecord, now: Date): boolean {
+async function needsSettling(user: UserRecord, now: Date): Promise<boolean> {
   const sub = user.subscription;
-  if (!sub) return user.memberCreditsCny > 0;
+  // 没订阅却留着会员积分要清零——但先得看在途任务 earmark：池子里全是 earmark
+  // 的钱时不算「有待结算」，否则在途期间每次读都白进一次用户锁。
+  if (!sub) return user.memberCreditsCny > (await heldMemberEarmarksCny(user.id));
   const nowMs = now.getTime();
   const expiresMs = Date.parse(sub.expiresAt);
   if (!Number.isFinite(expiresMs) || nowMs >= expiresMs) return true;
@@ -189,18 +206,23 @@ export async function settleSubscriptionLocked(
   let user = await readUser(userId);
   if (!user) return null;
 
+  // 所有清零路径共用同一个数：在途任务从会员池 earmark 走的总额。清零只能清到
+  // 「账面 − earmark」为止——那部分钱已经承诺给在途任务的结算（任务终态后 earmark
+  // 自然消失，下次结算再把没被承诺的余额冲掉）。
+  const earmarked = await heldMemberEarmarksCny(userId);
+
   const sub = user.subscription;
   if (!sub) {
     // 没订阅却还留着会员积分：只可能是上一次清零崩在半路（或手工改过记录）。
     // 会员积分离开订阅就没有存在的理由，扫地出门——没有 `ref`，因为它本来就不该发生，
-    // 每发现一次就记一行。
-    return zeroMemberPool(user, userId, "会员积分清零（无生效订阅）");
+    // 每发现一次就记一行。earmark 保留：在途任务的结算仍按承诺从会员池出钱。
+    return zeroMemberPool(user, userId, "会员积分清零（无生效订阅）", undefined, earmarked);
   }
 
   const nowMs = now.getTime();
   const expiresMs = Date.parse(sub.expiresAt);
   if (!Number.isFinite(expiresMs) || nowMs >= expiresMs) {
-    user = await zeroMemberPool(user, userId, "订阅到期，会员积分清零", `sub:${sub.id}:end`);
+    user = await zeroMemberPool(user, userId, "订阅到期，会员积分清零", `sub:${sub.id}:end`, earmarked);
     return writeUser(withoutSubscription(user));
   }
 
@@ -217,6 +239,7 @@ export async function settleSubscriptionLocked(
         userId,
         "订阅续期，上期会员积分清零",
         `sub:${sub.id}:p${target}:reset`,
+        earmarked,
       );
       record = {
         ...record,
@@ -406,8 +429,10 @@ export async function purchaseSubscription(
 
     // 会员池「置为」本期积分而不是「加上」：上一份订阅的余额早在结算时清过零，
     // 这里再做一次差额调整只会把一个本该恒等的值变成可能漂移的值。
-    if (user.memberCreditsCny > 0) {
-      user = await zeroMemberPool(user, userId, "订阅生效，重置会员积分", `sub:${id}:p0:reset`);
+    // 在途任务的 earmark 照保——它们可能 earmark 自上一份订阅，但承诺仍然有效。
+    const earmarked = await heldMemberEarmarksCny(userId);
+    if (user.memberCreditsCny > earmarked) {
+      user = await zeroMemberPool(user, userId, "订阅生效，重置会员积分", `sub:${id}:p0:reset`, earmarked);
     }
     if (grant > 0) {
       user = await applyBalanceChangeLocked(
@@ -421,14 +446,20 @@ export async function purchaseSubscription(
   }));
 }
 
-/** 会员池清零：池子空着就什么都不做（也不记一行「+0」的流水）。 */
+/**
+ * 会员池清零：池子空着就什么都不做（也不记一行「+0」的流水）。
+ *
+ * `preservedCny` 是清零时下限——在途任务的会员 earmark 不参与清零（A 包）：
+ * 那部分钱已经承诺给在途任务，任务进终态后 earmark 消失，下次结算再清掉。
+ */
 async function zeroMemberPool(
   user: UserRecord,
   userId: string,
   note: string,
   ref?: string,
+  preservedCny = 0,
 ): Promise<UserRecord> {
-  const amount = round2(user.memberCreditsCny);
+  const amount = round2(user.memberCreditsCny - preservedCny);
   if (!(amount > 0)) return user;
   return applyBalanceChangeLocked(
     userId,

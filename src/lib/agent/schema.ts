@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { aspectRatioSchema } from "@/lib/jobs/schema";
+import { aspectRatioSchema, uploadIdSchema } from "@/lib/jobs/schema";
 
 /**
  * 智能体会话的形状（方案 `docs/plan-agent-i18n-subscription-2026-09.md` §1）。
@@ -26,6 +26,14 @@ export const agentActionKindSchema = z.enum(["image", "video"]);
 export type AgentActionKind = z.infer<typeof agentActionKindSchema>;
 
 /**
+ * 资产引用（B 包）：LLM 动作里指向一份已上传素材的凭据。
+ * 目前只有 `uploadId`（首帧图）——执行时经 `createJob` 的 sidecar 校验
+ * 归属与角色，别人的 / 不存在的一律按无效处理，绝不静默丢。
+ */
+export const agentAssetRefSchema = z.object({ uploadId: uploadIdSchema }).strict();
+export type AgentAssetRef = z.infer<typeof agentAssetRefSchema>;
+
+/**
  * LLM 的输出契约。**不用 `.strict()`**：模型多吐一个字段是常事，为此把整轮判失败
  * （用户的钱已经扣了）不划算；多余字段直接丢掉即可。少字段、类型不对仍然判失败并重试。
  */
@@ -36,6 +44,8 @@ export const agentActionSchema = z.object({
   durationSec: z.number().finite().optional(),
   /** 产品 id（`GET /api/models`）。认不出 / 当前不可用时由 `run-turn` 丢弃，不整轮失败。 */
   product: z.string().max(64).optional(),
+  /** 首帧素材（仅 video 动作有意义，有了它动作变成图生视频）。 */
+  imageRef: agentAssetRefSchema.optional(),
 });
 export type AgentAction = z.infer<typeof agentActionSchema>;
 
@@ -54,8 +64,14 @@ export const agentJobRefSchema = z.object({
   kind: agentActionKindSchema,
   prompt: z.string(),
   error: z.string().optional(),
+  /** 提案阶段带上的报价（批准后才创建任务、才真扣这笔钱）。 */
+  priceCny: z.number().optional(),
 });
 export type AgentJobRef = z.infer<typeof agentJobRefSchema>;
+
+/** 助手消息上的审批状态：提案挂出时是 `pending`，批准 / 拒绝后盖终态戳。 */
+export const agentApprovalSchema = z.enum(["pending", "approved", "rejected"]);
+export type AgentApproval = z.infer<typeof agentApprovalSchema>;
 
 export const agentMessageSchema = z.object({
   id: z.string().regex(AGENT_MESSAGE_ID_RE),
@@ -65,9 +81,76 @@ export const agentMessageSchema = z.object({
   jobs: z.array(agentJobRefSchema).optional(),
   /** 这一轮的对话售价（人民币元），只挂在助手消息上。 */
   priceCny: z.number().optional(),
+  /**
+   * 提案审批状态（B 包默认批准制）：带 actions 的助手消息以 `pending` 落盘，
+   * 任务在批准那一刻才创建；approve/reject 路由把它改写成终态。
+   */
+  approval: agentApprovalSchema.optional(),
   at: z.string(),
 });
 export type AgentMessage = z.infer<typeof agentMessageSchema>;
+
+/* ── Turn：一轮对话的执行账（B 包）───────────────────────────────────────── */
+
+export const AGENT_TURN_STATUSES = [
+  /** 已扣轮次费、LLM 正在跑（或上一次跑崩了，等重放补走）。 */
+  "thinking",
+  /** LLM 给了提案，等用户批准才创建任务。 */
+  "awaiting_approval",
+  /** 已批准，任务创建中。 */
+  "executing",
+  /** 无动作的纯答复，或提案已全部执行完。 */
+  "succeeded",
+  /** LLM 整轮失败，费用已退回。 */
+  "failed",
+  /** 用户拒绝了提案。 */
+  "rejected",
+] as const;
+export const agentTurnStatusSchema = z.enum(AGENT_TURN_STATUSES);
+export type AgentTurnStatus = z.infer<typeof agentTurnStatusSchema>;
+
+/** 提案里每个动作的报价快照——批准时按这个价建任务，不重新算价。 */
+export const agentQuotedActionSchema = agentActionSchema.extend({ priceCny: z.number() });
+export type AgentQuotedAction = z.infer<typeof agentQuotedActionSchema>;
+
+export const agentProposalSchema = z.object({
+  actions: z.array(agentQuotedActionSchema),
+  totalCny: z.number(),
+  /** 报价有效期：过期后批准接口拒绝执行，用户重新发一轮拿新价。 */
+  expiresAt: z.string(),
+});
+export type AgentProposal = z.infer<typeof agentProposalSchema>;
+
+/**
+ * 一轮对话的持久化执行账。事实源字段在会话文件里与消息一起原子落盘：
+ * `requestHash` 守「同 key 异参 409」，`status` 让刷新后能接着等 / 接着批，
+ * `chargeRef` / `refundRef` 是这条轮次在流水里的账目引用。
+ */
+export const agentTurnSchema = z.object({
+  id: z.string().regex(AGENT_MESSAGE_ID_RE),
+  /** sha256(规范化请求体)：重放同参交回现状，异参 409 `idempotency_conflict`。 */
+  requestHash: z.string().regex(/^[0-9a-f]{64}$/),
+  status: agentTurnStatusSchema,
+  /** 本轮对话费。 */
+  priceCny: z.number(),
+  chargeRef: z.string(),
+  /** 失败退款行的 ref；存在即「这轮的账已经退过了」。 */
+  refundRef: z.string().optional(),
+  proposal: agentProposalSchema.optional(),
+  /** 已批准创建的任务 id，按动作顺序。 */
+  jobIds: z.array(z.string()).default([]),
+  error: z.object({ code: z.string(), message: z.string() }).optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type AgentTurn = z.infer<typeof agentTurnSchema>;
+
+/** 会话级预算闸门：上限 + 已花额。`limitCny` 由用户设置（PATCH 会话），缺省不限。 */
+export const agentBudgetSchema = z.object({
+  limitCny: z.number().positive(),
+  spentCny: z.number().nonnegative(),
+});
+export type AgentBudget = z.infer<typeof agentBudgetSchema>;
 
 export const agentSessionSchema = z.object({
   schemaVersion: z.literal(1),
@@ -81,6 +164,10 @@ export const agentSessionSchema = z.object({
   messages: z.array(agentMessageSchema),
   /** 本会话创建过的任务 id，按创建顺序。资产栏读它，不去扫全站任务。 */
   jobIds: z.array(z.string()),
+  /** 各轮的执行账（B 包）；老会话没有这个字段，读作空表。 */
+  turns: z.array(agentTurnSchema).optional(),
+  /** 会话预算闸门（B 包）；缺省 = 不限。 */
+  budget: agentBudgetSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -118,7 +205,11 @@ export const agentTurnBodySchema = z
 export type AgentTurnBody = z.infer<typeof agentTurnBodySchema>;
 
 export const agentPatchBodySchema = z
-  .object({ title: z.string().trim().min(1).max(80) })
+  .object({
+    title: z.string().trim().min(1).max(80).optional(),
+    /** 会话预算上限（元）：设正数开启闸门，`null` 解除。 */
+    budgetCny: z.number().positive().max(100000).nullable().optional(),
+  })
   .strict();
 
 /** 标题取第一条用户输入的前 24 字（按码点，emoji 不会被切半个）。 */

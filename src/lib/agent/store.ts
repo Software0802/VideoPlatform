@@ -212,16 +212,43 @@ export async function appendTurn(
 export async function patchSession(
   ownerId: string,
   sessionId: string,
-  patch: SessionPatch,
+  patch: SessionPatch & { budgetCny?: number | null },
 ): Promise<AgentSession | null> {
   return withAgentLock(async () => {
     const current = await readSession(ownerId, sessionId);
     if (!current) return null;
+    const { budgetCny, ...rest } = patch;
+    const budget =
+      budgetCny === undefined
+        ? current.budget
+        : budgetCny === null
+          ? undefined
+          : { limitCny: budgetCny, spentCny: current.budget?.spentCny ?? 0 };
     return writeSession({
       ...current,
-      ...stripUndefined(patch),
+      ...stripUndefined(rest),
+      budget,
       updatedAt: new Date().toISOString(),
     });
+  });
+}
+
+/**
+ * 通用读-改-写（B 包 turn 状态机用）：`fn` 在会话锁内拿到**新鲜副本**，返回 `null` /
+ * `undefined` 表示「不改」（原样交回，不动 updatedAt）。与 `appendTurn` 的锁内重读
+ * 同一条纪律——调用方手里那份可能是几秒前的。
+ */
+export async function updateSession(
+  ownerId: string,
+  sessionId: string,
+  fn: (s: AgentSession) => AgentSession | null | undefined,
+): Promise<AgentSession | null> {
+  return withAgentLock(async () => {
+    const current = await readSession(ownerId, sessionId);
+    if (!current) return null;
+    const next = fn(current);
+    if (!next) return current;
+    return writeSession({ ...next, updatedAt: new Date().toISOString() });
   });
 }
 

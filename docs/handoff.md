@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 基线 | `main` @ `9c63903`（R01–R09 全部修复落地：`e564ab6` 资金持久化 + `9c63903` R02/R04–R09）；未部署 |
+| 基线 | `main` @ `9c63903`（R01–R09）+ 工作区未提交的 A–C 切片：A 显式 Reservation/earmark + 恢复中心 API；B 智能体 Turn 状态机 + 提案审批制 + 会话预算 + AssetRef + 技能 kinds + locale 回复；C 画布持久化（`data/canvases/`、revision 409）+ 四类节点真实生成 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
 | 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；**未配 `XAI_API_KEY`**，grok 只作为路由兜底不会被选中 |
 | 生产订阅价格 | 标准 ¥19.1 / 专业 ¥49.6 / 尊享 ¥106.8 / 至尊 ¥170.3（月费，`costRatio` 按当前 provider 配置算出，非固定值，见 §2） |
-| 门禁 | 本轮依次执行 `pnpm exec tsc --noEmit` → `pnpm exec eslint src` → `pnpm test` → `pnpm build`，均退出 0；全量 92 文件、1067 通过、1 skip（新增：`file-ledger.test.ts` 12 条故障注入、`uncertain-submit.test.ts` 5 条 R06 端到端、R02/R04/R05/R07/R08/R09 回归若干）。R03 barrier 回归通过。本轮未跑 e2e；历史 `pnpm e2e` 29/29 通过（5 文件）不作为本轮验证 |
+| 门禁 | 本轮依次执行 `pnpm exec tsc --noEmit` → `pnpm exec eslint src` → `pnpm test` → `pnpm build`，均退出 0；全量 95 文件、1107 通过、1 skip（新增：`reservation.test.ts` 7 条、`recovery.test.ts` 3 条、`canvas.test.ts` 7 条、run-turn B 包用例 8 条、agent-routes 批准制改写）。本轮未跑 e2e |
 | 本地运行 | `pnpm dev` → `http://localhost:3000`（**用 `localhost`，`127.0.0.1` 会被 Next 16 dev 403**）；无任何生图/视频 key 时整实例回落 mock 模式（ffmpeg 水印片）；未登录访问任意路由 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`） |
 | 账号与余额 | 注册即送 ¥5（`SIGNUP_BONUS_CNY` 常量，`src/lib/users/service.ts`，流水 `ref:"signup"`，非环境变量）；更多余额靠管理员 `node scripts/grant-balance.mjs <邮箱> <金额> --offline [--ref 键] [--note "..."]` 充值，或用户在订阅页兑换礼品码（`node scripts/mint-gift-codes.mjs <数量> <金额>` 铸码）；每种任务定价 × 余额是主闸门，日配额只是防滥用兜底（`FREE_DAILY_IMAGE_QUOTA` 默认 200） |
 | 首次部署 / 迁移新数据目录前必做 | `cp -r data-seed/templates data/templates`（创作模板种子不随代码自动生成，见 §2「模板」） |
@@ -26,7 +26,7 @@
 - 组件 `src/components/genius/`：`GeniusShell.tsx`/`ShellContext.tsx`（唯一客户端状态所有者 `useShell()`）/`Sidebar.tsx`/`TopBar.tsx`/`LanguageSwitch.tsx`/`icons.tsx`/`composer/`（悬浮创作面板）/`home/`（瀑布流）/`create/`/`agent/`/`canvas/`/`subscription/`。
 - 样式：`src/app/globals.css`（壳 + 主页 + 创作面板 + 创作页 + 登录页）+ `src/app/styles/{agent,canvas,subscription}.css`。BEM + `data-*` 状态，不用 Tailwind / 组件库。
 - 浏览器只经 `src/lib/client/*`（`jobs.ts`/`auth.ts`/`useJobLive.ts`/`useEvents.ts`/`http.ts`）访问 `/api/*`；401 整页跳 `/login`。
-- 主页、创作面板、创作页、智能体、订阅五处已接真数据；**画布**视图仍是像素复刻 + 本地交互的原型（不发请求，占位数据）。有意偏离列表见 `DESIGN.md`「与交接包的有意偏离」。
+- 主页、创作面板、创作页、智能体、订阅、画布六处均已接真数据（画布见 §2「画布」）。有意偏离列表见 `DESIGN.md`「与交接包的有意偏离」。
 
 ### 1.2 后端模块（`docs/design.md` 是权威 as-built，章节号见下）
 
@@ -39,6 +39,7 @@
 | 余额与计费 | `src/lib/billing/{prices,admission,ledger}.ts` | §2d |
 | 订阅 / 会员积分池 | `src/lib/billing/{plans,subscription}.ts` | §2i |
 | 智能体 | `src/lib/agent/{llm,skills,store,run-turn}.ts` | §2h |
+| 画布 | `src/lib/canvas/{schema,store,run}.ts` | §2j |
 | 多语言 | `src/lib/i18n/` | §13 |
 | 分享 | `src/lib/share/token.ts` | §2g |
 | 用户系统 / 会话网关 | `src/lib/users/`、`src/proxy.ts` | §12.1、§12.2 |
@@ -48,7 +49,7 @@
 
 ### 1.3 数据落盘（完整清单见 `docs/design.md` §5）
 
-`data/{jobs/index.json 派生缓存, jobs/{id}/job.json 事实源, users/, invites/, gift-codes/, ledger/<userId>.jsonl, agent/<userId>/<sessionId>.json, templates/*.json, tmp/, idempotency/}`；生产另有 `/opt/genius/backups/*.tgz`（`scripts/backup.sh`）与阿里云 ECS 自动快照两层备份。
+`data/{jobs/index.json 派生缓存, jobs/{id}/job.json 事实源, users/, invites/, gift-codes/, ledger/<userId>.jsonl, agent/<userId>/<sessionId>.json, canvases/<userId>/<canvasId>.json, templates/*.json, tmp/, idempotency/}`；生产另有 `/opt/genius/backups/*.tgz`（`scripts/backup.sh`，白名单含 canvases/）与阿里云 ECS 自动快照两层备份。
 
 ### 1.4 环境变量分组（权威源 `src/lib/env.ts`，说明见 `.env.example`）
 
@@ -61,7 +62,8 @@
 - **模板**：`GET /api/templates` 读 `data/templates/*.json`，首次部署需手动 `cp -r data-seed/templates data/templates`（六条示例种子）。
 - **账号与余额**：邮箱 + 密码 + 一次性邀请码注册；改密（`POST /api/auth/password`，旧会话失效）；管理 CLI 封禁/解封（`disable-user.mjs`）、重置密码（`reset-password.mjs`）、充值（`grant-balance.mjs`，工作区起均须 `--offline`，充值可带 `--ref` 固定幂等键）、铸邀请码/礼品码（`mint-invites.mjs`/`mint-gift-codes.mjs`）、用量对账（`usage.mjs`）；礼品码自助兑换 `POST /api/me/redeem`；积分流水 `GET /api/me/ledger`；注册赠 ¥5；准入闸门 = 余额 − 在途预留 ≥ 本次售价（§2d），配额与止损阀降级为防滥用兜底。**工作区新资金模型**：`user.json.billing`（legacyLedger + opening + 自校验 operations 链）与两池余额同一次原子写提交，jsonl 成为派生导出物，篡改/不一致即 `billing_export_corrupt` 失败关闭；幂等重放须同键同输入（撞不同输入 409 `billing_idempotency_conflict`）；协议见 `src/lib/billing/{protocol,file-ledger}.mjs` 与 `docs/design.md` §2d。
 - **订阅与会员积分池**：四档（标准/专业/尊享/至尊），月费按 `成本 ÷ (1−15%毛利率)` 算出，年费 = 12×月费不打折；会员积分独立池，到期清零、跨期重置、按日发放（`assertBalance` 准入前先惰性结算，跨期旧积分不进可用额）；只能用已购余额购买（硬约束，防套利）；`GET/POST /api/subscription`。`purchaseSubscription` 为外层 `withAdmissionLock`、内层 `withUserLock`；扣款行带订单快照，「已扣款、订阅记录缺失」按快照补建不二次扣款。
-- **智能体**：真实 LLM 编排（生产走 `AGENT_BASE_URL=ccgoai.club`），一轮 ¥0.05，可按需触发真实生成任务（`text_to_image`/`text_to_video`，走同一套限流与幂等）；20 个技能定义；会话落盘 `data/agent/<userId>/<sessionId>.json`。
+- **智能体**：真实 LLM 编排（生产走 `AGENT_BASE_URL=ccgoai.club`），一轮 ¥0.05；**默认批准制**——LLM 产出报价提案（含每条价格快照与 30 分钟有效期），`POST .../turns/:turnId/approve` 才建任务（`createJob` 同链路、幂等 key `agent:<turnId>:<i>`），`/reject` 不建不退；Turn 状态机随会话文件落盘，`turnId`+`requestHash` 重放语义（同参交回、异参 409、thinking 续跑、陈旧 thinking 惰性退款）；会话预算 `budget`（402 `budget_exhausted`）；action 可带 `imageRef.uploadId`（图生视频）；技能可声明 `kinds` 过滤越界动作；回复语言随 `lumen_locale`。
+- **画布**（2026-09-11）：`/canvas` 接真实后端——文档落 `data/canvases/`、`expectedRevision` 409 乐观并发；四类节点（文本/素材/文生图/生成视频），`POST .../nodes/:nodeId/run` 走 `createJob`（素材或上游文生图产物喂入即 `image_to_video`）；前端右键建节点、拖拽、防抖落盘、刷新恢复。
 - **多语言**：`zh-CN`/`en` 两语，Cookie `lumen_locale` + `Accept-Language` 兜底，顶栏与登录页可切换；服务端错误文案不翻译（已知未做）。
 - **稳态与安全**：任务索引（`data/jobs/index.json`）取代全表扫描；上游轮询阶梯 2s→5s→10s；`uncertain_submit` 拦一键重试（崩溃恢复与运行期模糊提交两条路径都会打上这个标记，见 §3）；429/quota 指数退避；provider 积分耗尽自动换家（售价只降不升，一家都不剩时 503 而非静默落 mock）；限流（提交 10 次/分钟、上传 5 次/分钟、单账号在途任务数上限）；`/api/health` 分级下发（匿名只回 `{ok}`）；`x-request-id` 全链路追踪；CSRF 意义上的 Origin/Referer 校验（两者都缺失时放行，已记录的设计取舍）；CI（`tsc`/`eslint`/`test`，不含 e2e）。
 
@@ -69,12 +71,12 @@
 
 - **资金与执行恢复缺陷索引**（证据与历史复现见 `docs/review-2026-09-08.md`）：R01–R09 均已在工作区修复——R01 余额+流水同一原子写（`e564ab6`）；R02 Agent 退款经 `refundOf` 按原扣款的 `memberCny` 拆回原池；R03 订阅购买外层 admission 锁；R04 扣款行带订单快照（planId/cycle/priceCny/orderedAt），「已扣款、订阅记录缺失」按快照补建且不再判余额，同 key 异参 409；R05 `assertBalance` 先惰性结算再判可用额，跨期旧积分不再进 `availableCny`；R06 submit 的 5xx/超时/断连算「结果不确定」，先 `lookupByExternalId` 查回接管，查不到则 `failed`+`uncertain_submit` 锁死重试；R07 幂等键与请求哈希落 `job.json`（事实源），`data/idempotency/*.json` 降级为可重建缓存（原子写、命中回读校验、miss 从任务索引重建），同 key 异参 409 `idempotency_conflict`；R08 请求体加 `turnId`，同 turnId 重放原样交回、换文本 409、已退款轮次同键重发 409；R09 产物字节已 checkpoint（persisting / localOutputPath / remoteUrl）时取消不再成立，终态由 persist 落盘结算。绿门禁不代替专项验收，生产行为未实测。
 - **部署阻断项（新资金模型）**：本工作区版本一旦部署，**所有存量账号的余额变动会一律 409 `billing_migration_required`**，必须先停服、逐账号用 `scripts/migrate-billing.mjs --offline --baseline <人工核对的基线.json>` 迁移（基线含双 sha256 + reviewedBy/evidence，见 `docs/runbook.md`「充值与资金迁移」）。新注册账号不受影响。
-- **未实装计划受阻**：`docs/plan-unimplemented-2026-09-08.md` 于 2026-09-09 经 Codex 评审为 `VERDICT: BLOCK`；五项 P1 是 Reservation 与 Job/Run 原子恢复边界、审批与自动换家约束、会话自动执行累计预算、资金数据迁移与回滚兼容、支付退款 unknown。主代理均判成立，待方案补齐及用户确认，其他新机制未批准、未实施。
+- **未实装计划（A–C 已落地工作区）**：`docs/plan-unimplemented-2026-09-08.md` 于 2026-09-09 经 Codex 评审为 `VERDICT: BLOCK`，用户随后逐项拍板实施：A 显式 Reservation（`job.reservation` earmark + 恢复中心 `recovery/reconcile/resume` + 创作页「核验上游」入口）；B 智能体 Turn 状态机 + 默认批准制提案 + 会话预算 + `imageRef` + 技能 `kinds` + locale 回复；C 画布持久化 + revision 409 + 四类节点接 `createJob`。其余 D–J（DAG 工作流、Harness 长片放行、F 视频模式 UI、G 支付网关、H 账号页/通知落盘、I 运维扩容）仍未实施。
 - 生产未配 `XAI_API_KEY`：grok 只是路由兜底，实际不可达；`edit_video`/`extend_video`/harness 长片依赖 grok，生产目前不可用。
 - Harness（30/45/60 秒一致性管线）代码完整但 `HARNESS_ENABLED` 生产关闭；视觉 QC 阈值未经 `evals/runs` 校准，默认跳过。
 - 服务端 API 错误文案不做多语言翻译（前端按错误码映射的部分除外）。
 - 无支付网关，已购余额只能靠礼品码或管理员 CLI 充值，订阅收入是内部记账而非真实收款（`docs/runbook.md`「订阅对账」）。
-- 画布视图是本地交互原型，不接后端。智能体依赖单独配置的 `AGENT_API_KEY`/`AGENT_BASE_URL`（生产已配 ccgoai `gpt-5.4-mini`；只出图/视频的中转 key 没有对话模型，不能复用）；会话无留存清理（每人上限 200）；502「上游挂了已退款」与 503「没配 key」共用错误码 `agent_unavailable`。
+- 智能体依赖单独配置的 `AGENT_API_KEY`/`AGENT_BASE_URL`（生产已配 ccgoai `gpt-5.4-mini`；只出图/视频的中转 key 没有对话模型，不能复用）；会话与画布无留存清理（会话每人上限 200）；502「上游挂了已退款」与 503「没配 key」共用错误码 `agent_unavailable`。
 - `data/jobs/*/job.json` 是事实源、`index.json` 是可重建缓存；`hasChargeFor`/幂等扣款全量扫流水文件，未建索引，内测规模无感。
 - `scripts/grant-balance.mjs`/其余管理 CLI 与线上服务无跨进程锁，操作前后建议核对 `data/ledger/<userId>.jsonl`。
 - 生产 crontab 已有每日 03:17 的 `scripts/backup.sh`（2026-09-07 核实，`/opt/genius/backups/` 已有两份）；阿里云 ECS 自动快照策略只能在控制台看，SSH 核实不了，未确认。
@@ -86,8 +88,7 @@
 
 ## 5. 下一刀建议
 
-1. R01–R09 修复已全部提交（`9c63903`）、过全量门禁，**未部署**；部署仍受 §3 部署阻断项约束（存量账号须先迁移）。
-2. Codex 其余 P1（审批与自动换家约束、会话自动执行累计预算、支付退款 unknown）仍未定稿；`docs/plan-unimplemented-2026-09-08.md` 整体仍是 BLOCK。R06 只覆盖单片任务 submit 的模糊失败；harness 分镜级 uncertain_submit 是既有机制，支付/退款 unknown 态仍未动。
+1. A–C 切片已实装、过全量门禁，**待提交且未部署**；部署仍受 §3 部署阻断项约束（存量账号须先迁移）。
+2. 剩余 P1：支付/退款 unknown 态与 PaymentOrder/webhook 仍未动（G 包）；harness 分镜级 uncertain_submit 是既有机制。D（DAG 工作流）、E（Harness 放行）、F（视频模式 UI）、H、I 按文档建议不同时开工，未批准不实施。
 3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
-4. 在资金与执行恢复基础稳定后，再按用户确认的切片推进 Agent 可恢复轮次/审批与画布真实单节点，未批准前不实施新机制。
-5. 生产配置、备份与 ECS 快照核实、Harness 质量校准和移动端完整体验按后续授权另排；本轮未做生产操作或真实上游验收。
+4. 生产配置、备份与 ECS 快照核实、Harness 质量校准和移动端完整体验按后续授权另排；本轮未做生产操作或真实上游验收。

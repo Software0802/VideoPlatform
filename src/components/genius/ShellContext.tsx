@@ -14,6 +14,7 @@ import {
   fetchJobsPage,
   newIdempotencyKey,
   patchJobTags,
+  reconcileJob,
   retryJob,
   uploadFile,
   uploadFromJob,
@@ -210,6 +211,8 @@ type Shell = {
   working: boolean;
   cancel: () => void;
   retry: () => void;
+  /** 核验上游（恢复中心）：仅 `retryBlocked.code === "uncertain_submit"` 时出现 */
+  reconcile: () => void;
 
   /* 作品列表分页（`GET /api/jobs?before=&limit=&kind=`） */
   /** 这一类还有更老的没拉过来 */
@@ -1246,6 +1249,28 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     );
   }, [busy, currentJob, onLive, refreshMe, remember]);
 
+  /**
+   * 核验上游（A 包恢复中心）：`uncertain_submit` 的任务拿我们自己的 jobId 去查上游——
+   * 查到了任务接管成 pending 照常出片；查不到就把标记降级成普通失败，「重新生成」
+   * 随之解锁。两种结局都不新花钱。
+   */
+  const reconcile = useCallback(() => {
+    const job = currentJob;
+    if (!job || busy || job.retryBlocked?.code !== "uncertain_submit") return;
+    setError(null);
+    setBusy(true);
+    void reconcileJob(job.id).then(
+      ({ job: next }) => {
+        setBusy(false);
+        onLive(next);
+      },
+      (e: unknown) => {
+        setBusy(false);
+        setError(e instanceof Error ? e.message : String(e));
+      },
+    );
+  }, [busy, currentJob, onLive]);
+
   const reuse = useCallback(
     (text: string, kind: "video" | "image") => {
       // 先清空（含所有图片槽），再填提示词——顺序反了会被 clearAll 抹掉
@@ -1302,6 +1327,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     working,
     cancel,
     retry,
+    reconcile,
     hasMoreJobs,
     loadMoreJobs,
     jobsLoading,

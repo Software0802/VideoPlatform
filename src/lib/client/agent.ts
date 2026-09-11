@@ -14,7 +14,10 @@ import { parseAuthed } from "@/lib/client/http";
 export type AgentTier = "fast" | "balanced" | "quality";
 export const AGENT_TIERS: readonly AgentTier[] = ["fast", "balanced", "quality"];
 
-export type AgentJobRef = { jobId?: string; kind: "image" | "video"; prompt: string; error?: string };
+export type AgentJobRef = { jobId?: string; kind: "image" | "video"; prompt: string; error?: string; priceCny?: number };
+
+/** 提案审批状态（B 包默认批准制）：带 actions 的助手消息先 `pending`，批准/拒绝后盖终态戳。 */
+export type AgentApproval = "pending" | "approved" | "rejected";
 
 export type AgentMessage = {
   id: string;
@@ -23,8 +26,33 @@ export type AgentMessage = {
   skillId?: string;
   jobs?: AgentJobRef[];
   priceCny?: number;
+  approval?: AgentApproval;
   at: string;
 };
+
+export type AgentTurnStatus =
+  | "thinking"
+  | "awaiting_approval"
+  | "executing"
+  | "succeeded"
+  | "failed"
+  | "rejected";
+
+export type AgentTurn = {
+  id: string;
+  requestHash: string;
+  status: AgentTurnStatus;
+  priceCny: number;
+  chargeRef: string;
+  refundRef?: string;
+  proposal?: { actions: unknown[]; totalCny: number; expiresAt: string };
+  jobIds: string[];
+  error?: { code: string; message: string };
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AgentBudget = { limitCny: number; spentCny: number };
 
 export type AgentSessionSummary = {
   id: string;
@@ -39,6 +67,8 @@ export type AgentSessionDetail = AgentSessionSummary & {
   imageProduct?: string;
   videoProduct?: string;
   messages: AgentMessage[];
+  turns: AgentTurn[];
+  budget?: AgentBudget;
   jobs: JobPublic[];
 };
 
@@ -47,6 +77,8 @@ export type AgentSkill = {
   name: Record<Locale, string>;
   desc: Record<Locale, string>;
   group: "core" | "ecommerce";
+  /** 能力声明：这个技能只出哪类产物；缺省两类都行。 */
+  kinds?: ("image" | "video")[];
 };
 
 export type AgentTurnBody = {
@@ -94,7 +126,16 @@ function readSkill(raw: unknown): AgentSkill | null {
   const name = readLocalized(s.name);
   const desc = readLocalized(s.desc);
   if (!id || !name || !desc) return null;
-  return { id, name, desc, group: s.group === "ecommerce" ? "ecommerce" : "core" };
+  const kinds = Array.isArray(s.kinds)
+    ? s.kinds.filter((k): k is "image" | "video" => k === "image" || k === "video")
+    : undefined;
+  return {
+    id,
+    name,
+    desc,
+    group: s.group === "ecommerce" ? "ecommerce" : "core",
+    ...(kinds?.length ? { kinds } : {}),
+  };
 }
 
 function readJobRef(raw: unknown): AgentJobRef | null {
@@ -107,6 +148,7 @@ function readJobRef(raw: unknown): AgentJobRef | null {
     prompt: str(j.prompt),
     ...(optStr(j.jobId) ? { jobId: str(j.jobId) } : {}),
     ...(optStr(j.error) ? { error: str(j.error) } : {}),
+    ...(typeof j.priceCny === "number" && Number.isFinite(j.priceCny) ? { priceCny: j.priceCny } : {}),
   };
 }
 
@@ -127,7 +169,40 @@ function readMessage(raw: unknown): AgentMessage | null {
     ...(optStr(m.skillId) ? { skillId: str(m.skillId) } : {}),
     ...(jobs.length ? { jobs } : {}),
     ...(typeof m.priceCny === "number" && Number.isFinite(m.priceCny) ? { priceCny: m.priceCny } : {}),
+    ...(m.approval === "pending" || m.approval === "approved" || m.approval === "rejected"
+      ? { approval: m.approval }
+      : {}),
   };
+}
+
+function readTurn(raw: unknown): AgentTurn | null {
+  if (!raw || typeof raw !== "object") return null;
+  const t = raw as Record<string, unknown>;
+  const id = str(t.id);
+  const status = str(t.status) as AgentTurnStatus;
+  if (!id || !["thinking", "awaiting_approval", "executing", "succeeded", "failed", "rejected"].includes(status)) {
+    return null;
+  }
+  return {
+    id,
+    requestHash: str(t.requestHash),
+    status,
+    priceCny: typeof t.priceCny === "number" ? t.priceCny : 0,
+    chargeRef: str(t.chargeRef),
+    ...(optStr(t.refundRef) ? { refundRef: str(t.refundRef) } : {}),
+    ...(t.proposal && typeof t.proposal === "object" ? { proposal: t.proposal as AgentTurn["proposal"] } : {}),
+    jobIds: Array.isArray(t.jobIds) ? t.jobIds.filter((x): x is string => typeof x === "string") : [],
+    ...(t.error && typeof t.error === "object" ? { error: t.error as AgentTurn["error"] } : {}),
+    createdAt: str(t.createdAt),
+    updatedAt: str(t.updatedAt),
+  };
+}
+
+function readBudget(raw: unknown): AgentBudget | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const b = raw as Record<string, unknown>;
+  if (typeof b.limitCny !== "number" || typeof b.spentCny !== "number") return undefined;
+  return { limitCny: b.limitCny, spentCny: b.spentCny };
 }
 
 function readSummary(raw: unknown): AgentSessionSummary | null {
@@ -156,6 +231,10 @@ function readDetail(raw: unknown): AgentSessionDetail {
     messages: Array.isArray(s.messages)
       ? s.messages.map(readMessage).filter((m): m is AgentMessage => m !== null)
       : [],
+    turns: Array.isArray(s.turns)
+      ? s.turns.map(readTurn).filter((x): x is AgentTurn => x !== null)
+      : [],
+    ...(readBudget(s.budget) ? { budget: readBudget(s.budget) } : {}),
     // 任务用的是任务自己的公开投影，形状由 `jobs/schema.ts` 保证，这里只做数组兜底。
     jobs: Array.isArray(s.jobs) ? (s.jobs as JobPublic[]) : [],
   };
@@ -218,6 +297,39 @@ export async function renameAgentSession(id: string, title: string): Promise<Age
   });
   const data = await parseAuthed<{ session?: unknown }>(res, "重命名失败");
   return readDetail(data.session);
+}
+
+/** 设 / 解除会话预算上限（元）：正数开启闸门，`null` 解除（B 包）。 */
+export async function setAgentSessionBudget(id: string, budgetCny: number | null): Promise<AgentSessionDetail> {
+  const res = await fetch(`/api/agent/sessions/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ budgetCny }),
+  });
+  const data = await parseAuthed<{ session?: unknown }>(res, "设置预算失败");
+  return readDetail(data.session);
+}
+
+/** 批准一条提案：到这一刻才真的创建生成任务（B 包默认批准制）。 */
+export async function approveAgentTurn(sessionId: string, turnId: string): Promise<AgentSessionDetail> {
+  const res = await fetch(`/api/agent/sessions/${sessionId}/turns/${turnId}/approve`, { method: "POST" });
+  const data = await parseAuthed<{ session?: unknown }>(res, "批准失败");
+  return readDetail(data.session);
+}
+
+/** 拒绝提案：不创建任务；轮次费不退（对话本身已交付）。 */
+export async function rejectAgentTurn(sessionId: string, turnId: string): Promise<AgentSessionDetail> {
+  const res = await fetch(`/api/agent/sessions/${sessionId}/turns/${turnId}/reject`, { method: "POST" });
+  const data = await parseAuthed<{ session?: unknown }>(res, "拒绝失败");
+  return readDetail(data.session);
+}
+
+/** 读单轮（刷新恢复）：`thinking` / `executing` 的中途态是持久化的，拿它接着等。 */
+export async function fetchAgentTurn(sessionId: string, turnId: string): Promise<AgentTurn | null> {
+  const res = await fetch(`/api/agent/sessions/${sessionId}/turns/${turnId}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  const data = await parseAuthed<{ turn?: unknown }>(res, "无法读取轮次");
+  return readTurn(data.turn);
 }
 
 export async function deleteAgentSession(id: string): Promise<void> {

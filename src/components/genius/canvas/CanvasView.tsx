@@ -1,78 +1,47 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import CanvasToolbox from "./CanvasToolbox";
-import {
-  CANVAS_MODELS,
-  COST_TEXT,
-  COST_VIDEO,
-  FIT_PAD_X,
-  FIT_PAD_Y,
-  ICON_GRADS,
-  RTE_ACTIVE,
-  RTE_ITEMS,
-  SCENE_H,
-  SCENE_W,
-  SKELETON_ROWS,
-  shot,
-} from "./data";
 import { useT } from "@/components/genius/i18n/I18nProvider";
+import { useShell } from "@/components/genius/ShellContext";
 import {
-  IconArrowUp,
-  IconAudio,
-  IconBoard,
+  createCanvasApi,
+  fetchCanvas,
+  fetchCanvases,
+  newCanvasEdgeId,
+  newCanvasNodeId,
+  patchCanvas,
+  RevisionConflictError,
+  runCanvasNodeApi,
+  type CanvasDocument,
+  type CanvasNode,
+} from "@/lib/client/canvas";
+import { fetchJob, uploadFile } from "@/lib/client/jobs";
+import type { JobPublic } from "@/lib/jobs/schema";
+import { FIT_PAD_X, FIT_PAD_Y, SCENE_H, SCENE_W } from "./data";
+import {
   IconBolt,
-  IconBot,
   IconCursor,
-  IconExpand,
-  IconFace,
-  IconFit,
-  IconFolder,
-  IconGrid9,
   IconImage,
-  IconMinimap,
-  IconPanels,
-  IconPlay,
   IconPlus,
-  IconPointer,
-  IconRedo,
-  IconShare,
   IconText,
-  IconToolbox,
-  IconUndo,
+  IconClose,
   IconVideo,
-  IconVolume,
 } from "./icons";
 
-type Stage = 0 | 1 | 2;
-type NodeKind = "text" | "video";
-type NodeState = "idle" | "busy" | "done";
 type MenuPos = { x: number; y: number };
 
-/**
- * 作者坐标系里的节点几何：标签行 22px（13px 文字 + 6px 间距），正文体紧随其后。
- * 文本节点上方多一条 44px 富文本条，故 y 提前 44，两种节点的正文体顶边都落在 ADDED_BODY_TOP。
- */
 const LABEL_H = 22;
-const RTE_H = 44;
-const ADDED_BODY_TOP = 172;
-const RECTS = {
-  text1: { x: 24, y: 150, w: 264, h: 150 },
-  img1: { x: 384, y: 74, w: 200, h: 112 },
-  addedText: { x: 470, y: ADDED_BODY_TOP - LABEL_H - RTE_H, w: 270, h: 150 },
-  addedVideo: { x: 470, y: ADDED_BODY_TOP - LABEL_H, w: 270, h: 152 },
-  upload: { x: 24, y: 340, w: 130, h: 173 },
-  output: { x: 180, y: 340, w: 130, h: 173 },
-  prompt: { x: 440, y: 330, w: 340 },
-} as const;
-
+const NODE_W = 260;
 const MENU_W = 158;
 const MENU_H = 202;
-const DEFAULT_MENU: MenuPos = { x: 300, y: 224 };
+const POLL_MS = 3000;
+const SAVE_DEBOUNCE_MS = 600;
 
 function clamp(min: number, v: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
+
+const TERMINAL = new Set(["succeeded", "failed", "canceled", "expired"]);
 
 /** 点击浮层之外或按 Esc 时关闭。 */
 function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, close: () => void) {
@@ -95,45 +64,53 @@ function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, clo
 }
 
 /**
- * 画布视图（交接包 §6，原型图 2、26–37）。
- * 空态 → 场景层（900×620 作者坐标 + fit×zoom）→ 节点 / ⊕ 手柄 / 类型菜单 / 富文本条 /
- * 提示词面板 / 模型列表 / 工具箱抽屉 / 应用工具落节点并连线 / 发送后骨架→结果 / 视频节点。
- * 全部本地 state，占位数据，不发任何请求。
+ * 画布视图（C 包）：持久化到 `data/canvases/<userId>/<id>.json`，乐观并发
+ * （PATCH 带 `expectedRevision`，409 即重拉），生成节点「运行」走与服务端
+ * `createJob` 同一条准入 / 计价 / 幂等路径——画布上的任务就是普通任务。
+ *
+ * 四类节点：文本便签（内容并进下游提示词）、素材（上传图，喂给视频节点当首帧）、
+ * 文生图、视频（有图片输入 = 图生视频，否则文生视频）。
  */
 export default function CanvasView() {
   const t = useT();
+  const { showToast } = useShell();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const modelRef = useRef<HTMLDivElement | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const materialFor = useRef<string | null>(null);
+  const drag = useRef<{ id: string; dx: number; dy: number } | null>(null);
 
+  const [doc, setDoc] = useState<CanvasDocument | null>(null);
+  const [jobs, setJobs] = useState<Record<string, JobPublic>>({});
   const [fit, setFit] = useState(1);
-  const [zoom, setZoom] = useState(100);
-  const [stage, setStage] = useState<Stage>(0);
-  const [hoverText1, setHoverText1] = useState(false);
   const [menu, setMenu] = useState<MenuPos | null>(null);
-  const [nodeKind, setNodeKind] = useState<NodeKind | null>(null);
-  const [nodeState, setNodeState] = useState<NodeState>("idle");
-  const [toolboxOpen, setToolboxOpen] = useState(false);
-  const [refsAdded, setRefsAdded] = useState(false);
-  const [model, setModel] = useState("Claude Sonnet 4.6");
-  const [modelPop, setModelPop] = useState(false);
-  const [prompt, setPrompt] = useState("");
+  const [running, setRunning] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
 
   const closeMenu = useCallback(() => setMenu(null), []);
-  const closeModel = useCallback(() => setModelPop(false), []);
   useDismiss(menu !== null, menuRef, closeMenu);
-  useDismiss(modelPop, modelRef, closeModel);
 
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current);
-    },
-    [],
-  );
+  /* 载入：最新一张画布，没有就建一张。 */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const list = await fetchCanvases();
+        const next = list[0] ? await fetchCanvas(list[0].id) : await createCanvasApi();
+        if (alive) setDoc(next);
+      } catch (e) {
+        if (alive) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      alive = false;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, []);
 
-  // fit = clamp(0.4, min((W-108)/900, (H-72)/620), 1.4)；W/H 取本组件实际尺寸。
+  /* fit：作者坐标 900×620 缩放进视口。 */
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
@@ -149,22 +126,80 @@ export default function CanvasView() {
     return () => ro.disconnect();
   }, []);
 
-  const scale = (fit * zoom) / 100;
-  const isVideoNode = nodeKind === "video";
-  const nodeAdded = stage >= 2 && nodeKind !== null;
-  const cost = isVideoNode ? COST_VIDEO : COST_TEXT;
-  const modelLabel = isVideoNode ? "Genius V6" : model;
+  /**
+   * 写盘：本地先更新（界面不等网络），PATCH 带当前 revision；409 即别处已改——
+   * 重拉最新文档交回，绝不静默覆盖（C 包硬要求）。
+   */
+  const persist = useCallback(
+    async (base: CanvasDocument, nodes: CanvasNode[], edges = base.edges) => {
+      try {
+        const next = await patchCanvas(base.id, { expectedRevision: base.revision, nodes, edges });
+        setDoc((cur) => (cur && cur.id === next.id ? next : cur));
+      } catch (e) {
+        if (e instanceof RevisionConflictError) {
+          const fresh = await fetchCanvas(base.id);
+          if (fresh) setDoc(fresh);
+          showToast(t("canvas.conflict"));
+        } else {
+          showToast(e instanceof Error ? e.message : String(e));
+        }
+      }
+    },
+    [showToast, t],
+  );
 
-  const openMenuAt = (pos: MenuPos) => {
-    setStage((s) => (s === 0 ? 1 : s));
-    setMenu(pos);
-  };
+  /** 本地先改 + 防抖落盘（打字 / 拖拽走这条路）。 */
+  const mutate = useCallback(
+    (fn: (d: CanvasDocument) => { nodes: CanvasNode[]; edges?: CanvasDocument["edges"] }) => {
+      setDoc((cur) => {
+        if (!cur) return cur;
+        const { nodes, edges } = fn(cur);
+        const next = { ...cur, nodes, edges: edges ?? cur.edges };
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => void persist(next, nodes, next.edges), SAVE_DEBOUNCE_MS);
+        return next;
+      });
+    },
+    [persist],
+  );
+
+  /* 生成节点轮询：有 jobId 未终态的节点每 3s 问一次。 */
+  const pendingJobIds = (doc?.nodes ?? [])
+    .map((n) => n.jobId)
+    .filter((id): id is string => Boolean(id) && !TERMINAL.has(jobs[id!]?.status ?? ""));
+  useEffect(() => {
+    if (!pendingJobIds.length) return;
+    const timer = setInterval(() => {
+      for (const id of pendingJobIds) {
+        void fetchJob(id).then((job) => {
+          if (job) setJobs((map) => ({ ...map, [id]: job }));
+        });
+      }
+    }, POLL_MS);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingJobIds.join(",")]);
+
+  /* 首次见到 jobId 就立即拉一次（刷新恢复时不必等一个轮询周期）。 */
+  useEffect(() => {
+    for (const n of doc?.nodes ?? []) {
+      if (n.jobId && !jobs[n.jobId]) {
+        void fetchJob(n.jobId).then((job) => {
+          if (job) setJobs((map) => ({ ...map, [n.jobId!]: job }));
+        });
+      }
+    }
+  }, [doc, jobs]);
+
+  const scale = fit;
+
+  const openMenuAt = (pos: MenuPos) => setMenu(pos);
 
   const onContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault();
     const el = sceneRef.current;
     if (!el) {
-      openMenuAt(DEFAULT_MENU);
+      openMenuAt({ x: 300, y: 224 });
       return;
     }
     const r = el.getBoundingClientRect();
@@ -174,36 +209,121 @@ export default function CanvasView() {
     });
   };
 
-  const addNode = (kind: NodeKind) => {
+  const addNode = (kind: CanvasNode["kind"], pos: MenuPos) => {
     setMenu(null);
-    setNodeKind(kind);
-    setNodeState("idle");
-    setStage(2);
-    setPrompt(kind === "video" ? t("canvas.videoSeedPrompt") : "");
-  };
-
-  const send = () => {
-    if (!prompt.trim()) {
-      setPrompt(t("canvas.seedPrompt"));
-      return;
+    const node: CanvasNode = { id: newCanvasNodeId(), kind, x: pos.x, y: pos.y };
+    mutate((d) => ({ nodes: [...d.nodes, node] }));
+    if (kind === "material") {
+      materialFor.current = node.id;
+      fileRef.current?.click();
     }
-    setNodeState("busy");
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setNodeState("done"), 1600);
   };
 
-  const applyTool = () => {
-    setToolboxOpen(false);
-    setRefsAdded(true);
-    setStage(2);
-    setNodeKind((k) => k ?? "text");
+  const removeNode = (id: string) => {
+    mutate((d) => ({
+      nodes: d.nodes.filter((n) => n.id !== id),
+      edges: d.edges.filter((e) => e.from !== id && e.to !== id),
+    }));
   };
 
-  const addedRect = isVideoNode ? RECTS.addedVideo : RECTS.addedText;
-  const addedCenterY = ADDED_BODY_TOP + addedRect.h / 2;
-  const text1CenterY = RECTS.text1.y + LABEL_H + RECTS.text1.h / 2;
-  const img1CenterY = RECTS.img1.y + LABEL_H + RECTS.img1.h / 2;
-  const uploadCenterY = RECTS.upload.y + LABEL_H + RECTS.upload.h / 2;
+  const onUpload = async (file: File | undefined) => {
+    const nodeId = materialFor.current;
+    materialFor.current = null;
+    if (!file || !nodeId) return;
+    try {
+      const { uploadId } = await uploadFile(file, "start");
+      mutate((d) => ({
+        nodes: d.nodes.map((n) => (n.id === nodeId ? { ...n, uploadId } : n)),
+      }));
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /** 上游选择：一条 gen 节点最多一条入边；换选即换边，「无」即删掉入边。 */
+  const setInput = (nodeId: string, fromId: string | null) => {
+    mutate((d) => {
+      const edges = d.edges.filter((e) => e.to !== nodeId);
+      if (fromId) edges.push({ id: newCanvasEdgeId(), from: fromId, to: nodeId });
+      return { nodes: d.nodes, edges };
+    });
+  };
+
+  const runNode = async (nodeId: string) => {
+    if (!doc || running.has(nodeId)) return;
+    setError(null);
+    setRunning((s) => new Set(s).add(nodeId));
+    try {
+      // 先把本地未落盘的改动推上去，让 run 读到的是最新提示词与连线。
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+        await persist(doc, doc.nodes, doc.edges);
+      }
+      const fresh = (await fetchCanvas(doc.id)) ?? doc;
+      const { canvas, job } = await runCanvasNodeApi(fresh.id, nodeId);
+      setDoc(canvas);
+      setJobs((map) => ({ ...map, [job.id]: job }));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      showToast(message);
+    } finally {
+      setRunning((s) => {
+        const next = new Set(s);
+        next.delete(nodeId);
+        return next;
+      });
+    }
+  };
+
+  const onNodePointerDown = (e: ReactMouseEvent<HTMLElement>, node: CanvasNode) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("textarea,input,select,button")) return;
+    drag.current = { id: node.id, dx: (e.clientX - 0) / scale - node.x, dy: (e.clientY - 0) / scale - node.y };
+    const rect = sceneRef.current?.getBoundingClientRect();
+    if (rect) {
+      drag.current.dx = (e.clientX - rect.left) / scale - node.x;
+      drag.current.dy = (e.clientY - rect.top) / scale - node.y;
+    }
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const d = drag.current;
+      const el = sceneRef.current;
+      if (!d || !el) return;
+      const r = el.getBoundingClientRect();
+      const x = clamp(0, (e.clientX - r.left) / scale - d.dx, SCENE_W - NODE_W);
+      const y = clamp(0, (e.clientY - r.top) / scale - d.dy, SCENE_H - 60);
+      setDoc((cur) =>
+        cur ? { ...cur, nodes: cur.nodes.map((n) => (n.id === d.id ? { ...n, x, y } : n)) } : cur,
+      );
+    };
+    const onUp = () => {
+      if (!drag.current) return;
+      drag.current = null;
+      setDoc((cur) => {
+        if (cur) void persist(cur, cur.nodes, cur.edges);
+        return cur;
+      });
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    return () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+    };
+  }, [scale, persist]);
+
+  const nodeById = (id: string) => doc?.nodes.find((n) => n.id === id);
+  const inputOf = (nodeId: string) => doc?.edges.find((e) => e.to === nodeId)?.from ?? "";
+  const candidatesFor = (node: CanvasNode) =>
+    (doc?.nodes ?? []).filter(
+      (n) => n.id !== node.id && (n.kind === "text" || n.kind === "material" || n.kind === "gen_image"),
+    );
 
   return (
     <div
@@ -212,58 +332,13 @@ export default function CanvasView() {
       onContextMenu={onContextMenu}
       style={{ backgroundSize: `${Math.round(22 * scale)}px ${Math.round(22 * scale)}px` }}
     >
-      {stage === 0 ? (
+      {!doc ? (
         <div className="canvas-empty">
-          <div className="canvas-empty__lead">
-            <div className="canvas-empty__cards" aria-hidden="true">
-              <span
-                className="canvas-empty__card canvas-empty__card--a"
-                style={{ backgroundImage: `url(${shot(3)})` }}
-              />
-              <span
-                className="canvas-empty__card canvas-empty__card--b"
-                style={{ backgroundImage: `url(${shot(5)})` }}
-              />
-            </div>
-            <div className="canvas-empty__copy">
-              <span className="canvas-empty__hint">
-                <IconPointer />
-                {t("canvas.empty.rightClick")}
-              </span>
-              <span className="canvas-empty__title">{t("canvas.empty.title")}</span>
-              <span className="canvas-empty__sub">{t("canvas.empty.sub")}</span>
-            </div>
-          </div>
-          <div className="canvas-empty__actions">
-            <button type="button" className="canvas-entry" onClick={() => setStage(1)}>
-              <span className="canvas-entry__icon">
-                <IconImage size={15} />
-              </span>
-              {t("canvas.entry.image")}
-            </button>
-            <button type="button" className="canvas-entry" onClick={() => setStage(1)}>
-              <span className="canvas-entry__icon">
-                <IconVideo size={15} />
-              </span>
-              {t("canvas.entry.story")}
-            </button>
-            <button type="button" className="canvas-entry" onClick={() => setStage(1)}>
-              <span className="canvas-entry__icon">
-                <IconFace />
-              </span>
-              {t("canvas.entry.three")}
-            </button>
-            <button type="button" className="canvas-entry" onClick={() => setStage(1)}>
-              <span className="canvas-entry__icon">
-                <IconGrid9 />
-              </span>
-              {t("canvas.entry.grid")}
-            </button>
+          <div className="canvas-empty__copy">
+            <span className="canvas-empty__title">{error ?? t("canvas.loading")}</span>
           </div>
         </div>
-      ) : null}
-
-      {stage > 0 ? (
+      ) : (
         <div className="canvas-scroll">
           <div
             className="canvas-scene"
@@ -277,397 +352,225 @@ export default function CanvasView() {
               aria-hidden="true"
             >
               <g fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="1.2">
-                <path
-                  d={`M${RECTS.text1.x + RECTS.text1.w} ${text1CenterY - 7} C ${RECTS.text1.x + RECTS.text1.w + 34} ${text1CenterY - 7} ${RECTS.img1.x - 36} ${img1CenterY} ${RECTS.img1.x} ${img1CenterY}`}
-                />
-                {nodeAdded ? (
-                  <path
-                    d={`M${RECTS.text1.x + RECTS.text1.w} ${text1CenterY + 8} C ${RECTS.text1.x + RECTS.text1.w + 62} ${text1CenterY + 8} ${addedRect.x - 60} ${addedCenterY} ${addedRect.x} ${addedCenterY}`}
-                  />
-                ) : null}
-                {refsAdded ? (
-                  <>
-                    <path
-                      d={`M${RECTS.upload.x + RECTS.upload.w} ${uploadCenterY} C ${RECTS.upload.x + RECTS.upload.w + 10} ${uploadCenterY} ${RECTS.output.x - 10} ${uploadCenterY} ${RECTS.output.x} ${uploadCenterY}`}
-                    />
-                    {nodeAdded ? (
-                      <path
-                        d={`M${RECTS.output.x + RECTS.output.w} ${uploadCenterY} C ${RECTS.output.x + RECTS.output.w + 60} ${uploadCenterY} ${addedRect.x - 60} ${addedCenterY} ${addedRect.x} ${addedCenterY}`}
-                      />
-                    ) : null}
-                  </>
-                ) : null}
+                {doc.edges.map((e) => {
+                  const from = nodeById(e.from);
+                  const to = nodeById(e.to);
+                  if (!from || !to) return null;
+                  const x1 = from.x + NODE_W;
+                  const y1 = from.y + LABEL_H + 40;
+                  const x2 = to.x;
+                  const y2 = to.y + LABEL_H + 40;
+                  return (
+                    <path key={e.id} d={`M${x1} ${y1} C ${x1 + 50} ${y1} ${x2 - 50} ${y2} ${x2} ${y2}`} />
+                  );
+                })}
               </g>
             </svg>
 
-            {/* 文本 1 */}
-            <div
-              className="canvas-node"
-              style={{ left: RECTS.text1.x, top: RECTS.text1.y, width: RECTS.text1.w }}
-              onMouseEnter={() => setHoverText1(true)}
-              onMouseLeave={() => setHoverText1(false)}
-            >
-              <span className="canvas-node__label">
-                <IconText size={12} />
-                {t("canvas.node.text1")}
-              </span>
-              <div className="canvas-node__body canvas-node__body--text" style={{ height: RECTS.text1.h }}>
-                {t("canvas.nodeText1")}
-                {hoverText1 ? (
-                  <>
-                    <button
-                      type="button"
-                      className="canvas-node__handle canvas-node__handle--left"
-                      aria-label={t("canvas.node.handleLeft")}
-                      onClick={() => openMenuAt({ x: 24, y: 224 })}
-                    >
-                      <IconPlus size={10} />
-                    </button>
-                    <button
-                      type="button"
-                      className="canvas-node__handle canvas-node__handle--right"
-                      aria-label={t("canvas.node.handleRight")}
-                      onClick={() => openMenuAt(DEFAULT_MENU)}
-                    >
-                      <IconPlus size={10} />
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-
-            {/* 图片 1 */}
-            <div
-              className="canvas-node"
-              style={{ left: RECTS.img1.x, top: RECTS.img1.y, width: RECTS.img1.w }}
-            >
-              <span className="canvas-node__label">
-                <IconImage size={12} />
-                {t("canvas.node.img1")}
-              </span>
-              <span
-                className="canvas-node__shot"
-                style={{ backgroundImage: `url(${shot(3)})`, aspectRatio: "16 / 9" }}
-              />
-            </div>
-
-            {/* 工具应用后落下的两个节点 */}
-            {refsAdded ? (
-              <>
-                <div
-                  className="canvas-node canvas-node--pop"
-                  style={{ left: RECTS.upload.x, top: RECTS.upload.y, width: RECTS.upload.w }}
+            {doc.nodes.map((node) => (
+              <div
+                key={node.id}
+                className="canvas-node"
+                data-kind={node.kind}
+                style={{ left: node.x, top: node.y, width: NODE_W }}
+              >
+                <span
+                  className="canvas-node__label"
+                  onMouseDown={(e) => onNodePointerDown(e, node)}
+                  style={{ cursor: "grab" }}
                 >
-                  <span className="canvas-node__label">
+                  {node.kind === "text" ? (
+                    <IconText size={12} />
+                  ) : node.kind === "material" ? (
                     <IconImage size={12} />
-                    Upload a picture
-                  </span>
-                  <span
-                    className="canvas-node__shot"
-                    style={{ backgroundImage: `url(${shot(1)})`, aspectRatio: "3 / 4" }}
-                  />
-                </div>
-                <div
-                  className="canvas-node canvas-node--pop"
-                  style={{ left: RECTS.output.x, top: RECTS.output.y, width: RECTS.output.w }}
-                >
-                  <span className="canvas-node__label">
+                  ) : (
                     <IconVideo size={12} />
-                    Output Results
-                  </span>
-                  <div className="canvas-clip" style={{ backgroundImage: `url(${shot(6)})` }}>
-                    <span className="canvas-clip__bar">
-                      <IconPlay />
-                      <span className="canvas-clip__track">
-                        <span className="canvas-clip__fill" />
-                      </span>
-                      <span className="canvas-clip__time">00:05</span>
-                    </span>
-                  </div>
-                </div>
-              </>
-            ) : null}
+                  )}
+                  {t(`canvas.kind.${node.kind}`)}
+                  <button
+                    type="button"
+                    className="canvas-node__del"
+                    aria-label={t("canvas.nodeDelete")}
+                    onClick={() => removeNode(node.id)}
+                  >
+                    <IconClose size={11} />
+                  </button>
+                </span>
 
-            {/* 新增节点（文本 3 / 视频 2） */}
-            {nodeAdded ? (
-              <div
-                className="canvas-node canvas-node--pop"
-                style={{ left: addedRect.x, top: addedRect.y, width: addedRect.w }}
-              >
-                {!isVideoNode ? (
-                  <div className="canvas-rte" role="toolbar" aria-label={t("canvas.rte.aria")}>
-                    {RTE_ITEMS.map((r, i) => (
-                      <span key={r} className="canvas-rte__item" data-on={i === RTE_ACTIVE ? "true" : undefined}>
-                        {r}
-                      </span>
-                    ))}
+                {node.kind === "text" ? (
+                  <textarea
+                    className="canvas-node__body canvas-node__body--text canvas-node__textarea"
+                    style={{ height: 120 }}
+                    value={node.text ?? ""}
+                    placeholder={t("canvas.textPlaceholder")}
+                    onChange={(e) =>
+                      mutate((d) => ({
+                        nodes: d.nodes.map((n) => (n.id === node.id ? { ...n, text: e.target.value } : n)),
+                      }))
+                    }
+                  />
+                ) : null}
+
+                {node.kind === "material" ? (
+                  <div className="canvas-node__body" style={{ minHeight: 120 }}>
+                    {node.uploadId ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        className="canvas-node__img"
+                        src={`/api/uploads/${node.uploadId}`}
+                        alt={t("canvas.kind.material")}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="canvas-node__upload"
+                        onClick={() => {
+                          materialFor.current = node.id;
+                          fileRef.current?.click();
+                        }}
+                      >
+                        <IconPlus size={14} />
+                        {t("canvas.upload")}
+                      </button>
+                    )}
                   </div>
                 ) : null}
-                <span className="canvas-node__label">
-                  {isVideoNode ? <IconVideo size={12} /> : <IconText size={12} />}
-                  {isVideoNode ? t("canvas.node.video2") : t("canvas.node.text3")}
-                </span>
-                <div
-                  className={
-                    isVideoNode ? "canvas-node__body canvas-node__body--video" : "canvas-node__body"
-                  }
-                  style={{ minHeight: addedRect.h }}
-                  data-state={nodeState}
-                >
-                  {nodeState === "idle" ? (
-                    <span className="canvas-node__hint">{isVideoNode ? t("canvas.node.hintVideo") : t("canvas.node.hintText")}</span>
-                  ) : null}
-                  {nodeState === "busy" ? (
-                    <>
-                      <div className="canvas-skeleton">
-                        {SKELETON_ROWS.map((w, i) => (
-                          <span key={i} className="canvas-skeleton__row" style={{ width: w }} />
-                        ))}
-                      </div>
-                      <div className="canvas-progress">
-                        <span className="canvas-progress__pct">50%</span>
-                        <span className="canvas-progress__track">
-                          <span className="canvas-progress__fill" />
-                        </span>
-                      </div>
-                    </>
-                  ) : null}
-                  {nodeState === "done" ? (
-                    isVideoNode ? (
-                      <div className="canvas-clip canvas-clip--full" style={{ backgroundImage: `url(${shot(9)})` }}>
-                        <span className="canvas-clip__bar">
-                          <IconPlay />
-                          <span className="canvas-clip__track">
-                            <span className="canvas-clip__fill" />
-                          </span>
-                          <span className="canvas-clip__time">00:05</span>
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="canvas-result">
-                        <span className="canvas-result__title">{t("canvas.result.title")}</span>
-                        <span className="canvas-result__sub">{t("canvas.result.concept")}</span>
-                        <span className="canvas-result__rule" />
-                        <span className="canvas-result__sub">{t("canvas.result.sceneLabel")}</span>
-                        <span>{t("canvas.result.scene")}</span>
-                        <span className="canvas-result__rule" />
-                        <span className="canvas-result__sub">{t("canvas.result.layoutLabel")}</span>
-                      </div>
-                    )
-                  ) : null}
-                </div>
+
+                {node.kind === "gen_image" || node.kind === "gen_video" ? (
+                  <GenBody
+                    node={node}
+                    job={node.jobId ? jobs[node.jobId] : undefined}
+                    running={running.has(node.id)}
+                    inputOf={inputOf(node.id)}
+                    candidates={candidatesFor(node)}
+                    onPrompt={(prompt) =>
+                      mutate((d) => ({
+                        nodes: d.nodes.map((n) => (n.id === node.id ? { ...n, prompt } : n)),
+                      }))
+                    }
+                    onInput={(fromId) => setInput(node.id, fromId)}
+                    onRun={() => void runNode(node.id)}
+                  />
+                ) : null}
               </div>
-            ) : null}
-
-            {/* 提示词面板 */}
-            {nodeAdded ? (
-              <div
-                className="canvas-prompt"
-                style={{ left: RECTS.prompt.x, top: RECTS.prompt.y, width: RECTS.prompt.w }}
-              >
-                <div className="canvas-prompt__head">
-                  {refsAdded ? (
-                    <span className="canvas-prompt__ref" style={{ backgroundImage: `url(${shot(1)})` }} />
-                  ) : null}
-                  <button type="button" className="canvas-prompt__icon" data-on="true" aria-label={t("canvas.prompt.text")}>
-                    <IconText size={15} />
-                  </button>
-                  <button type="button" className="canvas-prompt__icon" aria-label={t("canvas.prompt.addRef")}>
-                    <IconPlus size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    className="canvas-prompt__icon canvas-prompt__icon--ring"
-                    title={t("canvas.prompt.fromToolbox")}
-                    aria-label={t("canvas.prompt.fromToolbox")}
-                    onClick={() => setToolboxOpen(true)}
-                  >
-                    <IconToolbox size={15} />
-                  </button>
-                  <span className="canvas-prompt__expand" aria-hidden="true">
-                    <IconExpand />
-                  </span>
-                </div>
-
-                <textarea
-                  className="canvas-prompt__text"
-                  value={prompt}
-                  maxLength={5000}
-                  aria-label={t("canvas.prompt.aria")}
-                  placeholder={t("canvas.prompt.placeholder")}
-                  onChange={(e) => setPrompt(e.target.value)}
-                />
-
-                <div className="canvas-prompt__foot" ref={modelRef}>
-                  <button
-                    type="button"
-                    className="canvas-model"
-                    aria-expanded={modelPop}
-                    aria-haspopup="menu"
-                    data-open={modelPop ? "true" : undefined}
-                    onClick={() => setModelPop((v) => !v)}
-                  >
-                    <span className="canvas-model__dot" />
-                    {modelLabel}
-                  </button>
-                  {isVideoNode ? (
-                    <span className="canvas-vidchip">
-                      {t("canvas.vidchip")}
-                      <IconVolume />
-                    </span>
-                  ) : null}
-                  <span className="canvas-prompt__count">{prompt.length}/5000</span>
-                  <span className="canvas-prompt__cost">
-                    <IconBolt />
-                    {cost}
-                  </span>
-                  <button type="button" className="canvas-prompt__send" aria-label={t("canvas.prompt.send")} onClick={send}>
-                    <IconArrowUp />
-                  </button>
-
-                  {modelPop ? (
-                    <div className="canvas-modelpop" role="menu">
-                      <span className="canvas-modelpop__title">{t("canvas.modelpop.title")}</span>
-                      {CANVAS_MODELS.map((m, i) => (
-                        <button
-                          type="button"
-                          key={m.key}
-                          role="menuitem"
-                          className="canvas-modelpop__item"
-                          data-current={model.startsWith(m.key) ? "true" : undefined}
-                          onClick={() => {
-                            setModel(m.full);
-                            setModelPop(false);
-                          }}
-                        >
-                          <span
-                            className="canvas-modelpop__icon"
-                            style={{ background: ICON_GRADS[i % ICON_GRADS.length] }}
-                          />
-                          <span className="canvas-modelpop__body">
-                            <span className="canvas-modelpop__name">{m.name}</span>
-                            <span className="canvas-modelpop__desc">{t(m.descKey)}</span>
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-
-            {/* 节点类型菜单 */}
-            {menu ? (
-              <div className="canvas-menu" role="menu" ref={menuRef} style={{ left: menu.x, top: menu.y }}>
-                <button type="button" role="menuitem" className="canvas-menu__item" onClick={() => addNode("text")}>
-                  <IconText />
-                  {t("canvas.menu.text")}
-                </button>
-                <button type="button" role="menuitem" className="canvas-menu__item" onClick={closeMenu}>
-                  <IconImage />
-                  {t("canvas.menu.image")}
-                </button>
-                <button type="button" role="menuitem" className="canvas-menu__item" onClick={() => addNode("video")}>
-                  <IconVideo />
-                  {t("canvas.menu.video")}
-                </button>
-                <button type="button" role="menuitem" className="canvas-menu__item" onClick={closeMenu}>
-                  <IconAudio />
-                  {t("canvas.menu.audio")}
-                </button>
-                <button type="button" role="menuitem" className="canvas-menu__item" onClick={closeMenu}>
-                  <IconBoard />
-                  {t("canvas.menu.board")}
-                </button>
-              </div>
-            ) : null}
+            ))}
           </div>
+        </div>
+      )}
+
+      {menu ? (
+        <div className="canvas-menu" ref={menuRef} style={{ left: menu.x * scale, top: menu.y * scale }}>
+          {(["text", "material", "gen_image", "gen_video"] as const).map((kind) => (
+            <button
+              type="button"
+              key={kind}
+              className="canvas-menu__item"
+              onClick={() => addNode(kind, menu)}
+            >
+              {kind === "text" ? (
+                <IconText size={12} />
+              ) : kind === "material" ? (
+                <IconImage size={12} />
+              ) : (
+                <IconVideo size={12} />
+              )}
+              {t(`canvas.kind.${kind}`)}
+            </button>
+          ))}
         </div>
       ) : null}
 
-      {/* 右上浮层 */}
-      <div className="canvas-topright">
-        <button type="button" className="canvas-topright__btn">
-          <IconShare />
-          {t("canvas.topright.share")}
-        </button>
-        <button type="button" className="canvas-topright__btn">
-          <IconBot />
-          {t("canvas.topright.assistant")}
-        </button>
-      </div>
-
-      {/* 左侧工具栏 */}
-      <div className="canvas-tools">
-        <button
-          type="button"
-          className="canvas-tools__add"
-          aria-label={t("canvas.tools.add")}
-          onClick={() => openMenuAt(DEFAULT_MENU)}
-        >
-          <IconPlus />
-        </button>
-        <div className="canvas-tools__group">
-          <button type="button" className="canvas-tools__btn" data-on="true" title={t("canvas.tools.select")} aria-label={t("canvas.tools.select")}>
-            <IconCursor />
-          </button>
-          <button type="button" className="canvas-tools__btn" title={t("canvas.tools.assets")} aria-label={t("canvas.tools.assets")}>
-            <IconFolder />
-          </button>
-          <button
-            type="button"
-            className="canvas-tools__btn"
-            title={t("canvas.tools.toolbox")}
-            aria-label={t("canvas.tools.toolbox")}
-            aria-expanded={toolboxOpen}
-            data-on={toolboxOpen ? "true" : undefined}
-            onClick={() => {
-              setStage((s) => (s === 0 ? 1 : s));
-              setToolboxOpen(true);
-            }}
-          >
-            <IconToolbox />
-          </button>
-          <button type="button" className="canvas-tools__btn" title={t("canvas.tools.undo")} aria-label={t("canvas.tools.undo")}>
-            <IconUndo />
-          </button>
-          <button type="button" className="canvas-tools__btn" title={t("canvas.tools.redo")} aria-label={t("canvas.tools.redo")}>
-            <IconRedo />
-          </button>
+      {doc && doc.nodes.length === 0 && !menu ? (
+        <div className="canvas-empty__hint" style={{ position: "absolute", left: 24, top: 24 }}>
+          <IconCursor />
+          {t("canvas.empty.rightClick")}
         </div>
-      </div>
+      ) : null}
 
-      {toolboxOpen ? <CanvasToolbox onClose={() => setToolboxOpen(false)} onApply={applyTool} /> : null}
+      {error ? <p className="agent-view__error" style={{ position: "absolute", left: 24, bottom: 16 }}>{error}</p> : null}
 
-      {/* 左下控制条 */}
-      <div className="canvas-bottom">
-        <button type="button" className="canvas-bottom__btn" title={t("canvas.bottom.panels")} aria-label={t("canvas.bottom.panels")}>
-          <IconPanels />
-        </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          void onUpload(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+    </div>
+  );
+}
+
+/** 生成节点的正文体：提示词 + 上游选择 + 运行 + 产物预览。 */
+function GenBody({
+  node,
+  job,
+  running,
+  inputOf,
+  candidates,
+  onPrompt,
+  onInput,
+  onRun,
+}: {
+  node: CanvasNode;
+  job: JobPublic | undefined;
+  running: boolean;
+  inputOf: string;
+  candidates: CanvasNode[];
+  onPrompt: (v: string) => void;
+  onInput: (fromId: string | null) => void;
+  onRun: () => void;
+}) {
+  const t = useT();
+  const status = job?.status;
+  return (
+    <div className="canvas-node__body" data-state={status ?? "idle"} style={{ minHeight: 120 }}>
+      <textarea
+        className="canvas-node__textarea"
+        style={{ height: 64 }}
+        value={node.prompt ?? ""}
+        placeholder={t("canvas.prompt.placeholder")}
+        onChange={(e) => onPrompt(e.target.value)}
+      />
+      {candidates.length ? (
+        <select
+          className="canvas-node__select"
+          value={inputOf}
+          aria-label={t("canvas.input")}
+          onChange={(e) => onInput(e.target.value || null)}
+        >
+          <option value="">{t("canvas.inputNone")}</option>
+          {candidates.map((c) => (
+            <option key={c.id} value={c.id}>
+              {t(`canvas.kind.${c.kind}`)} {c.id.slice(2, 6)}
+            </option>
+          ))}
+        </select>
+      ) : null}
+      <div className="canvas-node__runrow">
         <button
           type="button"
-          className="canvas-bottom__btn"
-          title={t("canvas.bottom.fit")}
-          aria-label={t("canvas.bottom.fit")}
-          onClick={() => setZoom(100)}
+          className="canvas-node__run"
+          disabled={running || (status !== undefined && !TERMINAL.has(status))}
+          onClick={onRun}
         >
-          <IconFit />
+          <IconBolt size={12} />
+          {running || (status && !TERMINAL.has(status)) ? t("canvas.running") : t("canvas.run")}
         </button>
-        <button type="button" className="canvas-bottom__btn" title={t("canvas.bottom.minimap")} aria-label={t("canvas.bottom.minimap")}>
-          <IconMinimap />
-        </button>
-        <span className="canvas-bottom__sep" />
-        <input
-          className="canvas-bottom__slider"
-          type="range"
-          min={20}
-          max={200}
-          value={zoom}
-          aria-label={t("canvas.bottom.zoom")}
-          onChange={(e) => setZoom(Number(e.target.value))}
-        />
-        <span className="canvas-bottom__pct">{Math.round(fit * zoom)}%</span>
+        {status ? (
+          <span className="canvas-node__state">{t(`canvas.job.${status}` as Parameters<typeof t>[0])}</span>
+        ) : null}
       </div>
+      {job?.output?.kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img className="canvas-node__img" src={job.output.imageUrl} alt={job.prompt} />
+      ) : null}
+      {job?.output?.kind === "video" ? (
+        <video className="canvas-node__video" src={job.output.videoUrl} poster={job.output.posterUrl} controls />
+      ) : null}
+      {job?.error ? <span className="canvas-node__err">{job.error.message}</span> : null}
     </div>
   );
 }

@@ -1,6 +1,8 @@
+import { randomBytes } from "node:crypto";
 import { listJobIndex } from "@/lib/jobs/index";
+import type { JobReservation } from "@/lib/jobs/schema";
 import { ProviderHttpError } from "@/lib/providers/types";
-import { activeMemberCreditsCny } from "@/lib/users/schema";
+import { activeMemberCreditsCny, subscriptionActive } from "@/lib/users/schema";
 import { readUser } from "@/lib/users/store";
 
 /**
@@ -8,13 +10,16 @@ import { readUser } from "@/lib/users/store";
  *
  * 模型和配额那边一样是**预留 + 结算**，只是单位从「次」换成「元」：
  *
- *   reserved  = 该用户所有非终态任务的售价之和
+ *   reserved  = 该用户所有非终态任务的预留额之和（`reservation.amountCny`；
+ *               没有显式预留对象的老任务回落 `priceCny`）
  *   available = 已购余额 + **有效**会员积分池 − reserved
  *   放行      = available ≥ 本次售价
  *
- * 预留不写盘：它就是「在途任务的 priceCny 之和」，从 job.json 现算。任务转终态时
- * 预留自然消失，成功的那一刻在 `store.updateJob` 里真扣钱，失败 / 取消 / 过期则
- * 什么都不扣——「上游挂了不该用户掏钱」和配额那边是同一条纪律。
+ * A 包起预留是显式对象：`job.reservation` 在准入那一刻把「会员池 earmark / 已购池
+ * 承诺额」冻结（`reserveJobFunds`），状态由任务 `status` 派生，不单独维护。任务转
+ * 终态时预留自然消失，成功的那一刻在 `store.updateJob` 里真扣钱（会员份额封顶
+ * `memberMaxCny`），失败 / 取消 / 过期则什么都不扣——「上游挂了不该用户掏钱」和
+ * 配额那边是同一条纪律。
  */
 
 export type BalanceUsage = {
@@ -23,12 +28,19 @@ export type BalanceUsage = {
   /** 会员积分池**账面**余量：`user.json` 里的数，可能还没被结算清掉（方案 §3.2）。 */
   memberCreditsCny: number;
   /**
-   * 这一刻真正能花的会员积分：订阅已过期（或没有订阅）时是 0，即使 `memberCreditsCny`
-   * 还是正数。判定一律用这个数，不用上面那个账面值。
+   * 有效会员池的账面口径：订阅生效期内等于 `memberCreditsCny`（含被在途任务
+   * earmark 占住的部分），过期 / 无订阅时是 0。展示与「本期还剩多少积分」用它；
+   * 新任务能 earmark 多少要用 `spendableMemberCny`。
    */
   effectiveMemberCny: number;
   /** 在途任务占住的钱，还没扣，但不能再拿去下单。 */
   reservedCny: number;
+  /** 在途预留里 earmark 到会员池的部分（老任务无 reservation 时按 0 计）。 */
+  heldMemberCny: number;
+  /** 在途预留里承诺由已购池出的部分 = `reservedCny − heldMemberCny`。 */
+  heldPurchasedCny: number;
+  /** 这一刻还能 earmark 给新任务的会员积分 = `effectiveMemberCny − heldMemberCny`。 */
+  spendableMemberCny: number;
   /** `balanceCny + effectiveMemberCny − reservedCny`：这一刻还能下多少单。 */
   availableCny: number;
 };
@@ -61,16 +73,26 @@ export async function loadBalanceUsage(
   // 旧期积分继续花，所以判定一律走 `activeMemberCreditsCny`。
   const effectiveMemberCny = activeMemberCreditsCny(user, now);
   let reservedCny = 0;
+  let heldMemberCny = 0;
   for (const job of entries) {
-    const price = typeof job.priceCny === "number" && Number.isFinite(job.priceCny) ? job.priceCny : 0;
-    reservedCny += price;
+    // 有显式预留对象的任务按它的冻结分配额计；老任务没有它，回落成「priceCny 全额、
+    // 不分池」——与升级前的口径一致。
+    reservedCny += job.reservation?.amountCny ??
+      (typeof job.priceCny === "number" && Number.isFinite(job.priceCny) ? job.priceCny : 0);
+    heldMemberCny += job.reservation?.memberCny ?? 0;
   }
   reservedCny = round2(reservedCny);
+  heldMemberCny = round2(Math.min(heldMemberCny, memberCreditsCny));
+  const heldPurchasedCny = round2(reservedCny - heldMemberCny);
+  const spendableMemberCny = round2(Math.max(0, effectiveMemberCny - heldMemberCny));
   return {
     balanceCny,
     memberCreditsCny,
     effectiveMemberCny,
     reservedCny,
+    heldMemberCny,
+    heldPurchasedCny,
+    spendableMemberCny,
     availableCny: round2(balanceCny + effectiveMemberCny - reservedCny),
   };
 }
@@ -81,13 +103,17 @@ export async function loadBalanceUsage(
  * 订阅只花已购池（会员积分买订阅 = 无限套利），但已购池里有一部分可能已经被在途任务
  * 占住了：在途预留先由有效会员积分顶，顶不住的那部分才落到已购池上，于是
  *
- *   可购 = balanceCny − max(0, reservedCny − effectiveMemberCny)
+ *   可购 = balanceCny − heldPurchasedCny
  *
  * 不减这一块的话，「先提交五条任务、再把余额买成订阅」就能让那五条任务结算时把已购池
  * 扣成负数——预留模型在准入那边守住了任务，购买这条路不守就等于开了个后门。
+ *
+ * 注意这里减的是在途预留里**承诺由已购池出**的那部分，不是 `reserved − effectiveMember`
+ * 那种「会员先顶、顶不住才落到已购」的估算——后者的估算方向是错的：会员池里后来又发
+ * 的日积分会让它低估已购池的真实承诺额。
  */
 export function purchasableCny(usage: BalanceUsage): number {
-  return round2(usage.balanceCny - Math.max(0, usage.reservedCny - usage.effectiveMemberCny));
+  return round2(usage.balanceCny - usage.heldPurchasedCny);
 }
 
 /**
@@ -109,6 +135,44 @@ export async function assertBalance(userId: string, priceCny: number): Promise<v
   if (usage.availableCny < priceCny) {
     throw new ProviderHttpError(402, "insufficient_balance", "余额不足，请充值");
   }
+}
+
+/**
+ * 准入判定 + 预留分配（A 包）：`createJob` / `retryJob` 用它取代裸 `assertBalance`。
+ *
+ * 做的事：先惰性结算（同 `assertBalance`），再判 `availableCny ≥ priceCny`，最后把这次
+ * 任务的**分池分配额冻结**成 `JobReservation`——会员池 earmark 取「这一刻还可 earmark
+ * 的会员积分」（`spendableMemberCny`）与售价的较小者，其余落到已购池承诺额。
+ *
+ * 冻结之后的纪律：`memberCny` 这部分钱从账面会员池里「钉住」——新任务 earmark 与新订阅
+ * 购买都不再把它当可花的钱，期次重置 / 到期清零也先保住它；任务进终态 earmark 消失，
+ * 成功按 `memberMaxCny` 扣走、失败等下一次结算冲销。
+ *
+ * 必须在 `withAdmissionLock` 临界区内调用（同 `assertBalance`）：返回的分配额依赖
+ * 「读到的在途预留总量」，出了锁两个并发请求会 earmark 同一份会员积分。
+ */
+export async function reserveJobFunds(
+  userId: string,
+  priceCny: number,
+): Promise<JobReservation | undefined> {
+  if (!(priceCny > 0)) return undefined;
+  const { settleSubscription } = await import("@/lib/billing/subscription");
+  const user = await settleSubscription(userId);
+  const usage = await loadBalanceUsage(userId);
+  if (usage.availableCny < priceCny) {
+    throw new ProviderHttpError(402, "insufficient_balance", "余额不足，请充值");
+  }
+  const memberCny = round2(Math.min(priceCny, usage.spendableMemberCny));
+  const sub = user?.subscription;
+  const subActive = subscriptionActive(user);
+  return {
+    id: `res_${randomBytes(8).toString("hex")}`,
+    amountCny: round2(priceCny),
+    memberCny,
+    purchasedCny: round2(priceCny - memberCny),
+    ...(sub && subActive ? { subscriptionId: sub.id, periodIndex: sub.periodIndex } : {}),
+    createdAt: new Date().toISOString(),
+  };
 }
 
 function round2(n: number): number {

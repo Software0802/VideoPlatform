@@ -1,5 +1,6 @@
 import { jsonError } from "@/lib/http";
 import { withRequestContext } from "@/lib/request-context";
+import { localeFromRequest } from "@/lib/i18n/server";
 import { requireUser } from "@/lib/users/session";
 import { toPublicSession } from "@/lib/agent/public";
 import { requireAgentLlmConfig } from "@/lib/agent/llm";
@@ -42,7 +43,7 @@ async function create(request: Request): Promise<Response> {
     });
     let next;
     try {
-      ({ session: next } = await runTurn(session, { ownerId: user.id, ...body }));
+      ({ session: next } = await runTurn(session, { ownerId: user.id, locale: localeFromRequest(request), ...body }));
     } catch (error) {
       // 第一轮没跑成（余额不足、上游挂了）就把空壳收回去，别在抽屉里留一条打不开的记录。
       await deleteSession(user.id, session.id).catch(() => undefined);

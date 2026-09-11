@@ -1,6 +1,6 @@
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { applyBalanceChange } from "@/lib/billing/ledger";
+import { applyBalanceChange, latestMemberDebitAt } from "@/lib/billing/ledger";
 import { dataDir } from "@/lib/env";
 import { log } from "@/lib/log";
 import { upsertJobIndex } from "@/lib/jobs/index";
@@ -13,6 +13,8 @@ import {
   type JobRecord,
 } from "@/lib/jobs/schema";
 import { canAccessJob } from "@/lib/jobs/ownership";
+import { subscriptionActive } from "@/lib/users/schema";
+import { readUser } from "@/lib/users/store";
 import { retryBlock } from "@/lib/jobs/retry-guard";
 import { mediaStore } from "@/lib/storage/local-fs";
 
@@ -174,6 +176,9 @@ export async function updateJob(
     if (charge && (await settleCharge(charge))) {
       next.billing = { chargedAt: new Date().toISOString() };
     }
+    // 与扣款对称的释放路径（A 包）：非成功终态任务的会员 earmark 要有个了结——
+    // 当期 earmark 溶解回可花池（不写流水），过期 earmark 写一行冲销把它清出池子。
+    await settleRelease(next);
     next.updatedAt = new Date().toISOString();
     const dir = mediaStore.jobDir(id);
     await mkdir(dir, { recursive: true });
@@ -189,7 +194,7 @@ export async function updateJob(
  * 出问题的原因。它现在通过 `withJobLock` 与本文件的写路径互斥。
  */
 
-type Charge = { jobId: string; ownerId: string; priceCny: number };
+type Charge = { jobId: string; ownerId: string; priceCny: number; memberMaxCny?: number };
 
 /**
  * 「这条记录此刻该不该扣钱」的纯判定，不改 `next`（`chargedAt` 由 `updateJob` 在扣款
@@ -207,7 +212,14 @@ function pendingCharge(next: JobRecord): Charge | null {
   if (next.billing?.chargedAt) return null;
   const priceCny = typeof next.priceCny === "number" && Number.isFinite(next.priceCny) ? next.priceCny : 0;
   if (priceCny <= 0 || !next.ownerId) return null;
-  return { jobId: next.id, ownerId: next.ownerId, priceCny };
+  return {
+    jobId: next.id,
+    ownerId: next.ownerId,
+    priceCny,
+    // 准入时冻结的会员 earmark 封顶这次扣款的会员份额（A 包）：不许把别的在途任务
+    // earmark 进池的钱花在这条任务上。老任务没有预留对象，沿用会员池优先的旧语义。
+    memberMaxCny: next.reservation?.memberCny,
+  };
 }
 
 /**
@@ -217,11 +229,16 @@ function pendingCharge(next: JobRecord): Charge | null {
  */
 async function settleCharge(charge: Charge): Promise<boolean> {
   try {
-    await applyBalanceChange(charge.ownerId, -charge.priceCny, {
-      kind: "charge",
-      amountCny: -charge.priceCny,
-      jobId: charge.jobId,
-    });
+    await applyBalanceChange(
+      charge.ownerId,
+      -charge.priceCny,
+      {
+        kind: "charge",
+        amountCny: -charge.priceCny,
+        jobId: charge.jobId,
+      },
+      charge.memberMaxCny !== undefined ? { memberMaxCny: charge.memberMaxCny } : {},
+    );
     return true;
   } catch (error) {
     log("error", "余额扣款失败，任务照常完成，下次 updateJob 会补扣，请按 jobId 人工对账", {
@@ -231,6 +248,64 @@ async function settleCharge(charge: Charge): Promise<boolean> {
       detail: error instanceof Error ? error.message : String(error),
     });
     return false;
+  }
+}
+
+/**
+ * 非成功终态任务的会员 earmark 了结（A 包）。
+ *
+ * 三种情形：
+ *
+ *  - earmark 还在当期（订阅没换、期次没滚）：钱本来还是有效会员积分，直接「溶解」
+ *    回可花池——不写流水，只盖 `releasedAt`；
+ *  - earmark 已过期（换订阅 / 跨期 / 订阅没了）且还在池里：写一行 `res:<id>:release`
+ *    的 `adjust` 冲销——过期会员额就此作废，不转成已购余额；
+ *  - earmark 已过期但已被整池扣减（期次重置 / 到期清零）一并清掉：任务终态之后才
+ *    发生的那次扣减天然包含了它，再冲会把本期新发的积分误扣一份——只盖戳不写行。
+ *    「终态之后才扣减」的判据：最近一次会员池整池扣减的时刻 > `completedAt`。
+ *
+ * 与 `settleCharge` 同一模式：抛错不挡终态落盘，不盖 `releasedAt`，下一次任何
+ * `updateJob` 命中同一条件自动补偿；`res:<id>:release` 这条 ref 让补偿天然幂等。
+ */
+async function settleRelease(rec: JobRecord): Promise<void> {
+  const res = rec.reservation;
+  if (!res || res.releasedAt || !(res.memberCny > 0) || !rec.ownerId) return;
+  if (!isTerminalStatus(rec.status) || rec.status === "succeeded") return;
+  try {
+    const user = await readUser(rec.ownerId);
+    const sub = user?.subscription;
+    const stillCurrent = Boolean(
+      user &&
+        subscriptionActive(user) &&
+        sub &&
+        sub.id === res.subscriptionId &&
+        sub.periodIndex === res.periodIndex,
+    );
+    if (!stillCurrent) {
+      const lastDebit = await latestMemberDebitAt(rec.ownerId);
+      const absorbedByReset = Boolean(lastDebit && rec.completedAt && lastDebit > rec.completedAt);
+      if (!absorbedByReset) {
+        await applyBalanceChange(
+          rec.ownerId,
+          -res.memberCny,
+          {
+            kind: "adjust",
+            amountCny: -res.memberCny,
+            ref: `res:${res.id}:release`,
+            note: "会员积分预留过期冲销",
+          },
+          { pool: "member" },
+        );
+      }
+    }
+    res.releasedAt = new Date().toISOString();
+  } catch (error) {
+    log("error", "earmark 冲销失败，任务照常落终态，下次 updateJob 会补偿", {
+      jobId: rec.id,
+      ownerId: rec.ownerId,
+      reservationId: res.id,
+      detail: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 

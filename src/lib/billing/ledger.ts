@@ -50,6 +50,13 @@ export type BalanceChangeOptions = {
    * `billing_refund_source_missing` 失败关闭，不猜池子。
    */
   refundOf?: string;
+  /**
+   * 会员池抽取上限（Reservation earmark）：负 delta 时最多从会员池出这么多。
+   * 任务结算用它把「准入时冻结的会员份额」变成扣款上限——会员池优先的默认行为
+   * 不加这个帽子会动到别的在途任务 earmark 留在池里的钱。与 `pool` / `refundOf`
+   * 互斥，只允许负 delta。
+   */
+  memberMaxCny?: number;
 };
 
 export const LEDGER_KINDS = ["grant", "charge", "adjust"] as const;
@@ -249,6 +256,26 @@ export async function hasChargeFor(userId: string, jobId: string): Promise<boole
 export async function hasGiftGrantFor(userId: string, giftCode: string): Promise<boolean> {
   const rows = await readDecisionRows(userId);
   return rows.some((row) => row.kind === "grant" && row.giftCode === giftCode);
+}
+
+/**
+ * 最近一次「会员池扣减」adjust 行的时刻（清零 / 重置 / earmark 冲销都算），无则 null。
+ *
+ * earmark 释放路径（`jobs/store.ts` 的 `settleRelease`）靠它判断「那笔 earmark 还在
+ * 不在池里」：任务终态之后才发生的池扣减已经把 earmark 一并清掉了，这时再冲销会把
+ * 本期新发的积分误扣一份。
+ */
+export async function latestMemberDebitAt(userId: string): Promise<string | null> {
+  const rows = await readDecisionRows(userId);
+  let latest: string | null = null;
+  for (const row of rows) {
+    // 只认「整池扣减」那几类：期次重置 / 到期清零（`sub:` ref）与无订阅孤儿池清理
+    // （无 ref）。`res:` 的 earmark 冲销行只动它自己那一份，不能当作「池已重置」。
+    if (row.kind !== "adjust" || row.amountCny >= 0 || (row.memberCny ?? 0) <= 0) continue;
+    if (row.ref && !row.ref.startsWith("sub:")) continue;
+    if (!latest || row.at > latest) latest = row.at;
+  }
+  return latest;
 }
 
 /**
