@@ -21,15 +21,17 @@ import {
   generatePassword,
   hashPassword,
   resolveDataDir,
+  requireOffline,
   updateUser,
   usage,
   usersDirOf,
   verifyPassword,
 } from "./lib/users-store.mjs";
 
-const HOWTO = "node scripts/reset-password.mjs <邮箱>";
+const HOWTO = "node scripts/reset-password.mjs <邮箱> --offline";
 
 const argv = process.argv.slice(2);
+requireOffline(argv, HOWTO);
 const positional = argv.filter((a) => !a.startsWith("--"));
 const email = String(positional[0] ?? "").trim().toLowerCase();
 if (!email || !email.includes("@")) usage("第一个参数必须是邮箱", HOWTO);

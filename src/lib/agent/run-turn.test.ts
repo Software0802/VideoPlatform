@@ -217,14 +217,15 @@ describe("runTurn", () => {
     const ref = `agent:${assistant.id}`;
     await expect(hasEntryFor(owner, "charge", ref)).resolves.toBe(true);
 
-    // 幂等键真的注册上了：同 kind + 同 ref 再扣一次是空操作。
+    // 幂等键真的注册上了：同 kind + 同 ref + 同输入的重放是空操作
+    //（同 ref 但输入不同会被判 billing_idempotency_conflict，见 file-ledger.test.ts）。
     const { applyBalanceChange } = await import("@/lib/billing/ledger");
     const before = (await readUser(owner))?.balanceCny ?? 0;
     await applyBalanceChange(owner, -TURN_PRICE, {
       kind: "charge",
       amountCny: -TURN_PRICE,
       ref,
-      note: "重放",
+      note: "智能体对话",
     });
     expect((await readUser(owner))?.balanceCny).toBe(before);
   });

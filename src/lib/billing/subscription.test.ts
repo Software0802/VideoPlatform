@@ -26,6 +26,7 @@ let applyBalanceChange: typeof import("@/lib/billing/ledger").applyBalanceChange
 let ledgerFilePath: typeof import("@/lib/billing/ledger").ledgerFilePath;
 let writeUser: typeof import("@/lib/users/store").writeUser;
 let readUser: typeof import("@/lib/users/store").readUser;
+let userFilePath: typeof import("@/lib/users/store").userFilePath;
 let writeJob: typeof import("@/lib/jobs/store").writeJob;
 
 beforeAll(async () => {
@@ -41,7 +42,7 @@ beforeAll(async () => {
     "./subscription"
   ));
   ({ applyBalanceChange, ledgerFilePath } = await import("@/lib/billing/ledger"));
-  ({ writeUser, readUser } = await import("@/lib/users/store"));
+  ({ writeUser, readUser, userFilePath } = await import("@/lib/users/store"));
   ({ writeJob } = await import("@/lib/jobs/store"));
 });
 
@@ -448,6 +449,84 @@ describe("purchaseSubscription 可购额算在途预留", () => {
     expect((await readUser(id))?.subscription).toBeUndefined();
   });
 
+  it("准入已判余额但未写任务时，购买先等 admission 再拿 user 锁，落盘后按预留拒绝", async () => {
+    const { withAdmissionLock } = await import("@/lib/jobs/admission");
+    const { withUserLock } = await import("@/lib/users/lock");
+    const { assertBalance, loadBalanceUsage } = await import("./admission");
+    const { readJob } = await import("@/lib/jobs/store");
+    const id = userId("res3");
+    await seedUser(id, 25);
+    const before = { user: await readUser(id), ledger: await ledgerLines(id) };
+    const job = inFlightJob(id, 10, "res3");
+    const balanceChecked = Promise.withResolvers<void>();
+    const allowWrite = Promise.withResolvers<void>();
+    let purchaseSettled = false;
+    let purchase: Promise<PromiseSettledResult<Awaited<ReturnType<typeof buy>>>[]> | undefined;
+    let userProbe: Promise<PromiseSettledResult<typeof before>[]> | undefined;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const admission = Promise.allSettled([
+      withAdmissionLock(async () => {
+        try {
+          await assertBalance(id, job.priceCny);
+          balanceChecked.resolve();
+          await allowWrite.promise;
+          return await writeJob(job);
+        } catch (error) {
+          balanceChecked.reject(error);
+          throw error;
+        }
+      }),
+    ]);
+
+    try {
+      await balanceChecked.promise;
+      expect(await readJob(job.id)).toBeNull();
+      purchase = Promise.allSettled([buy(id, "standard", "monthly", "key-res3")]).then((results) => {
+        purchaseSettled = true;
+        return results;
+      });
+      userProbe = Promise.allSettled([
+        withUserLock(async () => ({ user: await readUser(id), ledger: await ledgerLines(id) })),
+      ]);
+      const probe = await Promise.race([
+        userProbe,
+        new Promise<never>((_, reject) => {
+          watchdog = setTimeout(() => {
+            reject(new Error("购买等待 admission 时不得占住 user 锁"));
+          }, 2000);
+        }),
+      ]);
+      clearTimeout(watchdog);
+      expect.soft(purchaseSettled, "任务尚未落盘、admission 尚未释放，购买不能完成").toBe(false);
+      expect.soft(probe).toEqual([{ status: "fulfilled", value: before }]);
+      expect(await readJob(job.id)).toBeNull();
+
+      allowWrite.resolve();
+      expect(await admission).toMatchObject([
+        { status: "fulfilled", value: { id: job.id, ownerId: id, status: "pending", priceCny: 10 } },
+      ]);
+      expect(await readJob(job.id)).toMatchObject({ ownerId: id, status: "pending", priceCny: 10 });
+      expect.soft(await purchase).toMatchObject([
+        {
+          status: "rejected",
+          reason: {
+            status: 402,
+            code: "insufficient_balance",
+            needCny: STANDARD_MONTHLY,
+            purchasableCny: 15,
+          },
+        },
+      ]);
+      expect.soft({ user: await readUser(id), ledger: await ledgerLines(id) }).toEqual(before);
+      expect((await loadBalanceUsage(id)).reservedCny).toBe(10);
+    } finally {
+      balanceChecked.resolve();
+      allowWrite.resolve();
+      clearTimeout(watchdog);
+      await Promise.allSettled([admission, purchase, userProbe]);
+    }
+  });
+
   it("扣掉预留之后还够就照常买得下来", async () => {
     const id = userId("res2");
     await seedUser(id, 30);
@@ -491,21 +570,32 @@ describe("年付的期数", () => {
 });
 
 describe("settleSubscription 补发本期会员积分", () => {
-  it("入账行丢了（崩在扣款与入账之间）时补发，不必等到下一期", async () => {
+  it("本期积分那笔 op 没提交（崩在写订阅与发积分之间）时补发，不必等到下一期", async () => {
     const id = userId("fix1");
     await seedUser(id, 100);
     const { subscription } = await buy(id, "standard", "monthly");
 
-    // 造出那个崩溃状态：会员池是空的，流水里也没有本期的入账行。
-    const rows = await ledgerLines(id);
-    const kept = rows.filter((l) => l.ref !== `sub:${subscription.id}:p0`);
-    expect(kept).toHaveLength(rows.length - 1);
-    await writeFile(ledgerFilePath(id), kept.map((l) => JSON.stringify(l)).join("\n") + "\n", "utf8");
-    const user = await readUser(id);
-    await writeUser({ ...user!, memberCreditsCny: 0 });
+    // 造出那个崩溃状态：扣款与 subscription 都已落盘，唯独 `sub:<id>:p0` 那笔
+    // 入账 op 从没提交——新模型下流水行与余额同一次原子写进 user.json，「流水行丢了
+    // 而余额变了」这种状态构造不出来，等价物就是「op 没写上去」。直接改 user.json
+    // （绕过 writeUser 的链式校验）再把派生的导出文件删掉：它由 ops 重建，不是事实源。
+    const file = userFilePath(id);
+    const raw = JSON.parse(await readFile(file, "utf8"));
+    const kept = raw.billing.operations.filter(
+      (op: { input?: { entry?: { ref?: string } } }) =>
+        op.input?.entry?.ref !== `sub:${subscription.id}:p0`,
+    );
+    expect(kept).toHaveLength(raw.billing.operations.length - 1);
+    kept.forEach((op: { seq: number }, i: number) => {
+      op.seq = i + 1;
+    });
+    raw.billing.operations = kept;
+    raw.memberCreditsCny = 0;
+    await writeFile(file, JSON.stringify(raw, null, 2), "utf8");
+    await rm(ledgerFilePath(id), { force: true });
 
     const settled = await settleSubscription(id);
-    // 本期额度补回来了（当天的日积分早在购买后的第一次结算里发过，这里不重复）。
+    // 本期额度补回来了（第一次结算同时发了当天的日积分，所以是比面值多 0.6）。
     expect(settled?.memberCreditsCny).toBeGreaterThanOrEqual(STANDARD_PERIOD_CNY);
     expect(
       (await ledgerLines(id)).filter((l) => l.ref === `sub:${subscription.id}:p0`),

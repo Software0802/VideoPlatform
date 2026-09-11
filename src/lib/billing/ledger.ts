@@ -1,17 +1,27 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/lib/env";
 import { withUserLock } from "@/lib/users/lock";
-import { subscriptionActive, type UserRecord } from "@/lib/users/schema";
+import { type UserRecord } from "@/lib/users/schema";
 import { assertUserId, readUser, writeUser } from "@/lib/users/store";
+import { splitAcrossPools as splitShared, snapshotRows, parseLegacy } from "./protocol.mjs";
+import { commitChange, checkExport, rebuildExport, readText } from "./file-ledger.mjs";
+import { ProviderHttpError } from "@/lib/providers/types";
 
 /**
  * 余额变动与流水（方案 §3.2）。
  *
- * `user.json` 的 `balanceCny` 是余额的事实源，`data/ledger/<userId>.jsonl` 是**只增**
- * 的流水，供对账用——它不参与任何判定，所以一行写失败也不会让余额本身错，但反过来
- * 余额写成功、流水没写上，对账就少一条，因此顺序是「先改余额、再追加流水」，且流水
- * 里记的是改完之后的余额，任何一行都能自证。
+ * `user.json` 是资金事实的唯一提交点：`balanceCny` / `memberCreditsCny` 与产生它们的
+ * 流水（`billing.operations`）在**同一次原子写**里落盘，「余额变了、流水没记上」这种
+ * 状态从此不可能存在——这正是 R01 要堵的窗口。`data/ledger/<userId>.jsonl` 降级为
+ * **派生导出物**（由 `billing.legacyLedger` + `operations` 重建），供对账与
+ * `/api/me/ledger` 展示用；它与快照不一致（被手改 / 截断成非前缀）时读取与提交都
+ * 失败关闭（`billing_export_corrupt`），只缺不损时自动重建。
+ *
+ * 协议细节（快照校验、链式重放、幂等键、人工核对迁移）在 `protocol.mjs` /
+ * `file-ledger.mjs`（.mjs 因为管理 CLI 也要用，不能 import TS）。存量账号没有
+ * `billing` 字段：可读旧流水，但一切余额变动报 `billing_migration_required`，须先跑
+ * `scripts/migrate-billing.mjs --offline --baseline <已核对基线.json>`。
  *
  * 2026-09-06 起余额有**两个池**（方案 §3.2）：`balanceCny` 是已购池（礼品码 / 管理员
  * 充值），`memberCreditsCny` 是订阅送的会员积分池（期末清零）。扣款默认先扣会员池、
@@ -89,21 +99,8 @@ export function splitAcrossPools(
   delta: number,
   pool?: BalancePool,
 ): { balanceCny: number; memberCreditsCny: number; memberCny: number } {
-  const member = Number.isFinite(memberCreditsCny) ? Math.max(0, memberCreditsCny) : 0;
-  if (delta >= 0) {
-    return pool === "member"
-      ? { balanceCny: round2(balanceCny), memberCreditsCny: round2(member + delta), memberCny: 0 }
-      : { balanceCny: round2(balanceCny + delta), memberCreditsCny: round2(member), memberCny: 0 };
-  }
-  const need = -delta;
-  const fromMember = pool === "purchased" ? 0 : round2(Math.min(member, need));
   // `pool: "member"` 时差额直接抹掉（不转嫁给已购池）：它的用途只有「把会员池清零」。
-  const fromPurchased = pool === "member" ? 0 : round2(need - fromMember);
-  return {
-    balanceCny: round2(balanceCny - fromPurchased),
-    memberCreditsCny: round2(member - fromMember),
-    memberCny: fromMember,
-  };
+  return splitShared(balanceCny, memberCreditsCny, delta, pool);
 }
 
 export function ledgerDir(): string {
@@ -131,8 +128,9 @@ export function ledgerFilePath(userId: string): string {
  * 流水里而不是任务记录里，是因为流水是只增的：任务 json 可能还没落盘，流水已经
  * 是既成事实。
  *
- * ⚠️ 落盘格式与 `scripts/grant-balance.mjs` 逐字一致（.mjs 不能 import TS），
- * 改这里必须同步改那边。
+ * 重放必须是**同键同输入**：同一个幂等键（jobId / giftCode / ref）撞上一条输入不同
+ * 的操作会抛 `billing_idempotency_conflict`（409），而不是默默跳过——键被两个不同
+ * 语义的调用复用是数据事故，必须浮出来。
  */
 export async function applyBalanceChange(
   userId: string,
@@ -162,37 +160,20 @@ export async function applyBalanceChangeLocked(
   const user = await readUser(userId);
   if (!user) throw new Error(`用户不存在: ${userId}`);
   // 幂等去重必须在锁内：出了锁，两个并发的同 jobId 扣款会一起读到「还没扣过」。
-  if (entry.kind === "charge" && entry.jobId && (await hasChargeFor(userId, entry.jobId))) {
-    return user;
-  }
   // 同理，一张礼品码在一个人的流水里只入账一次。
-  if (entry.kind === "grant" && entry.giftCode && (await hasGiftGrantFor(userId, entry.giftCode))) {
-    return user;
-  }
   // 通用幂等键：同 kind + 同 ref 只记一次。
-  if (entry.ref && (await hasEntryFor(userId, entry.kind, entry.ref))) {
-    return user;
+  try {
+    return await commitChange(user, { delta, entry, options }, {
+      ledgerFile: ledgerFilePath(userId),
+      write: writeUser,
+      exportLedger: (record: UserRecord) => appendLedger(userId, record),
+    });
+  } catch (error) {
+    if (error instanceof Error && "status" in error && error.status === 409 && "code" in error) {
+      throw new ProviderHttpError(409, String(error.code), error.message);
+    }
+    throw error;
   }
-  const split = splitAcrossPools(
-    user.balanceCny,
-    user.memberCreditsCny,
-    delta,
-    poolFor(user, delta, options.pool),
-  );
-  const balanceCny = split.balanceCny;
-  const next = await writeUser({ ...user, balanceCny, memberCreditsCny: split.memberCreditsCny });
-  await appendLedger(userId, {
-    at: new Date().toISOString(),
-    kind: entry.kind,
-    amountCny: round2(entry.amountCny),
-    balanceAfterCny: balanceCny,
-    ...(entry.jobId ? { jobId: entry.jobId } : {}),
-    ...(entry.giftCode ? { giftCode: entry.giftCode } : {}),
-    ...(entry.ref ? { ref: entry.ref } : {}),
-    ...(split.memberCny > 0 ? { memberCny: split.memberCny } : {}),
-    ...(entry.note ? { note: entry.note } : {}),
-  });
-  return next;
 }
 
 /**
@@ -207,45 +188,59 @@ export async function applyBalanceChangeLocked(
  * 显式的 `pool` 一律原样放行：`"member"` 正是清零 / 重置那条路（过期时更要能用），
  * `"purchased"` 是订阅购买的硬约束。
  */
-function poolFor(user: UserRecord, delta: number, pool: BalancePool | undefined): BalancePool | undefined {
-  if (pool !== undefined || delta >= 0) return pool;
-  return subscriptionActive(user) ? pool : "purchased";
+async function readDecisionRows(userId: string): Promise<LedgerEntry[]> {
+  const user = await readUser(userId);
+  if (user?.billing) {
+    await checkExport(user, ledgerFilePath(userId));
+    return snapshotRows(user);
+  }
+  return parseLegacy((await readText(ledgerFilePath(userId), true)) ?? "");
 }
 
 /** 通用幂等键的判据：这个人的流水里是否已有同 `kind` 同 `ref` 的一行。 */
 export async function hasEntryFor(userId: string, kind: LedgerKind, ref: string): Promise<boolean> {
-  const rows = await readLedgerRows(userId);
+  const rows = await readDecisionRows(userId);
   return rows.some((row) => row.kind === kind && row.ref === ref);
 }
 
 /**
  * 这个用户的流水里是否已经有这条任务的扣款行。
  *
- * 只读一遍 jsonl 全量扫：流水是每人一个文件、一次任务一行，内测规模下比维护一份
- * 索引可靠得多——而且它就是对账时人眼看的那份东西，判据和证据是同一个。
- * 坏行（半截写入 / 手工编辑）跳过而不是抛错：一行读不懂不该让扣款失败。
+ * 已迁移账号读 `user.json` 里的 billing 快照（顺带核对导出文件没被动过），未迁移的
+ * 旧账号退回全量扫 jsonl——流水每人一份、一次任务一行，内测规模下比维护一份索引
+ * 可靠得多，而且它就是对账时人眼看的那份东西，判据和证据是同一个。
  *
  * 无锁读。`applyBalanceChangeLocked` 在 `withUserLock` 里调它，外部调用（测试、对账）
  * 拿到的是当下快照。
  */
 export async function hasChargeFor(userId: string, jobId: string): Promise<boolean> {
-  const rows = await readLedgerRows(userId);
+  const rows = await readDecisionRows(userId);
   return rows.some((row) => row.kind === "charge" && row.jobId === jobId);
 }
 
 /** 同款判据，用于礼品码：这个人的流水里是否已经有这张码的入账行。 */
 export async function hasGiftGrantFor(userId: string, giftCode: string): Promise<boolean> {
-  const rows = await readLedgerRows(userId);
+  const rows = await readDecisionRows(userId);
   return rows.some((row) => row.kind === "grant" && row.giftCode === giftCode);
 }
 
 /**
- * 逐行读出流水，保持文件顺序（= 时间顺序，因为它只增不改）。
+ * 读出全量流水，保持时间顺序。
  *
- * 坏行（半截写入 / 手工编辑）跳过而不是抛错：一行读不懂不该让扣款或对账页整个失败。
- * 没有文件 = 这个人一分钱都没动过，返回空。
+ * 已迁移账号：在用户锁里核对并重建导出文件（`rebuildExport`），然后返回快照行——
+ * 导出物与快照对不上时抛 `billing_export_corrupt`，不做「坏行跳过」。
+ * 未迁移账号：退回旧路径逐行读 jsonl，坏行跳过、没有文件返回空。
  */
 async function readLedgerRows(userId: string): Promise<Partial<LedgerEntry>[]> {
+  const user = await readUser(userId);
+  if (user?.billing) {
+    return withUserLock(async () => {
+      const current = await readUser(userId);
+      if (!current?.billing) throw new Error("billing_snapshot_missing");
+      await rebuildExport(current, ledgerFilePath(userId));
+      return snapshotRows(current);
+    });
+  }
   let raw: string;
   try {
     raw = await readFile(ledgerFilePath(userId), "utf8");
@@ -287,8 +282,9 @@ export type LedgerPage = {
 };
 
 /**
- * 读一页流水（方案 §1.7「积分使用详情」）。只读 jsonl，不加锁——流水只增不改，
- * 读到的永远是一份自洽的快照，最多漏掉刚追加的一行。
+ * 读一页流水（方案 §1.7「积分使用详情」）。已迁移账号走 billing 快照（用户锁内
+ * 顺带自愈导出文件），未迁移账号读 jsonl——流水只增不改，读到的永远是一份自洽的
+ * 快照，最多漏掉刚追加的一行。
  *
  * 排序以 `at` 为准、同刻按文件里的先后（后写的更新）兜底：文件本身就是时间序，
  * 只有系统时钟回拨才会让两者不一致，这时以 `at` 为准更符合用户看到的东西。
@@ -350,13 +346,7 @@ function toEntry(row: Partial<LedgerEntry>): LedgerEntry | null {
   };
 }
 
-async function appendLedger(userId: string, line: LedgerEntry): Promise<void> {
-  const file = ledgerFilePath(userId);
-  await mkdir(path.dirname(file), { recursive: true });
-  // 一行一条 JSON，追加写：并发只在锁内发生，单行 append 也不会把两条写串。
-  await appendFile(file, `${JSON.stringify(line)}\n`, "utf8");
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+async function appendLedger(userId: string, record: UserRecord): Promise<void> {
+  // jsonl 不再是追加写：它是 billing 快照的导出物，每次整体重建（原子 rename）。
+  await rebuildExport(record, ledgerFilePath(userId));
 }

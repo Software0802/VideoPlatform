@@ -4,6 +4,7 @@ import path from "node:path";
 import { dataDir } from "@/lib/env";
 import { log } from "@/lib/log";
 import { writeJsonAtomic } from "@/lib/storage/atomic-json";
+import { emptyBilling, validateSnapshot, validateTransition } from "@/lib/billing/protocol.mjs";
 import {
   USER_ID_RE,
   normalizeEmail,
@@ -40,14 +41,21 @@ export function newUserId(): string {
 
 export async function readUser(id: string): Promise<UserRecord | null> {
   if (!USER_ID_RE.test(id)) return null;
+  let raw: string;
   try {
-    const raw = await readFile(userFilePath(id), "utf8");
-    const parsed = userRecordSchema.safeParse(JSON.parse(raw));
-    if (!parsed.success || parsed.data.id !== id) return null;
-    return parsed.data;
-  } catch {
+    raw = await readFile(userFilePath(id), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const value = JSON.parse(raw);
+  const parsed = userRecordSchema.safeParse(value);
+  if (!parsed.success || parsed.data.id !== id) {
+    if (value && typeof value === "object" && "billing" in value) throw new Error("billing_user_corrupt");
     return null;
   }
+  if (parsed.data.billing !== undefined) validateSnapshot(parsed.data);
+  return parsed.data;
 }
 
 /**
@@ -57,8 +65,23 @@ export async function readUser(id: string): Promise<UserRecord | null> {
  * 不必知道每一个后加的字段该填什么。
  */
 export async function writeUser(user: UserRecordInput): Promise<UserRecord> {
+  const file = userFilePath(user.id);
+  let previous: UserRecord | undefined;
+  try {
+    previous = userRecordSchema.parse(JSON.parse(await readFile(file, "utf8")));
+    if (previous.id !== user.id) throw new Error("用户记录损坏");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   const record = userRecordSchema.parse({ ...user, updatedAt: new Date().toISOString() });
-  await writeJsonAtomic(userFilePath(record.id), record);
+  if (previous) {
+    if (previous.billing && user.billing === undefined) throw new Error("billing_history_rewrite");
+    validateTransition(previous, record);
+  } else {
+    if (record.billing === undefined) record.billing = emptyBilling(record);
+    validateSnapshot(record);
+  }
+  await writeJsonAtomic(file, record);
   return record;
 }
 

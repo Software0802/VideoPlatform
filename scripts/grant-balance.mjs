@@ -27,24 +27,40 @@
  * 余额、再用本脚本以 `adjust` 语义的金额补正。内测规模下「跑之前看一眼没人在用」
  * 就够了，不值得为它引入文件锁。
  */
-import { readFile, readdir, rename, rm, writeFile, appendFile, mkdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { commitChange, readText, writeJsonAtomic as writeShared } from "../src/lib/billing/file-ledger.mjs";
+import { validateUserRecord, validateTransition } from "../src/lib/billing/protocol.mjs";
+import { requireOffline } from "./lib/users-store.mjs";
 
 const USER_ID_RE = /^usr_[0-9a-f]{16}$/;
 
 function usage(message) {
   process.stderr.write(
-    `${message}\n用法: node scripts/grant-balance.mjs <邮箱> <金额（元，可为负）> [--note "说明"]\n`,
+    `${message}\n用法: node scripts/grant-balance.mjs <邮箱> <金额（元，可为负）> --offline [--ref "同笔操作固定键"] [--note "说明"]\n无 --ref 时每次调用均新增一笔，不能安全重跑未知结果的充值。\n`,
   );
   process.exit(1);
 }
 
 const argv = process.argv.slice(2);
-const positional = argv.filter((a) => !a.startsWith("--"));
-const noteIndex = argv.indexOf("--note");
-const note = noteIndex >= 0 ? argv[noteIndex + 1] : undefined;
-if (noteIndex >= 0 && (note === undefined || note.startsWith("--"))) usage("--note 需要一个值");
+requireOffline(argv, "node scripts/grant-balance.mjs <邮箱> <金额> --offline [--ref 固定键] [--note 说明]");
+const positional = [];
+const options = {};
+for (let i = 0; i < argv.length; i += 1) {
+  const arg = argv[i];
+  if (arg === "--offline") continue;
+  if (arg === "--note" || arg === "--ref") {
+    const value = argv[++i];
+    if (!value || value.startsWith("--") || options[arg] !== undefined) usage(`${arg} 需要唯一的非空值`);
+    options[arg] = value;
+  } else if (arg.startsWith("--")) usage(`未知参数: ${arg}`);
+  else positional.push(arg);
+}
+if (positional.length !== 2) usage("需要邮箱与金额两个位置参数");
+const note = options["--note"];
+const ref = options["--ref"];
+if (!ref) process.stderr.write("警告：未提供 --ref，本次调用新增一笔；结果不明时不要直接重跑。\n");
 
 const email = String(positional[0] ?? "").trim().toLowerCase();
 if (!email || !email.includes("@")) usage("第一个参数必须是邮箱");
@@ -59,13 +75,7 @@ const ledgerDir = path.join(dataDir, "ledger");
 
 /** 与服务端同款：临时文件 + rename 原子替换。 */
 async function writeJsonAtomic(destination, value) {
-  const temporary = `${destination}.${process.pid}.tmp`;
-  try {
-    await writeFile(temporary, JSON.stringify(value, null, 2), "utf8");
-    await rename(temporary, destination);
-  } finally {
-    await rm(temporary, { force: true }).catch(() => undefined);
-  }
+  await writeShared(destination, value);
 }
 
 async function readJson(file) {
@@ -109,30 +119,24 @@ if (!userId) {
 }
 
 const userFile = path.join(usersDir, userId, "user.json");
-const user = await readJson(userFile);
-if (!user || user.id !== userId) {
-  process.stderr.write(`用户记录损坏: ${userFile}\n`);
-  process.exit(1);
-}
-
-const round2 = (n) => Math.round(n * 100) / 100;
-const before = typeof user.balanceCny === "number" && Number.isFinite(user.balanceCny) ? user.balanceCny : 0;
-const after = round2(before + amount);
-
-await writeJsonAtomic(userFile, { ...user, balanceCny: after, updatedAt: new Date().toISOString() });
+const user = validateUserRecord(JSON.parse(await readText(userFile)), userId);
+if (user.email !== email) throw new Error("用户索引与邮箱不一致，请离线核对");
+const before = user.balanceCny;
 
 // 字段与顺序跟 ledger.ts 一模一样；kind 固定 grant（负数的人工纠正也记 grant 的反向额）。
-await mkdir(ledgerDir, { recursive: true });
-await appendFile(
-  path.join(ledgerDir, `${userId}.jsonl`),
-  `${JSON.stringify({
-    at: new Date().toISOString(),
-    kind: "grant",
-    amountCny: round2(amount),
-    balanceAfterCny: after,
-    ...(note ? { note } : {}),
-  })}\n`,
-  "utf8",
-);
+const next = await commitChange(user, {
+  delta: amount,
+  entry: { kind: "grant", amountCny: amount, ...(note ? { note } : {}), ...(ref ? { ref } : {}) },
+  options: { pool: "purchased" },
+}, {
+  ledgerFile: path.join(ledgerDir, `${userId}.jsonl`),
+  write: async (record) => {
+    const written = validateUserRecord({ ...record, updatedAt: new Date().toISOString() }, userId);
+    validateTransition(user, written);
+    await writeJsonAtomic(userFile, written);
+    return written;
+  },
+});
+const after = next.balanceCny;
 
 process.stdout.write(`${email} 余额: ¥${before.toFixed(2)} → ¥${after.toFixed(2)}\n`);

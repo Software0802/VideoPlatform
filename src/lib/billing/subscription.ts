@@ -8,6 +8,7 @@ import {
   planById,
   planPrices,
 } from "@/lib/billing/plans";
+import { withAdmissionLock } from "@/lib/jobs/admission";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { withUserLock } from "@/lib/users/lock";
 import type {
@@ -304,7 +305,7 @@ export async function purchaseSubscription(
   cycle: SubscriptionCycle,
   idempotencyKey: string,
 ): Promise<SubscriptionPurchase> {
-  return withUserLock(async () => {
+  return withAdmissionLock(() => withUserLock(async () => {
     const now = new Date();
     const id = subscriptionIdFor(idempotencyKey);
     const ref = `sub:${idempotencyKey}`;
@@ -390,7 +391,7 @@ export async function purchaseSubscription(
       );
     }
     return { user, subscription, paidCny: priceCny, replay: false };
-  });
+  }));
 }
 
 /** 会员池清零：池子空着就什么都不做（也不记一行「+0」的流水）。 */

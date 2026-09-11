@@ -16,7 +16,9 @@
  * 一眼没人在用」就够了。
  */
 import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
-import { readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { writeJsonAtomic as writeShared, readText } from "../../src/lib/billing/file-ledger.mjs";
+import { validateUserRecord, validateTransition } from "../../src/lib/billing/protocol.mjs";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
@@ -49,13 +51,7 @@ export async function readJson(file) {
 
 /** 与服务端同款：临时文件 + rename 原子替换。 */
 export async function writeJsonAtomic(destination, value) {
-  const temporary = `${destination}.${process.pid}.tmp`;
-  try {
-    await writeFile(temporary, JSON.stringify(value, null, 2), "utf8");
-    await rename(temporary, destination);
-  } finally {
-    await rm(temporary, { force: true }).catch(() => undefined);
-  }
+  await writeShared(destination, value);
 }
 
 export function normalizeEmail(raw) {
@@ -160,11 +156,12 @@ export function generatePassword(length = 12) {
  */
 export async function updateUser(usersDir, userId, mutate) {
   const file = userFileOf(usersDir, userId);
-  const user = await readJson(file);
-  if (!user || user.id !== userId) throw new Error(`用户记录损坏: ${file}`);
-  const next = mutate({ ...user });
+  const user = validateUserRecord(JSON.parse(await readText(file)), userId);
+  const next = mutate(structuredClone(user));
   if (!next) return null;
-  const written = { ...next, updatedAt: new Date().toISOString() };
+  const written = validateUserRecord({ ...next, updatedAt: new Date().toISOString() }, userId);
+  if (user.billing && next.billing === undefined) throw new Error("billing_history_rewrite");
+  validateTransition(user, written);
   await writeJsonAtomic(file, written);
   return written;
 }
@@ -184,6 +181,10 @@ export function bumpEpoch(user) {
 export function usage(message, howto) {
   process.stderr.write(`${message}\n用法: ${howto}\n`);
   process.exit(1);
+}
+
+export function requireOffline(argv, howto) {
+  if (!argv.includes("--offline")) usage("必须以 --offline 声明服务已停止，全部写 CLI 串行执行；这不是跨进程锁，也不自动检测停服", howto);
 }
 
 /** `--flag value` 取值；没有这个 flag 返回 undefined，有 flag 没值就报用法错误。 */

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { billingSchema } from "@/lib/billing/protocol.mjs";
 
 /** `usr_` + 8 random bytes, mirroring the `up_` upload id shape. */
 export const USER_ID_RE = /^usr_[0-9a-f]{16}$/;
@@ -131,7 +132,8 @@ export const userRecordSchema = z.object({
   inviteCode: z.string().regex(INVITE_CODE_RE).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
-});
+  billing: billingSchema.optional(),
+}).passthrough();
 export type UserRecord = z.infer<typeof userRecordSchema>;
 /**
  * 写入侧的形状：有默认值的字段（`balanceCny`）可以不写，由 `writeUser` 的 parse 补上。

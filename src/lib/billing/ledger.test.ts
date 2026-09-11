@@ -1,7 +1,7 @@
-import { access, appendFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { UserRecord } from "@/lib/users/schema";
 
 /**
@@ -357,7 +357,7 @@ describe("hasChargeFor", () => {
     expect(await hasChargeFor(id, "job_other")).toBe(false);
   });
 
-  it("ignores non-charge rows carrying the same jobId, and survives a corrupt line", async () => {
+  it("ignores non-charge rows carrying the same jobId, but rejects a charge after ledger corruption", async () => {
     const id = userId("b");
     await seedUser(id, 10);
     await applyBalanceChange(id, 3, { kind: "grant", amountCny: 3, jobId: "job_g", note: "补偿" });
@@ -366,34 +366,19 @@ describe("hasChargeFor", () => {
     // A half-written or hand-edited line must not make a charge throw — skip it and
     // keep reading, or a single bad byte would block every future deduction.
     await appendFile(ledgerFilePath(id), "{not json\n", "utf8");
-    await applyBalanceChange(id, -1, { kind: "charge", amountCny: -1, jobId: "job_g" });
-    expect(await hasChargeFor(id, "job_g")).toBe(true);
-    expect((await readUser(id))?.balanceCny).toBe(12);
+    await expect(
+      applyBalanceChange(id, -1, { kind: "charge", amountCny: -1, jobId: "job_g" }),
+    ).rejects.toThrow();
+    expect((await readUser(id))?.balanceCny).toBe(13);
   });
 });
 
 /**
- * 契约 A2：`readLedger(userId, { before?, limit? })` 倒序分页，坏行跳过，`nextBefore`。
- * 直接手写 jsonl 行（而不是走 `applyBalanceChange`）以拿到可控的 `at` 时间戳，
- * 分页边界才能被稳定断言，不依赖真实时钟先后。
+ * 契约 A2：`readLedger(userId, { before?, limit? })` 倒序分页，`nextBefore`。
+ * 落账一律走 `applyBalanceChange`（流水行由 billing ops 导出，不再允许手写进
+ * jsonl），可控的 `at` 用 `vi.useFakeTimers` 钉住，分页边界才能稳定断言。
  */
 describe("readLedger", () => {
-  async function seedLine(
-    id: string,
-    entry: {
-      at: string;
-      kind: "grant" | "charge" | "adjust";
-      amountCny: number;
-      balanceAfterCny: number;
-      jobId?: string;
-      giftCode?: string;
-    },
-  ) {
-    const file = ledgerFilePath(id);
-    await mkdir(path.dirname(file), { recursive: true });
-    await appendFile(file, `${JSON.stringify(entry)}\n`, "utf8");
-  }
-
   it("returns entries newest-first with a nextBefore cursor mid-list, and none on the final page", async () => {
     // "e" — every single-char tag through "d" is already claimed by an earlier describe
     // block sharing this file's DATA_DIR (applyBalanceChange uses "1".."9", hasChargeFor
@@ -406,8 +391,15 @@ describe("readLedger", () => {
       "2026-01-02T00:00:00.000Z",
       "2026-01-03T00:00:00.000Z",
     ];
-    for (const [i, at] of times.entries()) {
-      await seedLine(id, { at, kind: "grant", amountCny: 1, balanceAfterCny: i + 1 });
+    // 流水行只能由 billing ops 提交产生，不能再往导出文件里手写；三行的 at 用假时钟钉住。
+    vi.useFakeTimers();
+    try {
+      for (const [i, at] of times.entries()) {
+        vi.setSystemTime(new Date(at));
+        await applyBalanceChange(id, 1, { kind: "grant", amountCny: 1, note: `g${i}` });
+      }
+    } finally {
+      vi.useRealTimers();
     }
 
     const first = await readLedger(id, { limit: 2 });
@@ -419,38 +411,31 @@ describe("readLedger", () => {
     expect(second.nextBefore).toBeUndefined(); // reached the oldest row
   });
 
-  it("filters by kind before paginating, and silently skips a corrupt line", async () => {
+  it("filters by kind before paginating, and a hand-edited export line fails closed", async () => {
     const id = userId("e2");
     await seedUser(id, 0);
-    await seedLine(id, { at: "2026-02-01T00:00:00.000Z", kind: "grant", amountCny: 5, balanceAfterCny: 5 });
-    await seedLine(id, {
-      at: "2026-02-02T00:00:00.000Z",
-      kind: "charge",
-      amountCny: -2,
-      balanceAfterCny: 3,
-      jobId: "job_1",
-    });
-    // A half-written or hand-edited line must not throw and must not count as a row.
-    await appendFile(ledgerFilePath(id), "{not json\n", "utf8");
+    await applyBalanceChange(id, 5, { kind: "grant", amountCny: 5 });
+    await applyBalanceChange(id, -2, { kind: "charge", amountCny: -2, jobId: "job_1" });
 
     const grantsOnly = await readLedger(id, { kind: "grant" });
     expect(grantsOnly.entries).toHaveLength(1);
     expect(grantsOnly.entries[0]).toMatchObject({ kind: "grant", amountCny: 5 });
 
     const everything = await readLedger(id);
-    expect(everything.entries).toHaveLength(2); // the corrupt line contributed nothing
+    expect(everything.entries).toHaveLength(2);
+
+    // jsonl 文件现在是由 user.json 里的 billing ops 重建的**导出物**，不再是事实源：
+    // 一行塞进来但快照里没有的手工行 = 导出与事实源对不上，读取按损坏失败关闭，
+    // 而不是默默跳过（流水现在参与幂等判定，「读不懂就跳」会让一笔扣款凭空消失）。
+    await appendFile(ledgerFilePath(id), "{not json\n", "utf8");
+    await expect(readLedger(id)).rejects.toThrow("billing_export_corrupt");
   });
 
   it("clamps limit into [1, LEDGER_PAGE_MAX] instead of returning zero rows or throwing", async () => {
     const id = userId("e3");
     await seedUser(id, 0);
     for (let i = 0; i < 3; i += 1) {
-      await seedLine(id, {
-        at: `2026-03-0${i + 1}T00:00:00.000Z`,
-        kind: "grant",
-        amountCny: 1,
-        balanceAfterCny: i + 1,
-      });
+      await applyBalanceChange(id, 1, { kind: "grant", amountCny: 1, note: `g${i}` });
     }
 
     const zeroLimit = await readLedger(id, { limit: 0 });

@@ -185,10 +185,13 @@ describe("redeemGiftCode — crash recovery (credited but creditedAt never lande
     const { writeGiftCode } = await import("./gift-codes");
     const { applyBalanceChange } = await import("@/lib/billing/ledger");
     await writeGiftCode({ ...gift, usedBy: id, usedAt: new Date().toISOString() });
+    // 输入必须与 redeemGiftCode 自己的入账调用逐字相同（含 note）：新协议下同 giftCode
+    // 但输入不同的重放会判 billing_idempotency_conflict，而不是被当重复入账跳掉。
     await applyBalanceChange(id, gift.amountCny, {
       kind: "grant",
       amountCny: gift.amountCny,
       giftCode: gift.code,
+      note: `礼品码 ${gift.code}`,
     });
     expect((await readUser(id))?.balanceCny).toBe(40); // the pre-crash credit already landed
 

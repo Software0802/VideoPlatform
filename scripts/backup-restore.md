@@ -105,27 +105,30 @@ ls /opt/genius/data/users | head
 | 恢复后登录提示密码错 | 恢复的包与当前 `LUMEN_SESSION_SECRET` 无关（密码是 scrypt 存在 user.json 里），先确认恢复的是不是同一环境的包 |
 | 恢复后老作品打不开 | 预期行为，见上文「恢复后的直接后果」——产物不在这份备份里 |
 
-## 已知限制：充值 CLI 与线上服务没有跨进程锁
+## 已知限制：管理 CLI 与线上服务没有跨进程锁
 
-`scripts/grant-balance.mjs` 是独立进程，拿不到服务端的 `withUserLock`（那把锁只在服务
-进程内串行）。两边改余额都是「读 `user.json` → 改 `balanceCny` → 临时文件 + rename
-原子替换」，所以**充值的同一瞬间若恰好有同一用户的扣款（任务成功结算）或改密，后写的
-那次会覆盖整份记录，丢一次写**：余额少扣 / 少充，或者刚改的密码被回退。单次写本身是
-原子的，不会写出半截 JSON；丢的是另一次写。
+`scripts/*.mjs` 是独立进程，拿不到服务端的 `withUserLock`（那把锁只在服务进程内
+串行）。所以改 `user.json` 的 CLI（`grant-balance.mjs` / `reset-password.mjs` /
+`disable-user.mjs`）一律要求 `--offline`：这是「服务已停止、CLI 串行执行」的显式
+声明，是纪律而不是锁——脚本自己不会检测服务有没有在跑。
 
-`data/ledger/<userId>.jsonl` 是只增追加，两次写都会留下行，所以流水不会丢——对账时它
-是可信的那一份。
+万一还是撞了写（CLI 与服务在同一瞬间改同一用户的 `user.json`）：单次写仍是原子的，
+不会写出半截 JSON；新资金模型下丢写的后果从「静默少一笔」变成「下一次资金提交时
+`billing_export_corrupt` 失败关闭」——服务写进快照的 op 被 CLI 的旧版整份覆盖后，
+导出文件里留着的那行流水就与快照对不上，后续扣款/入账全部拒绝直到人工核对。宁可
+拒付，不可错账。
 
 操作纪律：
 
-- 充值挑没人用的时候跑（内测规模下看一眼在线情况就够）；
-- **充值前后各核对一次**：`user.json` 的 `balanceCny` 是否等于 ledger 最后一行的
-  `balanceAfterCny`；
-- 对不上说明撞了写：按 ledger 从头累加算出应有余额，再用本脚本补一笔差额（`--note`
-  写明是纠正）。
+- **先 `systemctl stop genius`，再跑 `--offline` 的 CLI，完成后 `systemctl start`**；
+- 充值尽量带 `--ref` 固定幂等键：结果不明（超时、断线）时可直接重跑同一条命令，
+  不会重复入账；不带 `--ref` 的重跑会再充一笔；
+- 撞写后的核对口径变了：`ledger/<id>.jsonl` 是导出物不是事实源，以 `user.json`
+  里的 `billing.operations` 为准；确认丢写后按漏掉的 op 用 `grant-balance.mjs
+  --ref` 补一笔差额（`--note` 写明是纠正）。
 
 ```bash
-# 核对：余额 vs 流水最后一行
-cat /opt/genius/data/users/<userId>/user.json | grep balanceCny
+# 核对：余额 vs 快照链末端 / 导出文件最后一行
+cat /opt/genius/data/users/<userId>/user.json | grep -E 'balanceCny|memberCreditsCny'
 tail -3 /opt/genius/data/ledger/<userId>.jsonl
 ```

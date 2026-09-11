@@ -76,15 +76,27 @@ curl -sS http://127.0.0.1:3000/api/health
 
 ```bash
 # 封禁账号：写 disabled:true 并使当前所有会话立即失效
-node scripts/disable-user.mjs <邮箱>
+node scripts/disable-user.mjs <邮箱> --offline
 # 解封
-node scripts/disable-user.mjs <邮箱> --enable
+node scripts/disable-user.mjs <邮箱> --offline --enable
 
 # 管理员强制重置密码：生成随机口令打印到 stdout，并使该账号所有设备立即掉线
-node scripts/reset-password.mjs <邮箱>
+node scripts/reset-password.mjs <邮箱> --offline
 ```
 
-两个脚本都读 `DATA_DIR`（与服务端一致，未设为 `./data`），改的是同一份 `user.json` + `sessionEpoch`，不需要重启服务即可生效（`sessionEpoch` 在每次请求时都会校验）。`reset-password.mjs` 打印的新口令只应口头/密码管理器传递给用户，不要写进工单或聊天记录。
+两个脚本都读 `DATA_DIR`（与服务端一致，未设为 `./data`），改的是同一份 `user.json` + `sessionEpoch`。`--offline` 是必须显式给出的声明：服务已停止、全部管理 CLI 串行执行——它们拿不到服务端的 `withUserLock`，撞写会被 billing 链校验拦下失败关闭（见 `scripts/backup-restore.md`「已知限制」），所以要先 `systemctl stop genius` 再操作，完成后 `systemctl start genius`；`sessionEpoch` 在每次请求时校验，重启后旧的禁用/重置立即生效。`reset-password.mjs` 打印的新口令只应口头/密码管理器传递给用户，不要写进工单或聊天记录。
+
+## 充值与资金迁移
+
+```bash
+# 充值（金额可为负表示人工纠正）；--ref 给固定幂等键，结果不明时可安全重跑
+node scripts/grant-balance.mjs <邮箱> <金额> --offline [--ref "固定键"] [--note "说明"]
+
+# 存量账号迁入新资金格式（user.json 内嵌 billing 快照）：逐账号一份人工核对过的基线
+node scripts/migrate-billing.mjs --offline --baseline <已核对基线.json>
+```
+
+新版资金模型（`docs/design.md` §2d）下 `user.json` 是余额 + 流水的唯一提交点，`ledger/<id>.jsonl` 变成派生导出物。**部署含此模型的代码前必须先迁移所有存量账号**，否则它们的余额变动一律 409 `billing_migration_required`（新注册账号不受影响，首次写盘即自带快照）。基线 JSON 由管理员逐账号核对生成，字段含 `userId`、迁移前 `user.json` 与 `ledger/<id>.jsonl` 的 sha256、`opening` 期初两池余额、每条历史入账行的池归属 `grantPools`、`reviewedBy`/`evidence`；校验不过不会动任何字节，不支持 `--force`。
 
 ## 礼品码
 

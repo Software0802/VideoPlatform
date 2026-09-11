@@ -20,14 +20,16 @@ import {
   bumpEpoch,
   findUserIdByEmail,
   resolveDataDir,
+  requireOffline,
   updateUser,
   usage,
   usersDirOf,
 } from "./lib/users-store.mjs";
 
-const HOWTO = "node scripts/disable-user.mjs <邮箱> [--enable]";
+const HOWTO = "node scripts/disable-user.mjs <邮箱> --offline [--enable]";
 
 const argv = process.argv.slice(2);
+requireOffline(argv, HOWTO);
 const positional = argv.filter((a) => !a.startsWith("--"));
 const enable = argv.includes("--enable");
 const email = String(positional[0] ?? "").trim().toLowerCase();

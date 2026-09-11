@@ -209,9 +209,11 @@ flowchart TB
 
 **结算**(`src/lib/jobs/store.ts` 的 `updateJob`):在同一次写盘里,「非终态 → succeeded」且 `priceCny > 0` 且未结算(`billing.chargedAt` 为空)时,**先扣款、扣成功才盖 `chargedAt`**,再落盘。顺序保证任一时刻要么任务仍非终态(预留占着钱),要么余额已经减了,不留「预留已消失、余额还没减」的窗口。若扣款抛错,任务仍照常落终态(不能卡成「明明出片却显示进行中」),只是不盖 `chargedAt`;后续任意一次 `updateJob` 命中「succeeded 且无 chargedAt」会自动补扣。失败 / 取消 / 过期不扣钱,预留随终态消失。
 
-**幂等与流水**(`src/lib/billing/ledger.ts`):`applyBalanceChange(userId, delta, entry)` 在 `withUserLock`(与改密同一把进程内串行锁)里读改写 `user.json` 再追加一行 `data/ledger/<userId>.jsonl`。带 `jobId` 的 `charge` 幂等:锁内先扫一遍该用户流水,同一 `jobId` 已扣过就原样返回,不改余额、不追加流水——这是补扣不会变成重复扣款的唯一保障(判据放流水而非任务记录,因为流水只增、任务 json 可能还没落盘)。`hasChargeFor` 全量扫一遍 `.jsonl`,坏行跳过不抛错。
+**幂等与流水**(`src/lib/billing/ledger.ts` + `protocol.mjs` + `file-ledger.mjs`,工作区版本):`user.json` 是资金事实的唯一提交点——`balanceCny`/`memberCreditsCny` 与产生它们的流水(`billing.operations`,逐条带 seq/operationId/输入/前后余额的自校验链)在 `withUserLock` 内的**同一次原子写**落盘,「余额变了、流水没记上」的窗口因此不存在(修 R01)。`data/ledger/<userId>.jsonl` 降级为**派生导出物**,每次提交后整体重建(原子 rename);它与快照不一致(多出快照没有的行、或内容不是快照行集的前缀)时读取与提交都抛 `billing_export_corrupt` 失败关闭,文件缺失时自动重建。幂等判据不变(charge 的 `jobId`、grant 的 `giftCode`、通用 `kind+ref`),但重放必须**同键同输入**——同键撞不同输入抛 409 `billing_idempotency_conflict`,不再静默跳过。`hasChargeFor`/`hasEntryFor`/`hasGiftGrantFor` 对已迁移账号读快照,未迁移账号退回扫 jsonl(严格解析,坏行抛错而非跳过——判定路径不能漏行)。`readUser`/`writeUser` 对带 `billing` 的记录做快照校验与链式转移校验(历史不可改写、一次最多追加一条 op、余额必须与链末端一致)。
 
-**充值** `scripts/grant-balance.mjs <邮箱> <金额> [--note "..."]`:管理员 CLI,读改写 `user.json`(原子 rename)+ 追加同格式流水行,金额可为负(纠正)。⚠️ **已知限制:与线上服务无跨进程锁**——CLI 与 `withUserLock` 各自串行,互不感知,若充值与该用户的扣款/改密在同一瞬间发生,后写的会覆盖先写的整份 `user.json`(流水两行都在,不会丢);缓解办法是操作前后核对 `data/ledger/<userId>.jsonl` 与 `balanceCny` 是否一致,内测规模下不值得为它引入文件锁。
+**迁移**:存量账号 `user.json` 没有 `billing` 字段——读旧流水正常,但一切余额变动报 409 `billing_migration_required`(失败关闭,不会自动迁移)。迁移须停服后跑 `scripts/migrate-billing.mjs --offline --baseline <基线.json>`:基线由人工核对生成,含 `userId`、迁移前 `user.json` 与 `ledger/<id>.jsonl` 的 sha256、`reviewedBy`/`evidence`(谁在什么证据下核对过)、`opening` 期初余额与每条历史入账行属于哪个池(`grantPools`);校验通过才把旧流水原文封存进 `billing.legacyLedger` 并记账进入新格式。新格式不自动回滚到不兼容旧版本。
+
+**充值** `scripts/grant-balance.mjs <邮箱> <金额> --offline [--ref "固定幂等键"] [--note "..."]`:管理员 CLI,走与服务端同一个 `commitChange`(校验快照 → 追加 op → 原子写 user.json → 重建导出),金额可为负(纠正)。`--offline` 是显式声明「服务已停、CLI 串行执行」——仍是纪律而非跨进程锁;`--ref` 给这笔操作一个固定幂等键,结果不明时可安全重跑,缺省时打印警告并每次新增一笔。`reset-password.mjs`/`disable-user.mjs` 同样要求 `--offline`。
 
 **API 面**:`GET /api/me` 新增 `balance:{balanceCny,reservedCny,availableCny}` 与 `prices`(整张售价表,供前端本地算「本次约 ¥x」而不必二次请求)。`POST /api/jobs`/`retry` 余额不足返回 `402 insufficient_balance`。
 
@@ -279,7 +281,7 @@ flowchart TB
 | `GET /api/share/:token` / `GET /api/share/:token/media`(2026-09-06 深夜) | 公开接口,不校验会话;`media` 响应 `public, max-age=3600`;见 §2g |
 | `GET /api/models`(2026-09-06 夜,阶段 A) | 需登录;返回 `availableProducts()` 的白名单字段 + `samplePriceCny`(§2f),不含 `provider`/上游模型名 |
 | `POST /api/uploads/from-job`(阶段 A) | `{ jobId, role }`;把调用者自己一条 `succeeded` 且未清理的图片任务产物复制成一次新上传(走与手动上传相同的 `preprocessImage`),`role ∈ start|last|reference`;别人的/不存在的/非图片/已清理的任务分别 404/400 |
-| `GET /api/me/ledger`(阶段 A) | `?before=&limit=&kind=`;读 `data/ledger/<userId>.jsonl` 倒序游标分页,`limit≤200`,坏行跳过 |
+| `GET /api/me/ledger`(阶段 A) | `?before=&limit=&kind=`;倒序游标分页,`limit≤200`;已迁移账号读 billing 快照(顺带自愈导出文件),未迁移账号读 jsonl、坏行跳过 |
 | `POST /api/me/redeem`(阶段 A) | `{ code }`;礼品码认领 + 入账同一临界区(§5);成功 `{ amountCny, balance }`;404 无效 / 409 已用 / 429(IP+用户各一桶,5 次/分钟) |
 | `GET/POST /api/subscription`(2026-09-07,§2i) | `GET` 返回当前订阅状态(先惰性结算);`POST { planId, cycle }` 购买/续订,只扣已购池,`idempotencyKey` 必填;402 `insufficient_balance`(带 `purchasableCny`)/409 `subscription_active` |
 | `GET/POST /api/agent/sessions`、`GET/PATCH/DELETE /api/agent/sessions/:id`、`POST /api/agent/sessions/:id/messages`、`GET /api/agent/skills`(2026-09-07,§2h) | 会话增删改查与发消息(消息 20 次/分钟/用户);LLM 不可用时消息接口 503 `agent_unavailable` |
@@ -311,10 +313,14 @@ data/
   idempotency/{ownerId,clientKey 的 sha256}.json
   users/
     index.json                         # email → usr_xxx,派生缓存,可从下方目录重建
-    usr_xxx/user.json                   # 事实源:email、密码哈希、disabled、sessionEpoch、balanceCny(2026-09-06)
+    usr_xxx/user.json                   # 事实源:email、密码哈希、disabled、sessionEpoch、balanceCny(2026-09-06);
+                                         # 工作区版本起另含 billing{legacyLedger, opening, operations[]}
+                                         # ——余额与流水在此同一原子写提交
   invites/<code>.json                   # 一次性邀请码:{ code, createdAt, note?, usedBy?, usedAt? }
   gift-codes/<code>.json                # 2026-09-06 夜(阶段 A):礼品码,{ code, amountCny, createdAt, note?, usedBy?, usedAt?, creditedAt? }
-  ledger/<userId>.jsonl                 # 2026-09-06:余额流水,只增;{at,kind,amountCny,balanceAfterCny,jobId?,note?};2026-09-07 起新增通用幂等键 ref 与 memberCny 字段
+  ledger/<userId>.jsonl                 # 2026-09-06:余额流水;{at,kind,amountCny,balanceAfterCny,jobId?,ref?,memberCny?,note?}
+                                         # 工作区版本起降级为 billing 快照的派生导出物(整体重建,不再追加写);
+                                         # 与快照不一致时读写均失败关闭(billing_export_corrupt)
   agent/<userId>/<sessionId>.json       # 2026-09-07:智能体会话记录,ownerId 校验,单用户上限 200 条(§2h)
   templates/*.json                      # 2026-09-06 深夜:创作模板,首次部署需 cp -r data-seed/templates data/templates
                                          # (data-seed/templates 提供六条示例种子,不随代码自动生成)
