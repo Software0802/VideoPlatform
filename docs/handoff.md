@@ -8,7 +8,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 基线 | `main` @ `e564ab6`（R01/R03 资金持久化新模型）；工作区为 R02/R04–R09 缺陷修复（详见 §3），未提交、未部署 |
+| 基线 | `main` @ `9c63903`（R01–R09 全部修复落地：`e564ab6` 资金持久化 + `9c63903` R02/R04–R09）；未部署 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
 | 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；**未配 `XAI_API_KEY`**，grok 只作为路由兜底不会被选中 |
@@ -86,7 +86,7 @@
 
 ## 5. 下一刀建议
 
-1. 工作区的 R02/R04–R09 修复已过全量门禁，**未经用户确认、未提交**；确认后提交。部署仍受 §3 部署阻断项约束（存量账号须先迁移）。
+1. R01–R09 修复已全部提交（`9c63903`）、过全量门禁，**未部署**；部署仍受 §3 部署阻断项约束（存量账号须先迁移）。
 2. Codex 其余 P1（审批与自动换家约束、会话自动执行累计预算、支付退款 unknown）仍未定稿；`docs/plan-unimplemented-2026-09-08.md` 整体仍是 BLOCK。R06 只覆盖单片任务 submit 的模糊失败；harness 分镜级 uncertain_submit 是既有机制，支付/退款 unknown 态仍未动。
 3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
 4. 在资金与执行恢复基础稳定后，再按用户确认的切片推进 Agent 可恢复轮次/审批与画布真实单节点，未批准前不实施新机制。
