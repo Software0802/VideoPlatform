@@ -205,11 +205,11 @@ flowchart TB
 
 `priceCny(input)` 按 mode 取值:视频 ≤5s/更长两档基价,1080p 乘 `hd`,有声再加 `audio`;30/45/60 秒 harness 长片按 5 秒段数 × `"5"` 计(30s=12 元);`extend_video`/`edit_video` 是定值;`text_to_image` 按 `imageResolution` 取 `1k`/`2k` 档。`LUMEN_PRICE_TABLE`(JSON,可只写要改的几项)覆盖默认表,坏 JSON 记一条 warn 并回落默认,不挡提交。`createJob`/`retryJob` 按**归一后**的参数(可灵把 4 秒请求归一为 5 秒那一档)算 `priceCny` 并写入 `job.priceCny`,提交后永不改写——它同时是在途预留额和成功后扣款额。
 
-**准入**(`src/lib/billing/admission.ts`):`loadBalanceUsage(userId)` 现算 `balanceCny`(`user.json`)与 `reservedCny`(该用户所有非终态任务 `priceCny` 之和,从 job.json 现算不落盘),`availableCny = balance − reserved`。`assertBalance(userId, priceCny)` 在 `availableCny < priceCny` 时抛 `ProviderHttpError(402, "insufficient_balance")`。判定必须在 `withAdmissionLock` 临界区内、`writeJob` 之前完成(与配额同一把锁),`createJob`/`retryJob` 共用同一个判官。
+**准入**(`src/lib/billing/admission.ts`):`loadBalanceUsage(userId)` 现算 `balanceCny`(`user.json`)与 `reservedCny`(该用户所有非终态任务 `priceCny` 之和,从 job.json 现算不落盘),`availableCny = balance − reserved`。`assertBalance(userId, priceCny)` 在 `availableCny < priceCny` 时抛 `ProviderHttpError(402, "insufficient_balance")`。判定必须在 `withAdmissionLock` 临界区内、`writeJob` 之前完成(与配额同一把锁),`createJob`/`retryJob` 共用同一个判官。判定前先跑 `settleSubscription`(R05,经动态 import 避开 subscription→admission 静态环):用户跨过 30 天期而没碰过任何读接口时,上一期的会员积分必须先清零、本期积分与当日赠送先入账,再谈「够不够」——否则过期积分会混进 `availableCny` 放行一条本该拒的购买。锁序不变:settle 内部取 user 锁,外层恒为 admission → user。
 
 **结算**(`src/lib/jobs/store.ts` 的 `updateJob`):在同一次写盘里,「非终态 → succeeded」且 `priceCny > 0` 且未结算(`billing.chargedAt` 为空)时,**先扣款、扣成功才盖 `chargedAt`**,再落盘。顺序保证任一时刻要么任务仍非终态(预留占着钱),要么余额已经减了,不留「预留已消失、余额还没减」的窗口。若扣款抛错,任务仍照常落终态(不能卡成「明明出片却显示进行中」),只是不盖 `chargedAt`;后续任意一次 `updateJob` 命中「succeeded 且无 chargedAt」会自动补扣。失败 / 取消 / 过期不扣钱,预留随终态消失。
 
-**幂等与流水**(`src/lib/billing/ledger.ts` + `protocol.mjs` + `file-ledger.mjs`,工作区版本):`user.json` 是资金事实的唯一提交点——`balanceCny`/`memberCreditsCny` 与产生它们的流水(`billing.operations`,逐条带 seq/operationId/输入/前后余额的自校验链)在 `withUserLock` 内的**同一次原子写**落盘,「余额变了、流水没记上」的窗口因此不存在(修 R01)。`data/ledger/<userId>.jsonl` 降级为**派生导出物**,每次提交后整体重建(原子 rename);它与快照不一致(多出快照没有的行、或内容不是快照行集的前缀)时读取与提交都抛 `billing_export_corrupt` 失败关闭,文件缺失时自动重建。幂等判据不变(charge 的 `jobId`、grant 的 `giftCode`、通用 `kind+ref`),但重放必须**同键同输入**——同键撞不同输入抛 409 `billing_idempotency_conflict`,不再静默跳过。`hasChargeFor`/`hasEntryFor`/`hasGiftGrantFor` 对已迁移账号读快照,未迁移账号退回扫 jsonl(严格解析,坏行抛错而非跳过——判定路径不能漏行)。`readUser`/`writeUser` 对带 `billing` 的记录做快照校验与链式转移校验(历史不可改写、一次最多追加一条 op、余额必须与链末端一致)。
+**幂等与流水**(`src/lib/billing/ledger.ts` + `protocol.mjs` + `file-ledger.mjs`,工作区版本):`user.json` 是资金事实的唯一提交点——`balanceCny`/`memberCreditsCny` 与产生它们的流水(`billing.operations`,逐条带 seq/operationId/输入/前后余额的自校验链)在 `withUserLock` 内的**同一次原子写**落盘,「余额变了、流水没记上」的窗口因此不存在(修 R01)。`data/ledger/<userId>.jsonl` 降级为**派生导出物**,每次提交后整体重建(原子 rename);它与快照不一致(多出快照没有的行、或内容不是快照行集的前缀)时读取与提交都抛 `billing_export_corrupt` 失败关闭,文件缺失时自动重建。幂等判据不变(charge 的 `jobId`、grant 的 `giftCode`、通用 `kind+ref`),但重放必须**同键同输入**——同键撞不同输入抛 409 `billing_idempotency_conflict`,不再静默跳过。`hasChargeFor`/`hasEntryFor`/`hasGiftGrantFor` 对已迁移账号读快照,未迁移账号退回扫 jsonl(严格解析,坏行抛错而非跳过——判定路径不能漏行)。退款经 `options.refundOf` 指向原扣款 ref:内核读原行的 `memberCny` 把退款拆回会员池与已购池(R02——会员池出的钱退回已购池等于把会过期的积分换成永久余额),原扣款不存在即失败关闭,拒绝显式分池与负 delta 混用。`readUser`/`writeUser` 对带 `billing` 的记录做快照校验与链式转移校验(历史不可改写、一次最多追加一条 op、余额必须与链末端一致)。
 
 **迁移**:存量账号 `user.json` 没有 `billing` 字段——读旧流水正常,但一切余额变动报 409 `billing_migration_required`(失败关闭,不会自动迁移)。迁移须停服后跑 `scripts/migrate-billing.mjs --offline --baseline <基线.json>`:基线由人工核对生成,含 `userId`、迁移前 `user.json` 与 `ledger/<id>.jsonl` 的 sha256、`reviewedBy`/`evidence`(谁在什么证据下核对过)、`opening` 期初余额与每条历史入账行属于哪个池(`grantPools`);校验通过才把旧流水原文封存进 `billing.legacyLedger` 并记账进入新格式。新格式不自动回滚到不兼容旧版本。
 
@@ -226,7 +226,7 @@ flowchart TB
 - LLM 客户端 `src/lib/agent/llm.ts`:OpenAI 兼容 `chat.completions`,提供方顺序 mock(`isMockMode()`)→ `AGENT_API_KEY`+`AGENT_BASE_URL`(默认 `api.openai.com/v1`,模型 `AGENT_CHAT_MODEL` 默认 `gpt-4o-mini`)→ `XAI_API_KEY`(`grok-4.6`)→ 都没有则 503 `agent_unavailable`,**绝不静默落 mock**。生产已配的 ccgoai / YMan 两家中转实测没有对话模型,须单独配 `AGENT_API_KEY` 才能真用。
 - 技能 `src/lib/agent/skills.ts`:20 个真实技能定义(id、中英文名与描述、system prompt 片段)。
 - 会话存储 `src/lib/agent/store.ts`:`data/agent/<userId>/<sessionId>.json`,`ownerId` 校验非本人 404,单用户上限 200 条,列表按 `updatedAt` 倒序。
-- 一轮定价 `src/lib/agent/run-turn.ts`:先判可用 → 扣一轮费 ¥0.05(`priceTable().agent.turn`,`applyBalanceChange` 幂等键 `ref:"agent:<turnId>"`)→ LLM 输出 JSON(`{ reply, actions[] }`,每轮最多 2 个 action)→ 每个 action 先过 `POST /api/jobs` 同一个限流桶(`src/lib/jobs/rate-limit.ts`)再 `createJob`(幂等 key `agent:<turnId>:<i>`),单个 action 失败(余额不足/校验 400)写进回复消息里而不是让整轮失败;LLM 调用本身失败则整轮退款(`ref:"agent:<turnId>:refund"`)。
+- 一轮定价 `src/lib/agent/run-turn.ts`:先判可用 → 扣一轮费 ¥0.05(`priceTable().agent.turn`,`applyBalanceChange` 幂等键 `ref:"agent:<turnId>"`)→ LLM 输出 JSON(`{ reply, actions[] }`,每轮最多 2 个 action)→ 每个 action 先过 `POST /api/jobs` 同一个限流桶(`src/lib/jobs/rate-limit.ts`)再 `createJob`(幂等 key `agent:<turnId>:<i>`),单个 action 失败(余额不足/校验 400)写进回复消息里而不是让整轮失败;LLM 调用本身失败则整轮退款(`ref:"agent:<turnId>:refund"`,经 `refundOf` 按原扣款的 `memberCny` 拆回原池——R02)。请求体可带 `turnId`(`msg_*`,客户端每次发送生成,HTTP 层重试原样带回——R08):会话里已有该 turnId 的 assistant 消息且上一条用户文本一致时整轮原样交回(不重复扣款、不再调 LLM);文本不同或该轮此前已失败退款时 409 `idempotency_conflict`;`appendTurn` 按消息 id 去重兜住并发双写。缺省 `turnId` 时服务端自取(老客户端/测试直调),不重放。
 - API:`GET/POST /api/agent/sessions`、`GET/PATCH/DELETE /api/agent/sessions/:id`、`POST /api/agent/sessions/:id/messages`(20 次/分钟/用户)、`GET /api/agent/skills`。
 - 前端 `src/components/genius/agent/**` 全接真数据,不可用时置灰「智能体暂未开放」。
 
@@ -241,8 +241,8 @@ flowchart TB
 - **硬约束**:订阅只能用**已购池**购买(`purchaseSubscription` 只看 `balanceCny`),否则「低于面值的钱买到面值积分」形成无限套利;订阅送的积分进独立会员池,到期或跨期清零。
 - 扣款(`src/lib/billing/ledger.ts`)顺序固定:先扣会员池,不足部分再扣已购池,流水行记 `memberCny` 字段;`admission.ts` 新增 `effectiveMemberCny` 供准入判定读取「有效(未过期)会员积分」。
 - 锁序恒为 admission → user,不得颠倒。
-- `purchaseSubscription`(用户锁内):必填 `idempotencyKey`(订阅 id 由 key 推导);扣款 `ref:"sub:<key>"`;可购额 `= balanceCny − max(0, reserved − 有效会员积分)`,不足报 402 `insufficient_balance` 并带 `purchasableCny`;已有有效订阅报 409 `subscription_active`;同一 key 重放返回 200。
-- `settleSubscription`(惰性结算,`GET /api/me`/`GET /api/subscription` 前调用):到期清零、跨 30 天期重置为本期积分、按 Asia/Shanghai 自然日无条件补发当日积分;无变更时走无锁快路径。
+- `purchaseSubscription`(外层 `withAdmissionLock`、内层 `withUserLock`):必填 `idempotencyKey`(订阅 id 由 key 推导);扣款 `ref:"sub:<key>"`,扣款行落内部订单快照 `order:{planId,cycle,priceCny,orderedAt}`(R04);可购额 `= balanceCny − max(0, reserved − 有效会员积分)`,不足报 402 `insufficient_balance` 并带 `purchasableCny`;已有有效订阅报 409 `subscription_active`。恢复路径(R04):扣款行在而订阅记录缺失时按订单快照补建——不再跑一次余额判定(钱已扣过),订阅有效期从 `orderedAt` 起算而非补建时刻;同 key 撞不同 plan/cycle 抛 409 `idempotency_key_reused`;旧扣款行无 `order` 时回落按行内时间戳与现存订阅信息补建;原订阅已完整过期时旧 key 也不能换新单(发放行在账上)。同一 key 同参重放返回 200。
+- `settleSubscription`(惰性结算,`GET /api/me`/`GET /api/subscription` 与 `assertBalance` 准入判定前调用):到期清零、跨 30 天期重置为本期积分、按 Asia/Shanghai 自然日无条件补发当日积分;无变更时走无锁快路径。
 - API:`GET/POST /api/subscription`(不下发 `costRatio` 等成本口径);`GET /api/me` 的 `balance` 含 `memberCreditsCny`。
 - `scripts/usage.mjs` 对账把 `sub:*`(订阅扣款/发放)与 `agent:*`(智能体扣款/退款)分列展示。
 - 无支付网关,已购余额只能靠礼品码(§12.6 之前的机制)或管理员 `scripts/grant-balance.mjs` 充值。
@@ -253,10 +253,11 @@ flowchart TB
 
 - 每次状态转换先写 `data/jobs/{id}/job.json` 再发 SSE 事件;**轮询 `GET /api/jobs/:id` 是真相,SSE 尽力而为**。
 - 轮询间隔 2s;单 job 15min 超时;`service_unavailable/internal_error` 指数退避重试 ≤2 次,`invalid_argument` 不重试。
-- cancel:queued 直接终态;submitting/pending/persisting 标记后停 poll;取消后即使上游 done 也不得写 `outputs/`(下载进 tmp,确认状态后 rename);已有 `xaiFileId` 则尽力 DELETE。
+- cancel:queued 直接终态;submitting/pending 标记后停 poll;取消后即使上游 done 也不得写 `outputs/`(下载进 tmp,确认状态后 rename);已有 `xaiFileId` 则尽力 DELETE。**产物已 checkpoint 的任务取消不成立**(R09):`persisting` 或 `localOutputPath` 已设意味着上游已产出/字节已拉到本地,费用已发生——`POST /cancel` 返回 200 与当前记录(仍进行中),终态由 persist 落盘路径结算成 succeeded/failed,而不是把已付费的产物删掉。
 - retry:仅 `failed|expired`,**新建 job** 复制 inputs 与参数,原 job 不变;单片任务若源 job 带 `error.code==="uncertain_submit"` 同样被 `retry-guard` 409 拦截(见下)。
 - boot recover(`instrumentation.register` → `startJobRunner`,幂等,**2026-09-06 阶段一改写单片分支**):`submitting` 且**无** remoteId 不再无条件回 queued——先调 provider 可选的 `lookupByExternalId(jobId)`(可灵已实现,按 `external_task_id` 查)问上游是否已经接过这个请求;查到就把返回的 remoteId 写回 job.json 转 `pending` 续跑,查不到(或 provider 未实现该方法、或查询本身失败)就转 `failed` + `error.code="uncertain_submit"`,由 `retry-guard` 的 `retryBlock()` 拦一键重试(与 harness 分镜级的同名标记共用一套拒绝逻辑与文案模板,§7.2)。`submitting` 有 remoteId → 改 pending 续跑;`pending/persisting` 续跑;超 15min 的 **submitting/pending/persisting/harness 各阶段** 标 expired(这条晚于「uncertain」判定执行,陈旧与「上游是否已接单」是两个互不隶属的问题);`queued` 一律重新入队,不因排队久而失败。harness 阶段的任务由 pump 重新交给 `orchestrator.execute`,它按 job.json 里的 plan / shot 记录续跑(shot 级 recover 见 §7.2)。
 - **上游退避(2026-09-06 阶段一,`runner.ts`)**:`submit` 阶段收到 `rate_limited`/`quota_exhausted`(尚未计费的拒绝)时不直接判失败,而是把任务从 `submitting` 打回 `queued` 并记 `upstreamRetries`/`nextAttemptAt`(15s→30s→60s 指数退避,`pump()` 跳过未到 `nextAttemptAt` 的 `queued` 任务,并用一个到期即唤醒的定时器避免轮询空转),满 3 次仍失败才终态失败(`quota_exhausted` 显示「平台余额不足,请联系管理员」,`rate_limited` 显示「上游繁忙,已重试 3 次仍失败」,上游原文进 `error.detail` 落盘但不下发给浏览器)。这两个码同时被 `quota.ts` 的止损阀排除(连同 `uncertain_submit`),因为它们不是用户的错。
+- **运行期模糊提交(R06,`runner.ts` `resolveAmbiguousSubmit`)**:submit 抛出的失败里,4xx 业务拒绝(参数/鉴权/限流/余额)与内部错误是「确定没接单」,照原路径走;5xx、`upstream_timeout`、`upstream_unavailable` 是「请求可能已送达」——不当未计费失败重发,而是先走 provider 的 `lookupByExternalId(jobId)`(目前仅可灵实现,按 `external_task_id` 查):查回 remoteId 就接管成 `pending` 继续轮询(照常计费、照常出片);查不到、provider 没这能力或查询也挂了,转 `failed`+`error.code="uncertain_submit"`(原错误进 `detail`),由 `retryBlock` 锁死一键重试——与崩溃恢复路径同一个标记、同一套拒绝语义。例外:`missing_api_key`/`mock_failure` 抛在请求发出之前,算确定失败。
 - 并发 `JOB_CONCURRENCY=2`;活跃(queued+submitting+pending+persisting)≥ `MAX_QUEUED_JOBS=20` 时 `POST /api/jobs` 429;单账号在途任务数 ≥ `MAX_QUEUED_JOBS_PER_USER`(默认 5)时同样 429(2026-09-06 深夜,防止一个账号占满全站队列)。
 - `sweepTmp`:boot + 每小时(timer `.unref()`),删 24h 前的 tmp 字节与 sidecar。
 - **索引与轮询(2026-09-06 深夜,as-built)**:`data/jobs/index.json` 是从各 `job.json` 派生的缓存,写完某条任务后增量维护、启动时重建、读取前自愈——配额、余额预留、留存清理、首页列表、`GET /api/jobs` 分页、`activeCount` 全部改读这份索引,不再对 `jobs/` 目录做全表扫描;`pump()` 额外维护一份内存待办集合。上游轮询从固定间隔改成阶梯 2s→5s→10s(上限 `UPSTREAM_POLL_MAX_MS`,默认 10000),进度不变时不写盘;单 job 超时改按 provider 各自的 `capabilities().taskTimeoutMs`(新增 `YMAN_TASK_TIMEOUT_MS`)判定,崩溃恢复的陈旧阈值 = provider 超时 + 5 分钟;冷启动 `maintenance()` 延后 30 秒执行;客户端 SSE 连接健康时轮询回退到 10 秒一次。实测 `/api/me` 230ms→20ms、首页 SSR 650ms→150ms。
@@ -268,7 +269,7 @@ flowchart TB
 | 端点 | 说明 |
 | --- | --- |
 | `POST /api/uploads` | multipart 流式(@fastify/busboy);`role ∈ start|last|reference|source_video`;图 ≤**6MB**(2026-09-06 阶段一从 12MB 下调,sharp 后覆盖写)、视频 mp4 ≤**24MB**(从 48MB 下调,ffmpeg 探针,产线 2 核/1.8G/`MemoryMax=700M` 下的内存预算,见 §3.3 与 `docs/plan-architecture-2026-09.md` P1);写 `data/tmp/{up_16hex}` + sidecar json;**不**做模式相关校验、不调 Files |
-| `POST /api/jobs` | 幂等 key 24h 重放;队列满 429;按 mode 校验(含 edit ≤8.7s / extend 2–15s);可选 `model`(产品 id,§2f)按产品能力再校验一遍;余额不足 **402 `insufficient_balance`**(§2d);tmp 字节 move 进 `inputs/`;uploadId 必须匹配 `^up_[0-9a-f]{16}$` |
+| `POST /api/jobs` | 幂等 key 24h 重放(同 key 撞不同请求体 409 `idempotency_conflict`,R07);队列满 429;按 mode 校验(含 edit ≤8.7s / extend 2–15s);可选 `model`(产品 id,§2f)按产品能力再校验一遍;余额不足 **402 `insufficient_balance`**(§2d);tmp 字节 move 进 `inputs/`;uploadId 必须匹配 `^up_[0-9a-f]{16}$` |
 | `GET /api/jobs` | `?before&limit&kind` 游标分页,信封 `{jobs, nextBefore?}`;走 §5 任务索引,同一毫秒的任务不切开;`kind` 可按 mode 分类 |
 | `GET /api/jobs/:id` | 单个 |
 | `PATCH /api/jobs/:id`(2026-09-06 深夜) | 改 `tags`(≤5 个、每个 ≤16 码点),非本人 404 |
@@ -310,7 +311,11 @@ data/
     shots/{index}/video.mp4 tail.jpg        # harness 每镜成片与 tail-chain 抽取帧
     logs.jsonl
   tmp/{uploadId} + {uploadId}.json     # 24h TTL
-  idempotency/{ownerId,clientKey 的 sha256}.json
+  idempotency/{ownerId,clientKey 的 sha256}.json   # 2026-09-11 起为可重建缓存(R07):原子写;
+                                                  # 命中时回读 job.json 校验 owner 与内嵌幂等键,
+                                                  # miss/不可信时按 jobs/index.json 的 idempotencyKey
+                                                  # 从任务事实源重建。事实源是 job.json.idempotency
+                                                  # {key, requestHash}——同 key 异参 409
   users/
     index.json                         # email → usr_xxx,派生缓存,可从下方目录重建
     usr_xxx/user.json                   # 事实源:email、密码哈希、disabled、sessionEpoch、balanceCny(2026-09-06);

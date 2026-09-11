@@ -55,7 +55,19 @@ export type AgentTurnBody = {
   tier?: AgentTier;
   imageProduct?: string;
   videoProduct?: string;
+  /**
+   * 一轮对话的稳定身份（R08）：一次逻辑发送生成一个，网络层重试时原样带上，
+   * 服务端按它幂等——重放不会扣第二次钱、不会多出半轮对话。
+   */
+  turnId?: string;
 };
+
+/** 一轮对话的幂等键，`msg_` + 16 位十六进制，与服务端 `AGENT_MESSAGE_ID_RE` 同形。 */
+export function newAgentTurnId(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return `msg_${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 const optStr = (value: unknown): string | undefined =>

@@ -299,6 +299,128 @@ describe("runTurn", () => {
     await expect(readSession(owner, session.id)).resolves.toMatchObject({ messages: [] });
   });
 
+  it("R02：整轮失败退款按原扣款的分池原路退回，会员积分不转成已购余额", async () => {
+    const owner = "usr_0000000000000108";
+    const now = new Date();
+    const subId = "sub_00000000000000aa";
+    // 有效订阅 + 全会员积分、已购池为 0：这一轮 ¥0.05 会整笔从会员池出。
+    // R05 起准入会先跑惰性结算，所以这份订阅要装成「已结算」的样子——本期积分入账行
+    // （p0）与当日标记都得在，否则结算会先补发一圈，干扰对退款路径的断言。
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+    await writeUser({
+      id: owner,
+      email: `${owner}@example.com`,
+      passwordHash: "scrypt$16384$8$1$00$00",
+      sessionEpoch: 1,
+      plan: "free",
+      balanceCny: 0,
+      memberCreditsCny: 0,
+      subscription: {
+        id: subId,
+        planId: "standard",
+        cycle: "monthly",
+        startedAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 30 * 86400_000).toISOString(),
+        periodIndex: 0,
+        periodStartedAt: now.toISOString(),
+        lastDailyGrantOn: today,
+      },
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    });
+    const { applyBalanceChange } = await import("@/lib/billing/ledger");
+    await applyBalanceChange(
+      owner,
+      1,
+      { kind: "grant", amountCny: 1, ref: `sub:${subId}:p0`, note: "订阅本期会员积分" },
+      { pool: "member" },
+    );
+    const session = await createSession(owner, { title: "退款回池" });
+
+    await expect(
+      runTurn(
+        session,
+        { ownerId: owner, text: "随便说点什么" },
+        {
+          complete: async () => {
+            throw new Error("upstream down");
+          },
+        },
+      ),
+    ).rejects.toThrow();
+
+    const user = await readUser(owner);
+    // 修复前：会员出的 0.05 被退进已购池（会员 0.95 + 已购 0.05），会员积分被套现。
+    // 修复后：原路回池——会员池回到 1，已购池仍为 0。
+    expect(user?.balanceCny).toBe(0);
+    expect(user?.memberCreditsCny).toBe(1);
+    // 退款行的 memberCny 记的是「退回会员池的金额」，对账能看出来路。
+    const { readLedger } = await import("@/lib/billing/ledger");
+    const { entries } = await readLedger(owner);
+    const refund = entries.find((e) => e.ref?.endsWith(":refund"));
+    expect(refund).toMatchObject({ kind: "adjust", amountCny: TURN_PRICE, memberCny: TURN_PRICE });
+  });
+
+  it("R08：同 turnId 的重放原样交回那一轮——不重复扣款、不重复调 LLM、不写重消息", async () => {
+    const owner = "usr_0000000000000109";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "重放" });
+    const turnId = "msg_aabbccddeeff0011";
+    let llmCalls = 0;
+
+    const first = await runTurn(
+      session,
+      { ownerId: owner, text: "生成一张海报", turnId },
+      {
+        complete: async () => {
+          llmCalls += 1;
+          return JSON.stringify({ reply: "这就来。", actions: [] });
+        },
+      },
+    );
+    const balanceAfterFirst = (await readUser(owner))?.balanceCny;
+
+    // 同一笔请求在网络上被透明重发：turnId 原样带回，服务端必须认账而不重做。
+    const again = await runTurn(
+      session,
+      { ownerId: owner, text: "生成一张海报", turnId },
+      { complete: completerReturning({ reply: "不该被走到", actions: [] }) },
+    );
+    expect(again.assistant.id).toBe(first.assistant.id);
+    expect(again.assistant.text).toBe("这就来。");
+    expect(again.session.messages).toHaveLength(2);
+    expect(llmCalls).toBe(1);
+    expect((await readUser(owner))?.balanceCny).toBe(balanceAfterFirst);
+    const { readLedger } = await import("@/lib/billing/ledger");
+    const { entries } = await readLedger(owner);
+    expect(entries.filter((e) => e.ref === `agent:${turnId}`)).toHaveLength(1);
+  });
+
+  it("R08：同 turnId 换文本是 409 冲突，不是重放", async () => {
+    const owner = "usr_000000000000010a";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "换参" });
+    const turnId = "msg_0011223344556677";
+    await runTurn(
+      session,
+      { ownerId: owner, text: "第一句", turnId },
+      { complete: completerReturning({ reply: "好。", actions: [] }) },
+    );
+    await expect(
+      runTurn(
+        session,
+        { ownerId: owner, text: "换了一句", turnId },
+        { complete: completerReturning({ reply: "不该被走到", actions: [] }) },
+      ),
+    ).rejects.toMatchObject({ status: 409, code: "idempotency_conflict" });
+    expect((await readSession(owner, session.id))?.messages).toHaveLength(2);
+  });
+
   it("与 POST /api/jobs 共用同一个限流桶：桶满时该 action 记码，整轮照常出回复", async () => {
     const owner = "usr_0000000000000106";
     await seedUser(owner, 100);

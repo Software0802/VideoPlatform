@@ -54,10 +54,11 @@ export async function loadBalanceUsage(
   const balanceCny = user?.balanceCny ?? 0;
   const memberCreditsCny = user?.memberCreditsCny ?? 0;
   // 两个池都能付任务的钱（扣的时候会员池优先），所以准入看的是两池之和——但会员池只在
-  // 订阅有效期内算数。结算是惰性的：一个昨天到期、今天还没被 `/api/me` 读过的账号，
-  // 会员池原样躺在 user.json 里，照账面值放行就等于让过期会员积分继续花。这里**不调**
-  // `settleSubscription` 去顺手清它：本函数跑在 `withAdmissionLock` 临界区内，而结算要
-  // 拿用户锁，锁序必须恒为 admission → user，反过来就是死锁。清零交给 `/api/me` 那条路径。
+  // 订阅有效期内算数。本函数不自己做结算：它在 `withAdmissionLock` 临界区内跑、拿不到
+  // 用户锁（锁序恒为 admission → user，反过来就是死锁）。跨期清零由 `assertBalance` 在
+  // 进临界区判余额之前先跑 `settleSubscription` 完成（R05）；`purchaseSubscription` 也
+  // 在锁内先调 `settleSubscriptionLocked`。直接读账面 `memberCreditsCny` 等于让没结算的
+  // 旧期积分继续花，所以判定一律走 `activeMemberCreditsCny`。
   const effectiveMemberCny = activeMemberCreditsCny(user, now);
   let reservedCny = 0;
   for (const job of entries) {
@@ -97,6 +98,13 @@ export function purchasableCny(usage: BalanceUsage): number {
  * 五个并发请求会读到同一份「还够一次」的余额然后一起放行。
  */
 export async function assertBalance(userId: string, priceCny: number): Promise<void> {
+  // R05：判定之前先把当前期结算掉。结算是惰性的（原本只有 `GET /api/me` /
+  // `/api/subscription` 触发），不在这里做的话，年付用户跨期后还没被任何读路径碰过，
+  // 上一期没花完的会员积分就会照账面放行——那笔钱本该在跨期那一刻清零。锁序不破：
+  // 调用方恒在 `withAdmissionLock` 内，结算内部拿 `withUserLock`，仍是 admission → user。
+  // 动态 import 是因为 `subscription.ts` 反向引用本文件的 `loadBalanceUsage`。
+  const { settleSubscription } = await import("@/lib/billing/subscription");
+  await settleSubscription(userId);
   const usage = await loadBalanceUsage(userId);
   if (usage.availableCny < priceCny) {
     throw new ProviderHttpError(402, "insufficient_balance", "余额不足，请充值");

@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 基线 | `main` @ `a183031`；工作区含 R03 订阅购买锁序修复 + 资金持久化新模型（`user.json` 内嵌 `billing` 快照为唯一提交点、`ledger/*.jsonl` 降级为派生导出、存量账号须人工基线迁移、管理 CLI 一律 `--offline`），未提交、未部署 |
+| 基线 | `main` @ `e564ab6`（R01/R03 资金持久化新模型）；工作区为 R02/R04–R09 缺陷修复（详见 §3），未提交、未部署 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
 | 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；**未配 `XAI_API_KEY`**，grok 只作为路由兜底不会被选中 |
 | 生产订阅价格 | 标准 ¥19.1 / 专业 ¥49.6 / 尊享 ¥106.8 / 至尊 ¥170.3（月费，`costRatio` 按当前 provider 配置算出，非固定值，见 §2） |
-| 门禁 | 本轮依次执行 `pnpm exec tsc --noEmit` → `pnpm exec eslint src` → `pnpm test`，均退出 0；全量 91 文件、1049 通过、1 skip（含新增 `file-ledger.test.ts` 12 条故障注入：导出失败重放、篡改失败关闭、跨 profile 写保留重放证据）。R03 barrier 回归通过。本轮未改 UI、未跑 e2e；历史 `pnpm e2e` 29/29 通过（5 文件）不作为本轮验证 |
+| 门禁 | 本轮依次执行 `pnpm exec tsc --noEmit` → `pnpm exec eslint src` → `pnpm test` → `pnpm build`，均退出 0；全量 92 文件、1067 通过、1 skip（新增：`file-ledger.test.ts` 12 条故障注入、`uncertain-submit.test.ts` 5 条 R06 端到端、R02/R04/R05/R07/R08/R09 回归若干）。R03 barrier 回归通过。本轮未跑 e2e；历史 `pnpm e2e` 29/29 通过（5 文件）不作为本轮验证 |
 | 本地运行 | `pnpm dev` → `http://localhost:3000`（**用 `localhost`，`127.0.0.1` 会被 Next 16 dev 403**）；无任何生图/视频 key 时整实例回落 mock 模式（ffmpeg 水印片）；未登录访问任意路由 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`） |
 | 账号与余额 | 注册即送 ¥5（`SIGNUP_BONUS_CNY` 常量，`src/lib/users/service.ts`，流水 `ref:"signup"`，非环境变量）；更多余额靠管理员 `node scripts/grant-balance.mjs <邮箱> <金额> --offline [--ref 键] [--note "..."]` 充值，或用户在订阅页兑换礼品码（`node scripts/mint-gift-codes.mjs <数量> <金额>` 铸码）；每种任务定价 × 余额是主闸门，日配额只是防滥用兜底（`FREE_DAILY_IMAGE_QUOTA` 默认 200） |
 | 首次部署 / 迁移新数据目录前必做 | `cp -r data-seed/templates data/templates`（创作模板种子不随代码自动生成，见 §2「模板」） |
@@ -60,14 +60,14 @@
 - **作品管理**：`GET /api/jobs?before&limit&kind` 游标分页；标签编辑（`PATCH`）、删除（`DELETE`，终态限定）；分享令牌 `POST /api/jobs/:id/share` → `/s/<token>`（公开只读页 + 媒体）；全局事件流 `GET /api/events` 驱动 toast / 铃铛（不落盘，仅当次会话有效）。
 - **模板**：`GET /api/templates` 读 `data/templates/*.json`，首次部署需手动 `cp -r data-seed/templates data/templates`（六条示例种子）。
 - **账号与余额**：邮箱 + 密码 + 一次性邀请码注册；改密（`POST /api/auth/password`，旧会话失效）；管理 CLI 封禁/解封（`disable-user.mjs`）、重置密码（`reset-password.mjs`）、充值（`grant-balance.mjs`，工作区起均须 `--offline`，充值可带 `--ref` 固定幂等键）、铸邀请码/礼品码（`mint-invites.mjs`/`mint-gift-codes.mjs`）、用量对账（`usage.mjs`）；礼品码自助兑换 `POST /api/me/redeem`；积分流水 `GET /api/me/ledger`；注册赠 ¥5；准入闸门 = 余额 − 在途预留 ≥ 本次售价（§2d），配额与止损阀降级为防滥用兜底。**工作区新资金模型**：`user.json.billing`（legacyLedger + opening + 自校验 operations 链）与两池余额同一次原子写提交，jsonl 成为派生导出物，篡改/不一致即 `billing_export_corrupt` 失败关闭；幂等重放须同键同输入（撞不同输入 409 `billing_idempotency_conflict`）；协议见 `src/lib/billing/{protocol,file-ledger}.mjs` 与 `docs/design.md` §2d。
-- **订阅与会员积分池**：四档（标准/专业/尊享/至尊），月费按 `成本 ÷ (1−15%毛利率)` 算出，年费 = 12×月费不打折；会员积分独立池，到期清零、跨期重置、按日发放（准入前跨期结算缺口见 §3 R05）；只能用已购余额购买（硬约束，防套利）；`GET/POST /api/subscription`。工作区 `purchaseSubscription` 已改为外层 `withAdmissionLock`、内层 `withUserLock`，保留原购买业务逻辑；R03 barrier 回归验证任务已判余额但未落盘时购买等待 admission 且不占 user 锁，任务落盘后按在途预留拒绝余额不足的购买。此局部修复不覆盖其他资金恢复缺陷。
+- **订阅与会员积分池**：四档（标准/专业/尊享/至尊），月费按 `成本 ÷ (1−15%毛利率)` 算出，年费 = 12×月费不打折；会员积分独立池，到期清零、跨期重置、按日发放（`assertBalance` 准入前先惰性结算，跨期旧积分不进可用额）；只能用已购余额购买（硬约束，防套利）；`GET/POST /api/subscription`。`purchaseSubscription` 为外层 `withAdmissionLock`、内层 `withUserLock`；扣款行带订单快照，「已扣款、订阅记录缺失」按快照补建不二次扣款。
 - **智能体**：真实 LLM 编排（生产走 `AGENT_BASE_URL=ccgoai.club`），一轮 ¥0.05，可按需触发真实生成任务（`text_to_image`/`text_to_video`，走同一套限流与幂等）；20 个技能定义；会话落盘 `data/agent/<userId>/<sessionId>.json`。
 - **多语言**：`zh-CN`/`en` 两语，Cookie `lumen_locale` + `Accept-Language` 兜底，顶栏与登录页可切换；服务端错误文案不翻译（已知未做）。
-- **稳态与安全**：任务索引（`data/jobs/index.json`）取代全表扫描；上游轮询阶梯 2s→5s→10s；`uncertain_submit` 拦一键重试（不覆盖运行期提交结果未知或全部资金恢复边界，见 §3）；429/quota 指数退避；provider 积分耗尽自动换家（售价只降不升，一家都不剩时 503 而非静默落 mock）；限流（提交 10 次/分钟、上传 5 次/分钟、单账号在途任务数上限）；`/api/health` 分级下发（匿名只回 `{ok}`）；`x-request-id` 全链路追踪；CSRF 意义上的 Origin/Referer 校验（两者都缺失时放行，已记录的设计取舍）；CI（`tsc`/`eslint`/`test`，不含 e2e）。
+- **稳态与安全**：任务索引（`data/jobs/index.json`）取代全表扫描；上游轮询阶梯 2s→5s→10s；`uncertain_submit` 拦一键重试（崩溃恢复与运行期模糊提交两条路径都会打上这个标记，见 §3）；429/quota 指数退避；provider 积分耗尽自动换家（售价只降不升，一家都不剩时 503 而非静默落 mock）；限流（提交 10 次/分钟、上传 5 次/分钟、单账号在途任务数上限）；`/api/health` 分级下发（匿名只回 `{ok}`）；`x-request-id` 全链路追踪；CSRF 意义上的 Origin/Referer 校验（两者都缺失时放行，已记录的设计取舍）；CI（`tsc`/`eslint`/`test`，不含 e2e）。
 
 ## 3. 已知限制 / 未做
 
-- **资金与执行恢复缺陷索引**（证据与历史复现见 `docs/review-2026-09-08.md`）：R03 订阅购买与任务准入互斥已在工作区修复（`purchaseSubscription` 外层 admission、内层 user 锁，barrier 回归通过）；R01 余额与幂等凭据非原子提交由工作区新资金模型覆盖（余额+流水同一原子写）。R02 Agent 退款错池、R04 已扣款订阅补建仍判首次余额、R05 年付跨期旧积分可先消费均未修复。R06 付费提交 unknown 被当可重试失败、R07 Job 与幂等映射跨文件恢复缺口、R08 Agent HTTP 重放缺少稳定轮次身份、R09 超时不覆盖响应体与下载也未修复；不能把现有幂等或本轮绿门禁等同于这些边界已安全。
+- **资金与执行恢复缺陷索引**（证据与历史复现见 `docs/review-2026-09-08.md`）：R01–R09 均已在工作区修复——R01 余额+流水同一原子写（`e564ab6`）；R02 Agent 退款经 `refundOf` 按原扣款的 `memberCny` 拆回原池；R03 订阅购买外层 admission 锁；R04 扣款行带订单快照（planId/cycle/priceCny/orderedAt），「已扣款、订阅记录缺失」按快照补建且不再判余额，同 key 异参 409；R05 `assertBalance` 先惰性结算再判可用额，跨期旧积分不再进 `availableCny`；R06 submit 的 5xx/超时/断连算「结果不确定」，先 `lookupByExternalId` 查回接管，查不到则 `failed`+`uncertain_submit` 锁死重试；R07 幂等键与请求哈希落 `job.json`（事实源），`data/idempotency/*.json` 降级为可重建缓存（原子写、命中回读校验、miss 从任务索引重建），同 key 异参 409 `idempotency_conflict`；R08 请求体加 `turnId`，同 turnId 重放原样交回、换文本 409、已退款轮次同键重发 409；R09 产物字节已 checkpoint（persisting / localOutputPath / remoteUrl）时取消不再成立，终态由 persist 落盘结算。绿门禁不代替专项验收，生产行为未实测。
 - **部署阻断项（新资金模型）**：本工作区版本一旦部署，**所有存量账号的余额变动会一律 409 `billing_migration_required`**，必须先停服、逐账号用 `scripts/migrate-billing.mjs --offline --baseline <人工核对的基线.json>` 迁移（基线含双 sha256 + reviewedBy/evidence，见 `docs/runbook.md`「充值与资金迁移」）。新注册账号不受影响。
 - **未实装计划受阻**：`docs/plan-unimplemented-2026-09-08.md` 于 2026-09-09 经 Codex 评审为 `VERDICT: BLOCK`；五项 P1 是 Reservation 与 Job/Run 原子恢复边界、审批与自动换家约束、会话自动执行累计预算、资金数据迁移与回滚兼容、支付退款 unknown。主代理均判成立，待方案补齐及用户确认，其他新机制未批准、未实施。
 - 生产未配 `XAI_API_KEY`：grok 只是路由兜底，实际不可达；`edit_video`/`extend_video`/harness 长片依赖 grok，生产目前不可用。
@@ -86,8 +86,8 @@
 
 ## 5. 下一刀建议
 
-1. 工作区的资金持久化新模型（billing 快照 + 人工基线迁移）是 Codex 五项 P1 中「资金持久化选型 / 原子恢复边界 / 迁移与回滚兼容」的一份候选实现，已过全量门禁但**未经用户确认、未提交**；确认后再提交，部署前必须完成存量账号迁移（§3 部署阻断项）。
-2. 其余 P1（审批与自动换家约束、会话自动执行累计预算、支付退款 unknown）仍未定稿；`docs/plan-unimplemented-2026-09-08.md` 整体仍是 BLOCK。
-3. 继续修剩余资金缺陷（R02/R04/R05）与执行身份/恢复边界（R06–R09），逐个补故障注入、并发与重启验收；绿门禁不代替专项验收。
+1. 工作区的 R02/R04–R09 修复已过全量门禁，**未经用户确认、未提交**；确认后提交。部署仍受 §3 部署阻断项约束（存量账号须先迁移）。
+2. Codex 其余 P1（审批与自动换家约束、会话自动执行累计预算、支付退款 unknown）仍未定稿；`docs/plan-unimplemented-2026-09-08.md` 整体仍是 BLOCK。R06 只覆盖单片任务 submit 的模糊失败；harness 分镜级 uncertain_submit 是既有机制，支付/退款 unknown 态仍未动。
+3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
 4. 在资金与执行恢复基础稳定后，再按用户确认的切片推进 Agent 可恢复轮次/审批与画布真实单节点，未批准前不实施新机制。
 5. 生产配置、备份与 ECS 快照核实、Harness 质量校准和移动端完整体验按后续授权另排；本轮未做生产操作或真实上游验收。

@@ -375,6 +375,85 @@ describe("purchaseSubscription 幂等", () => {
     expect((await ledgerLines(id)).filter((l) => l.kind === "charge")).toHaveLength(1);
   });
 
+  it("R04：余额刚够的用户已扣款未落订阅时，同 key 重试按订单快照补建而不再判余额", async () => {
+    const id = userId("idem6");
+    await seedUser(id, STANDARD_MONTHLY);
+    // 余额恰好等于月费：扣款行带着订单快照落盘（这正是购买代码现在写的形状），
+    // 崩在写 subscription 之前，此刻余额已是 0。
+    const orderedAt = new Date(Date.now() - 60_000).toISOString();
+    await applyBalanceChange(
+      id,
+      -STANDARD_MONTHLY,
+      {
+        kind: "charge",
+        amountCny: -STANDARD_MONTHLY,
+        ref: "sub:key-broke",
+        note: "订阅 标准版（月付）",
+        order: { planId: "standard", cycle: "monthly", priceCny: STANDARD_MONTHLY, orderedAt },
+      },
+      { pool: "purchased" },
+    );
+    expect((await readUser(id))?.balanceCny).toBe(0);
+
+    const result = await buy(id, "standard", "monthly", "key-broke");
+    expect(result.paidCny).toBe(STANDARD_MONTHLY);
+    const sub = (await readUser(id))?.subscription;
+    expect(sub?.planId).toBe("standard");
+    // 履约期从原下单时刻起算，不是重试这一秒——崩溃不该白送一分钟。
+    expect(sub?.startedAt).toBe(orderedAt);
+    // 本期积分照发、已购池不再被扣。
+    expect((await readUser(id))?.memberCreditsCny).toBe(STANDARD_PERIOD_CNY);
+    expect((await ledgerLines(id)).filter((l) => l.kind === "charge")).toHaveLength(1);
+  });
+
+  it("R04：同 key 换档位 / 换周期的补建请求是冲突，不是重放", async () => {
+    const id = userId("idem7");
+    await seedUser(id, 100);
+    await applyBalanceChange(
+      id,
+      -STANDARD_MONTHLY,
+      {
+        kind: "charge",
+        amountCny: -STANDARD_MONTHLY,
+        ref: "sub:key-swap",
+        note: "订阅 标准版（月付）",
+        order: {
+          planId: "standard",
+          cycle: "monthly",
+          priceCny: STANDARD_MONTHLY,
+          orderedAt: new Date().toISOString(),
+        },
+      },
+      { pool: "purchased" },
+    );
+    await expect(buy(id, "pro", "monthly", "key-swap")).rejects.toMatchObject({
+      status: 400,
+      code: "idempotency_key_reused",
+    });
+    await expect(buy(id, "standard", "yearly", "key-swap")).rejects.toMatchObject({
+      status: 400,
+      code: "idempotency_key_reused",
+    });
+    expect((await readUser(id))?.subscription).toBeUndefined();
+    // 原参数补建仍然成立。
+    const result = await buy(id, "standard", "monthly", "key-swap");
+    expect((await readUser(id))?.subscription?.id).toBe(result.subscription.id);
+  });
+
+  it("R04：已建成的订阅上，同 key 换参数也不是重放", async () => {
+    const id = userId("idem8");
+    await seedUser(id, 500);
+    await buy(id, "standard", "monthly", "key-same");
+    await expect(buy(id, "pro", "monthly", "key-same")).rejects.toMatchObject({
+      status: 400,
+      code: "idempotency_key_reused",
+    });
+    // 而真正的重放（同 key 同参）照旧 200。
+    const again = await buy(id, "standard", "monthly", "key-same");
+    expect(again.replay).toBe(true);
+    expect(again.paidCny).toBe(STANDARD_MONTHLY);
+  });
+
   it("一个用过、订阅已到期的 key 不能白换一份新订阅", async () => {
     const id = userId("idem4");
     await seedUser(id, 100);
@@ -566,6 +645,42 @@ describe("年付的期数", () => {
     await buy(id, "standard", "monthly");
     const settled = await settleSubscription(id, new Date(Date.now() + 29 * DAY_MS));
     expect(settled?.subscription?.periodIndex).toBe(0);
+  });
+});
+
+describe("R05：跨期结算先于准入判定", () => {
+  it("年付跨期后没经任何读路径，旧期积分必须先清零再放行", async () => {
+    const { assertBalance } = await import("./admission");
+    const id = userId("xr1");
+    // 年付第 31 天、还没被 /api/me 或 /api/subscription 读过：账面还躺着上期的 ¥12
+    // （periodIndex 仍是 0），订阅本身远未到期。
+    const started = new Date(Date.now() - 31 * DAY_MS);
+    const user = await seedUser(id, 0, STANDARD_PERIOD_CNY);
+    await writeUser({
+      ...user!,
+      subscription: {
+        id: "sub_00000000000000cc",
+        planId: "standard",
+        cycle: "yearly",
+        startedAt: started.toISOString(),
+        expiresAt: new Date(started.getTime() + 12 * 30 * DAY_MS).toISOString(),
+        periodIndex: 0,
+        periodStartedAt: started.toISOString(),
+      },
+    });
+
+    // 修前：旧期 ¥12 照账面放行，结算后发本期 ¥12 + 日积分 ¥0.6——同一份权益跨期领两次。
+    // 修后：assertBalance 先结算——旧期清零（p1:reset）→ 发本期 ¥12 → 当日 ¥0.6，
+    // 可用会员池是 12.6，所以 12.4 放行而 12.7 拒绝（旧账面 12 下两者都该拒）。
+    await expect(assertBalance(id, 12.4)).resolves.toBeUndefined();
+    await expect(assertBalance(id, 12.7)).rejects.toMatchObject({ code: "insufficient_balance" });
+
+    const after = await readUser(id);
+    expect(after?.subscription?.periodIndex).toBe(1);
+    expect(after?.memberCreditsCny).toBe(STANDARD_PERIOD_CNY + DAILY_CNY);
+    const rows = await ledgerLines(id);
+    expect(rows.some((l) => l.ref === "sub:sub_00000000000000cc:p1:reset")).toBe(true);
+    expect(rows.some((l) => l.ref === "sub:sub_00000000000000cc:p1")).toBe(true);
   });
 });
 

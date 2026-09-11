@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { loadBalanceUsage, purchasableCny } from "@/lib/billing/admission";
-import { applyBalanceChangeLocked, hasEntryFor } from "@/lib/billing/ledger";
+import { applyBalanceChangeLocked, findEntryFor, hasEntryFor } from "@/lib/billing/ledger";
 import {
   CREDITS_PER_CNY,
   DAILY_CREDITS,
@@ -313,69 +313,96 @@ export async function purchaseSubscription(
     let user = await settleSubscriptionLocked(userId, now);
     if (!user) throw new ProviderHttpError(401, "unauthorized", "请先登录");
     const charged = await hasEntryFor(userId, "charge", ref);
+    const chargeRow = charged ? await findEntryFor(userId, "charge", ref) : null;
+    const keyReused = () =>
+      new ProviderHttpError(400, "idempotency_key_reused", "这次请求已经处理过了，请刷新页面后重试");
     if (user.subscription) {
       if (charged) {
-        // 重放：这个 key 已经买下过，而且那份订阅还在。原样把它交回去（200），
-        // `paidCny` 按当前价目重算——两次调用之间只隔几秒，价格不会变。
+        // 重放：这个 key 已经买下过，而且那份订阅还在。同一个 key 带的参数必须与
+        // 原订单一致——扣款行上的 `order` 是原订单快照；老行没有它时退而比对已存在
+        // 的订阅记录。不一致就不是重放，是有人想拿一把旧 key 买另一档。
         const sub = user.subscription;
-        return { user, subscription: sub, paidCny: priceOf(sub.planId, sub.cycle), replay: true };
+        const order = chargeRow?.order;
+        const sameOrder = order
+          ? order.planId === planId && order.cycle === cycle
+          : sub.planId === planId && sub.cycle === cycle;
+        if (!sameOrder) throw keyReused();
+        // `paidCny` 用当初真正扣掉的那笔，不按当前价目重算（两次调用之间价格可能已变）。
+        return { user, subscription: sub, paidCny: chargeRow ? round2(-chargeRow.amountCny) : 0, replay: true };
       }
       throw new ProviderHttpError(409, "subscription_active", "已有生效中的订阅");
     }
     const plan = planById(planId);
     if (!plan) throw new ProviderHttpError(400, "invalid_argument", "未知的订阅档位");
     const grant = periodCreditsCny(planId);
-    if (charged) {
+    let subscription: SubscriptionRecord;
+    let paidCny: number;
+    if (charged && chargeRow) {
       // 扣过款、订阅却不在了。两种可能，靠「本期入账行在不在」分辨——它是每一次成功
       // 购买都会留下的痕迹（`sub:<id>:p0`，id 由 key 推导所以可预测）：
       //
       //  · 有那一行 → 订阅真的建成过、如今已经到期被清掉。放行等于让人拿一把旧 key
       //    白换一份新订阅（扣款会被幂等跳过），必须拒绝。
-      //  · 没有那一行 → 崩在「扣款成功、写订阅之前」的那道窗口里。补建出来即可，
-      //    扣款照样被幂等跳过，所以用户不会被扣第二笔。
+      //  · 没有那一行 → 崩在「扣款成功、写订阅之前」的那道窗口里。按 charge 行上的
+      //    订单快照补建——不再跑首次购买的余额判定：钱已经付掉了，再要一次余额就是
+      //    让「余额刚够」的用户永远买不成（R04）。同 key 换参数补建另一档同样拒绝。
       //
       // 档位积分为 0 时这个痕迹不存在，分辨不了就一律拒绝——宁可让人重来一次。
       const everGranted = grant > 0 && (await hasEntryFor(userId, "grant", `sub:${id}:p0`));
-      if (everGranted || !(grant > 0)) {
-        throw new ProviderHttpError(
-          400,
-          "idempotency_key_reused",
-          "这次请求已经处理过了，请刷新页面后重试",
-        );
+      if (everGranted || !(grant > 0)) throw keyReused();
+      const order = chargeRow.order;
+      if (order && (order.planId !== planId || order.cycle !== cycle)) throw keyReused();
+      // 履约期从**原下单时刻**起算（order.orderedAt；升级前的老扣款行退用 charge 行的
+      // `at`）：崩了几分钟再重试，订阅不该白送几分钟；钱也按原订单价认账。
+      const anchor = order?.orderedAt ?? chargeRow.at;
+      const anchorMs = Date.parse(anchor);
+      subscription = {
+        id,
+        planId,
+        cycle,
+        startedAt: anchor,
+        expiresAt: new Date(anchorMs + periodsOf(cycle) * PERIOD_MS).toISOString(),
+        periodIndex: 0,
+        periodStartedAt: anchor,
+      };
+      paidCny = order?.priceCny ?? round2(-chargeRow.amountCny);
+      user = await writeUser({ ...user, subscription });
+    } else {
+      const priceCny = priceOf(planId, cycle);
+      if (!(priceCny > 0)) throw new ProviderHttpError(500, "internal", "订阅价格暂不可用");
+      // 只看已购池（会员积分买不了订阅，本文件顶部第 1 条），而且要减掉在途任务已经占住的
+      // 那部分——那些任务结算时还要从这个池子里出钱。
+      const purchasable = purchasableCny(await loadBalanceUsage(userId, now.getTime()));
+      if (purchasable < priceCny) {
+        throw new InsufficientBalanceError(priceCny, purchasable);
       }
-    }
-    const priceCny = priceOf(planId, cycle);
-    if (!(priceCny > 0)) throw new ProviderHttpError(500, "internal", "订阅价格暂不可用");
-    // 只看已购池（会员积分买不了订阅，本文件顶部第 1 条），而且要减掉在途任务已经占住的
-    // 那部分——那些任务结算时还要从这个池子里出钱。
-    const purchasable = purchasableCny(await loadBalanceUsage(userId, now.getTime()));
-    if (purchasable < priceCny) {
-      throw new InsufficientBalanceError(priceCny, purchasable);
-    }
 
-    const startedAt = now.toISOString();
-    const subscription: SubscriptionRecord = {
-      id,
-      planId,
-      cycle,
-      startedAt,
-      expiresAt: new Date(now.getTime() + periodsOf(cycle) * PERIOD_MS).toISOString(),
-      periodIndex: 0,
-      periodStartedAt: startedAt,
-    };
+      const startedAt = now.toISOString();
+      subscription = {
+        id,
+        planId,
+        cycle,
+        startedAt,
+        expiresAt: new Date(now.getTime() + periodsOf(cycle) * PERIOD_MS).toISOString(),
+        periodIndex: 0,
+        periodStartedAt: startedAt,
+      };
 
-    user = await applyBalanceChangeLocked(
-      userId,
-      -priceCny,
-      {
-        kind: "charge",
-        amountCny: -priceCny,
-        ref,
-        note: `订阅 ${plan.name}（${cycle === "yearly" ? "年付" : "月付"}）`,
-      },
-      { pool: "purchased" },
-    );
-    user = await writeUser({ ...user, subscription });
+      user = await applyBalanceChangeLocked(
+        userId,
+        -priceCny,
+        {
+          kind: "charge",
+          amountCny: -priceCny,
+          ref,
+          note: `订阅 ${plan.name}（${cycle === "yearly" ? "年付" : "月付"}）`,
+          order: { planId, cycle, priceCny, orderedAt: startedAt },
+        },
+        { pool: "purchased" },
+      );
+      user = await writeUser({ ...user, subscription });
+      paidCny = priceCny;
+    }
 
     // 会员池「置为」本期积分而不是「加上」：上一份订阅的余额早在结算时清过零，
     // 这里再做一次差额调整只会把一个本该恒等的值变成可能漂移的值。
@@ -390,7 +417,7 @@ export async function purchaseSubscription(
         { pool: "member" },
       );
     }
-    return { user, subscription, paidCny: priceCny, replay: false };
+    return { user, subscription, paidCny, replay: false };
   }));
 }
 

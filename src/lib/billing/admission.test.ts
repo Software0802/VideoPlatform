@@ -218,8 +218,17 @@ describe("assertBalance", () => {
   it("admits a submission funded entirely by member credits", async () => {
     const id = userId("e");
     await seedUser(id, 0, 3);
-    await expect(assertBalance(id, 3)).resolves.toBeUndefined();
-    await expect(assertBalance(id, 3.01)).rejects.toMatchObject({ code: "insufficient_balance" });
+    // R05：准入前先跑惰性结算——这个种子里缺本期积分入账行与当日日积分，第一次
+    // assertBalance 会把它们都补上（会员池不再是账面的 3）。先触发一次再量边界：
+    // 结算后的真实可花额刚刚好放行，多一分拒绝——全部来自会员池（已购池是 0）。
+    await expect(assertBalance(id, 0.01)).resolves.toBeUndefined();
+    const usage = await loadBalanceUsage(id);
+    expect(usage.balanceCny).toBe(0);
+    expect(usage.effectiveMemberCny).toBeGreaterThan(3);
+    await expect(assertBalance(id, usage.effectiveMemberCny)).resolves.toBeUndefined();
+    await expect(assertBalance(id, usage.effectiveMemberCny + 0.01)).rejects.toMatchObject({
+      code: "insufficient_balance",
+    });
   });
 
   it("订阅过期后那些会员积分一分钱都不能再花", async () => {

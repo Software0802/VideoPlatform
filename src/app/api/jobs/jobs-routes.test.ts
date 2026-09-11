@@ -28,6 +28,7 @@ let GET_LIST: typeof import("./route").GET;
 let PATCH_JOB: typeof import("./[id]/route").PATCH;
 let DELETE_JOB: typeof import("./[id]/route").DELETE;
 let GET_JOB: typeof import("./[id]/route").GET;
+let CANCEL_JOB: typeof import("./[id]/cancel/route").POST;
 let GET_SHARE: typeof import("@/app/api/share/[token]/route").GET;
 let GET_SHARE_MEDIA: typeof import("@/app/api/share/[token]/media/route").GET;
 
@@ -41,6 +42,7 @@ beforeAll(async () => {
   ({ issueShareToken, signShareToken } = await import("@/lib/share/token"));
   ({ GET: GET_LIST } = await import("./route"));
   ({ PATCH: PATCH_JOB, DELETE: DELETE_JOB, GET: GET_JOB } = await import("./[id]/route"));
+  ({ POST: CANCEL_JOB } = await import("./[id]/cancel/route"));
   ({ GET: GET_SHARE } = await import("@/app/api/share/[token]/route"));
   ({ GET: GET_SHARE_MEDIA } = await import("@/app/api/share/[token]/media/route"));
   const { mediaStore } = await import("@/lib/storage/local-fs");
@@ -359,6 +361,51 @@ describe("DELETE /api/jobs/:id", () => {
     const job = await seedJob(owner.id);
     const res = await DELETE_JOB(deleteReq(`http://localhost/api/jobs/${job.id}`), ctxFor(job.id));
     expect(res.status).toBe(401);
+  });
+});
+
+describe("POST /api/jobs/:id/cancel — R09 取消契约", () => {
+  function postReq(url: string, user?: UserRecord): Request {
+    return new Request(url, { method: "POST", headers: user ? { cookie: cookieFor(user) } : {} });
+  }
+
+  it("排队中的任务照常取消", async () => {
+    const owner = await seedUser(userId("cc1"));
+    const job = await seedJob(owner.id, { status: "queued", progress: 0, output: null });
+    const res = await CANCEL_JOB(postReq(`http://localhost/api/jobs/${job.id}/cancel`, owner), ctxFor(job.id));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { status: string }).status).toBe("canceled");
+  });
+
+  it("字节已 checkpoint（persisting + localOutputPath）的任务不被取消：200 返回进行中的记录", async () => {
+    const owner = await seedUser(userId("cc2"));
+    const job = await seedJob(owner.id, {
+      status: "persisting",
+      progress: 90,
+      output: null,
+      remoteUrl: "https://cdn.example.com/out.mp4",
+      localOutputPath: "data/tmp/cc2.mp4",
+    });
+    const res = await CANCEL_JOB(postReq(`http://localhost/api/jobs/${job.id}/cancel`, owner), ctxFor(job.id));
+    expect(res.status).toBe(200);
+    // 取消契约：产物已存在时，终态交给 persist 结算——记录必须原样还在进行中，
+    // 不是「先标 canceled、等 persist 再把已付费的成片删掉」。
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe("persisting");
+    const after = await GET_JOB(getReq(`http://localhost/api/jobs/${job.id}`, owner), ctxFor(job.id));
+    expect(((await after.json()) as { status: string }).status).toBe("persisting");
+  });
+
+  it("远端产物已产出（persisting + remoteUrl，上游已计费）同样不取消", async () => {
+    const owner = await seedUser(userId("cc3"));
+    const job = await seedJob(owner.id, {
+      status: "persisting",
+      progress: 90,
+      output: null,
+      remoteUrl: "https://cdn.example.com/out.mp4",
+    });
+    const res = await CANCEL_JOB(postReq(`http://localhost/api/jobs/${job.id}/cancel`, owner), ctxFor(job.id));
+    expect(((await res.json()) as { status: string }).status).toBe("persisting");
   });
 });
 

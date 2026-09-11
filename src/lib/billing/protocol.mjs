@@ -9,11 +9,28 @@ export const ledgerEntrySchema = z.object({
   at: z.string().datetime(), kind, amountCny: money, balanceAfterCny: money,
   jobId: text.optional(), giftCode: text.optional(), ref: text.optional(),
   memberCny: money.nonnegative().optional(), note: text.optional(),
+  /**
+   * 订单快照（R04）：订阅购买的 charge 行带上「当初买的是什么档、什么周期、多少钱、
+   * 什么时候下的单」。崩溃补建按这份快照履约——不按当前价目重算，也不许同 key
+   * 换参数补建另一档。
+   */
+  order: z.object({
+    planId: text, cycle: z.enum(["monthly", "yearly"]),
+    priceCny: money.positive(), orderedAt: z.string().datetime(),
+  }).strict().optional(),
 }).strict();
 const inputSchema = z.object({
   delta: money,
   entry: ledgerEntrySchema.omit({ at: true, balanceAfterCny: true, memberCny: true }),
-  options: z.object({ pool: pool.optional() }).strict(),
+  options: z.object({
+    pool: pool.optional(),
+    /**
+     * 退款语义（R02）：正 delta 时指向原扣款行的 `ref`，按那笔 charge 的 `memberCny`
+     * 把退款原路拆回——会员池出的部分退回会员池（哪怕订阅已过期、等着被结算清掉，
+     * 也不许转成永久已购余额），其余进已购池。与 `pool` 互斥。
+     */
+    refundOf: text.optional(),
+  }).strict(),
 }).strict();
 export const baselineSchema = z.object({
   version: z.literal(1), userId: z.string().regex(/^usr_[0-9a-f]{16}$/),
@@ -26,7 +43,7 @@ export const billingSchema = z.object({
   operations: z.array(z.object({
     seq: z.number().int().positive(), operationId: z.string().uuid(), input: inputSchema,
     ledgerEntry: ledgerEntrySchema, before: poolsSchema, after: poolsSchema,
-    effectivePool: z.enum(["purchased", "member", "auto"]),
+    effectivePool: z.enum(["purchased", "member", "auto", "refund"]),
   }).strict()),
   migration: baselineSchema.optional(),
 }).strict();
@@ -88,6 +105,9 @@ export function normalizeInput(input) {
   const delta = round2(parsed.delta);
   const amountCny = round2(parsed.entry.amountCny);
   if (delta !== amountCny) throw billingError("billing_amount_mismatch");
+  if (parsed.options.refundOf !== undefined && (parsed.options.pool !== undefined || delta <= 0)) {
+    throw billingError("billing_invalid_refund");
+  }
   return { delta, entry: { ...parsed.entry, amountCny }, options: parsed.options };
 }
 
@@ -143,6 +163,23 @@ export function emptyBilling(record) {
   return billingSchema.parse({ version: 1, legacyLedger: "", opening: balances(record), operations: [] });
 }
 
+/**
+ * 退款的拆池：沿 `refundOf` 找到原扣款行（它在链上必在当前 op 之前，所以只搜
+ * 已重放的行集），把 `delta` 中不超过原扣款 `memberCny` 的部分退回会员池，其余进
+ * 已购池。返回值与 `splitAcrossPools` 同形：`memberCny` 在一笔**正**向行上表示
+ * 「退回会员池的金额」。原扣款找不到就失败关闭——乱猜池子等于免费送已购余额。
+ */
+function refundSplit(rows, refundOf, current, delta) {
+  const source = rows.find((row) => row.kind === "charge" && row.ref === refundOf);
+  if (!source) throw billingError("billing_refund_source_missing");
+  const memberPart = round2(Math.min(Math.max(0, source.memberCny ?? 0), delta));
+  return {
+    balanceCny: round2(current.balanceCny + delta - memberPart),
+    memberCreditsCny: round2(current.memberCreditsCny + memberPart),
+    memberCny: memberPart,
+  };
+}
+
 export function validateSnapshot(record) {
   if (record.billing === undefined) throw billingError("billing_migration_required");
   const billing = billingSchema.parse(record.billing);
@@ -160,11 +197,19 @@ export function validateSnapshot(record) {
     ids.add(op.operationId);
     const input = normalizeInput(op.input);
     if (!sameValue(input, op.input) || !sameValue(current, op.before)) throw billingError("billing_broken_chain");
-    if (input.options.pool && op.effectivePool !== input.options.pool) throw billingError("billing_invalid_pool");
-    if (input.delta >= 0 && op.effectivePool !== (input.options.pool ?? "purchased")) throw billingError("billing_invalid_pool");
-    if (!input.options.pool && input.delta < 0 && op.effectivePool === "member") throw billingError("billing_invalid_pool");
-    const split = splitAcrossPools(current.balanceCny, current.memberCreditsCny, input.delta,
-      op.effectivePool === "auto" ? undefined : op.effectivePool);
+    if (input.options.refundOf) {
+      if (op.effectivePool !== "refund") throw billingError("billing_invalid_pool");
+    } else {
+      if (input.options.pool && op.effectivePool !== input.options.pool) throw billingError("billing_invalid_pool");
+      if (input.delta >= 0 && op.effectivePool !== (input.options.pool ?? "purchased")) throw billingError("billing_invalid_pool");
+      if (!input.options.pool && input.delta < 0 && !["auto", "purchased"].includes(op.effectivePool)) {
+        throw billingError("billing_invalid_pool");
+      }
+    }
+    const split = input.options.refundOf
+      ? refundSplit(rows, input.options.refundOf, current, input.delta)
+      : splitAcrossPools(current.balanceCny, current.memberCreditsCny, input.delta,
+        op.effectivePool === "auto" ? undefined : op.effectivePool);
     const after = balances(split);
     const row = makeEntry(input, op.ledgerEntry.at, split);
     if (!sameValue(after, op.after) || !sameValue(row, op.ledgerEntry)) throw billingError("billing_broken_chain");
@@ -219,11 +264,15 @@ export function prepareChange(record, rawInput, context) {
     }
     return record;
   }
-  const effectivePool = input.options.pool ?? (input.delta >= 0 ? "purchased"
+  const effectivePool = input.options.refundOf ? "refund"
+    : input.options.pool ?? (input.delta >= 0 ? "purchased"
     : Date.parse(record.subscription?.expiresAt ?? "") > Date.parse(context.at) ? "auto" : "purchased");
   const before = balances(record);
-  const split = splitAcrossPools(before.balanceCny, before.memberCreditsCny, input.delta,
-    effectivePool === "auto" ? undefined : effectivePool);
+  const rows = [...legacy, ...billing.operations.map((op) => op.ledgerEntry)];
+  const split = input.options.refundOf
+    ? refundSplit(rows, input.options.refundOf, before, input.delta)
+    : splitAcrossPools(before.balanceCny, before.memberCreditsCny, input.delta,
+      effectivePool === "auto" ? undefined : effectivePool);
   const after = balances(split);
   const op = {
     seq: billing.operations.length + 1, operationId: context.operationId,

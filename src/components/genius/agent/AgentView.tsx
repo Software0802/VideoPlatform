@@ -9,6 +9,7 @@ import {
   fetchAgentSessions,
   fetchAgentSkills,
   isJobPending,
+  newAgentTurnId,
   sendAgentMessage,
   type AgentSessionDetail,
   type AgentSessionSummary,
@@ -132,6 +133,9 @@ export default function AgentView() {
       tier,
       ...(imageProduct ? { imageProduct } : {}),
       ...(videoProduct ? { videoProduct } : {}),
+      // 每次调用生成一个：同一句话被用户再发一次就是新的一轮（该再扣一次钱）；
+      // 只有同一笔 HTTP 请求的透明重发才共享这个 id，被服务端按重放拦下。
+      turnId: newAgentTurnId(),
     }),
     [activeSkill, tier, imageProduct, videoProduct],
   );

@@ -188,6 +188,61 @@ describe("daily image quota admission", () => {
     expect(again.job.id).toBe(first.job.id);
   });
 
+  it("R07：映射文件丢了，同 key 重放按 job.json 上的幂等键找回同一条任务", async () => {
+    const id = owner("r7a");
+    const key = "lost-mapping-key";
+    const first = await createJob(image({ idempotencyKey: key }), id);
+    expect(first.replay).toBe(false);
+
+    // 模拟崩在「任务落盘、映射没写」之间：任务在，映射没了。
+    const { idempotencyDir } = await import("./store");
+    const { createHash } = await import("node:crypto");
+    const hash = createHash("sha256").update(`${id}\0${key}`).digest("hex");
+    await rm(path.join(idempotencyDir(), `${hash}.json`), { force: true });
+
+    const again = await createJob(image({ idempotencyKey: key }), id);
+    expect(again.replay).toBe(true);
+    expect(again.job.id).toBe(first.job.id);
+  });
+
+  it("R07：同 key 换参数是 409 冲突，不是沉默交回旧任务", async () => {
+    const id = owner("r7b");
+    const key = "same-key-different-params";
+    const first = await createJob(image({ idempotencyKey: key, prompt: "原始提示词" }), id);
+
+    await expect(
+      createJob(image({ idempotencyKey: key, prompt: "改了提示词" }), id),
+    ).rejects.toMatchObject({ status: 409, code: "idempotency_conflict" });
+
+    // 同参重放照旧成立——冲突判的是参数不同，不是 key 已用。
+    const again = await createJob(image({ idempotencyKey: key, prompt: "原始提示词" }), id);
+    expect(again.replay).toBe(true);
+    expect(again.job.id).toBe(first.job.id);
+  });
+
+  it("R07：映射文件半截写坏时按缺失处理，从任务事实源找回而不是新建第二条", async () => {
+    const id = owner("r7c");
+    const key = "torn-mapping";
+    const first = await createJob(image({ idempotencyKey: key }), id);
+
+    // 崩溃把映射写成半份 JSON（升级前是非原子写，这是它真实的坏法）。读不出
+    // 就当不存在——然后靠 job.json 上的 `idempotency.key` 找回原任务，而不是
+    // 把这个 key 当新请求再建一条。
+    const { createHash } = await import("node:crypto");
+    const { idempotencyDir } = await import("./store");
+    const { writeFile } = await import("node:fs/promises");
+    const hash = createHash("sha256").update(`${id}\0${key}`).digest("hex");
+    await writeFile(path.join(idempotencyDir(), `${hash}.json`), `{"jobId":"${first.job.id}","cr`);
+
+    const again = await createJob(image({ idempotencyKey: key }), id);
+    expect(again.replay).toBe(true);
+    expect(again.job.id).toBe(first.job.id);
+    // 恢复顺手把映射补写了回来。
+    const { readFile } = await import("node:fs/promises");
+    const rebuilt = JSON.parse(await readFile(path.join(idempotencyDir(), `${hash}.json`), "utf8"));
+    expect(rebuilt.jobId).toBe(first.job.id);
+  });
+
   it("stops new submissions once the daily failure limit is reached", async () => {
     const id = owner("a8");
     process.env.FREE_DAILY_FAILURE_LIMIT = "3";

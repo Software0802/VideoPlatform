@@ -192,10 +192,16 @@ export async function appendTurn(
   return withAgentLock(async () => {
     const current = await readSession(ownerId, sessionId);
     if (!current) return null;
+    // 消息 id 去重（R08）：同一个 turnId 的两轮并发先后落进这把锁时，第二轮在这里
+    // 变成空操作——不然一次 HTTP 重试会在会话里留下一对重复的「问 + 答」。
+    const known = new Set(current.messages.map((m) => m.id));
+    const fresh = messages.filter((m) => !known.has(m.id));
+    // 一整轮都被去重掉时连会话头也不动：这是一次重放，不该悄悄改掉设置。
+    if (!fresh.length) return current;
     const next: AgentSession = {
       ...current,
       ...stripUndefined(patch),
-      messages: [...current.messages, ...messages],
+      messages: [...current.messages, ...fresh],
       jobIds: [...new Set([...current.jobIds, ...jobIds])],
       updatedAt: new Date().toISOString(),
     };

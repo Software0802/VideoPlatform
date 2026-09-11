@@ -106,6 +106,13 @@ export const agentTurnBodySchema = z
     tier: agentTierSchema.optional(),
     imageProduct: z.string().max(64).optional(),
     videoProduct: z.string().max(64).optional(),
+    /**
+     * 一轮对话的稳定身份（R08）：客户端在「一次发送」时生成，HTTP 层重试原样重发。
+     * 服务端用它做幂等键（扣款 `agent:<turnId>`、动作 `agent:<turnId>:<i>`），
+     * 会话里已有该 turnId 的 assistant 消息时整轮原样交回——网络重试不会扣第二次钱、
+     * 不会多出半轮对话。缺省时服务端自取一个（老客户端 / 测试直调）。
+     */
+    turnId: z.string().regex(AGENT_MESSAGE_ID_RE).optional(),
   })
   .strict();
 export type AgentTurnBody = z.infer<typeof agentTurnBodySchema>;

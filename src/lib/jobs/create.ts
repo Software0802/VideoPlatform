@@ -21,7 +21,11 @@ import {
 import { ProviderHttpError } from "@/lib/providers/types";
 import { activeCountForUser } from "@/lib/jobs/active";
 import { withAdmissionLock } from "@/lib/jobs/admission";
-import { lookupIdempotency, saveIdempotency } from "@/lib/jobs/idempotency";
+import {
+  idempotencyRequestHash,
+  lookupIdempotency,
+  saveIdempotency,
+} from "@/lib/jobs/idempotency";
 import { assertQuota } from "@/lib/jobs/quota";
 import { activeCount, enqueue } from "@/lib/jobs/runner";
 import { assertCreateJobFields } from "@/lib/jobs/request-validation";
@@ -71,6 +75,9 @@ async function assertQueueRoom(ownerId: string): Promise<void> {
 }
 
 async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
+  // 同 key 异参的判据（R07）：请求体剔掉 key 之后的正则哈希，随 `idempotency.key`
+  // 一起落进 job.json——重放必须带着和第一次完全相同的参数回来。
+  const requestHash = body.idempotencyKey ? idempotencyRequestHash(body) : undefined;
   if (body.idempotencyKey) {
     const existing = await lookupIdempotency(ownerId, body.idempotencyKey);
     if (existing) {
@@ -78,7 +85,21 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
       // The owner-namespaced filename should already make a cross-user hit
       // impossible; re-checking the record keeps that true even if a stale or
       // hand-edited mapping file points somewhere else (plan §5.2).
-      if (rec && rec.ownerId === ownerId) return { job: toPublic(rec), replay: true };
+      if (rec && rec.ownerId === ownerId) {
+        // 同 key 不同参数不是重放：沉默地交回旧任务等于「我改了提示词，出来的还是
+        // 上一条」——用户会以为新请求丢了。冲突要显式报出来，让前端重取 key。
+        // 老记录没有 `idempotency` 字段（那时幂等只写在映射文件里），无从比对，
+        // 按归属沿用旧语义放行。
+        const storedHash = rec.idempotency?.requestHash;
+        if (storedHash && storedHash !== requestHash) {
+          throw new ProviderHttpError(
+            409,
+            "idempotency_conflict",
+            "同一幂等键被用于不同的请求参数，请重新发起",
+          );
+        }
+        return { job: toPublic(rec), replay: true };
+      }
     }
   }
 
@@ -265,6 +286,10 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
     shots: null,
     assets: {},
     voiceIds: body.voiceIds,
+    // 幂等键跟着任务记录走（事实源）：映射文件丢了也能从 job.json 重建回来（R07）。
+    ...(body.idempotencyKey && requestHash
+      ? { idempotency: { key: body.idempotencyKey, requestHash } }
+      : {}),
   };
 
   // 余额是主闸门（方案 §3.2），配额退居防滥用兜底。判定与下面的 `writeJob` 必须在

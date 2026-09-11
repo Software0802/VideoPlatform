@@ -262,6 +262,65 @@ async function lookupInterruptedSubmit(job: JobRecord): Promise<string | null> {
 }
 
 /**
+ * 「提交结果不确定」的失败（R06）：上游可能已经把这条请求接走了。
+ *
+ * 上游给过确定答复的失败——参数不对、鉴权拒绝、限流、余额——都是 4xx，那时 POST 没有
+ * 被接受、没有被计费，照原路重发或换家即可。拿不准的只有两类：我们自己合成的超时 /
+ * 断连（`upstream_timeout` / `upstream_unavailable`，请求可能已送达）和上游的 5xx
+ * （服务端内部错，单子可能已经建出来）。把它们当「确定失败」重发 = 同一条片子付两次钱。
+ *
+ * 例外：`missing_api_key` 抛在请求发出之前；`mock_failure` 是测试替身模拟的「上游明确
+ * 拒收」。非 ProviderHttpError 是普通内部错误（rest-map 校验、读盘失败），同样确定。
+ */
+const CERTAIN_SUBMIT_FAILURE_CODES = new Set(["missing_api_key", "mock_failure"]);
+
+function isAmbiguousSubmitError(error: unknown): boolean {
+  if (!(error instanceof ProviderHttpError)) return false;
+  if (error.status < 500) return false;
+  return !CERTAIN_SUBMIT_FAILURE_CODES.has(error.code);
+}
+
+/**
+ * 一次「不确定」的提交该怎么结（R06）。
+ *
+ * - `"resumed"`：上游 `lookupByExternalId` 证明单子已经建出来了，记录已接管成
+ *   `pending`——它照常计费、照常出片，调用方进轮询段把它跑完；
+ * - `"handled"`：任务已结（`failed`/`uncertain_submit` 或已取消），`runOne` 直接返回；
+ * - `"not-ambiguous"`：错误不属于这一类，交回调用方按普通失败走。
+ */
+async function resolveAmbiguousSubmit(
+  id: string,
+  error: unknown,
+): Promise<"resumed" | "handled" | "not-ambiguous"> {
+  if (!isAmbiguousSubmitError(error)) return "not-ambiguous";
+  const rec = await readJob(id);
+  if (!rec || rec.canceled || rec.status === "canceled") return "handled";
+  // 先走不花钱的确认路：能把我们的 jobId 当外部单号查回任务，就接管它继续轮询，
+  // 而不是把一份可能已付费的单子按「失败」扔掉再重买一次。
+  const remoteId = await lookupInterruptedSubmit(rec);
+  if (remoteId) {
+    const next = await updateJob(id, (r) => {
+      if (r.status === "canceled" || r.canceled || r.status !== "submitting") return r;
+      r.remoteId = remoteId;
+      r.status = "pending";
+      r.progress = Math.max(r.progress, 5);
+      return r;
+    });
+    if (next.status === "pending" && next.remoteId === remoteId) {
+      emitRec(next);
+      log("info", "ambiguous submit resolved by upstream lookup", { id, remoteId });
+      return "resumed";
+    }
+    return "handled";
+  }
+  // 查不到、provider 没这个能力、或查询本身也挂了：诚实的答案是「不知道」——标记
+  // uncertain_submit，锁死一键重试（`retryBlock`），而不是把可能已付费的单子重发。
+  const detail = error instanceof Error ? error.message : String(error);
+  await fail(id, UNCERTAIN_SUBMIT_CODE, JOB_UNCERTAIN_SUBMIT_MESSAGE, detail);
+  return "handled";
+}
+
+/**
  * Upstream refusals that are nobody's fault and pass on their own: the account is out
  * of credit, or the platform's concurrency ceiling is full right now. Failing the job
  * outright would show "失败" for what is really "排队", and — because a submit that was
@@ -540,7 +599,13 @@ async function runOne(id: string) {
           await fail(id, error.code, message, detail);
           return;
         }
-        throw error;
+        // R06：到这儿的失败里混着「上游可能已经接单」的那一类（读超时、断连、5xx）。
+        // 直接当未计费失败 / 重新入队，等于在可能已经付费的请求上再买一次——先查上游
+        // 认不认这个外部单号，认了就接管继续轮询，查不到才按 uncertain_submit 结。
+        const ambiguous = await resolveAmbiguousSubmit(id, error);
+        if (ambiguous === "handled") return;
+        if (ambiguous === "not-ambiguous") throw error;
+        // "resumed"：落回下面公共的重读 + 轮询段，这条任务接着往出片走。
       }
       job = await readJob(id);
       if (!job || job.status === "canceled" || job.canceled) return;

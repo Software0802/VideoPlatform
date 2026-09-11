@@ -43,6 +43,13 @@ export type BalanceChangeOptions = {
    *   `"member"` = 只扣会员池且截在 0（期末清零）；缺省 = 先会员后已购。
    */
   pool?: BalancePool;
+  /**
+   * 退款原路回池（R02）：正 delta 时指向原扣款行的 `ref`，按那笔 charge 的
+   * `memberCny` 拆回——会员池出的部分退回会员池（哪怕订阅已过期、等结算清零，
+   * 也不转成永久已购余额），其余进已购池。与 `pool` 互斥；原扣款找不到则
+   * `billing_refund_source_missing` 失败关闭，不猜池子。
+   */
+  refundOf?: string;
 };
 
 export const LEDGER_KINDS = ["grant", "charge", "adjust"] as const;
@@ -79,6 +86,17 @@ export type LedgerEntry = {
    */
   memberCny?: number;
   note?: string;
+  /**
+   * 订单快照（R04）：订阅购买的 charge 行带上原订单的档位 / 周期 / 价格 / 下单时刻。
+   * 「扣款成功、写订阅前崩掉」的补建按这份快照履约——不按当前价目重算、不许同 key
+   * 换参数买另一档。内部字段，`toEntry` 不下发到前端。
+   */
+  order?: {
+    planId: string;
+    cycle: "monthly" | "yearly";
+    priceCny: number;
+    orderedAt: string;
+  };
 };
 
 /**
@@ -199,8 +217,17 @@ async function readDecisionRows(userId: string): Promise<LedgerEntry[]> {
 
 /** 通用幂等键的判据：这个人的流水里是否已有同 `kind` 同 `ref` 的一行。 */
 export async function hasEntryFor(userId: string, kind: LedgerKind, ref: string): Promise<boolean> {
+  return (await findEntryFor(userId, kind, ref)) !== null;
+}
+
+/** 同 `hasEntryFor`，但把那行本身交回来——R04 要读扣款行上的订单快照。 */
+export async function findEntryFor(
+  userId: string,
+  kind: LedgerKind,
+  ref: string,
+): Promise<LedgerEntry | null> {
   const rows = await readDecisionRows(userId);
-  return rows.some((row) => row.kind === kind && row.ref === ref);
+  return rows.find((row) => row.kind === kind && row.ref === ref) ?? null;
 }
 
 /**

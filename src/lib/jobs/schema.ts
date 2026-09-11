@@ -305,6 +305,14 @@ export type JobRecord = Omit<
    */
   billing?: { chargedAt: string };
   /**
+   * 创建请求带的幂等键与请求体哈希（R07）。幂等映射文件只是缓存：job.json 才是
+   * 「这个 key 建了哪条任务」的事实源——崩在「任务落盘、映射没写」之间时，下一次
+   * 同 key 请求靠它把映射重建回来。`requestHash` 是同 key 异参的判据：对不上即
+   * 409 `idempotency_conflict`，不许沉默复用旧任务。老记录没有它：那时幂等只写在
+   * 映射文件里，只能按归属信映射。
+   */
+  idempotency?: { key: string; requestHash: string };
+  /**
    * How many times an upstream refusal that is nobody's fault (rate limit, platform
    * balance) sent this job back to `queued` instead of failing it. Absent on records
    * written before the field existed, so every read goes through `?? 0`.

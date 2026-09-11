@@ -64,6 +64,11 @@ export type JobIndexEntry = {
   priceCny: number;
   provider: JobRecord["provider"];
   outputKind?: "video" | "image";
+  /**
+   * 创建时的幂等键（若带）。进索引的理由与别的判定字段一致：幂等映射文件丢了的
+   * 时候，恢复路径扫索引就能找到「这个 key 建了哪条任务」，不用回读每个 job.json。
+   */
+  idempotencyKey?: string;
 };
 
 const jobIndexEntrySchema = z.object({
@@ -78,6 +83,7 @@ const jobIndexEntrySchema = z.object({
   priceCny: z.number(),
   provider: jobPublicSchema.shape.provider,
   outputKind: z.enum(["video", "image"]).optional(),
+  idempotencyKey: z.string().optional(),
 });
 
 const jobIndexFileSchema = z.record(z.string(), jobIndexEntrySchema);
@@ -182,6 +188,7 @@ export function toIndexEntry(rec: JobRecord): JobIndexEntry {
   if (rec.artifactsPurgedAt) entry.artifactsPurgedAt = rec.artifactsPurgedAt;
   const kind = outputKindOf(rec);
   if (kind) entry.outputKind = kind;
+  if (rec.idempotency?.key) entry.idempotencyKey = rec.idempotency.key;
   return entry;
 }
 

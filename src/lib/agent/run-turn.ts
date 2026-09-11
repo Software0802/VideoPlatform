@@ -1,5 +1,5 @@
 import { assertBalance } from "@/lib/billing/admission";
-import { applyBalanceChange } from "@/lib/billing/ledger";
+import { applyBalanceChange, hasEntryFor } from "@/lib/billing/ledger";
 import { agentTurnPriceCny } from "@/lib/billing/prices";
 import { log } from "@/lib/log";
 import { withAdmissionLock } from "@/lib/jobs/admission";
@@ -24,7 +24,7 @@ import {
   type AgentTier,
 } from "@/lib/agent/schema";
 import { agentSkillById } from "@/lib/agent/skills";
-import { appendTurn, newMessageId } from "@/lib/agent/store";
+import { appendTurn, newMessageId, readSession } from "@/lib/agent/store";
 
 /**
  * 一轮对话（方案 §1）。
@@ -77,10 +77,46 @@ export async function runTurn(
     tier?: AgentTier;
     imageProduct?: string;
     videoProduct?: string;
+    /** 一轮的稳定身份（R08）：HTTP 重试原样带回，扣款 / 建任务 / 写消息全部按它幂等。 */
+    turnId?: string;
   },
   options: RunTurnOptions = {},
 ): Promise<RunTurnResult> {
   const ownerId = input.ownerId;
+  const turnId = input.turnId ?? newMessageId();
+  const ref = `agent:${turnId}`;
+
+  // R08：调用方带 turnId 时先按它查重——这条轮次可能整个跑完过、只是回执丢在了
+  // 网络上。会话里已有同 id 的 assistant 消息 = 这轮已经成交：原文本一致就把当时
+  // 的答复原样交回，不再扣钱、不再调 LLM；文本不同说明同一个 key 被复用到另一句话
+  // 上，那是参数冲突，按 409 拒绝而不是沉默交回旧答复。
+  if (input.turnId) {
+    const fresh = await readSession(ownerId, session.id);
+    if (!fresh) throw new ProviderHttpError(404, "not_found", "会话不存在");
+    const idx = fresh.messages.findIndex((m) => m.role === "assistant" && m.id === turnId);
+    if (idx >= 0) {
+      const prior = fresh.messages[idx - 1];
+      if (!prior || prior.role !== "user" || prior.text !== input.text) {
+        throw new ProviderHttpError(
+          409,
+          "idempotency_conflict",
+          "同一轮次键被用于不同的输入，请重新发起",
+        );
+      }
+      return { session: fresh, assistant: fresh.messages[idx] };
+    }
+    // 同 turnId 的一轮以前跑过、但 LLM 整轮失败退了款：扣款行与退款行都已落账，
+    // 再走一遍的话扣款被幂等跳过、LLM 却真的又调了——等于白送一轮。这不是重放，
+    // 是一次已被结算过的失败请求被原样重发；显式拒绝，客户端要重试就换 key。
+    if (await hasEntryFor(ownerId, "adjust", `${ref}:refund`)) {
+      throw new ProviderHttpError(
+        409,
+        "idempotency_conflict",
+        "这一轮已经失败退款，请重新发起",
+      );
+    }
+    session = fresh;
+  }
   // 一家可用的对话提供方都没有时到此为止，而且必须在扣款**之前**：先扣再退会在流水上
   // 留下一对无意义的进出，用户却什么都没拿到。注入了替身的调用（测试）不需要真凭据。
   if (!options.complete && !options.config) requireAgentLlmConfig();
@@ -98,8 +134,6 @@ export async function runTurn(
     ...(skill ? { skillId: skill.id } : {}),
     at: new Date().toISOString(),
   };
-  const turnId = newMessageId();
-  const ref = `agent:${turnId}`;
 
   // 判定与扣款必须在同一个 `withAdmissionLock` 临界区里（AGENTS.md 硬约束）：出了锁，
   // 并发的两轮会读到同一份「还够一次」的余额然后一起放行。
@@ -177,7 +211,7 @@ async function refundTurn(ownerId: string, priceCny: number, ref: string): Promi
       amountCny: priceCny,
       ref: `${ref}:refund`,
       note: "智能体对话失败退回",
-    });
+    }, { refundOf: ref });
   } catch (error) {
     // 退款失败不该盖掉「智能体挂了」这个真正的原因；记一条 warn 供人工对账。
     log("warn", "智能体退款失败", { ownerId, ref, error: String(error) });
