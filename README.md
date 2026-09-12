@@ -1,6 +1,6 @@
 # Genius（原 流光 / Lumen）— 视频创作平台
 
-侧栏 + 五视图的深色 App（`design_handoff/design_handoff_genius_app`）：主页瀑布流看真实作品，创作页跟进当前任务，悬浮创作面板接后端出片，智能体 / 画布 / 订阅三个视图是像素复刻的本地交互（占位数据，不发请求）。UI 只暴露三条真实路径——文生视频 / 图生视频 / 文生图；API 与 provider 层仍支持 Grok 原生参考生 / 编辑 / 延长。无上游密钥时走模拟模式。30 / 45 / 60 秒一致性管线（Harness）已接入，由 `HARNESS_ENABLED` 开关；mock 端到端已验证，真实 key 的质量与成本验收仍待完成（见 `docs/handoff.md`）。
+侧栏 + 五视图的深色 App（`design_handoff/design_handoff_genius_app`）：主页瀑布流看真实作品，创作页跟进当前任务，悬浮创作面板接后端出片；智能体（提案审批制 LLM 编排）、画布（节点 DAG 运行）、订阅（余额 / 会员积分池 / 礼品码）都接真实后端。上游由**多家供应商按能力路由**：`VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER` 的次序决定优先级，命中条件是有 key、声明支持该模式、未被判耗尽、接得下画幅 / 分辨率 / 尾帧（`src/lib/providers/router.ts`）。`edit_video` / `extend_video` 目前只有 grok（xAI）一家 provider 声明支持，ORDER 内没有可用 provider 承接时提交返回 503 `no_provider_available`。无上游密钥时走模拟模式。30 / 45 / 60 秒一致性管线（Harness）已接入，由 `HARNESS_ENABLED` 开关——现有实现绑定 xAI（shot 路由枚举 grok_*、角色表走 xAI Files API），生产关闭中；mock 端到端已验证，真实 key 的质量与成本验收仍待完成（见 `docs/handoff.md`）。
 
 新会话先读 [`docs/handoff.md`](docs/handoff.md)。
 
@@ -47,63 +47,25 @@ node scripts/usage.mjs --days 7                   # 按天/用户/provider 统�
 
 界面上的「模型」下拉列的是产品名（不露供应商），内置七档见 `src/lib/products/catalog.ts`，可用 `.env.example` 里的 `LUMEN_PRODUCTS`（JSON）按 id 覆盖或追加档位。
 
-可选：设置 `KLING_API_KEY`（可灵直连视频，见下）或 `OPENAI_API_KEY`（文生图走 OpenAI 兼容 provider，见 `.env.example` 的 `OPENAI_*` 段）；都不设时视频 / 图片各自回落 xAI 或模拟模式。`DATA_DIR` 默认 `./data`。
+可选：配置 `KLING_API_KEY`（可灵直连视频）、`YMAN_API_KEY`（YMan 中转，视频 + 生图）或 `OPENAI_API_KEY`（文生图走 OpenAI 兼容 provider），并用 `VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER` 声明各自的优先级次序——配了 key 却没写进 ORDER 的 provider 不会被选中；一把 key 都没有才走模拟模式。`DATA_DIR` 默认 `./data`。
 
 `docs/handoff.md` §0 新增的环境变量：`SHARE_TTL_HOURS`（分享链接有效期，默认 24 小时）、`ALERT_WEBHOOK_URL`/`ALERT_WEBHOOK_TIMEOUT_MS`（运维告警出站地址，不设则不外发）、`UPSTREAM_POLL_MAX_MS`（轮询阶梯上限，默认 10000）、`MAX_QUEUED_JOBS_PER_USER`（单账号同时在途任务数上限，默认 5）、`YMAN_TASK_TIMEOUT_MS`（YMan 任务本地等待上限，默认 900000）。说明见 `.env.example`。
 
-### 真出片：官方 xAI 或 Sub2API
+### 真出片：配置供应商
 
-后台视频/图片走同一套 REST（`/v1/videos/generations|edits|extensions`、`/v1/images/generations`）。任选一条：
+平台通过多家中转站 / 直连供应商协作出片。路由按 `VIDEO_PROVIDER_ORDER`（逗号分隔，取值 `kling|yman|grok`，代码默认 `grok`；兼容旧开关 `VIDEO_PROVIDER=kling` 视为 `kling,grok`）与 `IMAGE_PROVIDER_ORDER`（取值 `openai|yman|grok`，默认 `openai,grok`）的次序，取第一个「配了 key、声明 `capabilities().modes` 支持该模式、未被判定积分耗尽、（视频）接得下请求画幅 / 分辨率 / 尾帧」的 provider。一家可用的都不剩但配了真 key 时提交返回 503 `no_provider_available`，绝不静默落 mock。生产实例（2026-09-13 探查）：`VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`，配了 OpenAI 兼容 / 可灵 / YMan / 智能体四把 key，未配 xAI。下面是三家生产在用的供应商：
 
-**官方 API key（按秒计费）**
+**可灵（Kling）直连视频**（详见 `docs/design.md` §2c）——文生视频 / 图生视频走可灵开放平台新系统 API，声明 `supportsLastFrameLock`（首尾帧锁，i2v 专属，强制 1080p）；时长枚举只有 5/10 两档，服务端向上归一并写回 `job.durationSec`。国际版账号必须用 `api-singapore.klingai.com`。变量：`KLING_API_KEY`、`KLING_BASE_URL`、`KLING_VIDEO_MODEL`（默认 `kling-2.6`）、`KLING_VIDEO_RESOLUTION`、`KLING_VIDEO_AUDIO`、`KLING_USD_PER_UNIT`（默认 0.10）、`KLING_TASK_TIMEOUT_MS`，详见 `.env.example`。
 
-```
-XAI_API_KEY=xai-...
-XAI_BASE_URL=https://api.x.ai/v1
-```
+**OpenAI 兼容生图中转（生产用 ccgoai，`OPENAI_BASE_URL=https://ccgoai.club/v1`）**——文生图走 OpenAI Images 兼容 API，生产模型 `gpt-image-2`；`OPENAI_IMAGE_FLEXIBLE_SIZES=1` 时七画幅原生出图零裁切，按 `OPENAI_IMAGE_PRICE_TABLE`（画质档 × 尺寸档，单位为上游额度）计价；上游可回 202 异步任务（`OPENAI_IMAGE_TASK_TIMEOUT_MS` 管总时限），生成 POST 一旦接受即计费、固定不重发。变量：`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_IMAGE_MODEL`、`OPENAI_IMAGE_*`，详见 `.env.example` 与 `docs/design.md` §2b。
 
-**Sub2API 反代（Grok 订阅 / 拼车）**
+**YMan 中转渠道**（视频 + 生图，`https://vip.yman.cc/v1`，详见 `docs/design.md` §2e）——视频三步 `POST /videos` → `GET /videos/{id}` → `GET /videos/{id}/content`（取片也要带 Bearer）；声明 t2v / i2v / r2v / t2i，参考生视频走这条。视频模型 ID 必须用上游 `GET /v1/models` 的**展示名**（默认 `YMAN_T2V_MODEL=minimax-H3 文字`、`YMAN_I2V_MODEL=minimax-h3-933-图文`），生图默认 `YMAN_IMAGE_MODEL=gpt-image-2`；一家上游积分用完（`quota_exhausted`）会被自动标记耗尽 `PROVIDER_EXHAUSTED_TTL_MS`（默认 6 小时）并改走下一家，用户报价只降不升。全部变量说明见 `.env.example`。
 
-本仓库不内嵌 Sub2API。先自行部署 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)，在管理端加入 Grok OAuth 订阅账号（或 xAI API key 账号），建分组并打开 **image-generation** 权限，再签发 `sk-` 密钥。
-
-```
-SUB2API_API_KEY=sk-...
-XAI_BASE_URL=http://127.0.0.1:8080/v1
-UPSTREAM_TIMEOUT_MS=30000
-UPSTREAM_RETRY_BASE_MS=250
-```
-
-只填 `SUB2API_API_KEY`、不填 `XAI_BASE_URL` 时，默认打本地 `http://127.0.0.1:8080/v1`。同时填了 `XAI_API_KEY` 时优先走官方 key。
-
-**可选：可灵（Kling）直连视频**（详见 `docs/plan-kling-video.md` 与 `docs/handoff.md` §0c）——设置 `KLING_API_KEY` 与 `VIDEO_PROVIDER=kling` 后，文生视频 / 图生视频改走可灵开放平台，价格约为 xAI 的三分之一；参考生视频 / 编辑 / 延长与长片仍固定在 xAI。变量说明见 `.env.example`。
-
-**可选：YMan 中转渠道**（视频 + 生图，详见 `docs/design.md` §2e 与 `docs/handoff.md` §0f）——设置 `YMAN_API_KEY` 后自动参与路由（默认次序 `VIDEO_PROVIDER_ORDER=kling,grok`、`IMAGE_PROVIDER_ORDER=openai,grok`，把 `yman` 加进对应的 ORDER 变量才会被选中，如 `VIDEO_PROVIDER_ORDER=yman,kling,grok`）。视频模型 ID 必须用上游 `GET /v1/models` 的展示名（默认 `YMAN_T2V_MODEL=minimax-H3 文字`、`YMAN_I2V_MODEL=minimax-h3-933-图文`），生图默认 `YMAN_IMAGE_MODEL=gpt-image-2`；一家上游积分用完（`quota_exhausted`）会被自动标记耗尽 `PROVIDER_EXHAUSTED_TTL_MS`（默认 6 小时）并改走下一家，用户报价不变。全部变量说明见 `.env.example`。
-
-Sub2API 的 Grok 媒体路由与 xAI 字段兼容；OAuth 订阅号需要付费权益探测通过才会接图/视频，否则上游返回 `503 grok_media_no_eligible_account`。
+**可选：xAI（官方或 Sub2API 反代）**——grok provider（`src/lib/providers/grok/`）走 xAI REST（`/v1/videos/generations|edits|extensions`、`/v1/images/generations`），声明全部六个模式（含目前只有它声明的 `edit_video`/`extend_video`）。官方 key：`XAI_API_KEY` + `XAI_BASE_URL=https://api.x.ai/v1`。Sub2API 反代：自行部署 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)，建分组开 **image-generation** 权限后签发 `sk-` 密钥，填 `SUB2API_API_KEY`（不填 `XAI_BASE_URL` 时默认打本地 `http://127.0.0.1:8080/v1`；同时填了 `XAI_API_KEY` 时走官方 key）。OAuth 订阅号需付费权益探测通过才接图/视频，否则上游返回 `503 grok_media_no_eligible_account`。
 
 ### 视频链路冒烟
 
-先启动本地 Sub2API，并确认 Grok 分组已开启 **image-generation** 权限。把密钥只写在本机 `.env.local`（不要提交，也不要粘贴到聊天）：
-
-```bash
-SUB2API_API_KEY=sk-...
-XAI_BASE_URL=http://127.0.0.1:8080/v1
-```
-
-然后启动 Lumen：
-
-```bash
-pnpm build
-pnpm start
-```
-
-另开终端运行完整原生视频回路（T2V → I2V → R2V → Extend → Edit）：
-
-```bash
-pnpm run smoke:live
-```
-
-`smoke:live` 会先拒绝模拟模式，不会在上游不可用时静默生成假片；完成后报告每个 job 的状态、预估/实际成本和 Range 读取结果。没有订阅或只想验证本地 ffmpeg 时，可运行 `pnpm run smoke:mock`。
+`pnpm run smoke:live`（`scripts/smoke-lumen.mjs --require-live`）跑的是 xAI 原生五模式回路（T2V → I2V → R2V → Extend → Edit）：`extend_video` / `edit_video` 目前只有 grok provider 声明支持，因此这条冒烟**依赖 XAI key 或 Sub2API 反代**（先起本地 Sub2API 并把 `SUB2API_API_KEY`/`XAI_BASE_URL` 写进本机 `.env.local`，不要提交）；生产没配 xAI 时 Edit/Extend 两段会失败。它先拒绝模拟模式，不会在上游不可用时静默生成假片；完成后报告每个 job 的状态、预估/实际成本和 Range 读取结果。没有订阅或只想验证本地 ffmpeg 时，可运行 `pnpm run smoke:mock`。
 
 ### CI
 

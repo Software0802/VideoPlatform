@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 状态 | 已实施并部署生产，as-built 见 `docs/design.md` §2c；本文正文为历史方案，不再维护 |
+| 状态 | 已实施并部署生产，as-built 见 `docs/design.md` §2c；本文正文为历史方案，不再维护。2026-09-13 起产品方向为多中转按能力路由，Grok 为普通可选成员；本文 Grok 主视角部分为历史决策，现状以 `docs/design.md` 为准 |
 | 日期 | 2026-09-06 |
 | 前置 | `main` @ `c5e92ed`（用户系统 / 配额 / 留存清理已上线） |
 | 影响面 | `src/lib/providers/`（新目录 `kling/`）、`src/lib/providers/router.ts`、`src/lib/jobs/create.ts`、`src/lib/jobs/schema.ts`、`src/lib/cost.ts`、`src/lib/env.ts`、`/api/health`、`LumenHome.tsx` 时长芯片；**不改** `src/lib/jobs/runner.ts` 状态机与 `src/lib/harness/` |

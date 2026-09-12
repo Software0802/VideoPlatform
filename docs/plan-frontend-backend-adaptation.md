@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 状态 | 阶段 A 已实施并部署生产，as-built 见 `docs/design.md` §2f（产品目录）/§2c（首尾帧）；阶段 B（作品管理 / 账号自助）已在后续「阶段 B + 架构第二阶段」实施，见 `docs/handoff.md`；智能体 / 画布已按用户决策另行立项并实施（`docs/design.md` §2h，画布仍为本地交互原型）。本文正文为历史方案，不再维护 |
+| 状态 | 阶段 A 已实施并部署生产，as-built 见 `docs/design.md` §2f（产品目录）/§2c（首尾帧）；阶段 B（作品管理 / 账号自助）已在后续「阶段 B + 架构第二阶段」实施，见 `docs/handoff.md`；智能体 / 画布已按用户决策另行立项并实施（`docs/design.md` §2h，画布仍为本地交互原型）。本文正文为历史方案，不再维护。2026-09-13 起产品方向为多中转按能力路由，Grok 为普通可选成员；本文 Grok 主视角部分为历史决策，现状以 `docs/design.md` 为准 |
 | 日期 | 2026-09-06 晚 |
 | 依据 | 在 mock 实例（`lumen-mock`，Playwright 实点）走完五个视图与创作面板的全部入口；`design_handoff/design_handoff_genius_app/README.md`；`docs/plan-ui-genius-app.md`（UI 换壳方案，把后端不支持的入口画出来置灰） |
 | 原则 | 前端交付功能，供应商差异在 provider 层吸收（用户 2026-09-06）。本方案的工作就是把「置灰」逐项变成「能用」，能用的标准是至少一家已配置的 provider 支持，其余 provider 由能力路由自动跳过 |

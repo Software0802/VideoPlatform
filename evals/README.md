@@ -2,7 +2,7 @@
 
 `prompts.json` 有两组固定输入（审查 2026-09-05 R03 起分开）：
 
-- `cases`（20 条）：Grok 原生五模式回归集——T2V、I2V、R2V、Edit、Extend，中英各半，每模式两个边界档位。它证明底座没有回退，**不能**用来验收长片一致性。
+- `cases`（20 条）：原生五模式回归集——T2V、I2V、R2V、Edit、Extend，中英各半，每模式两个边界档位。它按 grok provider（xAI）的字段约束写成，覆盖的 Edit / Extend 目前只有 grok 声明支持，跑这组需要 `XAI_API_KEY` 或 Sub2API；它证明这五条原生链路没有回退，**不能**用来验收长片一致性，也不覆盖可灵 / YMan 路由。
 - `harnessCases`（8 条）：30 / 45 / 60 秒一致性管线用例——t2v / i2v、人物 / 场景、`tail_chain` / `extend` / 用户尾帧定格。`harnessProtocol` 规定每条重复 2 次、与"三段原生 T2V 直接 concat"的基线盲评、两个操作场景（QC 重试、中断续跑）以及"失败样本不得移出分母"。
 
 当前仓库只提供输入和人工评分规范（`rubric.md` v2），不会在 `pnpm test` 中自动调用上游，也不会伪造生成质量结果。

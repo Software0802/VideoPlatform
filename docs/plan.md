@@ -5,7 +5,7 @@
 | 日期 | 2026-08-30 |
 | 基线 | 2026-09-05 as-built：HEAD `6c01ba6`（M2.4 接入 `bb2657f`、Playwright 冒烟 `6c01ba6`）。§2 表按「已实现 / mock 已验证 / 真实已验证 / 质量已验收」四档标注 |
 | 配套文档 | 设计书 `docs/design.md`;审查报告 `docs/review-2026-08-29.md`;历史 Phase 0 设计 `docs/architecture.md` |
-| 状态 | 执行中。2026-09-05 完成 Blueprint 首页重建与 **M2.4 接入**(QC + orchestrator + `HARNESS_ENABLED` 放开 30/45/60,mock 端到端已验证;见 `docs/handoff.md`)。2026-09-05 晚 Codex 方案审查 5 条 P1 已并入（§4 / §5 / §6 / §7.1）。下一刀: 补齐预算覆盖与恢复账目（代码）→ 真实 key 30s 链路冒烟（G2）→ 校准样本定视觉 QC 阈值（G3） |
+| 状态 | **2026-09-13 起产品方向为多中转站按能力路由，Grok 为普通可选成员；本文 Grok 主视角部分为历史决策，现状以 `docs/design.md` 为准。** 执行中。2026-09-05 完成 Blueprint 首页重建与 **M2.4 接入**(QC + orchestrator + `HARNESS_ENABLED` 放开 30/45/60,mock 端到端已验证;见 `docs/handoff.md`)。2026-09-05 晚 Codex 方案审查 5 条 P1 已并入（§4 / §5 / §6 / §7.1）。下一刀: 补齐预算覆盖与恢复账目（代码）→ 真实 key 30s 链路冒烟（G2）→ 校准样本定视觉 QC 阈值（G3） |
 
 ---
 

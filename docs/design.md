@@ -48,24 +48,43 @@ flowchart TB
   Runner --> FS
 ```
 
-### 上游选择(as-built,`src/lib/env.ts`)
+### 上游选择(as-built,`src/lib/env.ts` + `src/lib/providers/router.ts`)
+
+路由**按能力 + 优先级列表**,不按 key 存在性:`pickVideoProvider`/`pickImageProvider` 按 `VIDEO_PROVIDER_ORDER`(默认 `grok`,兼容旧 `VIDEO_PROVIDER=kling` → `kling,grok`,其余值视为只有 `grok`)/`IMAGE_PROVIDER_ORDER`(默认 `openai,grok`)的次序,取第一个「配了 key、未被 `exhaustion.ts` 判定耗尽、`capabilities().modes` 声明支持该模式、(视频)接得下请求画幅 / 分辨率 / 尾帧」的 provider。生产已显式覆盖为 `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`。ORDER 全没选中时的 fallback:配了 XAI key 且未耗尽才试 grok;否则只要配了任何真 key 就 503 `no_provider_available`,完全没 key 才 mock。
 
 | 配置 | 行为 |
 | --- | --- |
-| `XAI_API_KEY` | 优先使用,base 默认 `https://api.x.ai/v1` |
-| 仅 `SUB2API_API_KEY` | base 默认 `http://127.0.0.1:8080/v1` |
-| `XAI_BASE_URL` | 覆盖 base(自动补 `/v1`) |
-| `KLING_API_KEY` + `VIDEO_PROVIDER=kling`(或 `VIDEO_PROVIDER_ORDER` 含 `kling`) | 文生视频 / 图生视频改走可灵新系统 API(非 harness),见 §2c |
-| `YMAN_API_KEY` | 中转渠道 YMan,视频/生图共用一把 key,见 §2e |
+| `KLING_API_KEY` | 可灵直连视频 key;`KLING_BASE_URL` 默认 `api-beijing`(国际版须 `api-singapore`),见 §2c |
+| `YMAN_API_KEY` | 中转渠道 YMan,视频/生图共用一把 key,`YMAN_BASE_URL` 默认 `vip.yman.cc/v1`,见 §2e |
+| `OPENAI_API_KEY` | 文生图 OpenAI 兼容通道(官方或中转如 ccgoai),`OPENAI_BASE_URL` 默认 `api.openai.com/v1`,见 §2b |
+| `XAI_API_KEY` | grok provider 的官方 key,base 默认 `https://api.x.ai/v1` |
+| 仅 `SUB2API_API_KEY` | grok 走 Sub2API 反代,base 默认 `http://127.0.0.1:8080/v1` |
+| `XAI_BASE_URL` | 覆盖 grok base(自动补 `/v1`) |
 | 都没有 / `LUMEN_FORCE_MOCK=1` | MockProvider |
 
-**2026-09-06 晚起**:视频与生图路由都已从「按 key 存在性 + 单点开关」改成「按能力 + 优先级列表」(`VIDEO_PROVIDER_ORDER` 默认 `kling,grok`,`IMAGE_PROVIDER_ORDER` 默认 `openai,grok`),详见 §2e。上表仍列出各 provider 需要哪把 key,但**谁被选中**由 §2e 的路由规则决定,不再是「点名开关」。
-
-视频与图片走同一套 REST(`/videos/generations|edits|extensions`、`/videos/{id}`、`/images/generations`),Sub2API 与官方字段兼容。**禁止** `openai.videos.*`(Sora 协议,非 xAI)。
+grok provider(`src/lib/providers/grok/`)走 xAI REST(`/videos/generations|edits|extensions`、`/videos/{id}`、`/images/generations`),Sub2API 与官方字段兼容。**禁止** `openai.videos.*`(Sora 协议,非 xAI)。
 
 ## 2. 模式矩阵(as-built,含文生图)
 
-| 模式 | 模型 | 端点 | 关键约束(服务端 Zod + `assertModeConstraints` 双重拒绝) |
+按模式列「当前声明支持的 provider」(抄自各 provider `capabilities().modes`,路由见 §1「上游选择」):
+
+| 模式 | 声明支持的 provider | 备注 |
+| --- | --- | --- |
+| `text_to_image` | openai(`openai-image`)、yman(生图委托 openai-image 工厂)、grok | 分辨率 `1k|2k`;openai 通道可 202 异步轮询(§2b) |
+| `text_to_video` | kling、yman、grok | kling 时长枚举只有 5/10、向上归一写回;yman 按模型档向上取档 |
+| `image_to_video` | kling、yman、grok | 首帧必填;首尾帧锁(`last_frame`)只有 kling 声明 |
+| `reference_to_video` | yman、grok | yman 参考图上限 ≤9、grok ≤7(各自 `validate` 收紧);kling 不声明 |
+| `edit_video` | 仅 grok | 目前唯一声明方;ORDER 内没有可用 provider 时提交返 503 `no_provider_available`,生产当前没有供应商承接 |
+| `extend_video` | 仅 grok | 同上(依赖 xAI Files API) |
+
+- 30/45/60:`HARNESS_ENABLED` 未开启时 400「长视频将由一致性管线提供,尚未开放」;开启后仅 t2v / i2v 可提交,任务走 §7 管线——现有实现绑定 xAI(shot 路由枚举 `grok_*`、角色表走 xAI Files API),rest-map 拒绝这三个时长进原生 Grok 请求体(golden 保障);生产 `HARNESS_ENABLED=false`,供应商无关化待做。
+- 尾帧(`last`)只存 `inputs/last.jpg`,只有声明 `supportsLastFrameLock` 的 provider(当前仅 kling)会把它发进请求体;grok 的 `validate` 直接拒绝带尾帧的请求,`toProviderReq` 对不支持的 provider 不填该字段(golden test 按 provider 分开断言)。
+
+### grok provider(xAI,`src/lib/providers/grok/`)
+
+grok 自己一家的字段约束(服务端 Zod + `grok.validate` 双重拒绝):
+
+| 模式 | 模型 | 端点 | 关键约束 |
 | --- | --- | --- | --- |
 | `text_to_image` | `grok-imagine-image-2.0` | `POST /images/generations` | prompt 必填;分辨率 `1k|2k`;同步返回(无 request_id 轮询),直接进 `persisting` |
 | `text_to_video` | `grok-imagine-video-1.5` | `POST /videos/generations` | prompt 必填;duration 1–15(默认 8);7 种画幅;480/720/1080p |
@@ -74,24 +93,16 @@ flowchart TB
 | `edit_video` | `grok-imagine-video`(1.0) | `POST /videos/edits` | 源视频必填,≤8.7s(create 时按 sidecar 校验);禁 duration/aspect/resolution |
 | `extend_video` | 1.0 | `POST /videos/extensions` | 源视频 2–15s;`duration`=延长段 2–10(默认 6);禁 aspect/resolution |
 
-- 30/45/60:`HARNESS_ENABLED` 未开启时 400「长视频将由一致性管线提供,尚未开放」;开启后仅 t2v / i2v 可提交,任务走 §7 管线,**这三个时长永不进入 Grok 请求体**(rest-map 仍拒绝,golden 保障)。
-- 尾帧(`last`)只存 `inputs/last.jpg`,**永不进入任何 Grok body**(golden test 保障);`lastFrameLocksOutput: false` 字面量。
 - 所有 live 请求附 `storage_options: { filename: "{jobId}.{jpg|mp4}" }` 作 Files 备份;poll/响应解析 `file_output.file_id`。
 - 图片/参考图经 sharp 压缩(≤256KB、最长边 1280)后以 data URI 发送;源视频 submit 时 `POST /v1/files` 得 `file_id`。Files 失败即 fail job,禁止源视频 data URI 兜底。
 
-定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.02/张;实际以 `usage.cost_in_usd_ticks / 1e10` 为准,两者都进 DTO。
+grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.02/张;实际以 `usage.cost_in_usd_ticks / 1e10` 为准,两者都进 DTO。
 
 ## 2b. 生图 provider 路由(2026-09-06,as-built)
 
-`text_to_image` 不再单走 xAI,`src/lib/providers/router.ts` 的 `selectProvider`/`currentProviderId` 按 key 是否存在分流,视频路径不受影响:
+`text_to_image` 由 `pickImageProvider`(`src/lib/providers/router.ts`)按 `IMAGE_PROVIDER_ORDER`(默认 `openai,grok`,即加 YMan 之前那条阶梯;生产已覆盖为 `openai,yman`)的次序,取第一个「有 key、未耗尽、`capabilities().modes` 声明 `text_to_image`」的 provider;ORDER 全没选中走 §1 的同一条 fallback(有 XAI key 才试 grok,否则有真 key 503、完全没 key 才 mock)。视频路径不受影响。openai 通道(`src/lib/providers/openai-image/`)官方 `gpt-image-1` 或兼容中转(生产 ccgoai `gpt-image-2`);yman 通道把生图委托给同一工厂(默认 `gpt-image-2`)。
 
-| 优先级 | 条件 | provider |
-| --- | --- | --- |
-| 1 | `OPENAI_API_KEY` 设置 | `openaiImageProvider`(`src/lib/providers/openai-image/`),官方 `gpt-image-1` 或兼容中转 |
-| 2 | 无 OpenAI key,`XAI_API_KEY`/`SUB2API_API_KEY` 设置 | `grokNativeProvider` |
-| 3 | 都没有 | `mockProvider` |
-
-`isMockMode()`(`src/lib/env.ts`)改为「xAI 与 OpenAI 两把 key 都没有才算 mock」——只配生图 key 的实例整体脱离 mock 模式(视频路径仍各自按自己的 key 回落)。
+`isMockMode()`(`src/lib/env.ts`)的口径是「xAI / OpenAI / 可灵 / YMan 四把 key 都没有才算 mock」——只配生图 key 的实例整体脱离 mock 模式(视频路径仍各自按自己的 ORDER 走)。
 
 ### 上游三种响应
 
@@ -113,14 +124,7 @@ flowchart TB
 
 ## 2c. 视频 provider 路由(可灵,2026-09-06,as-built)
 
-方案 `docs/plan-kling-video.md`。文生视频 / 图生视频在满足条件时改走可灵开放平台新系统 API,其余视频模式(参考生 / 编辑 / 延长 / harness 长片)不受影响,仍固定在 xAI。已作为 `bcad123` 提交并于 2026-09-06 部署到生产(`api-singapore` 域名),详见 `docs/handoff.md` §0c。
-
-| 优先级 | 条件 | provider |
-| --- | --- | --- |
-| 1 | mode 是 `text_to_video`/`image_to_video`,`VIDEO_PROVIDER=kling` 且 `KLING_API_KEY` 已设置,且非 harness(30/45/60) | `klingProvider`(`src/lib/providers/kling/`) |
-| 2 | 其余(含 harness、`reference_to_video`/`edit_video`/`extend_video`) | 沿用 §1 的 xAI 路由(`XAI_API_KEY`/`SUB2API_API_KEY` → mock) |
-
-`usesKling(mode, harness)`(`src/lib/providers/router.ts`)是唯一判据;`currentProviderId(mode, { harness })` 与 `selectProvider` 都过这一关。harness 永远留在 grok,因为 30/45/60 的 extend shot 依赖 xAI 的 Files API,可灵接不了。`isMockMode()` 改为「xAI / OpenAI / 可灵三把 key 都没有才算 mock」。
+方案 `docs/plan-kling-video.md`。可灵 provider(`klingProvider`,`src/lib/providers/kling/`)只声明 `text_to_video`/`image_to_video` 两种模式,是否被选中由 `VIDEO_PROVIDER_ORDER` 的次序决定——它要在次序表里、配了 `KLING_API_KEY`、未被判定耗尽才会被 `pickVideoProvider` 选中。其余模式由「声明支持它们的 provider」承接:`reference_to_video` 当前由 yman / grok 声明,`edit_video`/`extend_video` 只有 grok 声明(ORDER 内没有可用 provider 承接时提交返 503 `no_provider_available`),30/45/60 长片走 harness 管线(现有实现绑定 xAI,生产关闭中)。已作为 `bcad123` 提交并于 2026-09-06 部署到生产(`api-singapore` 域名),详见 `docs/handoff.md` §0c。
 
 ### 请求 / 查询形状
 
@@ -152,7 +156,7 @@ flowchart TB
 
 ### 路由规则
 
-`src/lib/providers/router.ts` 的 `pickVideoProvider`/`pickImageProvider` 按 `VIDEO_PROVIDER_ORDER`(默认 `kling,grok`,兼容旧 `VIDEO_PROVIDER`:`=kling` 视为 `kling,grok`,其余视为只有 `grok`)/`IMAGE_PROVIDER_ORDER`(默认 `openai,grok`,即加 YMan 前那条硬编码阶梯)的次序,取第一个「有 key、未被 `src/lib/providers/exhaustion.ts` 判定耗尽、`capabilities().modes` 声明支持该模式、(视频)`capabilities().aspectRatios` 接得下请求画幅」的 provider。`edit_video`/`extend_video`(只有 grok 声明支持,依赖 xAI Files API)与 harness 长片(30/45/60)恒定回落 grok,不需要每种模式单独配置。模式接得住但画幅接不住时抛 400,不再静默把画幅换成另一家的默认值。`capabilities()` 新增 `aspectRatios`(不声明 = 不限)与 `durations`(上游按档计费的枚举,不声明 = 连续,默认 `[4,6,8,10]`)。`isMockMode()` 改为「xAI / OpenAI / 可灵 / YMan 四把 key 都没有才算 mock」。
+`src/lib/providers/router.ts` 的 `pickVideoProvider`/`pickImageProvider` 按 `VIDEO_PROVIDER_ORDER`(默认 `grok`,兼容旧 `VIDEO_PROVIDER`:`=kling` 视为 `kling,grok`,其余视为只有 `grok`)/`IMAGE_PROVIDER_ORDER`(默认 `openai,grok`,即加 YMan 前那条硬编码阶梯)的次序,取第一个「有 key、未被 `src/lib/providers/exhaustion.ts` 判定耗尽、`capabilities().modes` 声明支持该模式、(视频)`capabilities().aspectRatios`/`resolutions`/尾帧声明接得下请求」的 provider。`edit_video`/`extend_video` 目前只有 grok 声明支持(依赖 xAI Files API):配了 XAI key 时经 fallback 落到 grok,没配则提交返 503 `no_provider_available`,不需要每种模式单独配置。harness 长片(30/45/60)不进这条路由,由 §7 管线承接(现有实现绑定 xAI)。模式接得住但画幅接不住时抛 400,不再静默把画幅换成另一家的默认值。`capabilities()` 新增 `aspectRatios`(不声明 = 不限)与 `durations`(上游按档计费的枚举,不声明 = 连续,默认 `[4,6,8,10]`)。`isMockMode()` 改为「xAI / OpenAI / 可灵 / YMan 四把 key 都没有才算 mock」。
 
 ### YMan provider
 
@@ -398,6 +402,7 @@ data/
 
 ## 7. Harness 一致性管线 **[Phase 2 详设 — 产品核心]**
 
+- **供应商绑定（2026-09-13 口径）**：现有实现绑定 xAI——shot 路由枚举 `grok_t2v/grok_i2v/grok_r2v/grok_extend`、角色表走 xAI Files API、费率表用 grok 价目、Director 与视觉 QC 用 `grok-4.6`；生产 `HARNESS_ENABLED=false` 关闭中，且生产未配 `XAI_API_KEY`，即便开启也没有供应商承接。计划改为供应商无关（shot 走 `selectProvider`、续接用「尾帧 → i2v」替代 extend），排在真实上游验收之后，见 `docs/handoff.md` §5。
 - `Harness Director`：`src/lib/harness/director.ts` 使用 `grok-4.6` Chat Completions + 严格 JSON Schema，解析 `IdentityBible`、shots、packing 和 stitch；格式校验失败最多重试 2 次。默认走 `XAI_BASE_URL`，因此可用本地 Sub2API。mock 模式用 `mock-director.ts`：15s generate 片 + tail-chain I2V 的确定性计划（无 extend，因为 extend 需要 xAI Files）。
 - **开关（M2.4 as-built）**：`HARNESS_ENABLED` 未开启时 `orchestrator.execute` 抛 `HARNESS_NOT_ENABLED`、API 对 30/45/60 返回 400；开启后 `createJob` 接受 30/45/60（仅 t2v / i2v），`costUsdEstimate` 先按 `packHarnessDuration` 预估，Director 出计划后按真实 packing 重算。`/api/health.harnessRunnable` 反映开关。
 - `cost.ts` 提供 Harness clip 成本与 QC 重试预算（1.5×）计算，未改变原生单 clip 计价；新增 `LLM_RATE_USD_PER_MTOKEN`（grok-4.6 输入 $3 / 输出 $15 每百万 token，**列表价占位，未经 ticks 核实**）、`estimateLlmCostUsd`、`LLM_RESERVE_USD`（Director $0.30、视觉 QC $0.05 的保守预留）。成本护栏：`budgetCap`（纯函数，= 提交时 `costUsdEstimate × 2`，见 §7.2）覆盖**每一次**付费调用——分镜提交、Director、角色表、视觉 QC——超限即停并以 `budget_exceeded` 失败。
