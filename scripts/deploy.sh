@@ -57,6 +57,7 @@ echo "== 3/5 打包（排除本地缓存）"
 PKG="$(mktemp -t genius-deploy-XXXXXX)"
 tar czf "$PKG" \
   --exclude=.next/cache --exclude=.next/dev --exclude=.next/types --exclude=.next/standalone \
+  --exclude=.next/node_modules \
   .next public package.json pnpm-lock.yaml pnpm-workspace.yaml next.config.ts \
   scripts/mint-invites.mjs scripts/backup.sh scripts/grant-balance.mjs scripts/mint-gift-codes.mjs \
   scripts/reset-password.mjs scripts/disable-user.mjs scripts/usage.mjs scripts/migrate-billing.mjs \
@@ -114,6 +115,9 @@ if [ -d .next ]; then
   mv .next .next.prev
 fi
 tar xzf deploy.tgz && rm deploy.tgz
+# .next/node_modules 里是构建机的 junction/软链,Windows 打包会解引用成真实目录,
+# 那份 sharp 副本找不到自己的 @img/* 依赖(它在 pnpm 布局的兄弟位)——删掉,让根级别名接管。
+rm -rf .next/node_modules
 # cron 直接执行 /opt/genius/scripts/backup.sh，需要可执行位。
 chmod +x scripts/*.sh 2>/dev/null || true
 echo "   依赖: $(pnpm install --prod --no-frozen-lockfile 2>&1 | tail -1)"
