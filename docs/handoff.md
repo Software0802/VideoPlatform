@@ -4,11 +4,11 @@
 
 ## 0. 当前状态
 
-本轮核对日期：2026-09-12。本文生产部署、配置、价格与备份信息沿用既有交接记录，本轮未访问生产、未重新核实，也未部署。
+本轮核对日期：2026-09-12。本轮已完成生产部署（含存量账号资金迁移），下列信息为部署后实测。
 
 | 字段 | 值 |
 | --- | --- |
-| 基线 | `main` @ `b91df6c`（R01–R09 + A–C 切片 + D 切片一：画布 DAG 运行——`data/canvas-runs/`、确定性报价 `quoteHash`、sweep 执行器、持久化取消意图；方案 `docs/plan-dag-canvas-run-2026-09-12.md`，过 Codex 评审后实装）。**D 切片二已实装未提交**（run 级预算预留 + 审批门 + 产物复用，方案 `docs/plan-dag-run-slice2-2026-09-12.md`，过 Codex 评审后实装）。本地领先 origin/main 5 个提交，未推送未部署 |
+| 基线 | `main` @ `24bc5c2`（R01–R09 + A–C 切片 + D 全部：画布 DAG 运行切片一 `b91df6c`——`data/canvas-runs/`、确定性报价 `quoteHash`、sweep 执行器、持久化取消意图；切片二 `d38dc05`——run 级预算预留/审批门/产物复用；另有部署修复 `b6a220f`/`6a46154`/`24bc5c2`）。**已部署生产 2026-09-12**（含 4 个存量账号资金迁移）；本地领先 origin/main 8 个提交，未推送 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
 | 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；**未配 `XAI_API_KEY`**，grok 只作为路由兜底不会被选中 |
@@ -70,8 +70,8 @@
 ## 3. 已知限制 / 未做
 
 - **资金与执行恢复缺陷索引**（证据与历史复现见 `docs/review-2026-09-08.md`）：R01–R09 均已在工作区修复——R01 余额+流水同一原子写（`e564ab6`）；R02 Agent 退款经 `refundOf` 按原扣款的 `memberCny` 拆回原池；R03 订阅购买外层 admission 锁；R04 扣款行带订单快照（planId/cycle/priceCny/orderedAt），「已扣款、订阅记录缺失」按快照补建且不再判余额，同 key 异参 409；R05 `assertBalance` 先惰性结算再判可用额，跨期旧积分不再进 `availableCny`；R06 submit 的 5xx/超时/断连算「结果不确定」，先 `lookupByExternalId` 查回接管，查不到则 `failed`+`uncertain_submit` 锁死重试；R07 幂等键与请求哈希落 `job.json`（事实源），`data/idempotency/*.json` 降级为可重建缓存（原子写、命中回读校验、miss 从任务索引重建），同 key 异参 409 `idempotency_conflict`；R08 请求体加 `turnId`，同 turnId 重放原样交回、换文本 409、已退款轮次同键重发 409；R09 产物字节已 checkpoint（persisting / localOutputPath / remoteUrl）时取消不再成立，终态由 persist 落盘结算。绿门禁不代替专项验收，生产行为未实测。
-- **部署阻断项（新资金模型）**：本工作区版本一旦部署，**所有存量账号的余额变动会一律 409 `billing_migration_required`**，必须先停服、逐账号用 `scripts/migrate-billing.mjs --offline --baseline <人工核对的基线.json>` 迁移（基线含双 sha256 + reviewedBy/evidence，见 `docs/runbook.md`「充值与资金迁移」）。新注册账号不受影响。
-- **未实装计划（A–C 已提交 `1f3077f`，D 切片一已提交 `b91df6c`，D 切片二已实装未提交）**：`docs/plan-unimplemented-2026-09-08.md` 于 2026-09-09 经 Codex 评审为 `VERDICT: BLOCK`，用户随后逐项拍板实施：A 显式 Reservation（`job.reservation` earmark + 恢复中心 `recovery/reconcile/resume` + 创作页「核验上游」入口）；B 智能体 Turn 状态机 + 默认批准制提案 + 会话预算 + `imageRef` + 技能 `kinds` + locale 回复；C 画布持久化 + revision 409 + 四类节点接 `createJob`；D 画布 DAG 运行两切片（`docs/plan-dag-canvas-run-2026-09-12.md` + `docs/plan-dag-run-slice2-2026-09-12.md`）。其余 E–J（Harness 长片放行、F 视频模式 UI、G 支付网关、H 账号页/通知落盘、I 运维扩容）仍未实施。
+- **新资金模型已完成迁移**（2026-09-12 随本次部署）：4 个存量账号逐账号基线迁移完成（全部入账行归 purchased 池——迁移前无会员积分池与订阅；迁移前后双 sha256 校验 + 流水重放余额一致才落盘；快照备份在服务器 `/opt/genius/data.bak.20260912-150535`、基线文件在 `/opt/genius/migrate-baselines/`）。新注册账号首次写盘即自带快照。注意：`data.bak.*` 与 `migrate-baselines/` 是迁移留痕，备份白名单不含它们，可择机清理。
+- **未实装计划（A–C `1f3077f`、D 两切片 `b91df6c`+`d38dc05` 均已提交并部署）**：`docs/plan-unimplemented-2026-09-08.md` 于 2026-09-09 经 Codex 评审为 `VERDICT: BLOCK`，用户随后逐项拍板实施：A 显式 Reservation（`job.reservation` earmark + 恢复中心 `recovery/reconcile/resume` + 创作页「核验上游」入口）；B 智能体 Turn 状态机 + 默认批准制提案 + 会话预算 + `imageRef` + 技能 `kinds` + locale 回复；C 画布持久化 + revision 409 + 四类节点接 `createJob`；D 画布 DAG 运行两切片（`docs/plan-dag-canvas-run-2026-09-12.md` + `docs/plan-dag-run-slice2-2026-09-12.md`）。其余 E–J（Harness 长片放行、F 视频模式 UI、G 支付网关、H 账号页/通知落盘、I 运维扩容）仍未实施。
 - 生产未配 `XAI_API_KEY`：grok 只是路由兜底，实际不可达；`edit_video`/`extend_video`/harness 长片依赖 grok，生产目前不可用。
 - Harness（30/45/60 秒一致性管线）代码完整但 `HARNESS_ENABLED` 生产关闭；视觉 QC 阈值未经 `evals/runs` 校准，默认跳过。
 - 服务端 API 错误文案不做多语言翻译（前端按错误码映射的部分除外）。
@@ -88,7 +88,7 @@
 
 ## 5. 下一刀建议
 
-1. A–C（`1f3077f`）、D 切片一（`b91df6c`）与文档/备份跟进（`5cc0397`）已提交；D 切片二已实装、门禁全绿、**工作区未提交**（等用户指示）。`canvas-runs/` 已进 `scripts/backup.sh` 白名单（本机无 bash 无法实测脚本执行，改动为机械性白名单扩充，随下次部署生效）。部署仍受 §3 部署阻断项约束（存量账号须先迁移）。
-2. D 包至此完整；E（Harness 放行）、F（视频模式 UI）、G（支付网关）、H、I 按文档建议不同时开工，未批准不实施；G 的支付/退款 unknown 态与 PaymentOrder/webhook 仍未动。
+1. 已全部提交并部署生产（`24bc5c2`）：资金迁移完成、`backup.sh` 在服务器实测通过（`backups/genius-data-20260912-150747.tgz`）。本次部署发现并修复两个打包坑：`scripts/*.mjs` 依赖 `src/lib/billing/*.mjs` 此前不在包内（已补进 `deploy.sh` 清单）；Windows junction 被 bsdtar 解引用导致 `.next/node_modules` 里的 sharp 副本解析不到 `@img/*`（打包排除 + 服务器侧 `rm -rf .next/node_modules` 让根级别名接管）；`*.sh` CRLF 已在 `.gitattributes` 钉 LF + 远端 `sed` 兜底。**部署仍走 `bash scripts/deploy.sh`——本机没有 Git Bash，本次是手工等价执行（tar/scp/ssh 逐段复刻脚本）；要么装 Git Bash，要么把 deploy.sh 翻成 PowerShell/Node 版**。
+2. D 包至此完整并上线；E（Harness 放行）、F（视频模式 UI）、G（支付网关）、H、I 按文档建议不同时开工，未批准不实施；G 的支付/退款 unknown 态与 PaymentOrder/webhook 仍未动。
 3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
-4. 生产配置、备份与 ECS 快照核实、Harness 质量校准和移动端完整体验按后续授权另排；本轮未做生产操作或真实上游验收。
+4. 本轮已做生产操作：部署 + 资金迁移 + backup.sh 实测均通过；Harness 质量校准、真实上游验收和移动端完整体验按后续授权另排。
