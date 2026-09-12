@@ -20,6 +20,14 @@ export const ZH_CN = assemble(zh);
 export type MessageKey = keyof typeof ZH_CN;
 export type Messages = Record<MessageKey, string>;
 
+/**
+ * zh-CN 字典（键的事实源）里有没有这个键。给按错误码拼键的调用方用——
+ * 比如 `common.err.<code>` 先问它再决定走字典还是走 `common.err.unknown`。
+ */
+export function hasMessage(key: string): key is MessageKey {
+  return Object.prototype.hasOwnProperty.call(ZH_CN, key);
+}
+
 export const MESSAGES: Record<Locale, Messages> = {
   "zh-CN": ZH_CN as Messages,
   en: assemble(en) as Messages,

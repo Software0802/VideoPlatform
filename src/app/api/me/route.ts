@@ -9,7 +9,8 @@ import { sessionUser } from "@/lib/users/session";
 export const runtime = "nodejs";
 
 /**
- * The caller's own account: `{ userId, email, plan, balance, prices, quota, subscription }`.
+ * The caller's own account: `{ userId, email, plan, createdAt, balance, prices, quota, subscription }`.
+ * `createdAt`（H3 账户页「注册时间」）由 `toPublicUser` 的白名单挑出。
  *
  * `balance` 与 `prices` 是余额模型的两半（方案 §3.2）：前者现算（两个池之和 − 在途
  * 预留），后者是价目表本身，交给提交面板在本地算「本次约 ¥x」——同一份表两边用，

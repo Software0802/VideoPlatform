@@ -84,8 +84,6 @@ export const composer = {
   "composer.err.needRef": "参考模式至少需要一张参考图",
   "composer.err.needBothFrames": "首尾帧模式需要首帧和尾帧两张图",
   "composer.err.needPrompt": "这条路径需要提示词",
-  "composer.err.upload": "上传失败",
-  "composer.err.pick": "选取失败",
 
   /* 创作搭子 */
   "composer.buddy.title": "创作搭子",

@@ -13,6 +13,8 @@ export class ApiError extends Error {
     readonly status: number,
     /** `error.code` from the server envelope, when there was one. */
     readonly code?: string,
+    /** `x-request-id` response header, for reporting a failure back to us. */
+    readonly requestId?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -39,7 +41,14 @@ type ErrorEnvelope = { error?: { code?: string; message?: string } };
 /** `{error:{code,message}}` in, `ApiError` out. Leaves 401 to the caller. */
 export async function parseJson<T>(res: Response, fallback: string): Promise<T> {
   const data = (await res.json().catch(() => null)) as (T & ErrorEnvelope) | null;
-  if (!res.ok) throw new ApiError(data?.error?.message ?? fallback, res.status, data?.error?.code);
+  if (!res.ok) {
+    throw new ApiError(
+      data?.error?.message ?? fallback,
+      res.status,
+      data?.error?.code,
+      res.headers.get("x-request-id") ?? undefined,
+    );
+  }
   return data as T;
 }
 

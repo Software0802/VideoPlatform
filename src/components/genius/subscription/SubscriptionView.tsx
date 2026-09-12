@@ -1,18 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  fetchLedger,
-  redeemErrorMessage,
-  redeemGiftCode,
-  type LedgerEntry,
-} from "@/lib/client/auth";
+import { fetchLedger, redeemGiftCode, type LedgerEntry } from "@/lib/client/auth";
 import { newIdempotencyKey } from "@/lib/client/jobs";
 import {
   fetchSubscription,
   purchaseSubscription,
   subscriptionErrorCode,
-  subscriptionErrorFallback,
   type MySubscription,
   type PlanCycle,
   type SubscriptionPlan,
@@ -20,6 +14,7 @@ import {
 } from "@/lib/client/subscription";
 import { creditsOf, useShell } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
+import { errorText } from "@/lib/i18n/errorText";
 import type { MessageKey } from "@/lib/i18n/messages";
 
 /**
@@ -214,6 +209,34 @@ export default function SubscriptionView({ credits }: { credits: number }) {
     [loadLedger],
   );
 
+  /*
+    H3：账户页「查看流水」落在 `/subscription#ledger`。挂载时认到这个 hash 就清掉它
+    （replaceState 是外部系统写，留着它刷新会再弹一次抽屉），然后开「积分使用详情」
+    抽屉。`openDrawer` 里的 setState 走微任务：react-hooks/set-state-in-effect 不允许
+    在 effect 体里同步改状态，推迟一个 tick 后行为不变。
+  */
+  useEffect(() => {
+    if (window.location.hash !== "#ledger") return;
+    window.history.replaceState(null, "", "/subscription");
+    queueMicrotask(() => openDrawer({ titleKey: "subscription.mine.usage" }));
+  }, [openDrawer]);
+
+  /*
+    Esc 收层（H4）：确认订阅 / 礼品码 / 流水抽屉共用一条 keydown。购买提交中
+    （`buying`）也照关——与遮罩点击的既有行为一致：弹层收了，请求照样走完。
+  */
+  useEffect(() => {
+    if (!pending && !redeemOpen && !drawer) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setPending(null);
+      setRedeemOpen(false);
+      setDrawer(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [pending, redeemOpen, drawer]);
+
   const redeem = useCallback(() => {
     const value = code.trim();
     if (!value || redeeming) return;
@@ -230,7 +253,7 @@ export default function SubscriptionView({ credits }: { credits: number }) {
       },
       (e: unknown) => {
         setRedeeming(false);
-        setRedeemErr(redeemErrorMessage(e));
+        setRedeemErr(errorText(t, e));
       },
     );
   }, [code, notify, redeeming, refreshMe, t]);
@@ -260,7 +283,7 @@ export default function SubscriptionView({ credits }: { credits: number }) {
           const code = subscriptionErrorCode(e);
           if (code === "insufficient_balance") notify(t("subscription.toast.insufficient"));
           else if (code === "subscription_active") notify(t("subscription.toast.active"));
-          else notify(subscriptionErrorFallback(e) || t("subscription.toast.failed"));
+          else notify(errorText(t, e));
         },
       );
     },

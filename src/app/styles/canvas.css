@@ -1195,3 +1195,15 @@
   cursor: pointer;
 }
 .canvas-quote__confirm:disabled { opacity: .5; cursor: default; }
+
+/*
+  ≤560：报价弹层贴视图左右边，不再固定 340px——375 视口下画布视图本身只剩约
+  319px，固定宽度的弹层左缘会被 `overflow:hidden` 的视图裁掉（H4）。
+*/
+@media (max-width: 560px) {
+  .canvas-quote {
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
+}

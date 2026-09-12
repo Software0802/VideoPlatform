@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./styles/account.css";
 @import "./styles/agent.css";
 @import "./styles/canvas.css";
 @import "./styles/subscription.css";
@@ -9,8 +10,8 @@
   两者冲突以原型为准）。令牌逐条对应交接包 §1。
 
   约定：BEM 块名 + `data-*` 状态，不用 Tailwind 工具类，不引组件库 / 图标库（图标在
-  `src/components/genius/icons.tsx`）。智能体 / 画布 / 订阅三个视图的样式在
-  `src/app/styles/{agent,canvas,subscription}.css`，由上面的 @import 引入。
+  `src/components/genius/icons.tsx`）。账户 / 智能体 / 画布 / 订阅四个视图的样式在
+  `src/app/styles/{account,agent,canvas,subscription}.css`，由上面的 @import 引入。
 */
 
 @theme {
@@ -1238,6 +1239,24 @@ input::placeholder {
   z-index: 10;
   animation: pop-in 0.2s ease both;
 }
+/* 浮在弹层右上角的关闭钮（H4）：跟槽位 ✕ 同款的不透明小圆章。 */
+.specs-pop__close {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--fg-3);
+  background: #1b1b20;
+  box-shadow: var(--ring-strong), 0 6px 16px rgba(0, 0, 0, 0.5);
+  z-index: 1;
+}
+.specs-pop__close:hover {
+  color: var(--fg);
+}
 .specs-pop__card {
   border-radius: 12px;
   background: rgba(24, 24, 28, 0.98);
@@ -1751,6 +1770,25 @@ input::placeholder {
     right: 0;
     width: auto;
     max-height: 50vh;
+  }
+  /*
+    规格弹层同此理（H4）：芯片锚点贴选项行左缘，330px 的弹层在 375/390 下右缘
+    会越过面板被 `.shell` 裁掉。把定位上下文抬到整行选项上，按面板宽度铺开。
+  */
+  .composer__specs-wrap {
+    position: static;
+  }
+  .specs-pop {
+    left: 0;
+    right: 0;
+    width: auto;
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+  /* 弹层开了 overflow 之后外凸的 ✕ 会被裁掉，挪回第一块卡的内角上。 */
+  .specs-pop__close {
+    top: 8px;
+    right: 10px;
   }
 }
 
@@ -2652,6 +2690,17 @@ input::placeholder {
   }
   .notice-toast {
     right: 14px;
+  }
+}
+
+@media (max-width: 400px) {
+  /*
+    账户芯片里的小圆头像与右边的大头像（`.top__avatar`）重复——375 下标题是三个字
+    （「智能体」）时右侧簇整体被推出视口，头像菜单钮右缘会被 `.shell` 裁掉（H4）。
+    让位的是这枚装饰性小头像，簇里其余都是真功能。
+  */
+  .top__chip-avatar {
+    display: none;
   }
 }
 

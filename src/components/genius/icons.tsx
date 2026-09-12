@@ -238,6 +238,16 @@ export const IconShare = ({ size = 14, ...p }: IconProps) => (
   </Svg>
 );
 
+/** 账户页入口（人形，头像菜单「账户」项） */
+export const IconUser = ({ size = 14, ...p }: IconProps) => (
+  <Svg size={size} {...p}>
+    <g {...stroke}>
+      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </g>
+  </Svg>
+);
+
 /** 修改密码（钥匙） */
 export const IconKey = ({ size = 14, ...p }: IconProps) => (
   <Svg size={size} {...p}>

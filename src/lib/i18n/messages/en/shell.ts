@@ -7,6 +7,7 @@ export const shell: Record<keyof typeof zh, string> = {
   "shell.nav.agent": "Agent",
   "shell.nav.canvas": "Canvas",
   "shell.nav.sub": "Subscription",
+  "shell.nav.account": "Account",
   "shell.nav.aria": "Main navigation",
   "shell.foot.legal": "Terms · Privacy",
 
@@ -18,7 +19,6 @@ export const shell: Record<keyof typeof zh, string> = {
   "shell.top.changePassword": "Change password",
   "shell.top.signOut": "Sign out",
   "shell.top.signingOut": "Signing out",
-  "shell.signOutFailed": "Sign-out failed",
 
   "shell.notify.empty": "No notifications yet. Finished jobs will show up here.",
   "shell.notify.dismiss": "Dismiss notification",
@@ -40,6 +40,7 @@ export const shell: Record<keyof typeof zh, string> = {
   "shell.pwd.err.short": "The new password needs at least {n} characters",
   "shell.pwd.err.mismatch": "The two new passwords do not match",
   "shell.pwd.err.same": "The new password must differ from the current one",
+  "shell.pwd.err.wrong": "Current password is incorrect",
   "shell.pwd.submitting": "Submitting…",
   "shell.pwd.submit": "Change password",
   "shell.pwd.done": "Password changed. Other devices have been signed out.",

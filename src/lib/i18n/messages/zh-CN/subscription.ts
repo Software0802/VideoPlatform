@@ -60,7 +60,6 @@ export const subscription = {
   "subscription.toast.success": "订阅成功，会员积分已到账",
   "subscription.toast.insufficient": "已购积分不足，请先兑换礼品码",
   "subscription.toast.active": "已有生效中的订阅",
-  "subscription.toast.failed": "订阅失败，请稍后再试",
 
   /* 兑换礼品码 */
   "subscription.redeem.title": "兑换礼品码",

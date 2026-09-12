@@ -26,6 +26,7 @@ import {
 } from "@/lib/client/canvas";
 import { ApiError } from "@/lib/client/http";
 import { fetchJob, newIdempotencyKey, uploadFile } from "@/lib/client/jobs";
+import { errorText } from "@/lib/i18n/errorText";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { FIT_PAD_X, FIT_PAD_Y, SCENE_H, SCENE_W } from "./data";
 import {
@@ -104,6 +105,7 @@ export default function CanvasView() {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const quoteRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const materialFor = useRef<string | null>(null);
@@ -128,6 +130,8 @@ export default function CanvasView() {
 
   const closeMenu = useCallback(() => setMenu(null), []);
   useDismiss(menu !== null, menuRef, closeMenu);
+  /* 报价弹层同样吃「点外层 / Esc」收层（H4），头部 ✕ 是可见关闭控件。 */
+  useDismiss(quote !== null, quoteRef, () => setQuote(null));
 
   /* 载入：最新一张画布，没有就建一张；再拉它的最新一次 run 做产物 overlay。 */
   useEffect(() => {
@@ -142,14 +146,14 @@ export default function CanvasView() {
         const runs = await fetchCanvasRuns(next.id).catch(() => []);
         if (alive && runs[0]) setLatestRun(runs[0]);
       } catch (e) {
-        if (alive) setError(e instanceof Error ? e.message : String(e));
+        if (alive) setError(errorText(t, e));
       }
     })();
     return () => {
       alive = false;
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, []);
+  }, [t]);
 
   /* fit：作者坐标 900×620 缩放进视口。 */
   useEffect(() => {
@@ -182,7 +186,7 @@ export default function CanvasView() {
           if (fresh) setDoc(fresh);
           showToast(t("canvas.conflict"));
         } else {
-          showToast(e instanceof Error ? e.message : String(e));
+          showToast(errorText(t, e));
         }
       }
     },
@@ -328,7 +332,7 @@ export default function CanvasView() {
         nodes: d.nodes.map((n) => (n.id === nodeId ? { ...n, uploadId } : n)),
       }));
     } catch (e) {
-      showToast(e instanceof Error ? e.message : String(e));
+      showToast(errorText(t, e));
     }
   };
 
@@ -358,7 +362,7 @@ export default function CanvasView() {
       setJobs((map) => ({ ...map, [job.id]: job }));
       refreshMe();
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = errorText(t, e);
       setError(message);
       showToast(message);
     } finally {
@@ -396,7 +400,7 @@ export default function CanvasView() {
       setRegen(new Set());
       setQuote(q);
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = errorText(t, e);
       setError(message);
       showToast(message);
     } finally {
@@ -425,7 +429,7 @@ export default function CanvasView() {
       );
       setQuote(q);
     } catch (e) {
-      showToast(e instanceof Error ? e.message : String(e));
+      showToast(errorText(t, e));
     } finally {
       setRunBusy(false);
     }
@@ -456,7 +460,7 @@ export default function CanvasView() {
       setLatestRun(run);
       setQuote(null);
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = errorText(t, e);
       // 报价过期：关掉弹层让用户重走「运行整图」拿新报价。
       if (e instanceof ApiError && e.code === "quote_stale") setQuote(null);
       setError(message);
@@ -471,7 +475,7 @@ export default function CanvasView() {
     try {
       setLatestRun(await cancelCanvasRunApi(latestRun.id));
     } catch (e) {
-      showToast(e instanceof Error ? e.message : String(e));
+      showToast(errorText(t, e));
     }
   };
 
@@ -481,7 +485,7 @@ export default function CanvasView() {
     try {
       setLatestRun(await decideCanvasRunApprovalApi(latestRun.id, nodeId, decision));
     } catch (e) {
-      showToast(e instanceof Error ? e.message : String(e));
+      showToast(errorText(t, e));
     }
   };
 
@@ -724,7 +728,7 @@ export default function CanvasView() {
       ) : null}
 
       {quote ? (
-        <div className="canvas-quote" role="dialog" aria-label={t("canvas.quote.title")}>
+        <div className="canvas-quote" ref={quoteRef} role="dialog" aria-label={t("canvas.quote.title")}>
           <div className="canvas-quote__head">
             <span className="canvas-quote__title">{t("canvas.quote.title")}</span>
             <button

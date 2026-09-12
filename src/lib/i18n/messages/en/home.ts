@@ -29,25 +29,21 @@ export const home: Record<keyof typeof zh, string> = {
   "home.tags.custom": "Custom tag",
   "home.tags.max": "Up to {n} tags",
   "home.tags.tooLong": "A tag can be at most {n} characters",
-  "home.tags.saveFailed": "Could not save the tags",
 
   "home.share.copiedPrefix": "Link copied:",
   "home.share.manualPrefix": "Copy it manually:",
   "home.share.toastCopied": "Link copied — valid for {span}",
   "home.share.toastManual": "Link created — valid for {span}; please copy it manually",
   "home.share.hours": "{n} hours",
-  "home.share.failed": "Could not create a share link",
 
   "home.delete.confirmAria": "Confirm deletion",
   "home.delete.confirmText": "Deleting is permanent — the render and its assets go with it.",
   "home.delete.deleting": "Deleting…",
   "home.delete.confirm": "Delete for good",
-  "home.delete.failed": "Delete failed",
   "home.delete.title": "Delete this creation",
   "home.delete.running": "The job is still running — cancel it before deleting",
   "home.reuse": "Generate again from this prompt",
 
-  "home.tpl.error": "Templates are unavailable right now",
   "home.tpl.loading": "Loading templates…",
   "home.tpl.empty": "No templates available yet.",
 

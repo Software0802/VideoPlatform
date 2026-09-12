@@ -272,6 +272,15 @@ flowchart TB
   - 取消是持久化意图:`POST /api/canvas-runs/:id/cancel` 只落 `cancelRequestedAt`;泵见它即停提交新节点(未提交的标 `blocked`),在途子任务逐个走 `cancelOwnedJob`(R09 checkpoint 语义不变),全部终态后 run 才落 `canceled`。
   - 前端:顶栏「运行整图」→ 报价弹层(逐节点价 + 复用行「重跑」勾选 + 可执行行「执行前需我批准」勾选——gen_video 默认勾 + 总价)→ 确认建 run;节点徽标显示执行态(含「待批准」/「已复用」),`awaiting_approval` 节点出批准/驳回按钮,3s 轮询 `GET /api/canvas-runs/:id`,运行中可「取消运行」。
 
+## 2k. 通知落盘(2026-09-12 H 包,as-built)
+
+方案 `docs/plan-h-account-notifications-2026-09-12.md`(Codex 评审后修订)。目标:任务终态通知跨刷新/跨设备保留,未读计数一致;SSE 仍只做即时提醒。
+
+- **存储** `src/lib/notifications/store.ts`:`data/notifications/<userId>.json`,`{schemaVersion, ownerId, epoch, nextSeq, lastReadSeq, items≤200}`。`epoch` 是存储代际(随机 `nep_*`),文件缺失/损坏记 warn 后以**新 epoch** 重建——通知是展示数据,不 fail closed;每用户一把内存 tail-promise 锁(与 admission/user/job 锁无交集);`writeJsonAtomic` 落盘。
+- **唯一写入点**:`updateJob` 在写 `job.json` + 索引之后、返回之前判「非终态 → 终态」边沿调 `appendJobNotification`,幂等键 `${jobId}:${status}`;**best-effort**,抛错只 `log warn`,不挡任务落盘与扣款。画布 run / 智能体轮次不入此索引(`kind` 字段已预留,二期并入)。
+- **API**:`GET /api/notifications` 全量 `{epoch, items(seq 倒序), lastReadSeq, unread}`(不分页,≤200 条一次给齐);`POST /api/notifications/read {epoch, upToSeq}` 游标只进不退,epoch 不符 409 `notifications_stale`。
+- **客户端** `ShellContext.syncNotifications()`:整体覆盖本地 notices/unread,触发点为挂载、SSE 每次 open(`useEvents` 的 `onOpen`,含重连——断线期间漏掉的终态靠它补齐)、页面回到前台、本地观察到终态边沿之后;失败 2s/5s/10s 退避三次放弃,在飞合并。SSE 那一跳仍即时插入 Notice + toast(等不了同步),随后 sync 以服务端为准覆盖。「打开铃铛 = 全部已读」:本地持全量,`markNoticesRead` 带 `epoch + 本地最大 seq` POST,409 则重拉不重试。
+
 ## 3. Job 生命周期
 
 状态:`queued → submitting → pending → persisting → succeeded`,终态另有 `failed | expired | canceled`。t2i 同步返回,submit 后直接 `persisting`。长片(30/45/60)走 `queued → directing → keyframing → generating_shots → qc → stitching → persisting → succeeded`,由 orchestrator 推进,runner 只接手最后的 persisting。
@@ -302,7 +311,9 @@ flowchart TB
 | `POST /api/jobs/:id/share`(2026-09-06 深夜) | 签发分享令牌 → `/s/<token>`;HMAC 派生密钥独立于会话 Cookie,`SHARE_TTL_HOURS`(默认 24 小时)到期失效,无吊销机制,见 §2g |
 | `POST /api/jobs/:id/cancel|retry` | 见 §3;retry 同样受 402 余额判定 |
 | `GET /api/jobs/:id/events` | SSE,`maxDuration=900`;15s `: ping` 心跳 + abort 时解除订阅 |
-| `GET /api/events`(2026-09-06 深夜) | 全局事件流,驱动前端通知 toast / 铃铛,只在当次连接内有效,不落盘持久化 |
+| `GET /api/events`(2026-09-06 深夜) | 全局事件流,驱动前端通知 toast / 铃铛的即时插入,只在当次连接内有效;落盘与历史见下两行(§2k) |
+| `GET /api/notifications`(H 包,§2k) | 全量返回 `{epoch, items(≤200,seq 倒序), lastReadSeq, unread(服务端算)}`;不分页 |
+| `POST /api/notifications/read`(H 包) | `{epoch, upToSeq}`;epoch 不符 409 `notifications_stale`(客户端重拉 GET);游标只进不退 |
 | `GET /api/templates`(2026-09-06 深夜) | 读 `data/templates/*.json`(`data-seed/templates` 提供六条示例种子);首页模板回填用 |
 | `GET /api/share/:token` / `GET /api/share/:token/media`(2026-09-06 深夜) | 公开接口,不校验会话;`media` 响应 `public, max-age=3600`;见 §2g |
 | `GET /api/models`(2026-09-06 夜,阶段 A) | 需登录;返回 `availableProducts()` 的白名单字段 + `samplePriceCny`(§2f),不含 `provider`/上游模型名 |
@@ -316,8 +327,9 @@ flowchart TB
 | `POST /api/auth/register` | 邮箱 + 密码(≥8 位) + 一次性邀请码;成功即写会话 Cookie 并返回 `MePublic` |
 | `POST /api/auth/login` | 邮箱 + 密码;IP+邮箱滑动窗口限流(10 次/分钟) |
 | `POST /api/auth/logout` | 清除会话 Cookie,并递增 `sessionEpoch`(2026-09-06 深夜起,与改密同一套失效机制) |
+| `POST /api/auth/logout-all`(H 包) | `revokeUserSessions`(sessionEpoch+1) + 清本会话 Cookie,全部设备下线;账户页「退出全部设备」用 |
 | `POST /api/auth/password`(2026-09-06 深夜) | 需校验旧密码;成功后 `sessionEpoch+1`,本机当次会话不掉线,其余会话失效 |
-| `GET /api/me` | 当前用户 email + `balance:{balanceCny,reservedCny,availableCny}` + `prices`(售价表)+ `quota:{limit,used,inFlight,remaining,resetsAt,blocked}`(§2d、§12.3) |
+| `GET /api/me` | 当前用户 email + `createdAt`(H 包) + `balance:{balanceCny,reservedCny,availableCny}` + `prices`(售价表)+ `quota:{limit,used,inFlight,remaining,resetsAt,blocked}`(§2d、§12.3);白名单挑字段,不下发 `sessionEpoch`/`passwordHash` |
 | `POST /api/canvases/:id/quotes`(D 包) | 整图确定性报价:体可带 `{regenerate?: nodeId[]}`(强制重跑,按实计价);返回 `{canvasId, revision, quote:{hash,totalCny,reusedCount?,items[]}}`;不落盘,图非法/越权素材 400,非本人 404 |
 | `GET /api/canvases/:id/runs`(D 包) | 该画布的 run 列表(倒序),前端取最新一次做产物 overlay |
 | `POST /api/canvas-runs`(D 包) | `{canvasId, quoteHash, idempotencyKey, approvalNodeIds?, regenerate?}`;同 key 同参重放交回原 run(200),异参 409 `idempotency_conflict`,报价过期 409 `quote_stale`,余额不足 402 `insufficient_balance`(总价冻结) |
@@ -362,22 +374,24 @@ data/
   canvases/<userId>/<canvasId>.json     # 2026-09-11:画布文档,ownerId 校验,revision 乐观并发(§2j)
   canvas-runs/<userId>/<runId>.json     # 2026-09-12:画布整图运行——冻结图快照/逐节点报价与执行位/
                                          # run 级预算预留台账/审批门/复用判定(§2j)
+  notifications/<userId>.json           # 2026-09-12 H 包:任务终态通知,{epoch,nextSeq,lastReadSeq,items≤200};
+                                         # 坏文件以新 epoch 重建(展示数据不 fail closed),§2k
   templates/*.json                      # 2026-09-06 深夜:创作模板,首次部署需 cp -r data-seed/templates data/templates
                                          # (data-seed/templates 提供六条示例种子,不随代码自动生成)
 ```
 
 `MediaStore` 接口(`storage/types.ts`)由 `LocalFsMediaStore` 实现,id 白名单 `[A-Za-z0-9_-]+`、rel 路径解析后必须落在 jobDir 内;后期 `S3MediaStore` 同接口替换。
 
-生产实例(阿里云)另有 `/opt/genius/backups/genius-data-<时间戳>.tgz`(`scripts/backup.sh`,白名单 `users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ + jobs/*/job.json`,不含产物,保留最近 14 份,`chmod 600`)与阿里云 ECS 控制台配置的整盘自动快照(每日一份、保留 7 天),两层数据安全见 §10.2。
+生产实例(阿里云)另有 `/opt/genius/backups/genius-data-<时间戳>.tgz`(`scripts/backup.sh`,白名单 `users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ notifications/ + jobs/*/job.json`,不含产物,保留最近 14 份,`chmod 600`)与阿里云 ECS 控制台配置的整盘自动快照(每日一份、保留 7 天),两层数据安全见 §10.2。
 
 ## 6. 前端(2026-09-06 晚起:侧栏 + 五视图 Genius App 壳,as-built)
 
 **2026-09-06 晚起,整站已换成「侧栏 + 五视图 + 悬浮创作面板」的 Genius App 壳**(`docs/plan-ui-genius-app.md`),取代了本节曾经描述的单屏三视图(首页/工作室/作品)+ three.js 场景层设计——那一版的 `app/page.tsx`(旧,单文件)、`components/lumen/LumenHome.tsx`、`components/shell/AccessTokenPrompt.tsx` 已从仓库删除。**完整 UI 规格、DOM 契约、颜色/字体/圆角令牌、与交接包的有意偏离见根目录 `DESIGN.md`**,本节只记后端如何与前端交接:
 
-- 路由 `src/app/(shell)/`:`layout.tsx`(服务端校验会话、下发 provider 能力)+ `page.tsx`(主页)/`create/page.tsx`/`agent/page.tsx`/`canvas/page.tsx`/`subscription/page.tsx`,五个路由共享同一个 `GeniusShell`(`src/components/genius/GeniusShell.tsx`);唯一客户端状态所有者是 `ShellContext.tsx`(`useShell()`)。
+- 路由 `src/app/(shell)/`:`layout.tsx`(服务端校验会话、下发 provider 能力)+ `page.tsx`(主页)/`create/page.tsx`/`agent/page.tsx`/`canvas/page.tsx`/`subscription/page.tsx`/`account/page.tsx`(H 包,账户页:账号/余额/安全三卡,入口在头像菜单,不进侧栏),六个路由共享同一个 `GeniusShell`(`src/components/genius/GeniusShell.tsx`);唯一客户端状态所有者是 `ShellContext.tsx`(`useShell()`)。
 - 路径收窄:创作面板只暴露 `text_to_video / image_to_video / text_to_image`(内部 `t2v / i2v / t2i`);首帧 `startUploadId`,可灵档另有尾帧槽(`lastUploadId`,§2c);`reference_to_video / edit_video / extend_video` 仍保留在 API 与 provider 层,UI 置灰。
 - **时长 / 画幅 / 音频芯片由服务端按 provider 能力下发**(见 §2e):`router.ts` 的 `videoDurationsFor(providerId)`(读 `capabilities().durations`,不声明则默认 `[4,6,8,10]`,开启 harness 时追加 30/45/60)、`videoAspectRatios()`(`VIDEO_PROVIDER_ORDER` 里所有有 key 的 provider 支持画幅的并集)、`audioAvailableFor(providerId)`(可灵读 `KLING_VIDEO_AUDIO`,YMan 恒 `false`,grok/mock 恒真)经 `/api/health` 与 `(shell)/layout.tsx` 解析一次下发给 `ShellContext`;前端不再写死档位或按 provider 名特判。选中具体产品(§2f)时,规格弹层进一步收窄到该产品自己的能力。
-- API 边界:`src/lib/client/{jobs,auth,agent,subscription,templates,models}.ts`(create/cancel/retry/幂等 key)、`useJobLive.ts`(SSE + 轮询)、`useEvents.ts`(全局通知)、`labels.ts`(终态判断/计时)。401 由 `client/http.ts` 整页跳转 `/login`。
+- API 边界:`src/lib/client/{jobs,auth,agent,subscription,templates,models,notifications,canvas}.ts`(create/cancel/retry/幂等 key)、`useJobLive.ts`(SSE + 轮询)、`useEvents.ts`(全局事件流 + `onOpen` 重连回调)、`labels.ts`(终态判断/计时)。401 由 `client/http.ts` 整页跳转 `/login`。
 - 成片来源:主页瀑布流与详情浮层直接用 `JobPublic.output`(视频取 `posterUrl`,图片取 `imageUrl`),按 `output.kind` 分视频/图片;`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡。
 - 依赖:`three`/`@types/three`/`raw-loader` 与旧场景层代码(`src/lib/scene/`、`src/shaders/`、`ClothVeil.tsx`、`SceneHost.tsx`)已于 2026-09-07 一并移除,`next.config.ts` 不再有 `*.html` raw-loader 规则;前端不含任何 WebGL 依赖。
 - 画布 `/canvas` 与智能体 `/agent`(§2h)、订阅 `/subscription`(§2i)均已接真实后端(画布见 §2j)。
@@ -547,5 +561,5 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 - `I18nProvider` + `useT()` 挂在根布局(`src/app/layout.tsx`),全部客户端组件经 `useT("ns.key")` 取文案,不写死字符串。
 - `src/components/genius/LanguageSwitch.tsx` 出现在顶栏与登录页,写 Cookie 切换语言并刷新。
 - DOM 契约(`data-mode`、`data-dur` 等状态值)保持 ASCII,不随语言变化,e2e 选择器不受影响。
-- 服务端 API 的错误文案**不翻译**——前端已按错误码映射的继续映射,直接透传服务端中文原文的保持原样(已知未做)。
+- 服务端 API 的错误 `message` 仍是中文(日志与 CLI 依赖);**用户可见的错误文案由前端按码本地化**(2026-09-12 H 包):`src/lib/i18n/errorText.ts` 的 `errorText(t, e)` 把 `ApiError` 的 `code` 映射到 `common.err.<code>` 字典——`error-codes.test.ts` 静态扫描 `src/**/*.{ts,mjs}` 的全部错误出口(`ProviderHttpError`、quota `code:`、`billingError()`、路由 `error:{code}` 信封、proxy `refuse()`),每个码都必须在字典里,缺一条测试红;`invalid_argument`/`invalid_state`/`conflict` 三个码在字典文案后拼服务端 message(细节在原文里);字典没有的码(上游透传/漏测新码)与非 `ApiError` 一律 `common.err.unknown` 带 `x-request-id`(`ApiError.requestId` 从响应头读),不再把服务端原文直接上屏。改密弹窗对 `invalid_credentials`/401/403 有语境覆盖(`shell.pwd.err.wrong`「当前密码不正确」)。
 - `playwright.config.ts` 钉 `locale: zh-CN` + `accept-language` 头,保证既有中文断言的 e2e 不因语言切换而失败;新增 `e2e/i18n.spec.ts` 覆盖语言切换本身。

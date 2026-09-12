@@ -6,6 +6,7 @@ export const shell = {
   "shell.nav.agent": "智能体",
   "shell.nav.canvas": "画布",
   "shell.nav.sub": "订阅",
+  "shell.nav.account": "账户",
   "shell.nav.aria": "主导航",
   "shell.foot.legal": "条款 · 隐私",
 
@@ -18,7 +19,6 @@ export const shell = {
   "shell.top.changePassword": "修改密码",
   "shell.top.signOut": "退出",
   "shell.top.signingOut": "退出中",
-  "shell.signOutFailed": "退出失败",
 
   /* 通知 */
   "shell.notify.empty": "还没有新通知。任务完成时会出现在这里。",
@@ -43,6 +43,7 @@ export const shell = {
   "shell.pwd.err.short": "新密码至少 {n} 位",
   "shell.pwd.err.mismatch": "两次输入的新密码不一致",
   "shell.pwd.err.same": "新密码不能与当前密码相同",
+  "shell.pwd.err.wrong": "当前密码不正确",
   "shell.pwd.submitting": "提交中…",
   "shell.pwd.submit": "确认修改",
   "shell.pwd.done": "密码已修改，其它设备已下线",

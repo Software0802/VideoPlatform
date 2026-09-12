@@ -81,8 +81,6 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.err.needRef": "Reference mode needs at least one reference image",
   "composer.err.needBothFrames": "First & last frame mode needs both a first and a last frame",
   "composer.err.needPrompt": "This path needs a prompt",
-  "composer.err.upload": "Upload failed",
-  "composer.err.pick": "Could not use that image",
 
   "composer.buddy.title": "Prompt buddy",
   "composer.buddy.clear": "Clear conversation",

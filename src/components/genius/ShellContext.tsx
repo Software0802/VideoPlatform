@@ -7,6 +7,7 @@ import type { AspectRatio, ImageResolution, NativeMode, Resolution } from "@/lib
 import { priceCny } from "@/lib/billing/prices";
 import { HARNESS_DURATIONS } from "@/lib/providers/grok/mode-matrix";
 import {
+  ApiError,
   cancelJob,
   createJob,
   deleteJob,
@@ -20,6 +21,12 @@ import {
   uploadFromJob,
   type JobKind,
 } from "@/lib/client/jobs";
+import {
+  fetchNotifications,
+  markNotificationsRead,
+  type NotificationItem,
+  type NotificationsState,
+} from "@/lib/client/notifications";
 import { fetchMe, logout, type MePublic } from "@/lib/client/auth";
 import { fetchProducts, supportsMode, type Product } from "@/lib/client/models";
 import type { Template } from "@/lib/client/templates";
@@ -27,7 +34,8 @@ import { useEvents } from "@/lib/client/useEvents";
 import { useJobLive } from "@/lib/client/useJobLive";
 import { isActive, isTerminal } from "@/lib/client/labels";
 import { useT } from "@/components/genius/i18n/I18nProvider";
-import type { MessageKey } from "@/lib/i18n/messages";
+import { errorText } from "@/lib/i18n/errorText";
+import { hasMessage, type MessageKey } from "@/lib/i18n/messages";
 
 /*
   Genius App 的唯一客户端状态所有者（方案 `docs/plan-ui-genius-app.md` §3）。
@@ -104,7 +112,13 @@ export const MAX_COUNT = 4;
 /** 「加载更多」一次拉多少条（与 SSR 首屏的 40 同档）。 */
 export const JOBS_PAGE = 40;
 
-/** 通知面板最多留几条（交接：铃铛点开列最近 10 条）。 */
+/**
+ * 铃铛面板一次列几条（交接：点开列最近 10 条）。
+ *
+ * H1 起 `notices` 里存的是服务端同步下来的**全量**（≤200 条）——本地持有全量，
+ * 「打开铃铛 = 全部已读」的 `upToSeq` 才能盖住没显示出来的部分；渲染仍只取前
+ * `MAX_NOTICES` 条（TopBar 里 slice）。
+ */
 export const MAX_NOTICES = 10;
 
 /** ¥1 = 100 积分（用户 2026-09-06 拍板的换算口径），余额模型与后端计费不变。 */
@@ -152,9 +166,10 @@ export type SlotTarget = "start" | "last" | "reference";
 export type Pop = null | "specs" | "model" | "count" | "buddy" | "picker";
 
 /**
- * 一条「任务完成」通知。只由账号级事件流（`GET /api/events`）里**观察到的**
- * 「非终态 → 终态」那一跳产生：页面加载时就已经是终态的任务不算，否则每次刷新都会被
- * 历史任务的通知糊一脸。
+ * 一条「任务完成」通知。两个来源（H1）：
+ *  - 服务端落盘的通知文件（`GET /api/notifications` 全量同步，刷新 / 换设备后仍在）；
+ *  - 账号级事件流里**观察到的**「非终态 → 终态」那一跳即时插入——toast 等不了下一次
+ *    同步。随后那次 `syncNotifications` 会用服务端结果整体覆盖（去重键 `id`）。
  */
 export type Notice = {
   /** jobId + 终态，同一条任务的同一次完成只入队一次 */
@@ -422,6 +437,20 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     };
   }, []);
 
+  /*
+    `pop` 驱动的悬浮层（规格 / 模型 / 数量 / 搭子 / 素材库）共用一条 Esc 收层
+    （H4）：在 Provider 挂一次 keydown 就够，各浮层自己不用重复绑。点开关件 /
+    点外层的既有收层路径不变。
+  */
+  useEffect(() => {
+    if (!pop) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPop(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [pop]);
+
   const isImageTab = tab === "image";
   const productChoices = useMemo(
     () => products.filter((p) => p.kind === (isImageTab ? "image" : "video")),
@@ -559,7 +588,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       },
       (e: unknown) => {
         setSigningOut(false);
-        setError(e instanceof Error ? e.message : t("shell.signOutFailed"));
+        setError(errorText(t, e));
       },
     );
   }, [signingOut, t]);
@@ -607,7 +636,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
         },
         (e: unknown) => {
           setJobsLoading(false);
-          setJobsError(e instanceof Error ? e.message : t("home.loadFailed"));
+          setJobsError(errorText(t, e));
         },
       );
     },
@@ -635,11 +664,12 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     [],
   );
 
-  /* ── 任务完成通知：账号级 SSE ── */
+  /* ── 任务完成通知：账号级 SSE + 服务端落盘（H1） ── */
   /*
-    只对**观察到的**「非终态 → 终态」那一跳发通知：连上时后端会把本人的任务推一遍，
-    页面加载时就已经完成的那些不该再弹一次。所以先把已知状态记进 `seenStatus`
-    （首屏 40 条 + 之后每一条事件），没见过的 id 第一次只记不弹。
+    真相是 `data/notifications/<userId>.json`（刷新 / 换设备后仍在）；SSE 只是提醒。
+    `syncNotifications` 在四个时机把服务端的全量拉下来整体覆盖本地：挂载、SSE 每次
+    open（含重连——断线期间漏掉的终态靠它补齐）、页面回到前台、本地观察到
+    「非终态 → 终态」那一跳之后。
   */
   const seenStatus = useRef<Map<string, JobPublic["status"]>>(
     new Map(caps.initialJobs.map((j) => [j.id, j.status])),
@@ -659,6 +689,91 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
   useEffect(() => {
     quietRef.current = { path: quietPath, jobId: quietJobId };
   }, [quietPath, quietJobId]);
+
+  /* H1：落盘通知的代际与游标。空 epoch = 还没同步成功过。 */
+  const notifEpoch = useRef("");
+  const notifMaxSeq = useRef(0);
+  /** 在飞中的 sync（含退避等待）；来了新触发就置 `notifPending` 让它结束后再跑一轮。 */
+  const notifSyncing = useRef(false);
+  const notifPending = useRef(false);
+
+  /** 一条落盘通知 → 面板条目。标题 / 失败原因按 status 与 errorCode 现渲染，不落盘。 */
+  const noticeOfItem = useCallback(
+    (item: NotificationItem): Notice => {
+      const ok = item.status === "succeeded";
+      const title = ok
+        ? t("shell.notice.done")
+        : item.status === "canceled"
+          ? t("shell.notice.canceled")
+          : t("shell.notice.failed");
+      let detail: string;
+      if (ok) {
+        detail =
+          item.prompt ||
+          (item.mode === "text_to_image" ? t("create.mode.text_to_image") : t("create.firstFrame"));
+      } else {
+        const errKey = item.errorCode ? `common.err.${item.errorCode}` : "";
+        detail =
+          errKey && hasMessage(errKey)
+            ? t(errKey)
+            : (item.errorMessage ?? t("shell.notice.unknownReason"));
+      }
+      return { id: item.id, jobId: item.jobId, ok, title, detail, at: item.at };
+    },
+    [t],
+  );
+
+  /** 服务端同步结果整体覆盖本地（items 已按 seq 倒序）；同时记下代际与最大 seq。 */
+  const applyNotificationState = useCallback(
+    (state: NotificationsState) => {
+      notifEpoch.current = state.epoch;
+      notifMaxSeq.current = state.items.reduce((m, i) => Math.max(m, i.seq), state.lastReadSeq);
+      setNotices(state.items.map(noticeOfItem));
+      setUnread(state.unread);
+    },
+    [noticeOfItem],
+  );
+
+  /**
+   * 拉一次全量通知。失败按 2s → 5s → 10s 退避重试三次后放弃（下一个触发点再来）；
+   * 在飞期间又来的触发只置 `notifPending`，当前这轮结束后补跑一轮——既不在
+   * 两个 GET 之间乱序覆盖，也不丢掉「断线期间又完成了一条」的那次提醒。
+   */
+  const syncNotifications = useCallback(async () => {
+    if (notifSyncing.current) {
+      notifPending.current = true;
+      return;
+    }
+    notifSyncing.current = true;
+    const backoffMs = [2000, 5000, 10_000];
+    try {
+      do {
+        notifPending.current = false;
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            applyNotificationState(await fetchNotifications());
+            break;
+          } catch {
+            // 401 已被 client 层送去登录页；其余失败退避重试，三次后放弃。
+            if (attempt >= backoffMs.length) return;
+            await new Promise((resolve) => setTimeout(resolve, backoffMs[attempt]));
+          }
+        }
+      } while (notifPending.current);
+    } finally {
+      notifSyncing.current = false;
+    }
+  }, [applyNotificationState]);
+
+  /* 触发点：挂载 + 页面回到前台（SSE open / 重连在 useEvents 的 onOpen 里）。 */
+  useEffect(() => {
+    void syncNotifications();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void syncNotifications();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [syncNotifications]);
 
   const onEventJob = useCallback(
     (job: JobPublic) => {
@@ -682,14 +797,18 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
           : (job.error?.message ?? t("shell.notice.unknownReason")),
         at: job.updatedAt || new Date().toISOString(),
       };
-      setNotices((list) => (list.some((n) => n.id === notice.id) ? list : [notice, ...list].slice(0, MAX_NOTICES)));
-      setUnread((n) => Math.min(MAX_NOTICES, n + 1));
+      setNotices((list) => (list.some((n) => n.id === notice.id) ? list : [notice, ...list]));
+      setUnread((n) => n + 1);
       const quiet = quietRef.current.path === "/create" && quietRef.current.jobId === job.id;
       if (!quiet) setNoticeToast(notice);
+      // toast 等不了同步，所以上面先即时插入；紧接着拉一次落盘真相把它对齐
+      // （以及补回这条 SSE 之前断线时漏掉的其它终态）。
+      void syncNotifications();
     },
-    [t, upsert],
+    [t, upsert, syncNotifications],
   );
-  useEvents(true, onEventJob);
+  const onEventsOpen = useCallback(() => void syncNotifications(), [syncNotifications]);
+  useEvents(true, onEventJob, onEventsOpen);
 
   /* toast 自动消失（6s）：比「即将上线」那条长，它带的是要读的信息 */
   useEffect(() => {
@@ -698,16 +817,52 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
     return () => clearTimeout(t);
   }, [noticeToast]);
 
-  const markNoticesRead = useCallback(() => setUnread(0), []);
+  /**
+   * 打开铃铛 = 全部已读：本地持有全量，`upToSeq` 就是手里最大的 seq。
+   * 409 `notifications_stale`（epoch 换了，多半是坏文件重建）→ 重拉一轮对齐，不重试 POST。
+   */
+  const markNoticesRead = useCallback(() => {
+    setUnread(0);
+    const epoch = notifEpoch.current;
+    if (!epoch) return;
+    void markNotificationsRead(epoch, notifMaxSeq.current).then(
+      applyNotificationState,
+      (e: unknown) => {
+        if (e instanceof ApiError && e.code === "notifications_stale") {
+          void syncNotifications();
+          return;
+        }
+        showToast(errorText(t, e));
+      },
+    );
+  }, [applyNotificationState, showToast, syncNotifications, t]);
   const dismissNoticeToast = useCallback(() => setNoticeToast(null), []);
   const openNotice = useCallback(
     (notice: Notice) => {
       setNoticeToast(null);
       const job = jobsRef.current.find((j) => j.id === notice.jobId);
-      if (job) setCurrentJob(job);
-      router.push("/create");
+      if (job) {
+        setCurrentJob(job);
+        router.push("/create");
+        return;
+      }
+      /*
+        落盘之后通知可能比本地列表活得久：列表只装了最近一页（40 条），更老的、
+        或留存期被清了产物的任务都还在通知里。点之前先把那条任务取回来再跳，
+        取不到（已删除）也照跳——创作页会落到最新一条。
+      */
+      void fetchJob(notice.jobId).then(
+        (next) => {
+          if (next) {
+            upsert(next);
+            setCurrentJob(next);
+          }
+          router.push("/create");
+        },
+        () => router.push("/create"),
+      );
     },
-    [router, setCurrentJob],
+    [router, setCurrentJob, upsert],
   );
 
   /*
@@ -975,7 +1130,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
             preview,
             uploadId: null,
             state: "error",
-            message: e instanceof Error ? e.message : t("composer.err.upload"),
+            message: errorText(t, e),
           }),
       );
     },
@@ -1059,7 +1214,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
             preview,
             uploadId: null,
             state: "error",
-            message: e instanceof Error ? e.message : t("composer.err.pick"),
+            message: errorText(t, e),
           }),
       );
     },
@@ -1171,10 +1326,10 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
         setOpen(true);
         router.push("/create");
       } catch (e: unknown) {
-        // 402 insufficient_balance / 429 quota_exceeded / failure_limit_reached：服务端消息原样展示。
+        // 402 insufficient_balance / 429 quota_exceeded / failure_limit_reached：按错误码出当前语言文案（H2）。
         // 已经建成的那几条留在列表里，幂等 key 也留着——再点一次「创作」不会重复计费。
         setBusy(false);
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorText(t, e));
         if (made.length) setCurrentJob(made[made.length - 1]);
         refreshMe();
       }
@@ -1220,10 +1375,10 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       },
       (e: unknown) => {
         setBusy(false);
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorText(t, e));
       },
     );
-  }, [busy, currentJob, onLive]);
+  }, [busy, currentJob, onLive, t]);
 
   const retry = useCallback(() => {
     const job = currentJob;
@@ -1243,11 +1398,11 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       },
       (e: unknown) => {
         setBusy(false);
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorText(t, e));
         refreshMe();
       },
     );
-  }, [busy, currentJob, onLive, refreshMe, remember]);
+  }, [busy, currentJob, onLive, refreshMe, remember, t]);
 
   /**
    * 核验上游（A 包恢复中心）：`uncertain_submit` 的任务拿我们自己的 jobId 去查上游——
@@ -1266,10 +1421,10 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
       },
       (e: unknown) => {
         setBusy(false);
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorText(t, e));
       },
     );
-  }, [busy, currentJob, onLive]);
+  }, [busy, currentJob, onLive, t]);
 
   const reuse = useCallback(
     (text: string, kind: "video" | "image") => {

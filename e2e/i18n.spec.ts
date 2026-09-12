@@ -88,7 +88,17 @@ test("语言切换：顶栏切英文 → 侧栏与顶栏即时变 → 刷新仍�
 
 test("登录页也能切换语言（未登录时）", async ({ page, context }) => {
   await context.clearCookies();
-  await page.goto("/login");
+  /*
+    清掉会话 Cookie 之后，旧页面上还在飞的后台请求（H1 起的通知同步等）会吃到
+    401 → 客户端 `location.assign("/login")`——与这里的 goto 同目的地，可能把它
+    顶成 ERR_ABORTED。等「最终落在 /login」即可，不要求 goto 自己跑完。
+  */
+  await Promise.all([
+    page.waitForURL("**/login"),
+    page.goto("/login").catch((e: unknown) => {
+      if (!String(e).includes("ERR_ABORTED")) throw e;
+    }),
+  ]);
   await expect(page.locator(".shell")).toHaveAttribute("data-ready", "true", { timeout: 60_000 });
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("进入 Genius");
 

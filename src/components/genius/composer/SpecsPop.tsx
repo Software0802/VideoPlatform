@@ -1,6 +1,7 @@
 "use client";
 
 import { IMAGE_RES_LABEL, RES_LABEL, useShell } from "@/components/genius/ShellContext";
+import { IconClose } from "@/components/genius/icons";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 
 /*
@@ -39,12 +40,20 @@ export function SpecsPop() {
     dur,
     setDur,
     durs,
+    setPop,
   } = useShell();
   const t = useT();
   const isImage = tab === "image";
 
   return (
     <div className="specs-pop">
+      {/*
+        可见关闭控件（H4）：规格层是多卡面板不是 listbox 下拉，给一枚浮在右上角的
+        ✕；Esc / 再点规格芯片 / 点外层的收层路径照旧。
+      */}
+      <button type="button" className="specs-pop__close" aria-label={t("common.close")} onClick={() => setPop(null)}>
+        <IconClose size={12} />
+      </button>
       <div className="specs-pop__card">
         <span className="specs-pop__title">{t("composer.specs.resolution")}</span>
         <div className="specs-pop__res">

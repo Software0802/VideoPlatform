@@ -26,25 +26,21 @@ export const home = {
   "home.tags.custom": "自定义标签",
   "home.tags.max": "最多 {n} 个标签",
   "home.tags.tooLong": "标签最多 {n} 个字",
-  "home.tags.saveFailed": "保存标签失败",
 
   "home.share.copiedPrefix": "链接已复制：",
   "home.share.manualPrefix": "请手动复制：",
   "home.share.toastCopied": "链接已复制，{span}有效",
   "home.share.toastManual": "链接已生成，{span}有效，请手动复制",
   "home.share.hours": "{n} 小时",
-  "home.share.failed": "生成分享链接失败",
 
   "home.delete.confirmAria": "确认删除",
   "home.delete.confirmText": "删除后不可恢复，成片与素材一并移除。",
   "home.delete.deleting": "删除中…",
   "home.delete.confirm": "确认删除",
-  "home.delete.failed": "删除失败",
   "home.delete.title": "删除这件作品",
   "home.delete.running": "任务进行中，先取消再删除",
   "home.reuse": "用这条提示词再生成",
 
-  "home.tpl.error": "暂时读不到模板",
   "home.tpl.loading": "读取模板中…",
   "home.tpl.empty": "还没有可用的模板。",
 

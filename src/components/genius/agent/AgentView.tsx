@@ -21,6 +21,7 @@ import {
   type AgentTurnBody,
 } from "@/lib/client/agent";
 import { fetchProducts, type Product } from "@/lib/client/models";
+import { errorText } from "@/lib/i18n/errorText";
 import AgentAsk, { type AskPop } from "./AgentAsk";
 import AgentChat from "./AgentChat";
 import AgentPlaza from "./AgentPlaza";
@@ -100,10 +101,12 @@ export default function AgentView() {
     };
   }, []);
 
-  const say = useCallback((e: unknown) => {
-    const message = e instanceof Error ? e.message : String(e);
-    if (alive.current) setError(message);
-  }, []);
+  const say = useCallback(
+    (e: unknown) => {
+      if (alive.current) setError(errorText(t, e));
+    },
+    [t],
+  );
 
   useEffect(() => {
     fetchAgentSkills().then((res) => {

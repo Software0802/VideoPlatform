@@ -1133,6 +1133,21 @@
   }
 }
 
+/*
+  ≤560：左右两列各占整屏宽、横滑切换（H4）。会话列里装着返回钮 / 提案按钮 /
+  输入框 / 发送钮，必须整个落在视口内；素材栏是次要的，留到右滑。
+*/
+@media (max-width: 560px) {
+  .agent-chat__left {
+    width: 100%;
+  }
+  .agent-chat__right {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-view *,
   .agent-view *::before,

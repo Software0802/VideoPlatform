@@ -6,5 +6,6 @@ export { create } from "./create";
 export { agent } from "./agent";
 export { canvas } from "./canvas";
 export { subscription } from "./subscription";
+export { account } from "./account";
 export { login } from "./login";
 export { share } from "./share";

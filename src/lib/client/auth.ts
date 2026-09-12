@@ -1,4 +1,4 @@
-import { ApiError, parseAuthed, parseJson } from "@/lib/client/http";
+import { parseAuthed, parseJson } from "@/lib/client/http";
 import { DEFAULT_PRICE_TABLE, type PriceTable } from "@/lib/billing/prices";
 
 /**
@@ -49,6 +49,8 @@ export type MePublic = {
   userId: string;
   email: string;
   plan: string;
+  /** 注册时间（ISO，H3 账户页）。老服务端不下发时按缺省处理。 */
+  createdAt?: string;
   balance?: BalancePublic;
   /** 服务端当前生效的价目表；缺失时调用方用 `DEFAULT_PRICE_TABLE` 也算不错。 */
   prices?: PriceTable;
@@ -145,6 +147,7 @@ export async function fetchMe(): Promise<MePublic> {
     userId: data.userId,
     email: data.email,
     plan: data.plan,
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : undefined,
     balance: readBalance(data.balance),
     prices: readPrices(data.prices),
     quota: readQuota(data.quota),
@@ -169,27 +172,6 @@ export async function redeemGiftCode(code: string): Promise<RedeemResult> {
     // `balance` 只是省一次 /api/me 的顺手回执；形状不对就当没给，调用方照常重拉。
     balance: readBalance(data.balance) ?? null,
   };
-}
-
-/** 码来自 `src/lib/users/gift-codes.ts`（404 / 409）与兑换路由的限流（429）。 */
-const REDEEM_MESSAGES: Record<string, string> = {
-  gift_code_invalid: "礼品码无效",
-  gift_code_used: "礼品码已被使用",
-  rate_limited: "兑换太频繁，稍后再试",
-};
-
-/**
- * 兑换失败的文案。服务端的码是事实源，这里只把已知的几种钉成固定中文；认不出的码
- * 一律回落服务端自己那句话（而不是吞成「兑换失败」，那会让用户不知道到底哪一步不对）。
- */
-export function redeemErrorMessage(error: unknown): string {
-  if (!(error instanceof ApiError)) {
-    return error instanceof Error && error.message ? error.message : "网络异常，请稍后再试";
-  }
-  const byCode = error.code ? REDEEM_MESSAGES[error.code] : undefined;
-  if (byCode) return byCode;
-  if (error.status === 429) return "兑换太频繁，稍后再试";
-  return error.message || "兑换失败，请稍后再试";
 }
 
 /** 一条积分流水。`kind` 由服务端定义（`grant` 是充值 / 兑换，其余是消费类）。 */
@@ -274,46 +256,21 @@ export async function changePassword(input: { currentPassword: string; newPasswo
   await parseJson<{ ok?: boolean }>(res, "修改密码失败");
 }
 
-const PASSWORD_MESSAGES: Record<string, string> = {
-  invalid_credentials: "当前密码不正确",
-  weak_password: "新密码太简单，请换一个",
-  rate_limited: "操作太频繁，稍后再试",
-};
-
-/** 与 `authErrorMessage` 同一个口径：认得的码钉成固定中文，认不出的回落服务端那句话。 */
-export function passwordErrorMessage(error: unknown): string {
-  if (!(error instanceof ApiError)) {
-    return error instanceof Error && error.message ? error.message : "网络异常，请稍后再试";
-  }
-  const byCode = error.code ? PASSWORD_MESSAGES[error.code] : undefined;
-  if (byCode) return byCode;
-  if (error.status === 401 || error.status === 403) return "当前密码不正确";
-  if (error.status === 429) return "操作太频繁，稍后再试";
-  return error.message || "修改密码失败，请稍后再试";
-}
-
 /** Idempotent server-side: it only clears the cookie. */
 export async function logout(): Promise<void> {
   const res = await fetch("/api/auth/logout", { method: "POST" });
   await parseJson<{ ok: boolean }>(res, "退出失败");
 }
 
-const AUTH_MESSAGES: Record<string, string> = {
-  invite_invalid: "邀请码无效或已使用",
-  email_taken: "该邮箱已注册",
-  invalid_credentials: "邮箱或密码不正确",
-  account_disabled: "账号已被停用，请联系管理员",
-  rate_limited: "操作太频繁，稍后再试",
-};
-
-/** Server copy is already Chinese; this pins the wording the plan §7 specifies. */
-export function authErrorMessage(error: unknown): string {
-  if (!(error instanceof ApiError)) {
-    return error instanceof Error && error.message ? error.message : "网络异常，请稍后再试";
-  }
-  const byCode = error.code ? AUTH_MESSAGES[error.code] : undefined;
-  if (byCode) return byCode;
-  if (error.status === 401) return "邮箱或密码不正确";
-  if (error.status === 429) return "操作太频繁，稍后再试";
-  return error.message || "操作失败，请稍后再试";
+/**
+ * `POST /api/auth/logout-all`（H3 账户页「退出全部设备」）。
+ *
+ * 服务端 bump `sessionEpoch`：这个账号签过的每张 Cookie 立刻作废，本机这张也随
+ * 响应清掉——与 `logout` 不同，失败要报错而不是静默放人走。成功后调用方
+ * `window.location.assign("/login")`；会话提前失效（401）时 `parseAuthed`
+ * 已经替我们把页面送去登录页，殊途同归。
+ */
+export async function logoutAll(): Promise<void> {
+  const res = await fetch("/api/auth/logout-all", { method: "POST" });
+  await parseAuthed<{ ok: boolean }>(res, "退出失败");
 }

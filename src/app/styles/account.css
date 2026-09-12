@@ -1,0 +1,217 @@
+/*
+  账户视图（/account）— H3，方案 docs/plan-h-account-notifications-2026-09-12.md §4。
+  块名统一以 account- 开头；三张卡与订阅页「我的方案」同语言（卡片 #131316 +
+  rgba(255,255,255,.07) 描边、圆角 14px）。令牌局部定义在 .account-view 上。
+*/
+
+.account-view {
+  --ac-card: #131316;
+  --ac-line: rgba(255, 255, 255, 0.07);
+  --ac-ring: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  --ac-chip: rgba(255, 255, 255, 0.06);
+  --ac-chip-hi: rgba(255, 255, 255, 0.12);
+  --ac-fg: #fff;
+  --ac-fg-2: #e4e4e8;
+  --ac-fg-5: #8b8b91;
+  --ac-weak: #7d7e84;
+  --ac-dim: #6f7075;
+  --ac-danger: #ff9b9b;
+
+  padding: 18px 20px 60px;
+}
+
+/* 入场动画只挂在内容层：挂到 .account-view 上会让它成为 position:fixed 的包含块，
+   PasswordDialog 就飘不出视口了（与 .sub-view 同一条纪律）。 */
+.account-view__body {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: account-fade-up 0.35s ease both;
+}
+
+/* 归零控件的 UA 样式；:where() 保证权重为 0，不会盖掉单类名规则。 */
+:where(.account-view) :where(button) {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+:where(.account-view) :where(a) {
+  color: inherit;
+  text-decoration: none;
+}
+
+@keyframes account-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- 卡片 ---------- */
+
+.account-card {
+  border-radius: 14px;
+  background: var(--ac-card);
+  box-shadow: var(--ac-ring);
+  padding: 20px 22px;
+}
+.account-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+.account-card__title {
+  font-size: 15px;
+  font-weight: 700;
+}
+/* 卡头链接（查看流水 / 充值·订阅），与 .sub-mine__link 同款。 */
+.account-card__link {
+  font-size: 12px;
+  color: var(--ac-weak);
+  transition: color 0.16s ease;
+}
+.account-card__link:hover {
+  color: var(--ac-fg-2);
+}
+.account-card__link--end {
+  margin-left: auto;
+}
+
+/* ---------- 键值行 ---------- */
+
+.account-rows {
+  display: flex;
+  flex-direction: column;
+  padding-top: 10px;
+}
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--ac-line);
+  font-size: 13px;
+}
+.account-row:last-child {
+  border-bottom: 0;
+}
+.account-row__label {
+  flex: none;
+  width: 88px;
+  font-size: 12px;
+  color: var(--ac-weak);
+}
+.account-row__value {
+  min-width: 0;
+  color: var(--ac-fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.account-row__value--num {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* 语言行：当前语言名 + 切换按钮（复用顶栏的 LanguageSwitch，尺寸略收） */
+.account-row__value--lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 订阅摘要行里那段的强调（未订阅时同样只是普通文本，靠 data-plan 区分） */
+.account-sub__plan[data-plan="none"] {
+  color: var(--ac-weak);
+}
+
+.account-note {
+  margin: 12px 0 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ac-dim);
+}
+
+/* ---------- 安全卡 ---------- */
+
+.account-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 14px;
+}
+.account-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ac-fg-2);
+  background: var(--ac-chip);
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+.account-btn:hover {
+  background: var(--ac-chip-hi);
+  color: var(--ac-fg);
+}
+.account-btn:disabled {
+  color: #4f5056;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: default;
+}
+/* 确认块里那颗真的会退出的按钮才用危险色；触发钮本身保持普通芯片 */
+.account-btn--danger {
+  color: #2a0f12;
+  background: var(--ac-danger);
+}
+.account-btn--danger:hover:not(:disabled) {
+  background: #ffb3b3;
+  color: #2a0f12;
+}
+
+/* 「退出全部设备」的页内二次确认（disclosure），视觉与 .work__confirm 同款。 */
+.account-confirm {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 155, 155, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 155, 155, 0.24);
+}
+.account-confirm__text {
+  flex: 1;
+  min-width: 200px;
+  font-size: 12.5px;
+  color: var(--ac-fg-2);
+}
+.account-confirm__err {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  color: var(--ac-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-view,
+  .account-view *,
+  .account-view *::before,
+  .account-view *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

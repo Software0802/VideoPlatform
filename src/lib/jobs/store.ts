@@ -13,6 +13,7 @@ import {
   type JobRecord,
 } from "@/lib/jobs/schema";
 import { canAccessJob } from "@/lib/jobs/ownership";
+import { appendJobNotification } from "@/lib/notifications/store";
 import { subscriptionActive } from "@/lib/users/schema";
 import { readUser } from "@/lib/users/store";
 import { retryBlock } from "@/lib/jobs/retry-guard";
@@ -184,6 +185,25 @@ export async function updateJob(
     await mkdir(dir, { recursive: true });
     await writeJobJson(dir, next);
     await upsertJobIndex(next);
+    /*
+      H1 通知落盘：只在「非终态 → 终态」这一跳写一条。`updateJob` 是全仓唯一的
+      终态边沿（`stampCompletedAt` 的注释已论证），所以不需要在 runner / cancel /
+      recover 各处再加。`appendJobNotification` 自己按 `${jobId}:${status}` 幂等，
+      崩溃恢复把同一终态重推一遍也不会入两条。
+      best-effort：抛错只记 warn——通知丢一条比任务落盘卡住便宜，下一跳终态
+      或客户端 `syncNotifications` 会把显示拉回正确状态。
+    */
+    if (!isTerminalStatus(before) && isTerminalStatus(next.status) && next.ownerId) {
+      try {
+        await appendJobNotification(next);
+      } catch (error) {
+        log("warn", "任务终态通知落盘失败（不影响任务本身）", {
+          jobId: next.id,
+          ownerId: next.ownerId,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     return next;
   });
 }

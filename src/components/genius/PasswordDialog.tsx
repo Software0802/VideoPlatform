@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { changePassword, passwordErrorMessage } from "@/lib/client/auth";
+import { useCallback, useEffect, useState } from "react";
+import { changePassword } from "@/lib/client/auth";
+import { ApiError } from "@/lib/client/http";
 import { useT } from "@/components/genius/i18n/I18nProvider";
+import { errorText } from "@/lib/i18n/errorText";
 
 /*
   修改密码弹窗（阶段 B）：旧密码 / 新密码 / 确认新密码 → `POST /api/auth/password`。
@@ -12,8 +14,8 @@ import { useT } from "@/components/genius/i18n/I18nProvider";
   `http.ts` 接住并整页跳 `/login`，不需要在这里再猜一遍。
 
   DOM 契约：`.pwd[role="dialog"]`，三个输入框按 `aria-label` 取（当前密码 / 新密码 /
-  确认新密码），错误行 `.pwd__err[role="alert"]`。服务端回的错误文案（`passwordErrorMessage`）
-  仍是中文，不在本轮多语言范围内。
+  确认新密码），错误行 `.pwd__err[role="alert"]`。服务端错误按 `common.err.<code>`
+  出当前语言文案（H2）。
 */
 
 /** 与 `LoginScreen` 同一条下限（服务端才是事实源，这里只是不让必被 400 的请求出门）。 */
@@ -26,6 +28,15 @@ export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDon
   const [again, setAgain] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  /* Esc 与点遮罩走同一条关闭路径（H4）。 */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const submit = useCallback(() => {
     if (busy) return;
@@ -54,7 +65,14 @@ export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDon
       },
       (e: unknown) => {
         setBusy(false);
-        setErr(passwordErrorMessage(e));
+        // 这个弹窗里的凭证错误只可能是旧密码不对——通用 invalid_credentials 文案
+        // （「邮箱或密码不正确」）在这里语境不对，沿用弹窗自己的措辞。
+        setErr(
+          e instanceof ApiError &&
+            (e.code === "invalid_credentials" || e.status === 401 || e.status === 403)
+            ? t("shell.pwd.err.wrong")
+            : errorText(t, e),
+        );
       },
     );
   }, [again, busy, current, next, onDone, t]);

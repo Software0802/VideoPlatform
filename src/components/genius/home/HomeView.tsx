@@ -10,6 +10,7 @@ import { fetchTemplates, type Template } from "@/lib/client/templates";
 import { IconCheck, IconClose, IconShare, IconStar, IconTrash } from "@/components/genius/icons";
 import { creditsOf, useShell } from "@/components/genius/ShellContext";
 import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
+import { errorText } from "@/lib/i18n/errorText";
 import type { MessageKey } from "@/lib/i18n/messages";
 
 /*
@@ -355,7 +356,7 @@ function TemplateGrid({ onPick }: { onPick: (t: Template) => void }) {
     let alive = true;
     void fetchTemplates().then(
       (next) => alive && setList(next),
-      (e: unknown) => alive && setErr(e instanceof Error ? e.message : t("home.tpl.error")),
+      (e: unknown) => alive && setErr(errorText(t, e)),
     );
     return () => {
       alive = false;
@@ -417,6 +418,17 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
   const [confirming, setConfirming] = useState(false);
   const [shared, setShared] = useState<{ url: string; copied: boolean } | null>(null);
 
+  /* Esc：删除二次确认开着时先收它，否则关整个详情层（H4）。 */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (confirming) setConfirming(false);
+      else onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [confirming, onClose]);
+
   /** 整组替换：先乐观改本地，失败再退回去并说明原因。 */
   const commit = useCallback(
     (next: string[]) => {
@@ -430,7 +442,7 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
         (e: unknown) => {
           setBusy(false);
           setTags(before);
-          setErr(e instanceof Error ? e.message : t("home.tags.saveFailed"));
+          setErr(errorText(t, e));
         },
       );
     },
@@ -486,7 +498,7 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
       },
       (e: unknown) => {
         setBusy(false);
-        setErr(e instanceof Error ? e.message : t("home.share.failed"));
+        setErr(errorText(t, e));
       },
     );
   }, [busy, job, onToast, t]);
@@ -500,7 +512,7 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
       (e: unknown) => {
         setBusy(false);
         setConfirming(false);
-        setErr(e instanceof Error ? e.message : t("home.delete.failed"));
+        setErr(errorText(t, e));
       },
     );
   }, [busy, job, onDelete, t]);

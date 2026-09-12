@@ -56,7 +56,6 @@ export const subscription: Record<keyof typeof zh, string> = {
   "subscription.toast.success": "Subscribed — member credits added",
   "subscription.toast.insufficient": "Not enough purchased credits. Redeem a gift code first.",
   "subscription.toast.active": "You already have an active subscription",
-  "subscription.toast.failed": "Could not subscribe. Please try again later.",
 
   "subscription.redeem.title": "Redeem gift code",
   "subscription.redeem.hint": "Enter a gift code and the credits land right away (¥1 = 100 credits).",

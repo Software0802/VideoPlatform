@@ -106,7 +106,7 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 - 创作页内容块底部留白 236px，`main` 本身不留（避免其它视图也被顶开）。
 - 图片页图片槽置灰显示「即将上线」（后端图片路径不支持首帧）。
 - 创作面板关闭态仍留在 DOM（`hidden` + `data-open="false"`），不是条件渲染，便于状态保留与 e2e 断言。
-- 窄屏（≤900px）侧栏收成 56px 图标栏，导航文字用 `clip-path` 隐藏而非 `display:none`。
+- 窄屏（≤900px）侧栏收成 56px 图标栏，导航文字用 `clip-path` 隐藏而非 `display:none`；移动端回归（`e2e/mobile.spec.ts`，375/390/768 三档）另修过：≤560px 规格弹层与画布报价层改为左右贴边全宽、智能体两列改单列横滑、≤400px 隐藏顶栏装饰性小头像；对话框类弹层统一支持 Esc 收层。
 - 头像菜单是 disclosure 语义（按钮+条件渲染的菜单容器），不是 `role="menu"`/`role="menuitem"`。
 - 进入技能广场 / 会话页（智能体视图的子状态）时顶栏标题仍固定显示「智能体」；画布视图顶栏标题固定「画布」——顶栏标题只跟五视图路由走，不感知视图内部 state（未做「视图内子页上报标题」的接口）。
 - 画布的工具箱工具名与节点标签沿用原型英文占位文案（中文态也是英文）。
@@ -138,6 +138,7 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 | 画布整图运行 | 顶栏按钮名 `运行整图`，运行中为 `取消运行` |
 | 画布报价弹层 | `.canvas-quote[role="dialog"]`，行内勾选 `重跑`/`执行前需我批准`，按钮 `确认运行`/`取消` |
 | 画布节点执行态 | `.canvas-node__exec[data-exec]`；`awaiting_approval` 时 `.canvas-node__approve` 按钮名 `批准`/`驳回` |
-| 头像菜单 | 按钮名 `账户`，菜单内按钮 `退出` |
+| 头像菜单 | 按钮 `.top__avatar`，菜单内按钮 `账户`/`修改密码`/`退出` |
+| 账户页 | `/account` 三卡 `.account__card`（账号/余额/安全）；「退出全部设备」为 `role="alertdialog"` 页内二次确认 |
 
 完整契约与 §7.1 细化假设见 `docs/plan-ui-genius-app.md`。

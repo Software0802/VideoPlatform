@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { authErrorMessage, login, register } from "@/lib/client/auth";
+import { login, register } from "@/lib/client/auth";
 import { LanguageSwitch } from "@/components/genius/LanguageSwitch";
 import { useT } from "@/components/genius/i18n/I18nProvider";
+import { errorText } from "@/lib/i18n/errorText";
 import type { MessageKey } from "@/lib/i18n/messages";
 
 /*
@@ -12,8 +13,8 @@ import type { MessageKey } from "@/lib/i18n/messages";
   页面 #0a0a0b、卡片 #131316、描边 rgba(255,255,255,.09)、主按钮渐变。
   背景不再挂 WebGL（three 场景本轮不再被引用），改为一层静态径向光晕。
 
-  多语言：右上角一枚与顶栏同款的语言切换——登录之前也得能换语言。服务端回的错误文案
-  （`authErrorMessage`）仍是中文，不在本轮范围内。
+  多语言：右上角一枚与顶栏同款的语言切换——登录之前也得能换语言。服务端错误按
+  `common.err.<code>` 出当前语言文案（H2）。
 */
 
 type Tab = "login" | "register";
@@ -81,7 +82,7 @@ export function LoginScreen() {
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination
       window.location.assign("/");
     } catch (reason) {
-      setError(authErrorMessage(reason));
+      setError(errorText(t, reason));
       setBusy(false);
     }
   }

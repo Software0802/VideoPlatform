@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -25,6 +25,8 @@ let updateJob: typeof import("./store").updateJob;
 let readUser: typeof import("@/lib/users/store").readUser;
 let writeUser: typeof import("@/lib/users/store").writeUser;
 let hasChargeFor: typeof import("@/lib/billing/ledger").hasChargeFor;
+let readNotifications: typeof import("@/lib/notifications/store").readNotifications;
+let notificationsDir: typeof import("@/lib/notifications/store").notificationsDir;
 
 beforeAll(async () => {
   dataRoot = await mkdtemp(path.join(os.tmpdir(), "lumen-store-charge-"));
@@ -32,6 +34,7 @@ beforeAll(async () => {
   ({ writeJob, readJob, updateJob } = await import("./store"));
   ({ readUser, writeUser } = await import("@/lib/users/store"));
   ({ hasChargeFor } = await import("@/lib/billing/ledger"));
+  ({ readNotifications, notificationsDir } = await import("@/lib/notifications/store"));
 });
 
 afterAll(async () => {
@@ -232,5 +235,62 @@ describe("updateJob charges a succeeded job exactly once", () => {
     });
     expect(settled.billing?.chargedAt).toEqual(expect.any(String));
     expect((await readUser(id))?.balanceCny).toBe(99.5);
+  });
+});
+
+/**
+ * H1：终态通知落盘挂在 `updateJob` 的「非终态 → 终态」边沿上（方案 §2.2）——
+ * 全仓唯一的终态入口，所以一条任务的同一次完成只产生一条通知。
+ */
+describe("updateJob appends a terminal notification exactly once", () => {
+  it("writes one item on the edge and nothing on later already-terminal writes", async () => {
+    const id = userId("7");
+    await seedUser(id, 100);
+    const job = await writeJob(imageJob(id, 0));
+
+    await updateJob(job.id, (r) => {
+      r.status = "succeeded";
+      return r;
+    });
+    let file = await readNotifications(id);
+    expect(file?.items).toHaveLength(1);
+    expect(file?.items[0]).toMatchObject({
+      id: `${job.id}:succeeded`,
+      jobId: job.id,
+      status: "succeeded",
+      kind: "job",
+    });
+
+    // 已终态任务上的后续写（成本回填、产物清理）不再构成边沿。
+    await updateJob(job.id, (r) => {
+      r.costUsdActual = 0.02;
+      return r;
+    });
+    file = await readNotifications(id);
+    expect(file?.items).toHaveLength(1);
+
+    // 崩溃恢复把「非终态 → 同一终态」重推一遍：边沿会再走一次，但
+    // `${jobId}:${status}` 幂等键让它仍是一条。
+    const crashed = (await readJob(job.id))!;
+    crashed.status = "pending";
+    delete crashed.completedAt;
+    await writeJob(crashed);
+    await updateJob(job.id, (r) => {
+      r.status = "succeeded";
+      return r;
+    });
+    file = await readNotifications(id);
+    expect(file?.items).toHaveLength(1);
+  });
+
+  it("does not write a notification file for ownerless legacy jobs", async () => {
+    const job = await writeJob(imageJob(undefined, 0));
+    const before = await readdir(notificationsDir()).catch(() => [] as string[]);
+    await updateJob(job.id, (r) => {
+      r.status = "succeeded";
+      return r;
+    });
+    const after = await readdir(notificationsDir()).catch(() => [] as string[]);
+    expect(after.slice().sort()).toEqual(before.slice().sort());
   });
 });

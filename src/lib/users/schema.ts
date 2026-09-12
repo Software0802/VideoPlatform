@@ -185,10 +185,12 @@ export type UserPublic = {
   userId: string;
   email: string;
   plan: UserPlan;
+  /** 注册时间（ISO）。账户页（H3）要展示；`sessionEpoch` / `passwordHash` 永远不下发。 */
+  createdAt: string;
 };
 
 export function toPublicUser(user: UserRecord): UserPublic {
-  return { userId: user.id, email: user.email, plan: user.plan };
+  return { userId: user.id, email: user.email, plan: user.plan, createdAt: user.createdAt };
 }
 
 export function normalizeEmail(raw: string): string {

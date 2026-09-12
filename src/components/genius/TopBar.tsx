@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { IconBell, IconBolt, IconKey, IconLogout, IconTag } from "@/components/genius/icons";
+import { IconBell, IconBolt, IconKey, IconLogout, IconTag, IconUser } from "@/components/genius/icons";
 import { LanguageSwitch } from "@/components/genius/LanguageSwitch";
 import { PasswordDialog } from "@/components/genius/PasswordDialog";
-import { useShell } from "@/components/genius/ShellContext";
+import { MAX_NOTICES, useShell } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { VIEW_TITLE, type ShellView } from "@/components/genius/views";
 
@@ -14,8 +15,10 @@ import { VIEW_TITLE, type ShellView } from "@/components/genius/views";
   → 语言（真的，切换即时生效）/ 通知（真的）→ 头像（点开小菜单：邮箱 + 修改密码 + 退出）。
   全部 nowrap + flex:none，簇本身不加 overflow:hidden（交接包 §9.2）。
 
-  阶段 B：铃铛接账号级事件流（`GET /api/events`）。红点 = 未读数（`.top__dot[data-count]`），
-  点击清零并列出最近 10 条（`.notify` / `.notify__item[data-job-id]`）；点一条跳创作页。
+  阶段 B：铃铛接账号级事件流（`GET /api/events`）；H1 起列表与未读数由服务端落盘的
+  通知文件供（`GET /api/notifications`，刷新 / 换设备后仍在）。红点 = 未读数
+  （`.top__dot[data-count]`），点开即全部标已读并列出最近 10 条
+  （`.notify` / `.notify__item[data-job-id]`）；点一条跳创作页。
 */
 
 /** 顶栏只放 @ 前的部分；完整邮箱留在 title / 菜单里 */
@@ -54,6 +57,7 @@ function useDismiss(open: boolean, close: () => void) {
 export function TopBar({ view }: { view: ShellView }) {
   const { email, credits, signOut, signingOut, showToast, notices, unread, markNoticesRead, openNotice } = useShell();
   const t = useT();
+  const router = useRouter();
   const [menu, setMenu] = useState(false);
   const [bell, setBell] = useState(false);
   const [pwd, setPwd] = useState(false);
@@ -108,7 +112,7 @@ export function TopBar({ view }: { view: ShellView }) {
               <span className="notify__title">{t("shell.top.notifications")}</span>
               {notices.length ? (
                 <ul className="notify__list">
-                  {notices.map((n) => (
+                  {notices.slice(0, MAX_NOTICES).map((n) => (
                     <li key={n.id}>
                       <button
                         type="button"
@@ -154,6 +158,18 @@ export function TopBar({ view }: { view: ShellView }) {
           {menu ? (
             <div className="top__menu">
               <span className="top__menu-email">{email}</span>
+              {/* H3：账户页入口在这里而不在侧栏（仍保持五视图）。 */}
+              <button
+                type="button"
+                className="top__menu-item"
+                onClick={() => {
+                  setMenu(false);
+                  router.push("/account");
+                }}
+              >
+                <IconUser size={14} />
+                {t("shell.top.account")}
+              </button>
               <button
                 type="button"
                 className="top__menu-item"

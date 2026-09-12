@@ -119,7 +119,8 @@ export async function fetchSubscription(): Promise<SubscriptionState> {
 }
 
 /**
- * `POST /api/subscription`。402 / 409 由调用方按 `subscriptionErrorCode` 分支。
+ * `POST /api/subscription`。402 / 409 由调用方按 `subscriptionErrorCode` 分支，
+ * 其余错误码的文案走 `errorText`（H2）。
  *
  * `idempotencyKey` 是必填的：一次「确认订阅」一个 key，提交成功前不换。双击、超时重发、
  * 「回执丢了再点一次」拿回的都是同一份订阅，而不是第二笔扣款（服务端按流水去重）。
@@ -140,7 +141,7 @@ export async function purchaseSubscription(
 
 /**
  * 失败原因的**码**（不是文案）：文案要走 i18n，只有组件那边拿得到 `useT()`。
- * 认不出的一律 `unknown`，由组件回落到服务端那句话。
+ * 认不出的一律 `unknown`，由组件走 `errorText` 兜底。
  */
 export type SubscriptionErrorCode = "insufficient_balance" | "subscription_active" | "unknown";
 
@@ -149,10 +150,4 @@ export function subscriptionErrorCode(error: unknown): SubscriptionErrorCode {
   if (error.code === "insufficient_balance" || error.status === 402) return "insufficient_balance";
   if (error.code === "subscription_active" || error.status === 409) return "subscription_active";
   return "unknown";
-}
-
-/** 服务端自己那句话，`subscriptionErrorCode` 为 `unknown` 时用。 */
-export function subscriptionErrorFallback(error: unknown): string {
-  if (error instanceof ApiError && error.message) return error.message;
-  return error instanceof Error && error.message ? error.message : "";
 }

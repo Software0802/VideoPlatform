@@ -18,15 +18,25 @@ import type { JobPublic } from "@/lib/jobs/schema";
 /** 退避：1s → 2s → 4s → 8s → 15s 封顶。SSE 断线多半是服务重启或睡眠唤醒，不必秒重连。 */
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 15_000] as const;
 
-export function useEvents(enabled: boolean, onJob: (job: JobPublic) => void) {
+export function useEvents(
+  enabled: boolean,
+  onJob: (job: JobPublic) => void,
+  /**
+   * SSE 每次 `open`（含断线重连成功）时调用——H1 用它补拉断线期间漏掉的
+   * 终态通知。可选；不给时行为与之前完全一致。
+   */
+  onOpen?: () => void,
+) {
   // 回调每次 render 都是新的（组件里的闭包），但订阅不该因此重建——否则每次状态更新
   // 都会断开重连一次 SSE。用 ref 转发，effect 只依赖 `enabled`。
   // 赋值放在 effect 里而不是 render 中：render 期间写 ref 会被 react-hooks/refs 拦下，
   // 而且 StrictMode 的双渲染下语义也不明确。事件是异步到的，晚一个 commit 更新没影响。
   const handler = useRef(onJob);
+  const openHandler = useRef(onOpen);
   useEffect(() => {
     handler.current = onJob;
-  }, [onJob]);
+    openHandler.current = onOpen;
+  }, [onJob, onOpen]);
 
   useEffect(() => {
     if (!enabled || typeof EventSource === "undefined") return;
@@ -56,6 +66,8 @@ export function useEvents(enabled: boolean, onJob: (job: JobPublic) => void) {
       }
       source.addEventListener("open", () => {
         attempt = 0;
+        // 建连 / 重连成功那一刻是补拉落盘通知的时机：断线期间的终态事件已经丢了。
+        openHandler.current?.();
       });
       source.addEventListener("message", apply);
       source.addEventListener("job", apply);

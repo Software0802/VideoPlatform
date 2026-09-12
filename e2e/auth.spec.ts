@@ -80,7 +80,8 @@ test("未登录被送到登录页；注册后进首页、头像菜单显示账�
     //    ASSUMPTION：菜单和规格弹层一样是点击态开关，再点一次头像会关闭——用来验证它
     //    不会一直悬着挡住后面的操作；如果 coder 用点击外部关闭而不是再点头像，这两行
     //    需要换成点别处。
-    const avatarBtn = page.getByRole("button", { name: "账户" });
+    // 头像按钮与 H3 新增的菜单项同名「账户」（aria-label vs 文本），按类名取头像避免歧义。
+    const avatarBtn = page.locator("button.top__avatar");
     const logoutBtn = page.getByRole("button", { name: "退出" });
     await avatarBtn.click();
     await expect(page.getByText(EMAIL)).toBeVisible();
@@ -142,6 +143,89 @@ test("未登录被送到登录页；注册后进首页、头像菜单显示账�
     await page.waitForURL("**/login");
   } finally {
     // 注册成功时码已被消费（文件仍在，标了 usedBy）；失败时别把活码留下
+    await rm(inviteFile, { force: true });
+  }
+});
+
+/**
+ * H3 账户页（方案 §4）：头像菜单进 `/account` → 三张卡 → 「查看流水」落到
+ * `/subscription#ledger` 自动开流水抽屉 → 回账户页「退出全部设备」→ 回登录页，
+ * 且作废旧 Cookie（`sessionEpoch` +1）再访 `/account` 又被送回登录页。
+ *
+ * 注册走与上面那条相同的真实注册路径；邮箱与邀请码是这条用例自己的，不与它共享。
+ */
+test("账户页：三张卡 → 查看流水开抽屉 → 退出全部设备后旧 Cookie 失效", async ({ page, baseURL }) => {
+  const dataDir = await serverDataDir();
+  const code = newInviteCode();
+  const inviteFile = await writeInvite(dataDir, code);
+  const email = `e2e-acct-${randomBytes(6).toString("hex")}@lumen.test`;
+  const password = randomBytes(18).toString("base64url");
+  const origin = baseURL ?? "http://localhost:3000";
+
+  try {
+    // 1. 注册 → 落到首页
+    await page.goto("/");
+    await page.waitForURL("**/login");
+    await expect(page.locator(".shell")).toHaveAttribute("data-ready", "true", { timeout: 60_000 });
+    await page.getByRole("tab", { name: "注册" }).click();
+    await emailField(page).fill(email);
+    await page.getByLabel("密码").fill(password);
+    await codeField(page).fill(code);
+    await submit(page, "注册").click();
+    await page.waitForURL((url) => url.pathname === "/");
+    await expect(page.locator(".shell")).toHaveAttribute("data-ready", "true", { timeout: 60_000 });
+
+    // 2. 头像菜单 → 「账户」菜单项（与头像按钮同名「账户」，限定在 .top__menu 里取）
+    await page.locator("button.top__avatar").click();
+    await page.locator(".top__menu").getByRole("button", { name: "账户" }).click();
+    await page.waitForURL((url) => url.pathname === "/account");
+
+    // 3. 三张卡可见；账号卡显示邮箱与注册时间，余额卡显示 ¥5 → 500 可用积分 + 未订阅
+    const profile = page.locator('.account-card[data-card="profile"]');
+    const balance = page.locator('.account-card[data-card="balance"]');
+    const security = page.locator('.account-card[data-card="security"]');
+    await expect(profile).toBeVisible();
+    await expect(balance).toBeVisible();
+    await expect(security).toBeVisible();
+    await expect(profile).toContainText(email);
+    await expect(profile).toContainText("注册时间");
+    await expect(balance).toContainText("500");
+    await expect(balance.locator('.account-sub__plan[data-plan="none"]')).toHaveText("未订阅");
+
+    // 4. 安全卡：「修改密码」弹窗能开能关
+    await security.getByRole("button", { name: "修改密码" }).click();
+    const pwdDialog = page.getByRole("dialog", { name: "修改密码" });
+    await expect(pwdDialog).toBeVisible();
+    await pwdDialog.getByRole("button", { name: "取消" }).click();
+    await expect(pwdDialog).toBeHidden();
+
+    // 5. 「查看流水」→ /subscription#ledger：抽屉自动打开，hash 随即被清掉。
+    //    抽屉内容要等 /api/me/ledger 回来（dev 下首编译可能很慢）。
+    await balance.getByRole("link", { name: "查看流水" }).click();
+    await page.waitForURL((url) => url.pathname === "/subscription");
+    const drawer = page.getByRole("dialog", { name: "积分使用详情" });
+    await expect(drawer).toBeVisible({ timeout: 60_000 });
+    await expect(drawer.locator(".ledger__item").first()).toBeVisible({ timeout: 60_000 });
+    await expect(page).toHaveURL(/\/subscription$/);
+
+    // 6. 回 /account → 退出全部设备（先抓下旧会话 Cookie，稍后验证它已作废）
+    await page.goto("/account");
+    await expect(security).toBeVisible();
+    const session = (await page.context().cookies(origin)).find((c) => c.name === "lumen_session");
+    expect(session, "会话 Cookie 应存在").toBeTruthy();
+
+    await security.getByRole("button", { name: "退出全部设备" }).click();
+    const confirmBox = page.locator(".account-confirm");
+    await expect(confirmBox).toBeVisible();
+    await confirmBox.getByRole("button", { name: "确认退出" }).click();
+    await page.waitForURL("**/login");
+    await expect(page.getByRole("tab", { name: "登录" })).toBeVisible();
+
+    // 7. 旧 Cookie 再访 /account：sessionEpoch 已 +1，服务端把它送回登录页
+    await page.context().addCookies([{ name: "lumen_session", value: session!.value, url: origin }]);
+    await page.goto("/account");
+    await page.waitForURL("**/login");
+  } finally {
     await rm(inviteFile, { force: true });
   }
 });
