@@ -118,6 +118,18 @@ export const canvasNodeExecutionSchema = z
     errorCode: z.string().optional(),
     /** `queue_full` 的退避：run 里它是等待信号不是失败，泵到点再试。 */
     nextAttemptAt: z.string().optional(),
+    /**
+     * 该执行位第一次进入 `awaiting_approval` 的时刻：超过
+     * `dag.APPROVAL_TIMEOUT_MS`（24h）由 sweep 收敛成 `blocked`/`approval_timeout`，
+     * 之后 `decideCanvasRunApproval` 也拒绝再写决策。旧 run 文件缺这个字段时
+     * sweep 先补记 `now`，不当即超时。
+     */
+    awaitingSince: z.string().optional(),
+    /**
+     * 第一次撞 `queue_full` 的时刻：超过 `dag.QUEUE_WAIT_TIMEOUT_MS`（1h）
+     * 收敛成 `blocked`/`queue_timeout` 并清掉 `nextAttemptAt`；提交成功后删掉。
+     */
+    queueWaitSince: z.string().optional(),
     /** D 切片二：本执行位复用了上一次 run 的成功产物（不新建任务、不计费）。 */
     reused: z.boolean().optional(),
     /** D 切片二：人工门的决策记录（仅 `awaiting_approval` 之后落上）。 */

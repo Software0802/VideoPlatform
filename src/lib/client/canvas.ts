@@ -129,6 +129,12 @@ export type CanvasNodeExecStatus =
 
 export type CanvasRunStatus = "running" | "succeeded" | "partially_failed" | "failed" | "canceled";
 
+/**
+ * 审批门超时（2026-09-13 产品拍板 24h）：镜像 `dag.ts` 的 APPROVAL_TIMEOUT_MS。
+ * 服务端模块进不了客户端组件（env/log/fs 依赖），这里保留同名同值镜像。
+ */
+export const CANVAS_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
 export type CanvasNodeExecution = {
   nodeId: string;
   attempt: number;
@@ -139,6 +145,10 @@ export type CanvasNodeExecution = {
   reused?: boolean;
   /** 人工门的决策记录。 */
   approval?: { decision: "approved" | "rejected"; decidedAt: string };
+  /** 第一次进入 `awaiting_approval` 的时刻；+24h 后服务端收敛成 blocked/approval_timeout。 */
+  awaitingSince?: string;
+  /** 第一次撞 `queue_full` 的时刻；+1h 后收敛成 blocked/queue_timeout。 */
+  queueWaitSince?: string;
   startedAt?: string;
   finishedAt?: string;
 };

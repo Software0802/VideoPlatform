@@ -64,6 +64,14 @@ const OUTPUT_IMAGE_REL = "outputs/image.jpg";
 const QUEUE_RETRY_MS = 15_000;
 const SWEEP_INTERVAL_MS = 3_000;
 
+/**
+ * 审批门与排队退避的超时（产品拍板 2026-09-13）：审批 24 小时、queue_full
+ * 等待 1 小时。写死不读环境变量——这是产品参数不是运维旋钮；导出给测试与
+ * 前端镜像常量（`client/canvas.ts` 的 CANVAS_APPROVAL_TIMEOUT_MS）对照。
+ */
+export const APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+export const QUEUE_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
+
 const EXEC_TERMINAL = new Set(["succeeded", "failed", "blocked"]);
 
 function requestHashOf(body: CanvasRunCreateBody): string {
@@ -298,6 +306,13 @@ export async function decideCanvasRunApproval(
       if (exec.approval?.decision === want) return undefined;
       throw new ProviderHttpError(409, "invalid_state", "该节点当前不需要审批或已有不同决策");
     }
+    // 审批已超时：不决策不写盘——下一轮 sweep 会把它收敛成 blocked/approval_timeout。
+    if (
+      exec.awaitingSince &&
+      Date.now() - Date.parse(exec.awaitingSince) >= APPROVAL_TIMEOUT_MS
+    ) {
+      throw new ProviderHttpError(409, "invalid_state", "审批已超时（24 小时），该节点将被跳过");
+    }
     const now = new Date().toISOString();
     return {
       ...r,
@@ -451,6 +466,21 @@ async function sweepOnce(run: CanvasRun): Promise<CanvasRun> {
     Object.assign(exec, jobToExecStatus(exec, job.status, job.error?.code));
   }
 
+  // 1b) 超时收敛（放在依赖传播之前，好让下游同一轮被标 upstream_failed）：
+  // awaiting_approval 超 24h → blocked/approval_timeout。queue_full 的等待超时
+  // 在下方 catch 分支判——它只在「再次尝试提交仍满」时评估。旧 run 文件缺
+  // awaitingSince 时补记 now，不当即超时。
+  for (const exec of execs) {
+    if (exec.status !== "awaiting_approval") continue;
+    if (!exec.awaitingSince) {
+      exec.awaitingSince = now;
+      continue;
+    }
+    if (Date.now() - Date.parse(exec.awaitingSince) >= APPROVAL_TIMEOUT_MS) {
+      Object.assign(exec, { status: "blocked", errorCode: "approval_timeout", finishedAt: now });
+    }
+  }
+
   // 2) 依赖失败/被拦 → blocked（立即标记，不必等其它上游跑完——那份输入已不可能来）。
   for (const exec of execs) {
     if (exec.status !== "waiting_dependencies" && exec.status !== "ready") continue;
@@ -492,6 +522,7 @@ async function sweepOnce(run: CanvasRun): Promise<CanvasRun> {
         exec.approval?.decision !== "approved"
       ) {
         exec.status = "awaiting_approval";
+        exec.awaitingSince ??= now;
         continue;
       }
 
@@ -564,9 +595,22 @@ async function sweepOnce(run: CanvasRun): Promise<CanvasRun> {
         exec.jobId = job.id;
         exec.status = "running";
         exec.startedAt ??= now;
+        delete exec.queueWaitSince;
       } catch (e) {
         if (e instanceof ProviderHttpError && e.code === "queue_full") {
-          // 队列满在 run 里是等待信号不是失败：15s 后泵再来试。
+          // 队列满在 run 里是等待信号不是失败：记首次撞满时刻，15s 一拍重试；
+          // 排队超过 1h（QUEUE_WAIT_TIMEOUT_MS）收敛成 blocked/queue_timeout——
+          // 不再无限占着 run 预留。
+          exec.queueWaitSince ??= now;
+          if (Date.now() - Date.parse(exec.queueWaitSince) >= QUEUE_WAIT_TIMEOUT_MS) {
+            Object.assign(exec, {
+              status: "blocked",
+              errorCode: "queue_timeout",
+              finishedAt: now,
+            });
+            delete exec.nextAttemptAt;
+            continue;
+          }
           exec.nextAttemptAt = new Date(Date.now() + QUEUE_RETRY_MS).toISOString();
           continue;
         }

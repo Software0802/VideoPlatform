@@ -5,6 +5,7 @@ import { useT } from "@/components/genius/i18n/I18nProvider";
 import { useShell } from "@/components/genius/ShellContext";
 import {
   cancelCanvasRunApi,
+  CANVAS_APPROVAL_TIMEOUT_MS,
   createCanvasApi,
   createCanvasRunApi,
   decideCanvasRunApprovalApi,
@@ -52,6 +53,13 @@ function clamp(min: number, v: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
 
+/* 月-日 时:分（与 CreateView 同款）：纯数字两种语言读法一致，不进字典。 */
+function clockTime(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => n.toString().padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 const TERMINAL = new Set(["succeeded", "failed", "canceled", "expired"]);
 
 /** 执行位 errorCode 里有字典文案的集合；不在里面的直接显示原始码。 */
@@ -63,6 +71,8 @@ const EXEC_ERR_KEYS = new Set([
   "job_missing",
   "output_purged",
   "approval_rejected",
+  "approval_timeout",
+  "queue_timeout",
   "canceled",
   "expired",
   "failed",
@@ -106,6 +116,7 @@ export default function CanvasView() {
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const quoteRef = useRef<HTMLDivElement | null>(null);
+  const conflictRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const materialFor = useRef<string | null>(null);
@@ -127,11 +138,60 @@ export default function CanvasView() {
   const [runBusy, setRunBusy] = useState(false);
   const runKeyRef = useRef<string | null>(null);
   const lastRunStatus = useRef<CanvasRun["status"] | null>(null);
+  // 保存 409（2026-09-13）：不静默覆盖任何一方——本地 doc 保持不动，弹层让用户
+  // 在「本地（未保存）」与「服务端」之间二选一。
+  const [conflict, setConflict] = useState<{ server: CanvasDocument } | null>(null);
+  // persist 是防抖定时器触发的 callback，读不到最新 state——用 ref 镜像 conflict。
+  const conflictState = useRef<{ server: CanvasDocument } | null>(null);
+  useEffect(() => {
+    conflictState.current = conflict;
+  }, [conflict]);
 
   const closeMenu = useCallback(() => setMenu(null), []);
   useDismiss(menu !== null, menuRef, closeMenu);
   /* 报价弹层同样吃「点外层 / Esc」收层（H4），头部 ✕ 是可见关闭控件。 */
   useDismiss(quote !== null, quoteRef, () => setQuote(null));
+
+  /** 冲突二选一：用当前本地 doc（冲突期间仍在编辑）按服务端 revision 覆盖写。 */
+  const resolveKeepLocal = async () => {
+    const cur = conflictState.current;
+    if (!doc || !cur) return;
+    try {
+      const next = await patchCanvas(doc.id, {
+        expectedRevision: cur.server.revision,
+        nodes: doc.nodes,
+        edges: doc.edges,
+      });
+      setDoc(next);
+      setConflict(null);
+      showToast(t("canvas.conflict.keptLocal"));
+    } catch (e) {
+      if (e instanceof RevisionConflictError) {
+        // 又被人改了：弹层留着，服务端栏换成最新版，直到成功或用户选服务端。
+        const fresh = await fetchCanvas(doc.id);
+        if (fresh) setConflict({ server: fresh });
+      } else {
+        showToast(errorText(t, e));
+      }
+    }
+  };
+  const resolveUseServer = () => {
+    const cur = conflictState.current;
+    if (!cur) return;
+    setDoc(cur.server);
+    setConflict(null);
+    showToast(t("canvas.conflict.usedServer"));
+  };
+  /* 严格模态：只能显式选一份，Esc / 点外层不关——误触不得替用户覆盖任何一方。 */
+  /* 弹层出现时聚焦「保留本地」按钮；关掉后焦点还给画布容器。 */
+  useEffect(() => {
+    if (!conflict) return;
+    conflictRef.current
+      ?.querySelector<HTMLElement>(".canvas-conflict__keep")
+      ?.focus();
+    const root = rootRef.current;
+    return () => root?.focus();
+  }, [conflict]);
 
   /* 载入：最新一张画布，没有就建一张；再拉它的最新一次 run 做产物 overlay。 */
   // `t` 随语言切换换引用；载入 effect 若依赖它，切语言会整份重拉画布并清掉防抖中的
@@ -179,18 +239,19 @@ export default function CanvasView() {
 
   /**
    * 写盘：本地先更新（界面不等网络），PATCH 带当前 revision；409 即别处已改——
-   * 重拉最新文档交回，绝不静默覆盖（C 包硬要求）。
+   * 保留本地副本，弹层让用户在本地 / 服务端之间二选一，绝不静默覆盖任何一方。
+   * 冲突未决期间不再发 PATCH（反复 409 没有意义），本地 mutate 照常进行。
    */
   const persist = useCallback(
     async (base: CanvasDocument, nodes: CanvasNode[], edges = base.edges) => {
+      if (conflictState.current) return;
       try {
         const next = await patchCanvas(base.id, { expectedRevision: base.revision, nodes, edges });
         setDoc((cur) => (cur && cur.id === next.id ? next : cur));
       } catch (e) {
         if (e instanceof RevisionConflictError) {
           const fresh = await fetchCanvas(base.id);
-          if (fresh) setDoc(fresh);
-          showToast(t("canvas.conflict"));
+          if (fresh) setConflict({ server: fresh });
         } else {
           showToast(errorText(t, e));
         }
@@ -556,6 +617,7 @@ export default function CanvasView() {
     <div
       className="canvas-view"
       ref={rootRef}
+      tabIndex={-1}
       onContextMenu={onContextMenu}
       style={{ backgroundSize: `${Math.round(22 * scale)}px ${Math.round(22 * scale)}px` }}
     >
@@ -811,6 +873,56 @@ export default function CanvasView() {
         </div>
       ) : null}
 
+      {conflict ? (
+        <div
+          className="canvas-conflict"
+          ref={conflictRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("canvas.conflict.title")}
+        >
+          <div className="canvas-conflict__head">
+            <span className="canvas-conflict__title">{t("canvas.conflict.title")}</span>
+          </div>
+          <p className="canvas-conflict__desc">{t("canvas.conflict.desc")}</p>
+          <div className="canvas-conflict__cols">
+            <div className="canvas-conflict__col">
+              <span className="canvas-conflict__colname">{t("canvas.conflict.local")}</span>
+              <span className="canvas-conflict__summary">
+                {t("canvas.conflict.summary", {
+                  nodes: doc?.nodes.length ?? 0,
+                  edges: doc?.edges.length ?? 0,
+                })}
+              </span>
+            </div>
+            <div className="canvas-conflict__col">
+              <span className="canvas-conflict__colname">{t("canvas.conflict.server")}</span>
+              <span className="canvas-conflict__summary">
+                {t("canvas.conflict.summary", {
+                  nodes: conflict.server.nodes.length,
+                  edges: conflict.server.edges.length,
+                })}
+              </span>
+              <span className="canvas-conflict__saved">
+                {t("canvas.conflict.savedAt", { time: clockTime(conflict.server.updatedAt) })}
+              </span>
+            </div>
+          </div>
+          <div className="canvas-conflict__foot">
+            <button
+              type="button"
+              className="canvas-conflict__keep"
+              onClick={() => void resolveKeepLocal()}
+            >
+              {t("canvas.conflict.keepLocal")}
+            </button>
+            <button type="button" className="canvas-conflict__server" onClick={resolveUseServer}>
+              {t("canvas.conflict.useServer")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {error ? <p className="agent-view__error" style={{ position: "absolute", left: 24, bottom: 16 }}>{error}</p> : null}
 
       <input
@@ -914,6 +1026,15 @@ function GenBody({
             {t("canvas.run.reject")}
           </button>
         </div>
+      ) : null}
+      {exec?.status === "awaiting_approval" && exec.awaitingSince ? (
+        <span className="canvas-node__deadline">
+          {t("canvas.run.approvalDeadline", {
+            time: clockTime(
+              new Date(Date.parse(exec.awaitingSince) + CANVAS_APPROVAL_TIMEOUT_MS).toISOString(),
+            ),
+          })}
+        </span>
       ) : null}
       {exec?.errorCode ? (
         <span className="canvas-node__err">

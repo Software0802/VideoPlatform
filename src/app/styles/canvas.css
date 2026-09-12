@@ -1196,9 +1196,90 @@
 }
 .canvas-quote__confirm:disabled { opacity: .5; cursor: default; }
 
+/* 保存冲突弹层（2026-09-13）：视觉照 .canvas-quote，居中放置、两栏对比。 */
+.canvas-conflict {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 380px;
+  border-radius: 14px;
+  background: var(--cv-pop);
+  box-shadow: var(--cv-shadow-pop);
+  animation: canvas-pop-in 0.2s ease both;
+  z-index: 4;
+  /* 兜底：内容超出锚容器（.canvas-view）高度时弹层内滚动，而不是溢出被裁。 */
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.canvas-conflict__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+.canvas-conflict__title { font-size: 13px; font-weight: 600; color: var(--cv-fg); }
+.canvas-conflict__desc {
+  margin: 0;
+  padding: 12px 14px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--cv-fg-5);
+}
+.canvas-conflict__cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px 14px;
+}
+.canvas-conflict__col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 12px;
+}
+.canvas-conflict__colname { font-size: 12px; font-weight: 600; color: var(--cv-fg); }
+.canvas-conflict__summary { font-size: 11px; color: var(--cv-fg-5); }
+.canvas-conflict__saved { font-size: 11px; color: var(--cv-fg-3); }
+.canvas-conflict__foot {
+  display: flex;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+.canvas-conflict__keep {
+  flex: 1;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(140deg,#ff8a3d,#ff4d8d 60%,#a855f7);
+  cursor: pointer;
+}
+.canvas-conflict__server {
+  flex: 1;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--cv-fg);
+  background: rgba(255,255,255,.04);
+  cursor: pointer;
+}
+.canvas-conflict__server:hover { background: rgba(255,255,255,.08); }
+
+/* 审批截止时间小字（approval 24h 超时）。 */
+.canvas-node__deadline { font-size: 11px; color: var(--cv-fg-3); }
+
 /*
-  ≤560：报价弹层贴视图左右边，不再固定 340px——375 视口下画布视图本身只剩约
+  ≤560：报价/冲突弹层贴视图左右边，不再固定宽度——375 视口下画布视图本身只剩约
   319px，固定宽度的弹层左缘会被 `overflow:hidden` 的视图裁掉（H4）。
+  冲突弹层两栏改纵向堆叠。
 */
 @media (max-width: 560px) {
   .canvas-quote {
@@ -1206,4 +1287,13 @@
     right: 12px;
     width: auto;
   }
+  /* .canvas-view 顶不到视口顶（侧栏/顶栏占掉 56px），垂直居中会把弹层底缘裁掉——贴顶放。 */
+  .canvas-conflict {
+    left: 12px;
+    right: 12px;
+    top: 12px;
+    width: auto;
+    transform: none;
+  }
+  .canvas-conflict__cols { grid-template-columns: 1fr; }
 }

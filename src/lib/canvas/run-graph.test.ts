@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { ProviderHttpError } from "@/lib/providers/types";
 
 /**
  * 画布 DAG 运行（D 包）：报价 / 幂等 / sweep 执行器 / 取消 / 崩溃窗口接管；
@@ -32,6 +33,25 @@ vi.mock("@/lib/jobs/admission", async (importOriginal) => {
         }
         return fn();
       }),
+  };
+});
+
+/**
+ * T4 注入点：`MAX_QUEUED_JOBS=0` 会被 env.ts 按「≥1 才生效」回落成 20，造不出
+ * queue_full；包一层 `createJob`，置旗期间一律抛 queue_full（环境变量与余额
+ * 都不受影响）。不置旗即原样透传。
+ */
+let failCreateJobWithQueueFull = false;
+vi.mock("@/lib/jobs/create", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/lib/jobs/create")>();
+  return {
+    ...orig,
+    createJob: ((...args: Parameters<typeof orig.createJob>) => {
+      if (failCreateJobWithQueueFull) {
+        return Promise.reject(new ProviderHttpError(429, "queue_full", "队列已满"));
+      }
+      return orig.createJob(...args);
+    }) as typeof orig.createJob,
   };
 });
 
@@ -1276,5 +1296,232 @@ describe("审查修复回归 2026-09-12", () => {
     });
     expect(after?.nodeExecutions[0]?.jobId).toBeUndefined();
     expect(await listJobIndex({ ownerId: owner })).toHaveLength(0);
+  }, 30000);
+});
+
+/* ---------- 超时收敛（2026-09-13：审批 24h / queue_full 1h） ---------- */
+
+describe("超时收敛 2026-09-13", () => {
+  /**
+   * 时间前推不走 vi.useFakeTimers：本文件其它用例靠真实计时器轮询
+   * （runToTerminal / sleep），fake timers 会把它们一并冻结。改成直接改写
+   * run 文件里的 awaitingSince / queueWaitSince——判据就是这两个字段，
+   * 效果等价且互不影响。
+   */
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+
+  /** 建图 + 报价 + 建 run 的公共前奏。 */
+  const setupRun = async (
+    owner: string,
+    nodes: Parameters<typeof patchCanvas>[2]["nodes"] & unknown[],
+    edges: { id: string; from: string; to: string }[] = [],
+    extra: { approvalNodeIds?: string[] } = {},
+    key: string,
+  ) => {
+    const doc = await createCanvas(owner, "超时");
+    const patched = await patchCanvas(owner, doc.id, { expectedRevision: 0, nodes, edges });
+    const quote = await computeQuote(owner, patched!);
+    const { run } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote.hash,
+      idempotencyKey: key,
+      ...extra,
+    });
+    return { doc, run };
+  };
+
+  it("T1: 审批超 24h → blocked/approval_timeout，下游 upstream_failed，run 终态释放预留", async () => {
+    const owner = "usr_0000000000000620";
+    await seedUser(owner);
+    const usageBefore = await loadBalanceUsage(owner);
+    const { run } = await setupRun(
+      owner,
+      [
+        { id: "n_06200001", kind: "gen_image", x: 0, y: 0, prompt: "上游图" },
+        { id: "n_06200002", kind: "gen_video", x: 300, y: 0, prompt: "动起来" },
+      ],
+      [{ id: "e_00000062", from: "n_06200001", to: "n_06200002" }],
+      { approvalNodeIds: ["n_06200001"] },
+      "test-run-key-00000050",
+    );
+
+    // 等被设门的上游节点进入 awaiting_approval（kick 的异步 sweep 或手动补一轮）。
+    let observed = await readCanvasRun(owner, run.id);
+    for (let i = 0; i < 40 && observed?.nodeExecutions[0]?.status !== "awaiting_approval"; i += 1) {
+      await sweepCanvasRun(owner, run.id);
+      observed = await readCanvasRun(owner, run.id);
+    }
+    const gated = observed?.nodeExecutions.find((e) => e.nodeId === "n_06200001");
+    expect(gated?.status).toBe("awaiting_approval");
+    expect(gated?.awaitingSince).toBeTruthy();
+
+    // 前推 25h：下一轮 sweep 应先收敛 A，同轮把下游 B 传播成 upstream_failed。
+    await updateCanvasRun(owner, run.id, (r) => ({
+      ...r,
+      nodeExecutions: r.nodeExecutions.map((e) =>
+        e.nodeId === "n_06200001" ? { ...e, awaitingSince: hoursAgo(25) } : e,
+      ),
+    }));
+    await sweepCanvasRun(owner, run.id);
+    const final = await readCanvasRun(owner, run.id);
+    expect(final?.status).toBe("failed");
+    expect(final?.nodeExecutions.find((e) => e.nodeId === "n_06200001")).toMatchObject({
+      status: "blocked",
+      errorCode: "approval_timeout",
+    });
+    expect(final?.nodeExecutions.find((e) => e.nodeId === "n_06200002")).toMatchObject({
+      status: "blocked",
+      errorCode: "upstream_failed",
+    });
+    // 两个节点都没建过 job：份额从未 carve，run 终态后余量停计，占用回到建 run 前。
+    const usageAfter = await loadBalanceUsage(owner);
+    expect(usageAfter.reservedCny).toBeCloseTo(usageBefore.reservedCny, 2);
+  }, 30000);
+
+  it("T2: 审批超时后再 approve → 409 invalid_state，run 文件不落决策", async () => {
+    const owner = "usr_0000000000000621";
+    await seedUser(owner);
+    const { run } = await setupRun(
+      owner,
+      [{ id: "n_06210001", kind: "gen_image", x: 0, y: 0, prompt: "图" }],
+      [],
+      { approvalNodeIds: ["n_06210001"] },
+      "test-run-key-00000051",
+    );
+    let observed = await readCanvasRun(owner, run.id);
+    for (let i = 0; i < 40 && observed?.nodeExecutions[0]?.status !== "awaiting_approval"; i += 1) {
+      await sweepCanvasRun(owner, run.id);
+      observed = await readCanvasRun(owner, run.id);
+    }
+    await updateCanvasRun(owner, run.id, (r) => ({
+      ...r,
+      nodeExecutions: r.nodeExecutions.map((e) => ({ ...e, awaitingSince: hoursAgo(25) })),
+    }));
+
+    await expect(
+      decideCanvasRunApproval(owner, run.id, { nodeId: "n_06210001", decision: "approve" }),
+    ).rejects.toMatchObject({ status: 409, code: "invalid_state" });
+    const after = await readCanvasRun(owner, run.id);
+    // 超时但未 sweep 的窗口里：执行位仍是 awaiting_approval、没有决策记录。
+    expect(after?.nodeExecutions[0]?.status).toBe("awaiting_approval");
+    expect(after?.nodeExecutions[0]?.approval).toBeUndefined();
+  }, 30000);
+
+  it("T3: 23h 内批准不误伤：决策落盘、节点回 ready 等下一轮提交", async () => {
+    const owner = "usr_0000000000000622";
+    await seedUser(owner);
+    const { run } = await setupRun(
+      owner,
+      [{ id: "n_06220001", kind: "gen_image", x: 0, y: 0, prompt: "图" }],
+      [],
+      { approvalNodeIds: ["n_06220001"] },
+      "test-run-key-00000052",
+    );
+    let observed = await readCanvasRun(owner, run.id);
+    for (let i = 0; i < 40 && observed?.nodeExecutions[0]?.status !== "awaiting_approval"; i += 1) {
+      await sweepCanvasRun(owner, run.id);
+      observed = await readCanvasRun(owner, run.id);
+    }
+    await updateCanvasRun(owner, run.id, (r) => ({
+      ...r,
+      nodeExecutions: r.nodeExecutions.map((e) => ({ ...e, awaitingSince: hoursAgo(23) })),
+    }));
+
+    const decided = await decideCanvasRunApproval(owner, run.id, {
+      nodeId: "n_06220001",
+      decision: "approve",
+    });
+    expect(decided.nodeExecutions[0]).toMatchObject({
+      status: "ready",
+      approval: { decision: "approved" },
+    });
+  }, 30000);
+
+  it("T4: queue_full 排队超 1h → blocked/queue_timeout，清掉 nextAttemptAt，预留释放", async () => {
+    const owner = "usr_0000000000000623";
+    await seedUser(owner);
+    const usageBefore = await loadBalanceUsage(owner);
+    const doc = await createCanvas(owner, "排队超时");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_06230001", kind: "gen_image", x: 0, y: 0, prompt: "图" }],
+    });
+    const quote = await computeQuote(owner, patched!);
+
+    // 置旗期间 createJob 一律 queue_full（见顶部 mock；env 上限压不到 0）。
+    failCreateJobWithQueueFull = true;
+    try {
+      const { run } = await createCanvasRun(owner, {
+        canvasId: doc.id,
+        quoteHash: quote.hash,
+        idempotencyKey: "test-run-key-00000053",
+      });
+      // 第一次提交撞满：queueWaitSince 与 nextAttemptAt 落盘，状态保持等待。
+      let observed = await readCanvasRun(owner, run.id);
+      for (let i = 0; i < 40 && !observed?.nodeExecutions[0]?.queueWaitSince; i += 1) {
+        await sweepCanvasRun(owner, run.id);
+        observed = await readCanvasRun(owner, run.id);
+      }
+      expect(observed?.nodeExecutions[0]?.status).toBe("ready");
+      expect(observed?.nodeExecutions[0]?.queueWaitSince).toBeTruthy();
+      expect(observed?.nodeExecutions[0]?.nextAttemptAt).toBeTruthy();
+
+      // 前推等待起点 61min、把 nextAttemptAt 拨到过去——下一轮真的再试提交，
+      // 仍撞满 → 收敛 blocked/queue_timeout。
+      await updateCanvasRun(owner, run.id, (r) => ({
+        ...r,
+        nodeExecutions: r.nodeExecutions.map((e) => ({
+          ...e,
+          queueWaitSince: new Date(Date.now() - 61 * 60_000).toISOString(),
+          nextAttemptAt: new Date(Date.now() - 1000).toISOString(),
+        })),
+      }));
+      await sweepCanvasRun(owner, run.id);
+      const final = await readCanvasRun(owner, run.id);
+      expect(final?.status).toBe("failed");
+      expect(final?.nodeExecutions[0]).toMatchObject({
+        status: "blocked",
+        errorCode: "queue_timeout",
+      });
+      expect(final?.nodeExecutions[0]?.nextAttemptAt).toBeUndefined();
+    } finally {
+      failCreateJobWithQueueFull = false;
+    }
+    const usageAfter = await loadBalanceUsage(owner);
+    expect(usageAfter.reservedCny).toBeCloseTo(usageBefore.reservedCny, 2);
+  }, 30000);
+
+  it("T5: 旧 run 的 awaiting_approval 缺 awaitingSince → sweep 补记 now，不当即超时", async () => {
+    const owner = "usr_0000000000000624";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "旧审批 run");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_06240001", kind: "gen_image", x: 0, y: 0, prompt: "图" }],
+    });
+    const quote = await computeQuote(owner, patched!);
+    const now = new Date().toISOString();
+    // 超时机制上线前落盘的 run：awaiting_approval 但没有 awaitingSince。
+    const run: CanvasRun = {
+      schemaVersion: 1,
+      id: newCanvasRunId(),
+      ownerId: owner,
+      canvasId: doc.id,
+      documentRevision: patched!.revision,
+      graphSnapshot: { nodes: patched!.nodes, edges: patched!.edges },
+      quote,
+      gatedNodeIds: ["n_06240001"],
+      status: "running",
+      nodeExecutions: [{ nodeId: "n_06240001", attempt: 1, status: "awaiting_approval" }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    await writeCanvasRun(run);
+
+    await sweepCanvasRun(owner, run.id);
+    const after = await readCanvasRun(owner, run.id);
+    expect(after?.nodeExecutions[0]?.status).toBe("awaiting_approval");
+    const stamped = Date.parse(after?.nodeExecutions[0]?.awaitingSince ?? "");
+    expect(Math.abs(Date.now() - stamped)).toBeLessThan(10_000);
   }, 30000);
 });
