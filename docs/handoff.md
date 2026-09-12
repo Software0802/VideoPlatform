@@ -4,16 +4,16 @@
 
 ## 0. 当前状态
 
-本轮核对日期：2026-09-12。本轮已完成生产部署（含存量账号资金迁移），下列信息为部署后实测。
+本轮核对日期：2026-09-12。基线之上又有两个已提交并合入本地 main、但**未推送、未部署**的修复提交（智能体错误码拆分 + 画布 DAG 运行审查修复），生产实际运行的仍是 `da0348c`。
 
 | 字段 | 值 |
 | --- | --- |
-| 基线 | `main` @ `da0348c`（**已部署生产 2026-09-12**，health 200 ok=true）——H 包（`docs/plan-h-account-notifications-2026-09-12.md`，Codex 评审后实施）：通知落盘 `data/notifications/`、错误码前端本地化（`errorText` + `common.err.*` 72 码）、`/account` 账户页 + `logout-all`、移动端回归 `e2e/mobile.spec.ts`；此前 `04efdce` 为 R01–R09 + A–D 包 + 资金迁移。本地领先 origin/main 多个提交，未推送 |
+| 基线 | `main` @ `da0348c`（**已部署生产 2026-09-12**，health 200 ok=true）——H 包（`docs/plan-h-account-notifications-2026-09-12.md`，Codex 评审后实施）：通知落盘 `data/notifications/`、错误码前端本地化（`errorText` + `common.err.*` 72 码）、`/account` 账户页 + `logout-all`、移动端回归 `e2e/mobile.spec.ts`；此前 `04efdce` 为 R01–R09 + A–D 包 + 资金迁移。本地在 `da0348c` 之上另有两个提交 `4690767`（智能体上游失败错误码拆分）与 `f6b8c88`（画布 DAG 运行审查修复），在分支 `claude/sub-agent-coordination-review-305653` 上，待主代理合入 main；均未推送、未部署 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
 | 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；**未配 `XAI_API_KEY`**，grok 只作为路由兜底不会被选中 |
 | 生产订阅价格 | 标准 ¥19.1 / 专业 ¥49.6 / 尊享 ¥106.8 / 至尊 ¥170.3（月费，`costRatio` 按当前 provider 配置算出，非固定值，见 §2） |
-| 门禁 | H 包后全量：`pnpm exec tsc --noEmit` / `pnpm exec eslint src` / `pnpm test`（99 文件、1149 通过、1 skip）/ `pnpm e2e` 33 通过，均退出 0 |
+| 门禁 | `f6b8c88` 上实跑：`pnpm exec tsc --noEmit` 0 错 / `pnpm exec eslint src` 0 错 0 警告 / `pnpm test` 99 文件、1154 通过、1 skip、0 失败 / `pnpm e2e`（`E2E_PORT=3100 E2E_ISOLATED=1`）33 通过、0 失败（2.5 分钟），均退出 0 |
 | 本地运行 | `pnpm dev` → `http://localhost:3000`（**用 `localhost`，`127.0.0.1` 会被 Next 16 dev 403**）；无任何生图/视频 key 时整实例回落 mock 模式（ffmpeg 水印片）；未登录访问任意路由 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`） |
 | 账号与余额 | 注册即送 ¥5（`SIGNUP_BONUS_CNY` 常量，`src/lib/users/service.ts`，流水 `ref:"signup"`，非环境变量）；更多余额靠管理员 `node scripts/grant-balance.mjs <邮箱> <金额> --offline [--ref 键] [--note "..."]` 充值，或用户在订阅页兑换礼品码（`node scripts/mint-gift-codes.mjs <数量> <金额>` 铸码）；每种任务定价 × 余额是主闸门，日配额只是防滥用兜底（`FREE_DAILY_IMAGE_QUOTA` 默认 200） |
 | 首次部署 / 迁移新数据目录前必做 | `cp -r data-seed/templates data/templates`（创作模板种子不随代码自动生成，见 §2「模板」） |
@@ -76,11 +76,12 @@
 - Harness（30/45/60 秒一致性管线）代码完整但 `HARNESS_ENABLED` 生产关闭；视觉 QC 阈值未经 `evals/runs` 校准，默认跳过。
 - 服务端 API 错误 `message` 仍是中文（日志/CLI 依赖）；用户可见文案已按码本地化（H 包），仅上游透传原文与「参数细节在 message 里」的三个码（`invalid_argument`/`invalid_state`/`conflict`）会在英文界面露出中文后半段，属明示的服务端细节。
 - 无支付网关，已购余额只能靠礼品码或管理员 CLI 充值，订阅收入是内部记账而非真实收款（`docs/runbook.md`「订阅对账」）。
-- 智能体依赖单独配置的 `AGENT_API_KEY`/`AGENT_BASE_URL`（生产已配 ccgoai `gpt-5.4-mini`；只出图/视频的中转 key 没有对话模型，不能复用）；会话与画布无留存清理（会话每人上限 200）；502「上游挂了已退款」与 503「没配 key」共用错误码 `agent_unavailable`。
+- 智能体依赖单独配置的 `AGENT_API_KEY`/`AGENT_BASE_URL`（生产已配 ccgoai `gpt-5.4-mini`；只出图/视频的中转 key 没有对话模型，不能复用）；会话与画布无留存清理（会话每人上限 200）。
 - `data/jobs/*/job.json` 是事实源、`index.json` 是可重建缓存；`hasChargeFor`/幂等扣款全量扫流水文件，未建索引，内测规模无感。
 - `scripts/grant-balance.mjs`/其余管理 CLI 与线上服务无跨进程锁，操作前后建议核对 `data/ledger/<userId>.jsonl`。
 - 生产 crontab 已有每日 03:17 的 `scripts/backup.sh`（2026-09-07 核实，`/opt/genius/backups/` 已有两份）；阿里云 ECS 自动快照策略只能在控制台看，SSH 核实不了，未确认。
 - 移动端已过一轮 e2e 回归（`e2e/mobile.spec.ts`，375/390/768 三档跑通六视图主要路径，修掉规格弹层/智能体两列/画布报价层越界与 Esc 收层缺失）；**软键盘遮挡未验证**（Playwright 模拟不了，需真机 iOS Safari / Android Chrome 验收）。
+- **画布 DAG 运行审查（2026-09-12，只读审查 11 条 finding，7 条已修，4 条留待产品决策，未修）**：(a) `CanvasView.persist` 遇 409 `revision_conflict` 时整份替换为服务端文档，冲突窗口内本地未落盘编辑会丢，注释自称「不静默覆盖」与实现不符，正确修法（保留本地副本 / 合并 UI）要产品定；(b) `validateGraph` 校验所有 material 节点均含未连线者，一个游离空素材节点会让整图报价 400；(c) `awaiting_approval` 与 `queue_full` 退避无超时，被遗弃的 run 会把剩余预留冻结到 run 终态；(d) 每次准入（createJob/retryJob/createCanvasRun/settleSubscription）都 strict 读该用户全部 run 文件，run 文件只增不删，IO 随时间线性增长，内测规模无感。
 
 ## 4. 运维与部署
 
@@ -88,7 +89,7 @@
 
 ## 5. 下一刀建议
 
-1. 已全部提交并部署生产（`24bc5c2`）：资金迁移完成、`backup.sh` 在服务器实测通过（`backups/genius-data-20260912-150747.tgz`）。本次部署发现并修复两个打包坑：`scripts/*.mjs` 依赖 `src/lib/billing/*.mjs` 此前不在包内（已补进 `deploy.sh` 清单）；Windows junction 被 bsdtar 解引用导致 `.next/node_modules` 里的 sharp 副本解析不到 `@img/*`（打包排除 + 服务器侧 `rm -rf .next/node_modules` 让根级别名接管）；`*.sh` CRLF 已在 `.gitattributes` 钉 LF + 远端 `sed` 兜底。**部署仍走 `bash scripts/deploy.sh`——本机没有 Git Bash，本次是手工等价执行（tar/scp/ssh 逐段复刻脚本）；要么装 Git Bash，要么把 deploy.sh 翻成 PowerShell/Node 版**。
+1. 已全部提交并部署生产（`24bc5c2`）：资金迁移完成、`backup.sh` 在服务器实测通过（`backups/genius-data-20260912-150747.tgz`）。本次部署发现并修复两个打包坑：`scripts/*.mjs` 依赖 `src/lib/billing/*.mjs` 此前不在包内（已补进 `deploy.sh` 清单）；Windows junction 被 bsdtar 解引用导致 `.next/node_modules` 里的 sharp 副本解析不到 `@img/*`（打包排除 + 服务器侧 `rm -rf .next/node_modules` 让根级别名接管）；`*.sh` CRLF 已在 `.gitattributes` 钉 LF + 远端 `sed` 兜底。本机有 Git Bash（`/usr/bin/bash`，GNU bash 5.3），`bash scripts/deploy.sh` 本轮未实测。
 2. H 包已落地（通知落盘/错误码本地化/账户页/移动端回归）；E（Harness 放行）、F（视频模式 UI）、G（支付网关）、I（运维扩容）按文档建议不同时开工，未批准不实施；G 的支付/退款 unknown 态与 PaymentOrder/webhook 仍未动。
 3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
-4. 本轮已做生产操作：部署 + 资金迁移 + backup.sh 实测均通过；Harness 质量校准、真实上游验收和移动端完整体验按后续授权另排。
+4. 智能体上游失败错误码拆分与画布 DAG 运行审查修复（`4690767`+`f6b8c88`）已合入本地 main，待推送、部署；画布审查未采纳的 4 条见 §3。
