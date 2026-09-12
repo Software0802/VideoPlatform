@@ -9,7 +9,12 @@
 | --- | --- |
 | `users/` | 账号事实源（含 scrypt 密码哈希）与 `index.json` 派生缓存 |
 | `invites/` | 一次性邀请码 |
-| `ledger/` | 余额流水（余额模型上线后才有；不存在就跳过） |
+| `gift-codes/` | 已铸未兑换的礼品码 |
+| `ledger/` | 余额流水（派生导出物，与 `user.json.billing` 不一致时以 user.json 为准重建） |
+| `agent/` | 智能体会话 |
+| `templates/` | 创作模板 |
+| `canvases/` | 画布文档 |
+| `canvas-runs/` | 画布整图运行记录（含冻结的图快照、节点执行位、预算预留台账） |
 | `jobs/<id>/job.json` | 任务记录本身 |
 
 **不在包里**：`jobs/<id>/outputs|inputs|shots`（成片与上传素材）、`idempotency/`、`tmp/`。
@@ -19,6 +24,8 @@
 > 恢复后的直接后果：老任务的记录在、产物不在。前端仍会按 `job.json` 显示这些作品，
 > 点开取 `/api/media` 会 404（不是「已过期清理」的占位卡，因为 `artifactsPurgedAt` 没写）。
 > 介意的话，恢复后可以给这批 job.json 补 `artifactsPurgedAt`，让 UI 走占位卡分支。
+> 画布整图运行同理：历史 run 的成功节点因产物缺失不能再被复用，新 run 会判
+> `blocked`/`output_purged`，报价时勾「重跑」即可显式重生成（这是设计行为，不是损坏）。
 
 包权限 600，里面有密码哈希与未使用的邀请码，不要随手 `scp` 到公共位置。
 
@@ -60,7 +67,8 @@ DATA_DIR=/opt/genius/data BACKUP_DIR=/opt/genius/backups KEEP=14 /opt/genius/scr
 前提：手上有一份 `genius-data-YYYYmmdd-HHMMSS.tgz`，要把它恢复成 `/opt/genius/data`。
 
 ```bash
-# 0. 先看包里是什么，确认是要的那份（应当只有 users/ invites/ ledger/ jobs/*/job.json）
+# 0. 先看包里是什么，确认是要的那份（users/ invites/ gift-codes/ ledger/ agent/
+#    templates/ canvases/ canvas-runs/ + jobs/*/job.json，不含产物字节）
 tar -tzf /opt/genius/backups/genius-data-20260906-031700.tgz | head -30
 
 # 1. 停服务。恢复期间绝不能让 runner 在写 data/

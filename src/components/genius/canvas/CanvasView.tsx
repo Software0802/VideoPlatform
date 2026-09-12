@@ -7,6 +7,7 @@ import {
   cancelCanvasRunApi,
   createCanvasApi,
   createCanvasRunApi,
+  decideCanvasRunApprovalApi,
   fetchCanvas,
   fetchCanvasRun,
   fetchCanvasRuns,
@@ -59,6 +60,8 @@ const EXEC_ERR_KEYS = new Set([
   "uncertain_submit",
   "upstream_failed",
   "job_missing",
+  "output_purged",
+  "approval_rejected",
   "canceled",
   "expired",
   "failed",
@@ -115,6 +118,10 @@ export default function CanvasView() {
   // D 包：最新一次整图运行（展示 overlay）+ 报价弹层 + 提交中状态。
   const [latestRun, setLatestRun] = useState<CanvasRun | null>(null);
   const [quote, setQuote] = useState<CanvasQuote | null>(null);
+  // D 切片二：报价弹层里的两份勾选——执行前需批准的节点（默认勾视频）与
+  // 强制重跑的复用/已清节点（默认不勾）。
+  const [gates, setGates] = useState<Set<string>>(new Set());
+  const [regen, setRegen] = useState<Set<string>>(new Set());
   const [runBusy, setRunBusy] = useState(false);
   const runKeyRef = useRef<string | null>(null);
   const lastRunStatus = useRef<CanvasRun["status"] | null>(null);
@@ -365,6 +372,15 @@ export default function CanvasView() {
       setDoc(fresh);
       const q = await quoteCanvas(fresh.id);
       runKeyRef.current = newIdempotencyKey();
+      // 默认给视频节点上审批门：图便宜、视频返工贵；复用/已清位不可设门。
+      setGates(
+        new Set(
+          q.items
+            .filter((i) => i.kind === "gen_video" && !i.reused && !i.purged)
+            .map((i) => i.nodeId),
+        ),
+      );
+      setRegen(new Set());
       setQuote(q);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -375,6 +391,42 @@ export default function CanvasView() {
     }
   };
 
+  /** 勾选「重跑」：复用/已清位切回实计价——重取报价（regen 集进 quoteHash）。 */
+  const toggleRegen = async (nodeId: string, on: boolean) => {
+    if (!doc || runBusy) return;
+    const next = new Set(regen);
+    if (on) next.add(nodeId);
+    else next.delete(nodeId);
+    setRegen(next);
+    setRunBusy(true);
+    try {
+      const q = await quoteCanvas(doc.id, [...next]);
+      // 复用位可能随 regen 闭包变化：清掉已落在复用/已清位上的门。
+      setGates((g) =>
+        new Set(
+          [...g].filter((id) => {
+            const it = q.items.find((i) => i.nodeId === id);
+            return it && !it.reused && !it.purged;
+          }),
+        ),
+      );
+      setQuote(q);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunBusy(false);
+    }
+  };
+
+  const toggleGate = (nodeId: string, on: boolean) => {
+    setGates((g) => {
+      const next = new Set(g);
+      if (on) next.add(nodeId);
+      else next.delete(nodeId);
+      return next;
+    });
+  };
+
   const confirmRun = async () => {
     if (!doc || !quote || runBusy) return;
     setRunBusy(true);
@@ -383,6 +435,8 @@ export default function CanvasView() {
         canvasId: doc.id,
         quoteHash: quote.hash,
         idempotencyKey: runKeyRef.current ?? newIdempotencyKey(),
+        approvalNodeIds: [...gates],
+        regenerate: [...regen],
       });
       runKeyRef.current = null;
       lastRunStatus.current = "running";
@@ -403,6 +457,16 @@ export default function CanvasView() {
     if (!latestRun || latestRun.status !== "running") return;
     try {
       setLatestRun(await cancelCanvasRunApi(latestRun.id));
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /** 审批门决策：批准 → 节点回 ready 继续提交；驳回 → blocked 传播下游。 */
+  const decideApproval = async (nodeId: string, decision: "approve" | "reject") => {
+    if (!latestRun || latestRun.status !== "running") return;
+    try {
+      setLatestRun(await decideCanvasRunApprovalApi(latestRun.id, nodeId, decision));
     } catch (e) {
       showToast(e instanceof Error ? e.message : String(e));
     }
@@ -588,6 +652,7 @@ export default function CanvasView() {
                     }
                     onInput={(fromId) => setInput(node.id, fromId)}
                     onRun={() => void runNode(node.id)}
+                    onApproval={(decision) => void decideApproval(node.id, decision)}
                   />
                 ) : null}
               </div>
@@ -667,12 +732,38 @@ export default function CanvasView() {
                 <span className="canvas-quote__item-summary" title={item.summary}>
                   {item.productName ?? item.mode} · {item.summary}
                 </span>
+                {item.reused || item.purged ? (
+                  <label className="canvas-quote__check">
+                    <input
+                      type="checkbox"
+                      checked={regen.has(item.nodeId)}
+                      disabled={runBusy}
+                      onChange={(e) => void toggleRegen(item.nodeId, e.target.checked)}
+                    />
+                    {t("canvas.quote.regen")}
+                  </label>
+                ) : (
+                  <label className="canvas-quote__check">
+                    <input
+                      type="checkbox"
+                      checked={gates.has(item.nodeId)}
+                      disabled={runBusy}
+                      onChange={(e) => toggleGate(item.nodeId, e.target.checked)}
+                    />
+                    {t("canvas.quote.approveFirst")}
+                  </label>
+                )}
                 <span className="canvas-quote__item-price">¥{item.priceCny.toFixed(2)}</span>
               </div>
             ))}
           </div>
           <div className="canvas-quote__foot">
-            <span className="canvas-quote__note">{t("canvas.quote.note")}</span>
+            <span className="canvas-quote__note">
+              {t("canvas.quote.note")}
+              {quote.reusedCount
+                ? ` · ${t("canvas.quote.reused", { n: quote.reusedCount })}`
+                : ""}
+            </span>
             <span className="canvas-quote__total">
               {t("canvas.quote.total")} ¥{quote.totalCny.toFixed(2)}
             </span>
@@ -715,6 +806,7 @@ function GenBody({
   onPrompt,
   onInput,
   onRun,
+  onApproval,
 }: {
   node: CanvasNode;
   job: JobPublic | undefined;
@@ -725,6 +817,7 @@ function GenBody({
   onPrompt: (v: string) => void;
   onInput: (fromId: string | null) => void;
   onRun: () => void;
+  onApproval: (decision: "approve" | "reject") => void;
 }) {
   const t = useT();
   const status = job?.status;
@@ -763,13 +856,33 @@ function GenBody({
           {running || (status && !TERMINAL.has(status)) ? t("canvas.running") : t("canvas.run")}
         </button>
         {exec ? (
-          <span className="canvas-node__exec" data-exec={exec.status}>
-            {t(`canvas.exec.${exec.status}` as Parameters<typeof t>[0])}
+          <span className="canvas-node__exec" data-exec={exec.reused ? "reused" : exec.status}>
+            {exec.reused
+              ? t("canvas.exec.reused")
+              : t(`canvas.exec.${exec.status}` as Parameters<typeof t>[0])}
           </span>
         ) : status ? (
           <span className="canvas-node__state">{t(`canvas.job.${status}` as Parameters<typeof t>[0])}</span>
         ) : null}
       </div>
+      {exec?.status === "awaiting_approval" ? (
+        <div className="canvas-node__approverow">
+          <button
+            type="button"
+            className="canvas-node__approve"
+            onClick={() => onApproval("approve")}
+          >
+            {t("canvas.run.approve")}
+          </button>
+          <button
+            type="button"
+            className="canvas-node__reject"
+            onClick={() => onApproval("reject")}
+          >
+            {t("canvas.run.reject")}
+          </button>
+        </div>
+      ) : null}
       {exec?.errorCode ? (
         <span className="canvas-node__err">
           {EXEC_ERR_KEYS.has(exec.errorCode)

@@ -51,7 +51,7 @@ curl -sS http://127.0.0.1:3000/api/health
 完整操作步骤见 `scripts/backup-restore.md`（包内容、crontab 配置、恢复到空 `DATA_DIR` 的完整命令序列、排错表、充值 CLI 无跨进程锁的已知限制与核对方法）。本节只列心智地图：
 
 - 本机每日备份（`scripts/backup.sh`，防误删/坏写）+ 阿里云 ECS 自动快照（防磁盘/实例丢失），两层缺一不可。
-- 备份包只含 `users/ invites/ gift-codes/ ledger/ jobs/*/job.json`，**不含产物**（`outputs/inputs/shots`）——产物要整盘找回靠 ECS 快照，不靠这份备份。
+- 备份包只含 `users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ jobs/*/job.json`，**不含产物**（`outputs/inputs/shots`）——产物要整盘找回靠 ECS 快照，不靠这份备份。
 - **crontab 与 ECS 自动快照策略均未在生产验证/配置**（阶段一遗留待办，见 `docs/handoff.md`），排期上线前必须补上。
 
 ## 磁盘告警处理

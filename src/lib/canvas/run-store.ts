@@ -8,6 +8,8 @@ import {
   canvasRunSchema,
   type CanvasRun,
 } from "@/lib/canvas/schema";
+import type { JobReservation } from "@/lib/jobs/schema";
+import { ProviderHttpError } from "@/lib/providers/types";
 import { assertUserId } from "@/lib/users/store";
 
 /**
@@ -160,6 +162,164 @@ export async function deleteCanvasRun(ownerId: string, runId: string): Promise<b
     await rm(canvasRunPath(ownerId, runId), { force: true });
     return true;
   });
+}
+
+/* ---------- D 切片二：run 级预算预留的资金口径 ---------- */
+
+export type RunHeldFunds = {
+  /** 尚未转移给任何子任务的余量（仍在 run 上占着）。 */
+  remainingCny: number;
+  remainingMemberCny: number;
+  /**
+   * 已转移、但份额锚定的 job 在索引里不存在的部分——job 没落盘就不能由
+   * `job.reservation` 计，由 transfer 记录兜底：宁可多占不超卖。
+   */
+  transferCny: number;
+  transferMemberCny: number;
+};
+
+/**
+ * 资金口径的严格读：与列表用的容错读相反——目录不存在（ENOENT）算「没有 run」，
+ * 目录其它 IO 错、文件损坏都抛 `billing_state_corrupt` 失败关闭。余额判定宁可
+ * 挡住新预留，也不能把一笔真实占用静默漏掉。
+ */
+async function listCanvasRunsStrict(ownerId: string): Promise<CanvasRun[]> {
+  let names: string[];
+  try {
+    names = await readdir(canvasRunsUserDir(ownerId));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+  const runs: CanvasRun[] = [];
+  for (const n of names) {
+    if (!n.endsWith(".json")) continue;
+    const id = n.slice(0, -".json".length);
+    if (!CANVAS_RUN_ID_RE.test(id)) continue;
+    let raw: string;
+    try {
+      raw = await readFile(canvasRunPath(ownerId, id), "utf8");
+    } catch (e) {
+      // readdir 到 readFile 之间文件没了（并发删除）= 这条 run 已消失，跳过；
+      // 其它读错（权限等）必须失败关闭。
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw e;
+    }
+    const parsed = canvasRunSchema.safeParse(safeJson(raw));
+    if (!parsed.success) {
+      throw new ProviderHttpError(
+        500,
+        "billing_state_corrupt",
+        `画布运行记录损坏，无法确认资金占用: ${id}`,
+      );
+    }
+    if (parsed.data.ownerId === ownerId) runs.push(parsed.data);
+  }
+  return runs;
+}
+
+/**
+ * 该用户非终态 run 当前占用的资金（D 切片二）。`jobEntries` 必须是该用户的
+ * **全量**任务索引（不能只传非终态——transfer 份额是否还计占用，取决于锚定的
+ * job 是否存在，终态 job 表示份额已结算/释放）。
+ */
+export async function runHeldFunds(
+  ownerId: string,
+  jobEntries: readonly { id: string }[],
+): Promise<RunHeldFunds> {
+  const jobIds = new Set(jobEntries.map((e) => e.id));
+  let remainingCny = 0;
+  let remainingMemberCny = 0;
+  let transferCny = 0;
+  let transferMemberCny = 0;
+  for (const run of await listCanvasRunsStrict(ownerId)) {
+    if (run.status !== "running" || !run.reservation) continue;
+    remainingCny += run.reservation.remainingCny;
+    remainingMemberCny += run.reservation.remainingMemberCny;
+    for (const t of Object.values(run.reservation.transfers)) {
+      if (jobIds.has(t.jobId)) continue;
+      transferCny += t.amountCny;
+      transferMemberCny += t.memberCny;
+    }
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return {
+    remainingCny: r2(remainingCny),
+    remainingMemberCny: r2(remainingMemberCny),
+    transferCny: r2(transferCny),
+    transferMemberCny: r2(transferMemberCny),
+  };
+}
+
+/**
+ * 把 `priceCny` 的份额从 run 余量转移到子任务（返回给 `createJob` 的
+ * `reserveFunds` 回调）。
+ *
+ * 不取任何锁：调用方已经持有 run 锁（sweep）与 admission 锁（createJob 临界
+ * 区），这里只做一次原子读-改-写。`run` 是调用方手里的活对象——就地改并落盘，
+ * sweep 终写时带的就是同一份预留状态。
+ *
+ * 幂等：`transfers[nodeId]` 已存在 ⇒ 复用记录的分池份额、jobId 换成最新一条
+ * （覆盖崩溃留下的孤儿 id），份额绝不重复扣。金额对不上属内部错误——报价校验
+ * 在更上游就拦了价变，走到这里份额必须等于快照价。
+ */
+export async function carveRunShare(
+  run: CanvasRun,
+  nodeId: string,
+  priceCny: number,
+  jobId: string,
+): Promise<JobReservation | undefined> {
+  const res = run.reservation;
+  if (!res || !(priceCny > 0)) return undefined;
+  const now = new Date().toISOString();
+  const existing = res.transfers[nodeId];
+  if (existing) {
+    if (existing.amountCny !== priceCny) {
+      throw new ProviderHttpError(
+        500,
+        "internal_error",
+        "画布运行台账金额与成交价不一致",
+      );
+    }
+    existing.jobId = jobId;
+    await writeCanvasRun(run);
+    return {
+      id: `res_${randomBytes(8).toString("hex")}`,
+      amountCny: existing.amountCny,
+      memberCny: existing.memberCny,
+      purchasedCny: existing.purchasedCny,
+      ...(existing.subscriptionId ? { subscriptionId: existing.subscriptionId } : {}),
+      ...(existing.periodIndex !== undefined ? { periodIndex: existing.periodIndex } : {}),
+      createdAt: now,
+    };
+  }
+  if (res.remainingCny + 1e-9 < priceCny) {
+    throw new ProviderHttpError(500, "internal_error", "画布运行预留余额不足（台账异常）");
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const memberCny = r2(Math.min(priceCny, res.remainingMemberCny));
+  const purchasedCny = r2(priceCny - memberCny);
+  res.remainingCny = r2(res.remainingCny - priceCny);
+  res.remainingMemberCny = r2(res.remainingMemberCny - memberCny);
+  res.remainingPurchasedCny = r2(res.remainingPurchasedCny - purchasedCny);
+  res.transfers[nodeId] = {
+    amountCny: priceCny,
+    memberCny,
+    purchasedCny,
+    jobId,
+    ...(res.subscriptionId ? { subscriptionId: res.subscriptionId } : {}),
+    ...(res.periodIndex !== undefined ? { periodIndex: res.periodIndex } : {}),
+  };
+  await writeCanvasRun(run);
+  return {
+    id: `res_${randomBytes(8).toString("hex")}`,
+    amountCny: priceCny,
+    memberCny,
+    purchasedCny,
+    ...(res.subscriptionId ? { subscriptionId: res.subscriptionId } : {}),
+    ...(res.periodIndex !== undefined ? { periodIndex: res.periodIndex } : {}),
+    createdAt: now,
+  };
 }
 
 function safeJson(raw: string): unknown {

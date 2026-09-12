@@ -1,5 +1,5 @@
 /**
- * 命名空间 `canvas`：画布视图（占位数据视图，不接后端），键统一以 `canvas.` 开头。
+ * 命名空间 `canvas`：画布视图（已接真后端：文档持久化 + 单节点/整图运行），键统一以 `canvas.` 开头。
  * 原型里刻意保留英文的几处（工具名、`Upload a picture` / `Output Results` 节点标签）
  * 仍是字面量，不进字典——见 `DESIGN.md`「与交接包的有意偏离」。
  */
@@ -86,17 +86,24 @@ export const canvas = {
   "canvas.runAll": "运行整图",
   "canvas.runCancel": "取消运行",
   "canvas.quote.title": "运行报价",
-  "canvas.quote.note": "逐节点扣费；余额不足时运行会中途停止",
+  "canvas.quote.note": "确认后按总价冻结预算，执行时逐节点划转",
   "canvas.quote.total": "合计",
   "canvas.quote.confirm": "确认运行",
   "canvas.quote.cancel": "取消",
   "canvas.quote.stale": "画布已修改，请重新获取报价",
+  "canvas.quote.reused": "{n} 个节点复用上次产物",
+  "canvas.quote.regen": "重跑",
+  "canvas.quote.approveFirst": "执行前需我批准",
   "canvas.exec.waiting_dependencies": "等待上游",
   "canvas.exec.ready": "就绪",
+  "canvas.exec.awaiting_approval": "待批准",
   "canvas.exec.running": "生成中",
   "canvas.exec.succeeded": "完成",
+  "canvas.exec.reused": "已复用",
   "canvas.exec.failed": "失败",
   "canvas.exec.blocked": "已跳过",
+  "canvas.run.approve": "批准",
+  "canvas.run.reject": "驳回",
   "canvas.run.toast.succeeded": "整图运行完成",
   "canvas.run.toast.partially_failed": "部分节点失败（{n} 个）",
   "canvas.run.toast.failed": "整图运行失败",
@@ -106,6 +113,8 @@ export const canvas = {
   "canvas.err.uncertain_submit": "提交结果待核验，请到创作页「核验上游」",
   "canvas.err.upstream_failed": "上游节点失败",
   "canvas.err.job_missing": "任务记录缺失",
+  "canvas.err.output_purged": "历史产物已被清理；要重跑请在报价里勾选「重跑」",
+  "canvas.err.approval_rejected": "审批被驳回",
   "canvas.err.canceled": "已取消",
   "canvas.err.expired": "已过期",
   "canvas.err.failed": "失败",

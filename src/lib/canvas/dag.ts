@@ -1,6 +1,8 @@
 import { createJob } from "@/lib/jobs/create";
 import { cancelOwnedJob } from "@/lib/jobs/cancel";
 import { lookupIdempotency, stableJsonHash } from "@/lib/jobs/idempotency";
+import { withAdmissionLock } from "@/lib/jobs/admission";
+import { reserveJobFunds } from "@/lib/billing/admission";
 import type { CreateJobBody, JobStatus } from "@/lib/jobs/schema";
 import { isTerminalStatus } from "@/lib/jobs/schema";
 import { readJob } from "@/lib/jobs/store";
@@ -9,8 +11,19 @@ import { ProviderHttpError } from "@/lib/providers/types";
 import { mediaStore } from "@/lib/storage/local-fs";
 import { log } from "@/lib/log";
 import { readCanvas } from "@/lib/canvas/store";
-import { computeQuote, genDeps, isGenNode, mergePrompt, nodeMode, planNodeJob } from "@/lib/canvas/graph";
 import {
+  computeQuote,
+  expandRegenerate,
+  genDeps,
+  isGenNode,
+  mergePrompt,
+  nodeInputHash,
+  nodeMode,
+  planNodeJob,
+  type ReuseDecision,
+} from "@/lib/canvas/graph";
+import {
+  carveRunShare,
   findRunByIdempotencyKey,
   listActiveCanvasRuns,
   listCanvasRuns,
@@ -20,10 +33,13 @@ import {
   writeCanvasRun,
 } from "@/lib/canvas/run-store";
 import type {
+  CanvasDocument,
   CanvasNode,
   CanvasNodeExecution,
   CanvasRun,
+  CanvasRunApprovalBody,
   CanvasRunCreateBody,
+  CanvasRunStatus,
 } from "@/lib/canvas/schema";
 
 /**
@@ -51,17 +67,89 @@ const SWEEP_INTERVAL_MS = 3_000;
 const EXEC_TERMINAL = new Set(["succeeded", "failed", "blocked"]);
 
 function requestHashOf(body: CanvasRunCreateBody): string {
-  return stableJsonHash({ canvasId: body.canvasId, quoteHash: body.quoteHash });
+  return stableJsonHash({
+    canvasId: body.canvasId,
+    quoteHash: body.quoteHash,
+    approvalNodeIds: [...(body.approvalNodeIds ?? [])].sort(),
+    regenerate: [...(body.regenerate ?? [])].sort(),
+  });
 }
 
-/** 创建一次整图运行：幂等重放 → 重算报价比对 → 冻结图落盘 → 唤醒泵。 */
+/** 全部执行位终态时的 run 结算态；还有非终态位时返回 null。 */
+function settledStatus(
+  execs: readonly CanvasNodeExecution[],
+  canceled: boolean,
+): CanvasRunStatus | null {
+  if (!execs.every((e) => EXEC_TERMINAL.has(e.status))) return null;
+  if (canceled) return "canceled";
+  if (execs.every((e) => e.status === "succeeded")) return "succeeded";
+  if (execs.some((e) => e.status === "succeeded")) return "partially_failed";
+  return "failed";
+}
+
+/** 复用要核的最后一步：历史任务还在、成功、产物没被留存清理、文件还在盘上。 */
+async function jobOutputUsable(ownerId: string, jobId: string): Promise<boolean> {
+  const job = await readJob(jobId);
+  if (!job || job.ownerId !== ownerId || job.status !== "succeeded" || job.artifactsPurgedAt) {
+    return false;
+  }
+  const rel = job.output?.kind === "image" ? "outputs/image.jpg" : "outputs/video.mp4";
+  try {
+    await mediaStore.statJobFile(jobId, rel);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 复用判定（D 切片二）：对每个不在 regen 闭包里的生成节点，按 `inputHash` 在该
+ * 画布的历史 run（新→旧）里找「同节点、同输入、且成功」的执行位——命中且产物
+ * 仍在盘上 → 采纳该 jobId；有命中记录但产物全都不可用 → `purged`（blocked，
+ * 不悄悄重生成）；没有同输入的历史成功 → 不标记，正常执行。
+ */
+export async function resolveReuseForQuote(
+  ownerId: string,
+  doc: CanvasDocument,
+  regen: ReadonlySet<string>,
+): Promise<Map<string, ReuseDecision>> {
+  const graph = { nodes: doc.nodes, edges: doc.edges };
+  const priors = (await listCanvasRuns(ownerId)).filter((r) => r.canvasId === doc.id);
+  const out = new Map<string, ReuseDecision>();
+  for (const node of graph.nodes.filter(isGenNode)) {
+    if (regen.has(node.id)) continue;
+    const want = nodeInputHash(graph, node.id);
+    let sawMatch = false;
+    for (const prior of priors) {
+      const item = prior.quote.items.find((i) => i.nodeId === node.id);
+      // 切片一的旧 run 没有 inputHash——没有判定键就当不可复用。
+      if (!item?.inputHash || item.inputHash !== want) continue;
+      const exec = prior.nodeExecutions.find((e) => e.nodeId === node.id);
+      if (exec?.status !== "succeeded" || !exec.jobId) continue;
+      sawMatch = true;
+      if (await jobOutputUsable(ownerId, exec.jobId)) {
+        out.set(node.id, { jobId: exec.jobId });
+        break;
+      }
+    }
+    if (!out.has(node.id) && sawMatch) out.set(node.id, "purged");
+  }
+  return out;
+}
+
+/**
+ * 创建一次整图运行（D 切片二：含总预算冻结 + 复用采纳 + 审批门名单）。
+ *
+ * 三段式：锁外快路径做幂等查询与报价重算（慢路径不占全局准入锁）；
+ * `withAdmissionLock` 内再查一次幂等键（并发双发只有一个能建出来）、复核
+ * revision、按 `totalCny` 冻结 run 级预留、写盘——hold 落盘后才出锁。
+ */
 export async function createCanvasRun(
   ownerId: string,
   body: CanvasRunCreateBody,
 ): Promise<{ run: CanvasRun; replay: boolean }> {
   const requestHash = requestHashOf(body);
-  const prior = await findRunByIdempotencyKey(ownerId, body.idempotencyKey);
-  if (prior) {
+  const replyPrior = (prior: CanvasRun) => {
     if (prior.idempotency!.requestHash !== requestHash) {
       throw new ProviderHttpError(
         409,
@@ -70,39 +158,153 @@ export async function createCanvasRun(
       );
     }
     return { run: prior, replay: true };
-  }
+  };
+  const prior = await findRunByIdempotencyKey(ownerId, body.idempotencyKey);
+  if (prior) return replyPrior(prior);
 
   const doc = await readCanvas(ownerId, body.canvasId);
   if (!doc) throw new ProviderHttpError(404, "not_found", "画布不存在");
-  const quote = await computeQuote(ownerId, doc);
+  const graph = { nodes: doc.nodes, edges: doc.edges };
+  const genIds = new Set(graph.nodes.filter(isGenNode).map((n) => n.id));
+  for (const id of [...(body.approvalNodeIds ?? []), ...(body.regenerate ?? [])]) {
+    if (!genIds.has(id)) {
+      throw new ProviderHttpError(400, "invalid_argument", "审批/重跑名单里有非生成节点");
+    }
+  }
+  const regen = expandRegenerate(graph, body.regenerate ?? []);
+  const reuse = await resolveReuseForQuote(ownerId, doc, regen);
+  const quote = await computeQuote(ownerId, doc, { regenerate: body.regenerate, reuse });
   if (quote.hash !== body.quoteHash) {
     throw new ProviderHttpError(409, "quote_stale", "报价已过期或画布已修改，请重新获取报价");
   }
 
   const now = new Date().toISOString();
-  const graph = { nodes: doc.nodes, edges: doc.edges };
-  const nodeExecutions: CanvasNodeExecution[] = doc.nodes.filter(isGenNode).map((node) => ({
-    nodeId: node.id,
-    attempt: 1,
-    status: genDeps(graph, node.id).length ? "waiting_dependencies" : "ready",
-  }));
-  const run: CanvasRun = {
-    schemaVersion: 1,
-    id: newCanvasRunId(),
-    ownerId,
-    canvasId: doc.id,
-    documentRevision: doc.revision,
-    graphSnapshot: graph,
-    quote,
-    idempotency: { key: body.idempotencyKey, requestHash },
-    status: "running",
-    nodeExecutions,
-    createdAt: now,
-    updatedAt: now,
-  };
-  await writeCanvasRun(run);
-  kickSweep(ownerId, run.id);
-  return { run, replay: false };
+  const nodeExecutions: CanvasNodeExecution[] = graph.nodes.filter(isGenNode).map((node) => {
+    const decision = reuse.get(node.id);
+    if (decision && decision !== "purged") {
+      return {
+        nodeId: node.id,
+        attempt: 1,
+        status: "succeeded" as const,
+        jobId: decision.jobId,
+        reused: true,
+        startedAt: now,
+        finishedAt: now,
+      };
+    }
+    if (decision === "purged") {
+      return {
+        nodeId: node.id,
+        attempt: 1,
+        status: "blocked" as const,
+        errorCode: "output_purged",
+        finishedAt: now,
+      };
+    }
+    return {
+      nodeId: node.id,
+      attempt: 1,
+      status: genDeps(graph, node.id).length
+        ? ("waiting_dependencies" as const)
+        : ("ready" as const),
+    };
+  });
+
+  const created = await withAdmissionLock(async () => {
+    // 并发同 key 双发：锁内复核，只有一个能过——另一个同参交回 / 异参 409。
+    const again = await findRunByIdempotencyKey(ownerId, body.idempotencyKey);
+    if (again) return replyPrior(again);
+    // revision 复核：锁外算报价用的 doc 和此刻落盘要冻结的必须是同一份。
+    const fresh = await readCanvas(ownerId, body.canvasId);
+    if (!fresh || fresh.revision !== doc.revision) {
+      throw new ProviderHttpError(409, "quote_stale", "画布已修改，请重新获取报价");
+    }
+    // 总价冻结：分池口径与 createJob 的 reserveJobFunds 完全相同——建 run
+    // 成功 = 全程钱够；不足即 402，run 文件不留痕。
+    const hold = await reserveJobFunds(ownerId, quote.totalCny);
+    const run: CanvasRun = {
+      schemaVersion: 1,
+      id: newCanvasRunId(),
+      ownerId,
+      canvasId: doc.id,
+      documentRevision: doc.revision,
+      graphSnapshot: graph,
+      quote,
+      reservation: hold
+        ? {
+            amountCny: hold.amountCny,
+            memberCny: hold.memberCny,
+            purchasedCny: hold.purchasedCny,
+            remainingCny: hold.amountCny,
+            remainingMemberCny: hold.memberCny,
+            remainingPurchasedCny: hold.purchasedCny,
+            transfers: {},
+            ...(hold.subscriptionId ? { subscriptionId: hold.subscriptionId } : {}),
+            ...(hold.periodIndex !== undefined ? { periodIndex: hold.periodIndex } : {}),
+            createdAt: now,
+          }
+        : undefined,
+      gatedNodeIds: body.approvalNodeIds?.length ? [...body.approvalNodeIds] : undefined,
+      regenerate: regen.size ? [...regen].sort() : undefined,
+      idempotency: { key: body.idempotencyKey, requestHash },
+      status: "running",
+      nodeExecutions,
+      createdAt: now,
+      updatedAt: now,
+    };
+    // 全部执行位创建即终态（全复用 / 全 blocked）→ 直接落终态，不等泵。
+    const settled = settledStatus(nodeExecutions, false);
+    if (settled) {
+      run.status = settled;
+      run.finishedAt = now;
+    }
+    await writeCanvasRun(run);
+    return { run, replay: false };
+  });
+  if (!created.replay && created.run.status === "running") kickSweep(ownerId, created.run.id);
+  return created;
+}
+
+/** 审批门：批准 → 节点回 ready 等下一轮提交；驳回 → blocked 并传播下游。 */
+export async function decideCanvasRunApproval(
+  ownerId: string,
+  runId: string,
+  body: CanvasRunApprovalBody,
+): Promise<CanvasRun> {
+  const run = await updateCanvasRun(ownerId, runId, (r) => {
+    const exec = r.nodeExecutions.find((e) => e.nodeId === body.nodeId);
+    if (!exec) throw new ProviderHttpError(404, "not_found", "节点不在这次运行里");
+    const want = body.decision === "approve" ? "approved" : "rejected";
+    if (exec.status !== "awaiting_approval") {
+      // 同决策重放交回原样（幂等）；异决策或时机已过都是 409。
+      if (exec.approval?.decision === want) return undefined;
+      throw new ProviderHttpError(409, "invalid_state", "该节点当前不需要审批或已有不同决策");
+    }
+    const now = new Date().toISOString();
+    return {
+      ...r,
+      nodeExecutions: r.nodeExecutions.map((e) =>
+        e.nodeId === body.nodeId
+          ? body.decision === "approve"
+            ? {
+                ...e,
+                status: "ready" as const,
+                approval: { decision: "approved" as const, decidedAt: now },
+              }
+            : {
+                ...e,
+                status: "blocked" as const,
+                errorCode: "approval_rejected",
+                approval: { decision: "rejected" as const, decidedAt: now },
+                finishedAt: now,
+              }
+          : e,
+      ),
+    };
+  });
+  if (!run) throw new ProviderHttpError(404, "not_found", "运行不存在");
+  kickSweep(ownerId, runId);
+  return run;
 }
 
 export async function readCanvasRunForUser(ownerId: string, runId: string): Promise<CanvasRun> {
@@ -241,9 +443,13 @@ async function sweepOnce(run: CanvasRun): Promise<CanvasRun> {
   }
 
   if (run.cancelRequestedAt) {
-    // 3a) 取消中：不再提交；未提交的标 blocked，在途的逐个走既有 job cancel。
+    // 3a) 取消中：不再提交；未提交/待批准的标 blocked，在途的逐个走既有 job cancel。
     for (const exec of execs) {
-      if (exec.status === "waiting_dependencies" || exec.status === "ready") {
+      if (
+        exec.status === "waiting_dependencies" ||
+        exec.status === "ready" ||
+        exec.status === "awaiting_approval"
+      ) {
         Object.assign(exec, { status: "blocked", errorCode: "canceled", finishedAt: now });
       } else if (exec.status === "running" && exec.jobId) {
         try {
@@ -261,6 +467,15 @@ async function sweepOnce(run: CanvasRun): Promise<CanvasRun> {
       if (!deps.every((d) => byNode.get(d.id)?.status === "succeeded")) continue;
       exec.status = "ready";
       if (exec.nextAttemptAt && Date.parse(exec.nextAttemptAt) > Date.now()) continue;
+
+      // 人工审批门（D 切片二）：被设门且尚无批准决策 → 停住等 approvals 端点。
+      if (
+        run.gatedNodeIds?.includes(exec.nodeId) &&
+        exec.approval?.decision !== "approved"
+      ) {
+        exec.status = "awaiting_approval";
+        continue;
+      }
 
       const node = graph.nodes.find((n) => n.id === exec.nodeId)!;
       const quoted = run.quote.items.find((i) => i.nodeId === exec.nodeId);
@@ -307,7 +522,15 @@ async function sweepOnce(run: CanvasRun): Promise<CanvasRun> {
           ...(startUploadId ? { startUploadId } : {}),
           idempotencyKey: key,
         };
-        const { job } = await createJob(body, run.ownerId);
+        // 资金不从零押：createJob 临界区里调 carveRunShare，把该节点的份额从
+        // run 级预留转移给子任务（台账幂等——崩溃重试复用同一份额换 jobId）。
+        // 没有 run 预留（切片一的旧 run）回落普通预留——准入闸门不能因路径不同被绕过。
+        const { job } = await createJob(body, run.ownerId, {
+          reserveFunds: (priceCny, jobId) =>
+            run.reservation
+              ? carveRunShare(run, exec.nodeId, priceCny, jobId)
+              : reserveJobFunds(run.ownerId, priceCny),
+        });
         exec.jobId = job.id;
         exec.status = "running";
         exec.startedAt ??= now;
@@ -327,15 +550,9 @@ async function sweepOnce(run: CanvasRun): Promise<CanvasRun> {
   }
 
   // 4) 全部执行位终态 → 结算 run。
-  let status = run.status;
-  let finishedAt = run.finishedAt;
-  if (execs.every((e) => EXEC_TERMINAL.has(e.status))) {
-    finishedAt = now;
-    if (run.cancelRequestedAt) status = "canceled";
-    else if (execs.every((e) => e.status === "succeeded")) status = "succeeded";
-    else if (execs.some((e) => e.status === "succeeded")) status = "partially_failed";
-    else status = "failed";
-  }
+  const settled = settledStatus(execs, Boolean(run.cancelRequestedAt));
+  const status = settled ?? run.status;
+  const finishedAt = settled ? now : run.finishedAt;
   return { ...run, status, nodeExecutions: execs, finishedAt };
 }
 

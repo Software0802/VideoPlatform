@@ -121,6 +121,7 @@ export async function runCanvasNodeApi(
 export type CanvasNodeExecStatus =
   | "waiting_dependencies"
   | "ready"
+  | "awaiting_approval"
   | "running"
   | "succeeded"
   | "failed"
@@ -134,6 +135,10 @@ export type CanvasNodeExecution = {
   status: CanvasNodeExecStatus;
   jobId?: string;
   errorCode?: string;
+  /** 本执行位复用了上一次 run 的成功产物（不新建任务、不计费）。 */
+  reused?: boolean;
+  /** 人工门的决策记录。 */
+  approval?: { decision: "approved" | "rejected"; decidedAt: string };
   startedAt?: string;
   finishedAt?: string;
 };
@@ -145,9 +150,20 @@ export type CanvasQuoteItem = {
   priceCny: number;
   productName?: string;
   summary: string;
+  /** 复用上一次 run 的成功产物：本次不执行、不计费。 */
+  reused?: boolean;
+  /** 复用时指向被采纳的历史任务。 */
+  adoptedJobId?: string;
+  /** 输入未变但历史产物已清理：本 run 里会 blocked，须 regenerate 显式重跑。 */
+  purged?: boolean;
 };
 
-export type CanvasQuote = { hash: string; totalCny: number; items: CanvasQuoteItem[] };
+export type CanvasQuote = {
+  hash: string;
+  totalCny: number;
+  reusedCount?: number;
+  items: CanvasQuoteItem[];
+};
 
 export type CanvasRun = {
   id: string;
@@ -155,14 +171,20 @@ export type CanvasRun = {
   status: CanvasRunStatus;
   cancelRequestedAt?: string;
   quote: CanvasQuote;
+  /** 执行前需人工批准的节点。 */
+  gatedNodeIds?: string[];
   nodeExecutions: CanvasNodeExecution[];
   createdAt: string;
   finishedAt?: string;
 };
 
 /** 整图报价：逐节点明细 + 总价 + `hash`（建 run 时回传，图变即 `quote_stale`）。 */
-export async function quoteCanvas(canvasId: string): Promise<CanvasQuote> {
-  const res = await fetch(`/api/canvases/${canvasId}/quotes`, { method: "POST" });
+export async function quoteCanvas(canvasId: string, regenerate?: string[]): Promise<CanvasQuote> {
+  const res = await fetch(`/api/canvases/${canvasId}/quotes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(regenerate?.length ? { regenerate } : {}),
+  });
   const data = await parseAuthed<{ quote?: CanvasQuote }>(res, "报价失败");
   if (!data.quote) throw new Error("报价失败");
   return data.quote;
@@ -172,6 +194,8 @@ export async function createCanvasRunApi(input: {
   canvasId: string;
   quoteHash: string;
   idempotencyKey: string;
+  approvalNodeIds?: string[];
+  regenerate?: string[];
 }): Promise<CanvasRun> {
   const res = await fetch("/api/canvas-runs", {
     method: "POST",
@@ -200,5 +224,21 @@ export async function cancelCanvasRunApi(runId: string): Promise<CanvasRun> {
   const res = await fetch(`/api/canvas-runs/${runId}/cancel`, { method: "POST" });
   const data = await parseAuthed<{ run?: CanvasRun }>(res, "取消失败");
   if (!data.run) throw new Error("取消失败");
+  return data.run;
+}
+
+/** 审批门：批准 → 节点继续提交；驳回 → 该节点 blocked 并传播下游。 */
+export async function decideCanvasRunApprovalApi(
+  runId: string,
+  nodeId: string,
+  decision: "approve" | "reject",
+): Promise<CanvasRun> {
+  const res = await fetch(`/api/canvas-runs/${runId}/approvals`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nodeId, decision }),
+  });
+  const data = await parseAuthed<{ run?: CanvasRun }>(res, "审批失败");
+  if (!data.run) throw new Error("审批失败");
   return data.run;
 }

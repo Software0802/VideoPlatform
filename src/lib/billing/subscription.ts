@@ -10,6 +10,8 @@ import {
 } from "@/lib/billing/plans";
 import { withAdmissionLock } from "@/lib/jobs/admission";
 import { listJobIndex } from "@/lib/jobs/index";
+import { isTerminalStatus } from "@/lib/jobs/schema";
+import { runHeldFunds } from "@/lib/canvas/run-store";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { withUserLock } from "@/lib/users/lock";
 import type {
@@ -157,10 +159,18 @@ export async function settleSubscription(
  * 在途任务结算用的，清掉等于让一条付了钱的任务在结算时改从已购池出钱。
  */
 async function heldMemberEarmarksCny(userId: string): Promise<number> {
-  const entries = await listJobIndex({ ownerId: userId, nonTerminal: true });
+  // 全量索引：D 切片二 run 的 transfer 份额要按「锚定 job 是否存在」判定，
+  // 只看非终态会把「job 终态已结算」误判成「job 缺失仍占用」。
+  const entries = await listJobIndex({ ownerId: userId });
   let sum = 0;
-  for (const entry of entries) sum += entry.reservation?.memberCny ?? 0;
-  return round2(sum);
+  for (const entry of entries) {
+    if (isTerminalStatus(entry.status)) continue;
+    sum += entry.reservation?.memberCny ?? 0;
+  }
+  // run 侧 earmark：未转移余量的会员份额 + 孤儿 transfer 的会员份额，
+  // 与 loadBalanceUsage 共用同一个 runHeldFunds——两处口径一字不差。
+  const held = await runHeldFunds(userId, entries);
+  return round2(sum + held.remainingMemberCny + held.transferMemberCny);
 }
 
 /**

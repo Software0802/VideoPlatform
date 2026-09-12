@@ -1,11 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
- * 画布 DAG 运行（D 包）：报价 / 幂等 / sweep 执行器 / 取消 / 崩溃窗口接管。
+ * 画布 DAG 运行（D 包）：报价 / 幂等 / sweep 执行器 / 取消 / 崩溃窗口接管；
+ * 切片二：run 级预算预留 / 份额转移 / 审批门 / 产物复用 / 强制重跑。
  *
  * 与 `canvas.test.ts` 同口径：跑真实 `createJob`（`LUMEN_FORCE_MOCK=1`），
  * 因为「run 里的节点就是普通任务」正是要验的东西。mock 图片同步完成，
@@ -18,15 +19,24 @@ let patchCanvas: typeof import("./store").patchCanvas;
 let readCanvas: typeof import("./store").readCanvas;
 let computeQuote: typeof import("./graph").computeQuote;
 let validateGraph: typeof import("./graph").validateGraph;
+let expandRegenerate: typeof import("./graph").expandRegenerate;
 let createCanvasRun: typeof import("./dag").createCanvasRun;
 let sweepCanvasRun: typeof import("./dag").sweepCanvasRun;
 let cancelCanvasRun: typeof import("./dag").cancelCanvasRun;
+let decideCanvasRunApproval: typeof import("./dag").decideCanvasRunApproval;
+let resolveReuseForQuote: typeof import("./dag").resolveReuseForQuote;
 let readCanvasRun: typeof import("./run-store").readCanvasRun;
 let updateCanvasRun: typeof import("./run-store").updateCanvasRun;
 let writeCanvasRun: typeof import("./run-store").writeCanvasRun;
 let newCanvasRunId: typeof import("./run-store").newCanvasRunId;
+let listCanvasRuns: typeof import("./run-store").listCanvasRuns;
+let canvasRunsUserDir: typeof import("./run-store").canvasRunsUserDir;
+let runHeldFunds: typeof import("./run-store").runHeldFunds;
 let writeUser: typeof import("@/lib/users/store").writeUser;
 let readJob: typeof import("@/lib/jobs/store").readJob;
+let writeJob: typeof import("@/lib/jobs/store").writeJob;
+let listJobIndex: typeof import("@/lib/jobs/index").listJobIndex;
+let loadBalanceUsage: typeof import("@/lib/billing/admission").loadBalanceUsage;
 let storeUploadFromBuffer: typeof import("@/lib/jobs/upload").storeUploadFromBuffer;
 let readUploadSidecar: typeof import("@/lib/jobs/upload").readUploadSidecar;
 let mediaStore: typeof import("@/lib/storage/local-fs").mediaStore;
@@ -38,11 +48,27 @@ beforeAll(async () => {
   process.env.DATA_DIR = dataRoot;
   process.env.LUMEN_FORCE_MOCK = "1";
   ({ createCanvas, patchCanvas, readCanvas } = await import("./store"));
-  ({ computeQuote, validateGraph } = await import("./graph"));
-  ({ createCanvasRun, sweepCanvasRun, cancelCanvasRun } = await import("./dag"));
-  ({ readCanvasRun, updateCanvasRun, writeCanvasRun, newCanvasRunId } = await import("./run-store"));
+  ({ computeQuote, validateGraph, expandRegenerate } = await import("./graph"));
+  ({
+    createCanvasRun,
+    sweepCanvasRun,
+    cancelCanvasRun,
+    decideCanvasRunApproval,
+    resolveReuseForQuote,
+  } = await import("./dag"));
+  ({
+    readCanvasRun,
+    updateCanvasRun,
+    writeCanvasRun,
+    newCanvasRunId,
+    listCanvasRuns,
+    canvasRunsUserDir,
+    runHeldFunds,
+  } = await import("./run-store"));
   ({ writeUser } = await import("@/lib/users/store"));
-  ({ readJob } = await import("@/lib/jobs/store"));
+  ({ readJob, writeJob } = await import("@/lib/jobs/store"));
+  ({ listJobIndex } = await import("@/lib/jobs/index"));
+  ({ loadBalanceUsage } = await import("@/lib/billing/admission"));
   ({ storeUploadFromBuffer, readUploadSidecar } = await import("@/lib/jobs/upload"));
   ({ mediaStore } = await import("@/lib/storage/local-fs"));
 });
@@ -300,9 +326,9 @@ describe("sweep 执行器", () => {
     expect(after?.nodes.find((n) => n.id === "n_00110002")?.jobId).toBeUndefined();
   }, 45000);
 
-  it("marks the node failed and propagates blocked downstream on insufficient balance", async () => {
+  it("rejects run creation with 402 when the total exceeds the balance (slice 2: budget hold up front)", async () => {
     const owner = "usr_0000000000000421";
-    await seedUser(owner, 0); // 没余额：准入拒绝必须落失败态，不是无限重试。
+    await seedUser(owner, 0); // 没余额：建 run 时总价冻结就该 402，不再放到执行中途。
     const doc = await createCanvas(owner, "余额不足链");
     const patched = await patchCanvas(owner, doc.id, {
       expectedRevision: 0,
@@ -313,19 +339,58 @@ describe("sweep 执行器", () => {
       edges: [{ id: "e_00000022", from: "n_00220001", to: "n_00220002" }],
     });
     const quote = await computeQuote(owner, patched!);
-    const { run } = await createCanvasRun(owner, {
-      canvasId: doc.id,
-      quoteHash: quote.hash,
-      idempotencyKey: "test-run-key-00000004",
+    await expect(
+      createCanvasRun(owner, {
+        canvasId: doc.id,
+        quoteHash: quote.hash,
+        idempotencyKey: "test-run-key-00000004",
+      }),
+    ).rejects.toMatchObject({ status: 402, code: "insufficient_balance" });
+    // 冻结失败不留任何 run 文件。
+    expect(await listCanvasRuns(owner)).toHaveLength(0);
+  });
+
+  it("still fails closed mid-flight for a legacy run without a reservation", async () => {
+    const owner = "usr_0000000000000431";
+    await seedUser(owner, 0);
+    const doc = await createCanvas(owner, "旧版 run 无预留");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [
+        { id: "n_00220011", kind: "gen_image", x: 0, y: 0, prompt: "第一段" },
+        { id: "n_00220012", kind: "gen_video", x: 300, y: 0, prompt: "第二段" },
+      ],
+      edges: [{ id: "e_00000023", from: "n_00220011", to: "n_00220012" }],
     });
+    const quote = await computeQuote(owner, patched!);
+    // 手搓一个切片一形状的旧 run：没有 reservation 字段——子任务必须回落
+    // 普通 reserveJobFunds，准入闸门不许因 run 无预留被绕过。
+    const now = new Date().toISOString();
+    const run: CanvasRun = {
+      schemaVersion: 1,
+      id: newCanvasRunId(),
+      ownerId: owner,
+      canvasId: doc.id,
+      documentRevision: patched!.revision,
+      graphSnapshot: { nodes: patched!.nodes, edges: patched!.edges },
+      quote,
+      status: "running",
+      nodeExecutions: [
+        { nodeId: "n_00220011", attempt: 1, status: "ready" },
+        { nodeId: "n_00220012", attempt: 1, status: "waiting_dependencies" },
+      ],
+      createdAt: now,
+      updatedAt: now,
+    };
+    await writeCanvasRun(run);
 
     const final = await runToTerminal(owner, run.id);
     expect(final.status).toBe("failed");
-    expect(final.nodeExecutions.find((e) => e.nodeId === "n_00220001")).toMatchObject({
+    expect(final.nodeExecutions.find((e) => e.nodeId === "n_00220011")).toMatchObject({
       status: "failed",
       errorCode: "insufficient_balance",
     });
-    expect(final.nodeExecutions.find((e) => e.nodeId === "n_00220002")).toMatchObject({
+    expect(final.nodeExecutions.find((e) => e.nodeId === "n_00220012")).toMatchObject({
       status: "blocked",
       errorCode: "upstream_failed",
     });
@@ -473,4 +538,419 @@ describe("sweep 执行器", () => {
     expect(after?.status).toBe("failed");
     expect(after?.nodeExecutions[0]).toMatchObject({ status: "failed", errorCode: "price_changed" });
   });
+});
+
+/* ---------- D 切片二：run 级预算预留 ---------- */
+
+describe("run 级预算预留", () => {
+  it("freezes the quote total on creation and stops counting once the run settles", async () => {
+    const owner = "usr_0000000000000510";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "冻结");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_05100001", kind: "gen_image", x: 0, y: 0, prompt: "图" }],
+    });
+    const quote = await computeQuote(owner, patched!);
+    const before = await loadBalanceUsage(owner);
+    const { run } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote.hash,
+      idempotencyKey: "test-run-key-00000010",
+    });
+
+    // 总价冻结在 run 上：余量 = 总额，尚未转移任何份额。
+    expect(run.reservation).toMatchObject({
+      amountCny: quote.totalCny,
+      remainingCny: quote.totalCny,
+    });
+    const during = await loadBalanceUsage(owner);
+    expect(during.reservedCny).toBeCloseTo(before.reservedCny + quote.totalCny, 2);
+
+    const final = await runToTerminal(owner, run.id);
+    expect(final.status).toBe("succeeded");
+    // 终态释放：job 已结算不再计预留，run 余量也停计——占用归零。
+    const after = await loadBalanceUsage(owner);
+    expect(after.reservedCny).toBeCloseTo(before.reservedCny, 2);
+  }, 30000);
+
+  it("transfers the node share to the child job — one share, counted once", async () => {
+    const owner = "usr_0000000000000511";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "转移");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_05110001", kind: "gen_image", x: 0, y: 0, prompt: "图" }],
+    });
+    const quote = await computeQuote(owner, patched!);
+    const { run } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote.hash,
+      idempotencyKey: "test-run-key-00000011",
+    });
+
+    // 等执行位拿到 jobId（kick 的异步 sweep 或手动补一轮都行）。
+    let observed = await readCanvasRun(owner, run.id);
+    for (let i = 0; i < 40 && !observed?.nodeExecutions[0]?.jobId; i += 1) {
+      await sweepCanvasRun(owner, run.id);
+      observed = await readCanvasRun(owner, run.id);
+    }
+    const jobId = observed?.nodeExecutions[0]?.jobId;
+    expect(jobId).toBeTruthy();
+
+    const after = await readCanvasRun(owner, run.id);
+    const res = after?.reservation;
+    const price = quote.items[0]!.priceCny;
+    // 份额已从 run 划走：余量归零，台账锚定该子任务。
+    expect(res?.remainingCny).toBeCloseTo(0, 2);
+    expect(res?.transfers["n_05110001"]).toMatchObject({ amountCny: price, jobId });
+    // 子任务拿到的是转移份额，不是二次现押：总额仍只计一次。
+    const job = await readJob(jobId!);
+    expect(job?.reservation?.amountCny).toBeCloseTo(price, 2);
+    const usage = await loadBalanceUsage(owner);
+    // job 未终态时：占用 = job.reservation（transfer 因 jobId 存在不再重复计）。
+    expect(usage.reservedCny).toBeCloseTo(price, 2);
+
+    const final = await runToTerminal(owner, run.id);
+    expect(final.status).toBe("succeeded");
+  }, 30000);
+
+  it("counts an orphan transfer (job file missing) and skips one anchored to a finished job", async () => {
+    const owner = "usr_0000000000000512";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "孤儿份额");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_05120001", kind: "gen_image", x: 0, y: 0, prompt: "图" }],
+    });
+    const quote = await computeQuote(owner, patched!);
+    const { run: run1 } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote.hash,
+      idempotencyKey: "test-run-key-00000012",
+    });
+    const final1 = await runToTerminal(owner, run1.id);
+    const doneJobId = final1.nodeExecutions[0]?.jobId;
+    expect(doneJobId).toBeTruthy();
+
+    const entries = await listJobIndex({ ownerId: owner });
+    const mkRun = async (transferJobId: string) => {
+      const now = new Date().toISOString();
+      const run: CanvasRun = {
+        schemaVersion: 1,
+        id: newCanvasRunId(),
+        ownerId: owner,
+        canvasId: doc.id,
+        documentRevision: patched!.revision,
+        graphSnapshot: { nodes: patched!.nodes, edges: patched!.edges },
+        quote,
+        reservation: {
+          amountCny: 7,
+          memberCny: 0,
+          purchasedCny: 7,
+          remainingCny: 0,
+          remainingMemberCny: 0,
+          remainingPurchasedCny: 0,
+          transfers: {
+            n_05120001: {
+              amountCny: 7,
+              memberCny: 0,
+              purchasedCny: 7,
+              jobId: transferJobId,
+            },
+          },
+          createdAt: now,
+        },
+        status: "running",
+        nodeExecutions: [{ nodeId: "n_05120001", attempt: 1, status: "running", jobId: transferJobId }],
+        createdAt: now,
+        updatedAt: now,
+      };
+      await writeCanvasRun(run);
+      return run;
+    };
+
+    // 锚定 job 缺失（转移已写、任务没落盘的崩溃窗口）→ 份额仍计占用。
+    const orphanRun = await mkRun("job_0000000000ff");
+    const heldOrphan = await runHeldFunds(owner, entries);
+    expect(heldOrphan.transferCny).toBeCloseTo(7, 2);
+    const usageOrphan = await loadBalanceUsage(owner);
+    expect(usageOrphan.reservedCny).toBeCloseTo(7, 2);
+
+    // 锚定 job 存在且已终态 → 该份额已随任务生命周期结算，不再计。
+    const anchoredRun = await mkRun(doneJobId!);
+    const heldAnchored = await runHeldFunds(owner, entries);
+    expect(heldAnchored.transferCny).toBeCloseTo(7, 2); // 只剩孤儿那笔
+    void anchoredRun;
+
+    // 孤儿 run 转终态 → 全部停计。
+    await updateCanvasRun(owner, orphanRun.id, (r) => ({ ...r, status: "failed" as const }));
+    const heldAfter = await runHeldFunds(owner, entries);
+    expect(heldAfter.transferCny).toBeCloseTo(0, 2);
+    expect(heldAfter.remainingCny).toBeCloseTo(0, 2);
+  }, 30000);
+
+  it("fails closed with billing_state_corrupt when a run file is unreadable", async () => {
+    const owner = "usr_0000000000000513";
+    await seedUser(owner);
+    await mkdir(canvasRunsUserDir(owner), { recursive: true });
+    await writeFile(
+      path.join(canvasRunsUserDir(owner), "crun_ffffffffffff.json"),
+      "{ not json",
+      "utf8",
+    );
+    await expect(loadBalanceUsage(owner)).rejects.toMatchObject({
+      status: 500,
+      code: "billing_state_corrupt",
+    });
+  });
+});
+
+/* ---------- D 切片二：复用 / 强制重跑 / 已清产物 ---------- */
+
+describe("复用与重跑", () => {
+  it("expandRegenerate closes over downstream generation nodes", () => {
+    const graph = {
+      nodes: [
+        { id: "n_0000000a", kind: "gen_image" as const, x: 0, y: 0, prompt: "a" },
+        { id: "n_0000000b", kind: "gen_video" as const, x: 0, y: 0, prompt: "b" },
+        { id: "n_0000000c", kind: "gen_video" as const, x: 0, y: 0, prompt: "c" },
+      ],
+      edges: [
+        { id: "e_0000000a", from: "n_0000000a", to: "n_0000000b" },
+        { id: "e_0000000b", from: "n_0000000b", to: "n_0000000c" },
+      ],
+    };
+    expect([...expandRegenerate(graph, ["n_0000000a"])].sort()).toEqual([
+      "n_0000000a",
+      "n_0000000b",
+      "n_0000000c",
+    ]);
+    expect([...expandRegenerate(graph, ["n_0000000c"])]).toEqual(["n_0000000c"]);
+  });
+
+  it("reuses an unchanged prior output at ¥0 — no new job is created", async () => {
+    const owner = "usr_0000000000000520";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "复用");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_05200001", kind: "gen_image", x: 0, y: 0, prompt: "同样的图" }],
+    });
+    const quote1 = await computeQuote(owner, patched!);
+    const { run: run1 } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote1.hash,
+      idempotencyKey: "test-run-key-00000020",
+    });
+    const final1 = await runToTerminal(owner, run1.id);
+    const jobIdA = final1.nodeExecutions[0]?.jobId;
+    expect(jobIdA).toBeTruthy();
+    const jobsBefore = (await listJobIndex({ ownerId: owner })).length;
+
+    // 第二张 run：输入没变 → 报价 ¥0、执行位直接采纳历史产物。
+    const doc2 = (await readCanvas(owner, doc.id))!;
+    const reuse = await resolveReuseForQuote(owner, doc2, new Set());
+    const quote2 = await computeQuote(owner, doc2, { reuse });
+    expect(quote2.items[0]).toMatchObject({ reused: true, adoptedJobId: jobIdA, priceCny: 0 });
+    expect(quote2.totalCny).toBe(0);
+    const { run: run2 } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote2.hash,
+      idempotencyKey: "test-run-key-00000021",
+    });
+    // 全复用：创建即终态，不建任务、不冻结预算。
+    expect(run2.status).toBe("succeeded");
+    expect(run2.reservation).toBeUndefined();
+    expect(run2.nodeExecutions[0]).toMatchObject({
+      status: "succeeded",
+      reused: true,
+      jobId: jobIdA,
+    });
+    expect((await listJobIndex({ ownerId: owner })).length).toBe(jobsBefore);
+  }, 30000);
+
+  it("runs a fresh job when the node is explicitly regenerated", async () => {
+    const owner = "usr_0000000000000521";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "重跑");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_05210001", kind: "gen_image", x: 0, y: 0, prompt: "再跑一次" }],
+    });
+    const quote1 = await computeQuote(owner, patched!);
+    const { run: run1 } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote1.hash,
+      idempotencyKey: "test-run-key-00000022",
+    });
+    const final1 = await runToTerminal(owner, run1.id);
+    const jobIdA = final1.nodeExecutions[0]?.jobId;
+
+    // 点名重跑：报价按实计价（复用位被 regen 集排除），执行建新任务。
+    const doc2 = (await readCanvas(owner, doc.id))!;
+    const regen = expandRegenerate(
+      { nodes: doc2.nodes, edges: doc2.edges },
+      ["n_05210001"],
+    );
+    const reuse = await resolveReuseForQuote(owner, doc2, regen);
+    const quote2 = await computeQuote(owner, doc2, {
+      regenerate: ["n_05210001"],
+      reuse,
+    });
+    expect(quote2.items[0]?.reused).toBeUndefined();
+    expect(quote2.totalCny).toBeGreaterThan(0);
+    const { run: run2 } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote2.hash,
+      idempotencyKey: "test-run-key-00000023",
+      regenerate: ["n_05210001"],
+    });
+    const final2 = await runToTerminal(owner, run2.id);
+    expect(final2.status).toBe("succeeded");
+    expect(final2.nodeExecutions[0]?.reused).toBeUndefined();
+    expect(final2.nodeExecutions[0]?.jobId).toBeTruthy();
+    expect(final2.nodeExecutions[0]?.jobId).not.toBe(jobIdA);
+  }, 30000);
+
+  it("blocks output_purged when the matched prior output was cleaned up", async () => {
+    const owner = "usr_0000000000000522";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "已清产物");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_05220001", kind: "gen_image", x: 0, y: 0, prompt: "被清掉的图" }],
+    });
+    const quote1 = await computeQuote(owner, patched!);
+    const { run: run1 } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote1.hash,
+      idempotencyKey: "test-run-key-00000024",
+    });
+    const final1 = await runToTerminal(owner, run1.id);
+    const jobIdA = final1.nodeExecutions[0]?.jobId;
+    expect(jobIdA).toBeTruthy();
+
+    // 模拟留存清理：产物被清，任务状态不变。
+    const jobA = await readJob(jobIdA!);
+    await writeJob({ ...jobA!, artifactsPurgedAt: new Date().toISOString() });
+
+    const doc2 = (await readCanvas(owner, doc.id))!;
+    const reuse = await resolveReuseForQuote(owner, doc2, new Set());
+    const quote2 = await computeQuote(owner, doc2, { reuse });
+    expect(quote2.items[0]).toMatchObject({ purged: true, priceCny: 0 });
+    const { run: run2 } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote2.hash,
+      idempotencyKey: "test-run-key-00000025",
+    });
+    // 输入没变但产物没了：blocked/output_purged，绝不悄悄重生成。
+    expect(run2.status).toBe("failed");
+    expect(run2.nodeExecutions[0]).toMatchObject({
+      status: "blocked",
+      errorCode: "output_purged",
+    });
+    expect(run2.nodeExecutions[0]?.jobId).toBeUndefined();
+  }, 30000);
+});
+
+/* ---------- D 切片二：审批门 ---------- */
+
+describe("审批门", () => {
+  it("holds a gated node at awaiting_approval; approve submits, reject blocks", async () => {
+    const owner = "usr_0000000000000530";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "审批");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [
+        { id: "n_05300001", kind: "gen_image", x: 0, y: 0, prompt: "上游图" },
+        { id: "n_05300002", kind: "gen_video", x: 300, y: 0, prompt: "动起来" },
+      ],
+      edges: [{ id: "e_00000053", from: "n_05300001", to: "n_05300002" }],
+    });
+    const quote = await computeQuote(owner, patched!);
+    const { run } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote.hash,
+      idempotencyKey: "test-run-key-00000030",
+      approvalNodeIds: ["n_05300002"],
+    });
+    expect(run.gatedNodeIds).toEqual(["n_05300002"]);
+
+    // 上游图先跑完，视频节点到门停住——不提交任务。
+    let observed = await readCanvasRun(owner, run.id);
+    for (let i = 0; i < 60 && observed?.nodeExecutions[1]?.status !== "awaiting_approval"; i += 1) {
+      await sweepCanvasRun(owner, run.id);
+      observed = await readCanvasRun(owner, run.id);
+      if (observed?.nodeExecutions[1]?.status !== "awaiting_approval") await sleep(250);
+    }
+    const gated = observed?.nodeExecutions.find((e) => e.nodeId === "n_05300002");
+    expect(gated).toMatchObject({ status: "awaiting_approval" });
+    expect(gated?.jobId).toBeUndefined();
+
+    // 批准 → 回 ready，下一轮提交。
+    const decided = await decideCanvasRunApproval(owner, run.id, {
+      nodeId: "n_05300002",
+      decision: "approve",
+    });
+    expect(decided.nodeExecutions[1]).toMatchObject({
+      status: "ready",
+      approval: { decision: "approved" },
+    });
+    // 同决策重放幂等交回。
+    const replay = await decideCanvasRunApproval(owner, run.id, {
+      nodeId: "n_05300002",
+      decision: "approve",
+    });
+    expect(replay.nodeExecutions[1]?.approval?.decision).toBe("approved");
+
+    const final = await runToTerminal(owner, run.id, 45000);
+    expect(final.status).toBe("succeeded");
+    expect(final.nodeExecutions[1]?.jobId).toBeTruthy();
+  }, 60000);
+
+  it("reject blocks the node and propagates downstream", async () => {
+    const owner = "usr_0000000000000531";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "驳回");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [
+        { id: "n_05310001", kind: "gen_image", x: 0, y: 0, prompt: "甲" },
+        { id: "n_05310002", kind: "gen_image", x: 300, y: 0, prompt: "乙（吃甲的图没用，演示传播）" },
+      ],
+      edges: [{ id: "e_00000054", from: "n_05310001", to: "n_05310002" }],
+    });
+    const quote = await computeQuote(owner, patched!);
+    const { run } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote.hash,
+      idempotencyKey: "test-run-key-00000031",
+      approvalNodeIds: ["n_05310001"],
+    });
+
+    let observed = await readCanvasRun(owner, run.id);
+    for (let i = 0; i < 40 && observed?.nodeExecutions[0]?.status !== "awaiting_approval"; i += 1) {
+      await sweepCanvasRun(owner, run.id);
+      observed = await readCanvasRun(owner, run.id);
+    }
+    expect(observed?.nodeExecutions[0]?.status).toBe("awaiting_approval");
+
+    const decided = await decideCanvasRunApproval(owner, run.id, {
+      nodeId: "n_05310001",
+      decision: "reject",
+    });
+    expect(decided.nodeExecutions[0]).toMatchObject({
+      status: "blocked",
+      errorCode: "approval_rejected",
+      approval: { decision: "rejected" },
+    });
+    const final = await runToTerminal(owner, run.id);
+    expect(final.status).toBe("failed");
+    expect(final.nodeExecutions.find((e) => e.nodeId === "n_05310002")).toMatchObject({
+      status: "blocked",
+      errorCode: "upstream_failed",
+    });
+  }, 30000);
 });

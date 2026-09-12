@@ -203,16 +203,76 @@ function shortPrompt(text: string): string {
 }
 
 /**
- * 整张图的报价：校验 → 逐生成节点归一报价 → 总价 + hash。
- * `basisHash` 盖住 prompt / 点名产品 / 入边构成——报价之后改过其中任何一样，
- * 创建时重算就对不上，`quote_stale`。
+ * 递归内容寻址的节点输入哈希（D 切片二）：任一上游输入变 → 自身 hash 变 →
+ * 下游连锁 stale。inputs **保 `nodeInputs` 的画布顺序不排序**——执行器按同序
+ * 取「首个可用图」，顺序本身就是输入语义（两个素材换序 = 不同输入）。
+ * text 节点不单列：它的内容已经并入 mergedPrompt。
+ */
+export function nodeInputHash(graph: Graph, nodeId: string): string {
+  const node = graph.nodes.find((n) => n.id === nodeId);
+  if (!node) return stableJsonHash({ missing: nodeId });
+  const inputs = nodeInputs(graph, nodeId).flatMap((n) => {
+    if (n.kind === "material") return [`material:${n.uploadId ?? ""}`];
+    if (isGenNode(n)) return [`gen:${n.id}:${nodeInputHash(graph, n.id)}`];
+    return [];
+  });
+  return stableJsonHash({
+    kind: node.kind,
+    mode: isGenNode(node) ? nodeMode(graph, node) : null,
+    prompt: isGenNode(node) ? mergePrompt(graph, node) : (node.text ?? ""),
+    product: node.product ?? null,
+    inputs,
+  });
+}
+
+/**
+ * `regenerate` 点名集的生效集 = 该集合沿 gen 依赖方向的传递闭包（D 切片二）：
+ * 强制重跑上游 ⇒ 下游产物基于旧输入，必须一并重跑，否则下游会复用到旧产物。
+ */
+export function expandRegenerate(graph: Graph, requested: readonly string[]): Set<string> {
+  const out = new Set(requested);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const n of graph.nodes) {
+      if (!isGenNode(n) || out.has(n.id)) continue;
+      if (genDeps(graph, n.id).some((d) => out.has(d.id))) {
+        out.add(n.id);
+        grew = true;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 复用判定结果（由 dag.ts 解析后传入报价）：`{jobId}` = 产物还在直接采纳；
+ * `"purged"` = 输入没变但历史产物已清理——本 run 里该节点 blocked，
+ * 不悄悄重生成（要重跑得走 regenerate 点名）。
+ */
+export type ReuseDecision = { jobId: string } | "purged";
+
+export type ComputeQuoteOptions = {
+  /** 请求体里的 regenerate 点名集（未展开）；内部展开成闭包再判定。 */
+  regenerate?: readonly string[];
+  /** 复用判定表（仅不在 regen 闭包里的节点会被查）。 */
+  reuse?: ReadonlyMap<string, ReuseDecision>;
+};
+
+/**
+ * 整张图的报价：校验 → 逐生成节点归一报价 → 复用条目 ¥0 → 总价 + hash。
+ * `basisHash` 盖住 prompt / 点名产品 / 入边构成；`quoteHash` 再叠加 inputHash、
+ * 采纳的 jobId 与生效 regen 集——报价之后图变 / 价变 / revision 变 / 产物被清 /
+ * regen 集合变，重算都对不上，`quote_stale`。
  */
 export async function computeQuote(
   ownerId: string,
   doc: CanvasDocument,
+  opts?: ComputeQuoteOptions,
 ): Promise<CanvasQuote> {
   const graph: Graph = { nodes: doc.nodes, edges: doc.edges };
   await validateGraph(graph, ownerId);
+  const regen = expandRegenerate(graph, opts?.regenerate ?? []);
   const items: CanvasQuoteItem[] = [];
   for (const node of topoOrder(graph)!.filter(isGenNode)) {
     const plan = planNodeJob(graph, node);
@@ -227,26 +287,40 @@ export async function computeQuote(
         }),
       )
       .digest("hex");
+    const inputHash = nodeInputHash(graph, node.id);
+    const reuse = regen.has(node.id) ? undefined : opts?.reuse?.get(node.id);
+    const adopted = typeof reuse === "object" ? reuse.jobId : undefined;
+    const purged = reuse === "purged";
     items.push({
       nodeId: node.id,
       kind: node.kind,
       mode: plan.mode,
-      priceCny: plan.priceCny,
+      priceCny: adopted || purged ? 0 : plan.priceCny,
       ...(plan.productName ? { productName: plan.productName } : {}),
-      summary: shortPrompt(plan.prompt) || node.id,
+      summary: adopted
+        ? `复用 · ${shortPrompt(plan.prompt) || node.id}`
+        : shortPrompt(plan.prompt) || node.id,
       basisHash,
+      inputHash,
+      ...(adopted ? { reused: true, adoptedJobId: adopted } : {}),
+      ...(purged ? { purged: true } : {}),
     });
   }
   const totalCny = Math.round(items.reduce((s, i) => s + i.priceCny, 0) * 100) / 100;
+  const reusedCount = items.filter((i) => i.reused).length;
   const hash = stableJsonHash({
     canvasId: doc.id,
     revision: doc.revision,
+    regenerate: [...regen].sort(),
     items: items.map((i) => ({
       nodeId: i.nodeId,
       mode: i.mode,
       priceCny: i.priceCny,
       basisHash: i.basisHash,
+      inputHash: i.inputHash,
+      adoptedJobId: i.adoptedJobId ?? null,
+      purged: i.purged ?? false,
     })),
   });
-  return { hash, totalCny, items };
+  return { hash, totalCny, reusedCount, items };
 }

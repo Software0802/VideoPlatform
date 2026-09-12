@@ -1074,6 +1074,36 @@
 .canvas-node__exec[data-exec="succeeded"] { color: #4ade80; }
 .canvas-node__exec[data-exec="failed"] { color: #f87171; }
 .canvas-node__exec[data-exec="blocked"] { color: #a1a1aa; }
+.canvas-node__exec[data-exec="awaiting_approval"] { color: #fbbf24; }
+.canvas-node__exec[data-exec="reused"] { color: #34d399; }
+
+/* D 切片二：审批门按钮 + 报价弹层勾选 */
+.canvas-node__approverow { display: flex; gap: 6px; margin-top: 6px; }
+.canvas-node__approve,
+.canvas-node__reject {
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.canvas-node__approve { color: #fff; background: linear-gradient(140deg,#ff8a3d,#ff4d8d 60%,#a855f7); }
+.canvas-node__reject { color: var(--cv-fg-5); background: rgba(255,255,255,.07); }
+.canvas-node__reject:hover { color: var(--cv-fg); background: rgba(255,255,255,.12); }
+
+.canvas-quote__check {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--cv-fg-5);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.canvas-quote__check input { accent-color: #ff4d8d; margin: 0; }
+.canvas-quote__check:hover { color: var(--cv-fg); }
 
 .canvas-quote {
   position: absolute;

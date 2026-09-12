@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
+import { runHeldFunds } from "@/lib/canvas/run-store";
 import { listJobIndex } from "@/lib/jobs/index";
 import type { JobReservation } from "@/lib/jobs/schema";
+import { isTerminalStatus } from "@/lib/jobs/schema";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { activeMemberCreditsCny, subscriptionActive } from "@/lib/users/schema";
 import { readUser } from "@/lib/users/store";
@@ -59,10 +61,16 @@ export async function loadBalanceUsage(
   userId: string,
   now: number = Date.now(),
 ): Promise<BalanceUsage> {
-  const [user, entries] = await Promise.all([
+  // D 切片二：在途预留 = 非终态 job 的预留 + 非终态 canvas-run 的预算占用。
+  // 任务索引用全量拉取：run 的 transfer 份额是否还计占用，取决于锚定的 job
+  // 在索引里存不存在（终态 = 已结算），只看非终态会把「job 终态已释放」
+  // 误判成「job 缺失仍占用」。
+  const [user, allEntries] = await Promise.all([
     readUser(userId),
-    listJobIndex({ ownerId: userId, nonTerminal: true }),
+    listJobIndex({ ownerId: userId }),
   ]);
+  const entries = allEntries.filter((e) => !isTerminalStatus(e.status));
+  const runHeld = await runHeldFunds(userId, allEntries);
   const balanceCny = user?.balanceCny ?? 0;
   const memberCreditsCny = user?.memberCreditsCny ?? 0;
   // 两个池都能付任务的钱（扣的时候会员池优先），所以准入看的是两池之和——但会员池只在
@@ -81,6 +89,9 @@ export async function loadBalanceUsage(
       (typeof job.priceCny === "number" && Number.isFinite(job.priceCny) ? job.priceCny : 0);
     heldMemberCny += job.reservation?.memberCny ?? 0;
   }
+  // run 侧占用：未转移余量 + 「job 缺失」的 transfer 份额（台账兜底，不超卖）。
+  reservedCny += runHeld.remainingCny + runHeld.transferCny;
+  heldMemberCny += runHeld.remainingMemberCny + runHeld.transferMemberCny;
   reservedCny = round2(reservedCny);
   heldMemberCny = round2(Math.min(heldMemberCny, memberCreditsCny));
   const heldPurchasedCny = round2(reservedCny - heldMemberCny);

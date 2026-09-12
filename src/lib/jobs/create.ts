@@ -16,6 +16,7 @@ import {
   type CreateJobBody,
   type JobPublic,
   type JobRecord,
+  type JobReservation,
   type UploadSidecar,
 } from "@/lib/jobs/schema";
 import { ProviderHttpError } from "@/lib/providers/types";
@@ -47,9 +48,22 @@ import { mediaStore } from "@/lib/storage/local-fs";
 /**
  * `ownerId` comes from the session (`requireUser`), never from the request
  * body — a client must not be able to name the account a job is filed under.
+ *
+ * `opts.reserveFunds`（D 切片二，画布 run）：替换默认的 `reserveJobFunds`——
+ * 子任务的钱不是现收现押，而是从 run 级预算预留里**转移**份额过来；回调在
+ * 本函数既有的 `withAdmissionLock` 临界区内执行，拿到的是即将落盘的 jobId。
  */
-export async function createJob(body: CreateJobBody, ownerId: string) {
-  return withAdmissionLock(() => createJobUnlocked(body, ownerId));
+export async function createJob(
+  body: CreateJobBody,
+  ownerId: string,
+  opts?: {
+    reserveFunds?: (
+      priceCny: number,
+      jobId: string,
+    ) => Promise<JobReservation | undefined>;
+  },
+) {
+  return withAdmissionLock(() => createJobUnlocked(body, ownerId, opts));
 }
 
 /**
@@ -75,7 +89,16 @@ async function assertQueueRoom(ownerId: string): Promise<void> {
   }
 }
 
-async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
+async function createJobUnlocked(
+  body: CreateJobBody,
+  ownerId: string,
+  opts?: {
+    reserveFunds?: (
+      priceCny: number,
+      jobId: string,
+    ) => Promise<JobReservation | undefined>;
+  },
+) {
   // 同 key 异参的判据（R07）：请求体剔掉 key 之后的正则哈希，随 `idempotency.key`
   // 一起落进 job.json——重放必须带着和第一次完全相同的参数回来。
   const requestHash = body.idempotencyKey ? idempotencyRequestHash(body) : undefined;
@@ -297,7 +320,10 @@ async function createJobUnlocked(body: CreateJobBody, ownerId: string) {
   // 同一个 `withAdmissionLock` 临界区里：只有那次写盘落地后，这条任务的预留才对
   // 下一个请求可见。放在认领素材之前，被拒时磁盘上不留半个任务目录。
   // 预留的分池分配额在这一刻冻结（A 包）：会员池 earmark 从此被这条任务钉住。
-  rec.reservation = await reserveJobFunds(ownerId, rec.priceCny);
+  // D 切片二：调用方给了 reserveFunds（画布 run 预算转移）就用它取代现押。
+  rec.reservation = opts?.reserveFunds
+    ? await opts.reserveFunds(rec.priceCny, id)
+    : await reserveJobFunds(ownerId, rec.priceCny);
 
   await mkdir(path.join(mediaStore.jobDir(id), "inputs"), { recursive: true });
   if (start) rec.assets.start = await claim(id, start, "inputs/start.jpg");
