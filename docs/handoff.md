@@ -4,11 +4,11 @@
 
 ## 0. 当前状态
 
-本轮核对日期：2026-09-12。基线之上又有两个已提交并合入本地 main、但**未推送、未部署**的修复提交（智能体错误码拆分 + 画布 DAG 运行审查修复），生产实际运行的仍是 `da0348c`。
+本轮核对日期：2026-09-13。下列信息为部署后实测。
 
 | 字段 | 值 |
 | --- | --- |
-| 基线 | `main` @ `da0348c`（**已部署生产 2026-09-12**，health 200 ok=true）——H 包（`docs/plan-h-account-notifications-2026-09-12.md`，Codex 评审后实施）：通知落盘 `data/notifications/`、错误码前端本地化（`errorText` + `common.err.*` 72 码）、`/account` 账户页 + `logout-all`、移动端回归 `e2e/mobile.spec.ts`；此前 `04efdce` 为 R01–R09 + A–D 包 + 资金迁移。本地在 `da0348c` 之上另有两个提交 `4690767`（智能体上游失败错误码拆分）与 `f6b8c88`（画布 DAG 运行审查修复），在分支 `claude/sub-agent-coordination-review-305653` 上，待主代理合入 main；均未推送、未部署 |
+| 基线 | `main` @ `98759a5`（**已部署生产 2026-09-13**，本机 health 200 ok=true，公网 `/login` 200、`/` 307 跳登录；已推送 origin）——本轮两个修复：`4690767` 智能体上游失败错误码拆分、`f6b8c88` 画布 DAG 运行审查修复。此前 `da0348c` 为 H 包（`docs/plan-h-account-notifications-2026-09-12.md`，Codex 评审后实施）：通知落盘 `data/notifications/`、错误码前端本地化（`errorText` + `common.err.*` 72 码）、`/account` 账户页 + `logout-all`、移动端回归 `e2e/mobile.spec.ts`；再往前 `04efdce` 为 R01–R09 + A–D 包 + 资金迁移 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
 | 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；**未配 `XAI_API_KEY`**，grok 只作为路由兜底不会被选中 |
@@ -89,7 +89,7 @@
 
 ## 5. 下一刀建议
 
-1. 已全部提交并部署生产（`24bc5c2`）：资金迁移完成、`backup.sh` 在服务器实测通过（`backups/genius-data-20260912-150747.tgz`）。本次部署发现并修复两个打包坑：`scripts/*.mjs` 依赖 `src/lib/billing/*.mjs` 此前不在包内（已补进 `deploy.sh` 清单）；Windows junction 被 bsdtar 解引用导致 `.next/node_modules` 里的 sharp 副本解析不到 `@img/*`（打包排除 + 服务器侧 `rm -rf .next/node_modules` 让根级别名接管）；`*.sh` CRLF 已在 `.gitattributes` 钉 LF + 远端 `sed` 兜底。本机有 Git Bash（`/usr/bin/bash`，GNU bash 5.3），`bash scripts/deploy.sh` 本轮未实测。
+1. 全部改动已推送 origin 并部署生产（`98759a5`）。`bash scripts/deploy.sh` 在本机 Git Bash（`/usr/bin/bash`，GNU bash 5.3）上一次跑通：本地 tsc → `pnpm build` → 18M 包 → 上传 → 服务器切换，两个 Turbopack 别名（sharp / ffmpeg-static）自动补软链，`systemctl is-active genius` = active，本机 health 200 ok=true，未触发回滚。脚本末尾的公网检查对 `/` 返回 307 并提示「非 200」，那是未登录跳 `/login` 的正常行为（`/login` 与 `/api/health` 均 200），不是故障——脚本这一行的判定偏严，下次改脚本时可顺手把它改成跟 `/login`。此前踩过的打包坑（`src/lib/billing/*.mjs` 不在包内、Windows junction 被解引用、`*.sh` CRLF）均已在脚本与 `.gitattributes` 里修掉，本次未复现。
 2. H 包已落地（通知落盘/错误码本地化/账户页/移动端回归）；E（Harness 放行）、F（视频模式 UI）、G（支付网关）、I（运维扩容）按文档建议不同时开工，未批准不实施；G 的支付/退款 unknown 态与 PaymentOrder/webhook 仍未动。
 3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
-4. 智能体上游失败错误码拆分与画布 DAG 运行审查修复（`4690767`+`f6b8c88`）已合入本地 main，待推送、部署；画布审查未采纳的 4 条见 §3。
+4. 智能体上游失败错误码拆分与画布 DAG 运行审查修复（`4690767`+`f6b8c88`）已上线；画布审查未采纳的 4 条见 §3，需产品决策后再排。本轮未做真实上游验收（生产 provider 的实际生成链路没跑过任务）。
