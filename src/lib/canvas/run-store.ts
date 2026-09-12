@@ -175,8 +175,8 @@ export type RunHeldFunds = {
   transferMemberCny: number;
 };
 
-/** 执行位终态集合：份额已随子任务生命周期结算/退回，不再计 run 占用。 */
-const EXEC_SETTLED = new Set(["succeeded", "failed", "blocked", "canceled"]);
+/** 执行位终态集合（与 dag.ts EXEC_TERMINAL 相同；被取消的节点落 blocked/canceled，不是独立状态）：份额已随子任务生命周期结算/退回，不再计 run 占用。 */
+const EXEC_SETTLED = new Set(["succeeded", "failed", "blocked"]);
 
 /**
  * 资金口径的严格读：与列表用的容错读相反——目录不存在（ENOENT）算「没有 run」，

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 /**
  * 画布 DAG 运行（D 包）：报价 / 幂等 / sweep 执行器 / 取消 / 崩溃窗口接管；
@@ -12,6 +12,28 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
  * 因为「run 里的节点就是普通任务」正是要验的东西。mock 图片同步完成，
  * 视频 ~3.5s 轮询 + ffmpeg——链式用例的等待上限给足。
  */
+
+/**
+ * F3b 注入点：`createCanvasRun` 的 admission 锁内复核对外没有可触发窗口，
+ * 包一层 `withAdmissionLock` 让用例能在临界区内先跑一个一次性副作用
+ * （比如删掉被采纳的产物）。不设钩子即原样透传，不影响其它用例。
+ */
+let hookInsideAdmissionLock: (() => Promise<void>) | null = null;
+vi.mock("@/lib/jobs/admission", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/lib/jobs/admission")>();
+  return {
+    ...orig,
+    withAdmissionLock: <T>(fn: () => Promise<T>): Promise<T> =>
+      orig.withAdmissionLock(async () => {
+        const hook = hookInsideAdmissionLock;
+        if (hook) {
+          hookInsideAdmissionLock = null;
+          await hook();
+        }
+        return fn();
+      }),
+  };
+});
 
 let dataRoot = "";
 let createCanvas: typeof import("./store").createCanvas;
@@ -1121,6 +1143,55 @@ describe("审查修复回归 2026-09-12", () => {
     ).rejects.toMatchObject({ status: 409, code: "quote_stale" });
     // 失败关闭：不留下半个 run。
     expect(await listCanvasRuns(owner)).toHaveLength(1);
+  }, 30000);
+
+  it("F3b: 锁内采纳复核——报价通过后、锁内删除被采纳产物 → 409 quote_stale 且不留 run / 不留预留", async () => {
+    const { deleteJobById } = await import("@/lib/jobs/delete");
+    const owner = "usr_0000000000000615";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "锁内采纳复核");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_06150001", kind: "gen_image", x: 0, y: 0, prompt: "同样的图" }],
+    });
+    const quote1 = await computeQuote(owner, patched!);
+    const { run: run1 } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote1.hash,
+      idempotencyKey: "test-run-key-00000044",
+    });
+    const final1 = await runToTerminal(owner, run1.id);
+    const jobIdA = final1.nodeExecutions[0]?.jobId;
+    expect(jobIdA).toBeTruthy();
+
+    // 报价采纳 A（¥0 复用）。与 F3 不同：删除不在调用前发生（那会撞锁外
+    // `quote.hash !== body.quoteHash`），而是用钩子在 admission 锁内、采纳复核
+    // 之前删掉——命中的正是那段对外没有窗口的 TOCTOU 复核。
+    const doc2 = (await readCanvas(owner, doc.id))!;
+    const reuse = await resolveReuseForQuote(owner, doc2, new Set());
+    const quote2 = await computeQuote(owner, doc2, { reuse });
+    expect(quote2.items[0]).toMatchObject({ reused: true, adoptedJobId: jobIdA });
+
+    const usageBefore = await loadBalanceUsage(owner);
+    const runsBefore = (await listCanvasRuns(owner)).length;
+    hookInsideAdmissionLock = async () => {
+      await deleteJobById(jobIdA!);
+    };
+
+    await expect(
+      createCanvasRun(owner, {
+        canvasId: doc.id,
+        quoteHash: quote2.hash,
+        idempotencyKey: "test-run-key-00000045",
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "quote_stale" });
+    // 钩子确实在锁内跑过并被消费。
+    expect(hookInsideAdmissionLock).toBeNull();
+    // 失败关闭：不留半个 run。
+    expect(await listCanvasRuns(owner)).toHaveLength(runsBefore);
+    // 预留没多押一分钱（本次报价 ¥0，复核在冻结之前就抛了）。
+    const usageAfter = await loadBalanceUsage(owner);
+    expect(usageAfter.reservedCny).toBeCloseTo(usageBefore.reservedCny, 2);
   }, 30000);
 
   it("F5: approving after the cancel intent landed is 409 invalid_state and writes no decision", async () => {

@@ -89,7 +89,7 @@
 
 ## 5. 下一刀建议
 
-1. 全部改动已推送 origin 并部署生产（`98759a5`）。`bash scripts/deploy.sh` 在本机 Git Bash（`/usr/bin/bash`，GNU bash 5.3）上一次跑通：本地 tsc → `pnpm build` → 18M 包 → 上传 → 服务器切换，两个 Turbopack 别名（sharp / ffmpeg-static）自动补软链，`systemctl is-active genius` = active，本机 health 200 ok=true，未触发回滚。脚本末尾的公网检查对 `/` 返回 307 并提示「非 200」，那是未登录跳 `/login` 的正常行为（`/login` 与 `/api/health` 均 200），不是故障——脚本这一行的判定偏严，下次改脚本时可顺手把它改成跟 `/login`。此前踩过的打包坑（`src/lib/billing/*.mjs` 不在包内、Windows junction 被解引用、`*.sh` CRLF）均已在脚本与 `.gitattributes` 里修掉，本次未复现。
+1. 全部改动已推送 origin 并部署生产（`98759a5`）。`bash scripts/deploy.sh` 在本机 Git Bash（`/usr/bin/bash`，GNU bash 5.3）上一次跑通：本地 tsc → `pnpm build` → 18M 包 → 上传 → 服务器切换，两个 Turbopack 别名（sharp / ffmpeg-static）自动补软链，`systemctl is-active genius` = active，本机 health 200 ok=true，未触发回滚。脚本末尾的公网检查请求 `/login`（匿名可访问、预期 200；`/` 未登录会 307 跳登录页，不作判定对象）。此前踩过的打包坑（`src/lib/billing/*.mjs` 不在包内、Windows junction 被解引用、`*.sh` CRLF）均已在脚本与 `.gitattributes` 里修掉，本次未复现。
 2. H 包已落地（通知落盘/错误码本地化/账户页/移动端回归）；E（Harness 放行）、F（视频模式 UI）、G（支付网关）、I（运维扩容）按文档建议不同时开工，未批准不实施；G 的支付/退款 unknown 态与 PaymentOrder/webhook 仍未动。
 3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
 4. 智能体上游失败错误码拆分与画布 DAG 运行审查修复（`4690767`+`f6b8c88`）已上线；画布审查未采纳的 4 条见 §3，需产品决策后再排。本轮未做真实上游验收（生产 provider 的实际生成链路没跑过任务）。这一轮交给独立审查者复核的清单（已验证 / 未验证的边界、建议重点查的位置、未采纳项的行号）在 `docs/review-2026-09-13.md`。

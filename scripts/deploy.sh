@@ -180,8 +180,9 @@ fi
 
 echo "== 完成。公网验证："
 # 公网这一跳过 Caddy / DNS，失败不代表这次部署坏（远端 health 已经绿），只提示不中止。
-PUBLIC="$(curl -sS --max-time 25 -o /dev/null -w '%{http_code}' https://genius.homeaistack.online/)" || PUBLIC="000"
-echo "   https://genius.homeaistack.online -> HTTP=$PUBLIC"
+# 查 `/login` 而不是 `/`：未登录访问 `/` 会 307 跳登录页，是正常行为；`/login` 匿名 200 才算通。
+PUBLIC="$(curl -sS --max-time 25 -o /dev/null -w '%{http_code}' https://genius.homeaistack.online/login)" || PUBLIC="000"
+echo "   https://genius.homeaistack.online/login -> HTTP=$PUBLIC"
 if [ "$PUBLIC" != "200" ]; then
   echo "   （非 200：服务器本机 health 是绿的，先查 Caddy 站点块与 DNS）"
 fi
