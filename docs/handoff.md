@@ -8,7 +8,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 基线 | `main`：生产部署在 `04efdce`（2026-09-12，含 4 个存量账号资金迁移）；其上是未推送的 **H 包**（`docs/plan-h-account-notifications-2026-09-12.md`，Codex 评审后实施）——通知落盘 `data/notifications/`、错误码前端本地化（`errorText` + `common.err.*` 72 码）、`/account` 账户页 + `logout-all`、移动端回归 `e2e/mobile.spec.ts`；本地领先 origin/main 多个提交，未推送 |
+| 基线 | `main` @ `da0348c`（**已部署生产 2026-09-12**，health 200 ok=true）——H 包（`docs/plan-h-account-notifications-2026-09-12.md`，Codex 评审后实施）：通知落盘 `data/notifications/`、错误码前端本地化（`errorText` + `common.err.*` 72 码）、`/account` 账户页 + `logout-all`、移动端回归 `e2e/mobile.spec.ts`；此前 `04efdce` 为 R01–R09 + A–D 包 + 资金迁移。本地领先 origin/main 多个提交，未推送 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
 | 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；**未配 `XAI_API_KEY`**，grok 只作为路由兜底不会被选中 |
