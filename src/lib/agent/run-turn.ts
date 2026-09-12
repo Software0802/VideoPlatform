@@ -268,7 +268,7 @@ export async function runTurn(
                     ...t,
                     status: "failed" as const,
                     refundRef: `${ref}:refund`,
-                    error: { code: "agent_unavailable", message: "智能体未能给出合法回复" },
+                    error: { code: "agent_upstream_failed", message: "智能体未能给出合法回复" },
                     updatedAt: new Date().toISOString(),
                   }
                 : t,
@@ -280,7 +280,7 @@ export async function runTurn(
     );
     throw error instanceof ProviderHttpError
       ? error
-      : new ProviderHttpError(502, "agent_unavailable", "智能体暂时无法回复，本轮费用已退回");
+      : new ProviderHttpError(502, "agent_upstream_failed", "智能体暂时无法回复，本轮费用已退回");
   }
 
   // 技能能力过滤（B 包）：技能声明了 kinds 的，越界的动作直接丢掉——它是「这个技能

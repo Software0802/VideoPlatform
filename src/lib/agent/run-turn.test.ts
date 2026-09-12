@@ -310,7 +310,7 @@ describe("runTurn", () => {
           },
         },
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ status: 502, code: "agent_upstream_failed" });
 
     // 「上游挂了不该用户掏钱」：钱已经扣了，所以这里必须退回去。
     expect((await readUser(owner))?.balanceCny).toBe(10);
@@ -318,7 +318,11 @@ describe("runTurn", () => {
     // turn 标 failed 且带退款引用，下一轮（新 turnId）照常能发。
     const stored = await readSession(owner, session.id);
     expect(stored?.messages.map((m) => m.role)).toEqual(["user"]);
-    expect(stored?.turns?.[0]).toMatchObject({ status: "failed", refundRef: expect.stringContaining(":refund") });
+    expect(stored?.turns?.[0]).toMatchObject({
+      status: "failed",
+      refundRef: expect.stringContaining(":refund"),
+      error: { code: "agent_upstream_failed" },
+    });
   });
 
   it("R02：整轮失败退款按原扣款的分池原路退回，会员积分不转成已购余额", async () => {
@@ -374,7 +378,7 @@ describe("runTurn", () => {
           },
         },
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ status: 502, code: "agent_upstream_failed" });
 
     const user = await readUser(owner);
     // 修复前：会员出的 0.05 被退进已购池（会员 0.95 + 已购 0.05），会员积分被套现。

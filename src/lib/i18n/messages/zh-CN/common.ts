@@ -31,6 +31,7 @@ export const common = {
   "common.err.notifications_stale": "通知已过期，正在刷新",
   "common.err.account_disabled": "账号已被停用，请联系管理员",
   "common.err.agent_unavailable": "智能体暂时不可用，请稍后再试",
+  "common.err.agent_upstream_failed": "智能体暂时无法回复，本轮费用已退回",
   "common.err.artifacts_purged": "作品已过期清理，请重新生成",
   "common.err.bad_origin": "请求来源不合法",
   "common.err.billing_ambiguous_legacy_pool": "账单数据异常，请联系管理员",
