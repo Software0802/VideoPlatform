@@ -1,0 +1,2 @@
+# shell 脚本必须 LF——CRLF 到 Linux 上 shebang 变成 bash\r 无法执行
+*.sh text eol=lf

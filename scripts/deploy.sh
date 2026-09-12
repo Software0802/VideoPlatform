@@ -119,7 +119,10 @@ tar xzf deploy.tgz && rm deploy.tgz
 # 那份 sharp 副本找不到自己的 @img/* 依赖(它在 pnpm 布局的兄弟位)——删掉,让根级别名接管。
 rm -rf .next/node_modules
 # cron 直接执行 /opt/genius/scripts/backup.sh，需要可执行位。
+# Windows 工作区可能检出 CRLF——先归一成 LF 再赋可执行位（.gitattributes 已钉 eol=lf，
+# 这层 sed 是给「绕过 git 直接打包」的场景兜底）。
 chmod +x scripts/*.sh 2>/dev/null || true
+sed -i 's/\r$//' scripts/*.sh 2>/dev/null || true
 echo "   依赖: $(pnpm install --prod --no-frozen-lockfile 2>&1 | tail -1)"
 # 补 Turbopack external 别名（部署固定一步，详见 handoff §0.4 坑一）
 node -e '
