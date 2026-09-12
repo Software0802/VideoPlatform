@@ -896,10 +896,15 @@ const workDialog = (page: Page) => page.locator('.work[role="dialog"]');
 test("主页分页：SSR 首屏 40 条，加载更多按 kind 续页", async ({ page }) => {
   const userId = await currentUserId(page);
   const dataDir = await serverDataDir();
-  // 45 条，全部比现有任务新（ageMs 从 0 起往前推 1 秒一条），所以首屏那 40 条一定是它们。
+  /*
+    45 条，全部比现有任务新：ageMs 取负 = createdAt 落在未来（首屏 SSR 的 listJobIndex
+    不按 kind 过滤、纯按 createdAt 降序截前 40 条）。套件前面用例真实建出来的任务
+    （文生图等）若恰好落在「过去 45s」的窗口里，会顶掉一条视频种子——把时间戳放到
+    未来，种子就永远是最新的 45 条，用例不再依赖套件节奏。
+  */
   const seeds: { id: string; dir: string }[] = [];
   for (let i = 0; i < 45; i += 1) {
-    seeds.push(await seedJob(userId, dataDir, { prompt: `分页样本 ${i}`, ageMs: i * 1000 }));
+    seeds.push(await seedJob(userId, dataDir, { prompt: `分页样本 ${i}`, ageMs: i * 1000 - 60_000 }));
   }
   const oldest = seeds[seeds.length - 1];
 

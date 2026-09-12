@@ -115,3 +115,90 @@ export async function runCanvasNodeApi(
   const data = await parseAuthed<{ canvas?: unknown; job?: JobPublic }>(res, "运行失败");
   return { canvas: readDoc(data.canvas), job: data.job as JobPublic };
 }
+
+/* ---------- D 包：整图运行（CanvasRun） ---------- */
+
+export type CanvasNodeExecStatus =
+  | "waiting_dependencies"
+  | "ready"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "blocked";
+
+export type CanvasRunStatus = "running" | "succeeded" | "partially_failed" | "failed" | "canceled";
+
+export type CanvasNodeExecution = {
+  nodeId: string;
+  attempt: number;
+  status: CanvasNodeExecStatus;
+  jobId?: string;
+  errorCode?: string;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
+export type CanvasQuoteItem = {
+  nodeId: string;
+  kind: CanvasNodeKind;
+  mode: "text_to_image" | "text_to_video" | "image_to_video";
+  priceCny: number;
+  productName?: string;
+  summary: string;
+};
+
+export type CanvasQuote = { hash: string; totalCny: number; items: CanvasQuoteItem[] };
+
+export type CanvasRun = {
+  id: string;
+  canvasId: string;
+  status: CanvasRunStatus;
+  cancelRequestedAt?: string;
+  quote: CanvasQuote;
+  nodeExecutions: CanvasNodeExecution[];
+  createdAt: string;
+  finishedAt?: string;
+};
+
+/** 整图报价：逐节点明细 + 总价 + `hash`（建 run 时回传，图变即 `quote_stale`）。 */
+export async function quoteCanvas(canvasId: string): Promise<CanvasQuote> {
+  const res = await fetch(`/api/canvases/${canvasId}/quotes`, { method: "POST" });
+  const data = await parseAuthed<{ quote?: CanvasQuote }>(res, "报价失败");
+  if (!data.quote) throw new Error("报价失败");
+  return data.quote;
+}
+
+export async function createCanvasRunApi(input: {
+  canvasId: string;
+  quoteHash: string;
+  idempotencyKey: string;
+}): Promise<CanvasRun> {
+  const res = await fetch("/api/canvas-runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = await parseAuthed<{ run?: CanvasRun }>(res, "运行失败");
+  if (!data.run) throw new Error("运行失败");
+  return data.run;
+}
+
+export async function fetchCanvasRun(runId: string): Promise<CanvasRun | null> {
+  const res = await fetch(`/api/canvas-runs/${runId}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  const data = await parseAuthed<{ run?: CanvasRun }>(res, "无法读取运行状态");
+  return data.run ?? null;
+}
+
+export async function fetchCanvasRuns(canvasId: string): Promise<CanvasRun[]> {
+  const res = await fetch(`/api/canvases/${canvasId}/runs`, { cache: "no-store" });
+  const data = await parseAuthed<{ runs?: CanvasRun[] }>(res, "无法读取运行列表");
+  return Array.isArray(data.runs) ? data.runs : [];
+}
+
+export async function cancelCanvasRunApi(runId: string): Promise<CanvasRun> {
+  const res = await fetch(`/api/canvas-runs/${runId}/cancel`, { method: "POST" });
+  const data = await parseAuthed<{ run?: CanvasRun }>(res, "取消失败");
+  if (!data.run) throw new Error("取消失败");
+  return data.run;
+}

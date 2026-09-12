@@ -44,7 +44,16 @@ async function fund(page: Page, amountCny: number): Promise<void> {
   const script = path.resolve(__dirname, "../scripts/grant-balance.mjs");
   await promisify(execFile)(
     process.execPath,
-    [script, me.email, String(amountCny), "--note", "playwright subscription"],
+    [
+      script,
+      me.email,
+      String(amountCny),
+      "--offline",
+      "--ref",
+      `e2e-fund:${me.email}:${Date.now()}`,
+      "--note",
+      "playwright subscription",
+    ],
     { env: { ...process.env, DATA_DIR: await serverDataDir() } },
   );
 }

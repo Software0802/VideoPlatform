@@ -79,3 +79,104 @@ export const canvasPatchBodySchema = z
   })
   .strict();
 export type CanvasPatchBody = z.infer<typeof canvasPatchBodySchema>;
+
+/* ---------- D 包：整张图的一次性运行（CanvasRun） ---------- */
+
+export const CANVAS_RUN_ID_RE = /^crun_[0-9a-f]{12}$/;
+
+/** 只有生成节点进执行表；text / material 是静态输入，不占执行位。 */
+export const canvasNodeExecStatusSchema = z.enum([
+  "waiting_dependencies",
+  "ready",
+  "running",
+  "succeeded",
+  "failed",
+  "blocked",
+]);
+export type CanvasNodeExecStatus = z.infer<typeof canvasNodeExecStatusSchema>;
+
+export const canvasRunStatusSchema = z.enum([
+  "running",
+  "succeeded",
+  "partially_failed",
+  "failed",
+  "canceled",
+]);
+export type CanvasRunStatus = z.infer<typeof canvasRunStatusSchema>;
+
+export const canvasNodeExecutionSchema = z
+  .object({
+    nodeId: nodeIdSchema,
+    /** 恒 1：重跑一张图 = 新 run，不在原 run 里加 attempt。 */
+    attempt: z.number().int().positive(),
+    status: canvasNodeExecStatusSchema,
+    jobId: z.string().optional(),
+    errorCode: z.string().optional(),
+    /** `queue_full` 的退避：run 里它是等待信号不是失败，泵到点再试。 */
+    nextAttemptAt: z.string().optional(),
+    startedAt: z.string().optional(),
+    finishedAt: z.string().optional(),
+  })
+  .strict();
+export type CanvasNodeExecution = z.infer<typeof canvasNodeExecutionSchema>;
+
+/**
+ * 报价条目：`basisHash` 盖住「这次到底买什么」（prompt + 点名产品 + 入边构成），
+ * 报价 hash 由全部条目的 basisHash + 归一价 + revision 算出——图或文案变了，
+ * 重算就对不上，`quote_stale`。
+ */
+export const canvasQuoteItemSchema = z
+  .object({
+    nodeId: nodeIdSchema,
+    kind: canvasNodeKindSchema,
+    mode: z.enum(["text_to_image", "text_to_video", "image_to_video"]),
+    priceCny: z.number().nonnegative(),
+    productName: z.string().optional(),
+    summary: z.string(),
+    basisHash: z.string(),
+  })
+  .strict();
+export type CanvasQuoteItem = z.infer<typeof canvasQuoteItemSchema>;
+
+export const canvasQuoteSchema = z
+  .object({
+    hash: z.string(),
+    totalCny: z.number().nonnegative(),
+    items: z.array(canvasQuoteItemSchema),
+  })
+  .strict();
+export type CanvasQuote = z.infer<typeof canvasQuoteSchema>;
+
+export const canvasRunSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    id: z.string().regex(CANVAS_RUN_ID_RE),
+    ownerId: z.string(),
+    canvasId: z.string().regex(CANVAS_ID_RE),
+    /** 冻结时的文档 revision——之后编辑画布不影响本次运行。 */
+    documentRevision: z.number().int().nonnegative(),
+    graphSnapshot: z
+      .object({ nodes: z.array(canvasNodeSchema), edges: z.array(canvasEdgeSchema) })
+      .strict(),
+    /** 成交快照：执行器提交节点前重算归一价与它比对，不一致即 `price_changed`。 */
+    quote: canvasQuoteSchema,
+    idempotency: z.object({ key: z.string(), requestHash: z.string() }).strict().optional(),
+    status: canvasRunStatusSchema,
+    /** 持久化取消意图：落盘后泵不再提交新节点，在途收敛完毕才进 `canceled`。 */
+    cancelRequestedAt: z.string().optional(),
+    nodeExecutions: z.array(canvasNodeExecutionSchema),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+    finishedAt: z.string().optional(),
+  })
+  .strict();
+export type CanvasRun = z.infer<typeof canvasRunSchema>;
+
+export const canvasRunCreateBodySchema = z
+  .object({
+    canvasId: z.string().regex(CANVAS_ID_RE),
+    quoteHash: z.string().min(8).max(128),
+    idempotencyKey: z.string().trim().min(8).max(128),
+  })
+  .strict();
+export type CanvasRunCreateBody = z.infer<typeof canvasRunCreateBodySchema>;

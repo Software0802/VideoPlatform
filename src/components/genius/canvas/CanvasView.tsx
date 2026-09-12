@@ -4,18 +4,27 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouse
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { useShell } from "@/components/genius/ShellContext";
 import {
+  cancelCanvasRunApi,
   createCanvasApi,
+  createCanvasRunApi,
   fetchCanvas,
+  fetchCanvasRun,
+  fetchCanvasRuns,
   fetchCanvases,
   newCanvasEdgeId,
   newCanvasNodeId,
   patchCanvas,
+  quoteCanvas,
   RevisionConflictError,
   runCanvasNodeApi,
   type CanvasDocument,
   type CanvasNode,
+  type CanvasNodeExecution,
+  type CanvasQuote,
+  type CanvasRun,
 } from "@/lib/client/canvas";
-import { fetchJob, uploadFile } from "@/lib/client/jobs";
+import { ApiError } from "@/lib/client/http";
+import { fetchJob, newIdempotencyKey, uploadFile } from "@/lib/client/jobs";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { FIT_PAD_X, FIT_PAD_Y, SCENE_H, SCENE_W } from "./data";
 import {
@@ -42,6 +51,21 @@ function clamp(min: number, v: number, max: number) {
 }
 
 const TERMINAL = new Set(["succeeded", "failed", "canceled", "expired"]);
+
+/** 执行位 errorCode 里有字典文案的集合；不在里面的直接显示原始码。 */
+const EXEC_ERR_KEYS = new Set([
+  "price_changed",
+  "input_missing",
+  "uncertain_submit",
+  "upstream_failed",
+  "job_missing",
+  "canceled",
+  "expired",
+  "failed",
+  "insufficient_balance",
+  "invalid_argument",
+  "internal_error",
+]);
 
 /** 点击浮层之外或按 Esc 时关闭。 */
 function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, close: () => void) {
@@ -88,18 +112,28 @@ export default function CanvasView() {
   const [menu, setMenu] = useState<MenuPos | null>(null);
   const [running, setRunning] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  // D 包：最新一次整图运行（展示 overlay）+ 报价弹层 + 提交中状态。
+  const [latestRun, setLatestRun] = useState<CanvasRun | null>(null);
+  const [quote, setQuote] = useState<CanvasQuote | null>(null);
+  const [runBusy, setRunBusy] = useState(false);
+  const runKeyRef = useRef<string | null>(null);
+  const lastRunStatus = useRef<CanvasRun["status"] | null>(null);
 
   const closeMenu = useCallback(() => setMenu(null), []);
   useDismiss(menu !== null, menuRef, closeMenu);
 
-  /* 载入：最新一张画布，没有就建一张。 */
+  /* 载入：最新一张画布，没有就建一张；再拉它的最新一次 run 做产物 overlay。 */
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const list = await fetchCanvases();
-        const next = list[0] ? await fetchCanvas(list[0].id) : await createCanvasApi();
-        if (alive) setDoc(next);
+        // 列表与详情之间可能被删掉：落空就当没有画布，重建一张。
+        const next = list[0] ? ((await fetchCanvas(list[0].id)) ?? (await createCanvasApi())) : await createCanvasApi();
+        if (!alive) return;
+        setDoc(next);
+        const runs = await fetchCanvasRuns(next.id).catch(() => []);
+        if (alive && runs[0]) setLatestRun(runs[0]);
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e));
       }
@@ -163,10 +197,45 @@ export default function CanvasView() {
     [persist],
   );
 
-  /* 生成节点轮询：有 jobId 未终态的节点每 3s 问一次。 */
-  const pendingJobIds = (doc?.nodes ?? [])
-    .map((n) => n.jobId)
-    .filter((id): id is string => Boolean(id) && !TERMINAL.has(jobs[id!]?.status ?? ""));
+  /* 整图运行轮询（D 包）：running 的 run 每 3s 问一次；进终态时 toast 一次。 */
+  useEffect(() => {
+    if (!latestRun || latestRun.status !== "running") return;
+    const timer = setInterval(() => {
+      void fetchCanvasRun(latestRun.id).then((run) => {
+        if (run) setLatestRun(run);
+      });
+    }, POLL_MS);
+    return () => clearInterval(timer);
+    // 只按「哪张 run、是否还在跑」重建定时器；run 对象内容刷新不该重启轮询。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestRun?.id, latestRun?.status]);
+
+  useEffect(() => {
+    if (!latestRun) return;
+    const prev = lastRunStatus.current;
+    lastRunStatus.current = latestRun.status;
+    if (prev === "running" && latestRun.status !== "running") {
+      const failed = latestRun.nodeExecutions.filter((e) => e.status === "failed").length;
+      const key =
+        latestRun.status === "partially_failed" ? "canvas.run.toast.partially_failed" : `canvas.run.toast.${latestRun.status}`;
+      showToast(
+        latestRun.status === "partially_failed"
+          ? t(key as Parameters<typeof t>[0], { n: failed })
+          : t(key as Parameters<typeof t>[0]),
+      );
+    }
+  }, [latestRun, showToast, t]);
+
+  /* 生成节点轮询：有 jobId 未终态的节点每 3s 问一次（含 run 执行位的 jobId）。 */
+  const execOf = useCallback(
+    (nodeId: string): CanvasNodeExecution | undefined =>
+      latestRun?.nodeExecutions.find((e) => e.nodeId === nodeId),
+    [latestRun],
+  );
+  const pendingJobIds = [
+    ...(doc?.nodes ?? []).map((n) => n.jobId),
+    ...(latestRun?.nodeExecutions ?? []).map((e) => e.jobId),
+  ].filter((id): id is string => Boolean(id) && !TERMINAL.has(jobs[id!]?.status ?? ""));
   useEffect(() => {
     if (!pendingJobIds.length) return;
     const timer = setInterval(() => {
@@ -182,14 +251,18 @@ export default function CanvasView() {
 
   /* 首次见到 jobId 就立即拉一次（刷新恢复时不必等一个轮询周期）。 */
   useEffect(() => {
-    for (const n of doc?.nodes ?? []) {
-      if (n.jobId && !jobs[n.jobId]) {
-        void fetchJob(n.jobId).then((job) => {
-          if (job) setJobs((map) => ({ ...map, [n.jobId!]: job }));
+    const ids = [
+      ...(doc?.nodes ?? []).map((n) => n.jobId),
+      ...(latestRun?.nodeExecutions ?? []).map((e) => e.jobId),
+    ];
+    for (const id of ids) {
+      if (id && !jobs[id]) {
+        void fetchJob(id).then((job) => {
+          if (job) setJobs((map) => ({ ...map, [id]: job }));
         });
       }
     }
-  }, [doc, jobs]);
+  }, [doc, jobs, latestRun]);
 
   const scale = fit;
 
@@ -274,6 +347,64 @@ export default function CanvasView() {
         next.delete(nodeId);
         return next;
       });
+    }
+  };
+
+  /** 整图运行（D 包）：先落盘 → 报价弹层 → 确认后建 run；幂等键随一次点击固定。 */
+  const runAll = async () => {
+    if (!doc || runBusy) return;
+    setError(null);
+    setRunBusy(true);
+    try {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+        await persist(doc, doc.nodes, doc.edges);
+      }
+      const fresh = (await fetchCanvas(doc.id)) ?? doc;
+      setDoc(fresh);
+      const q = await quoteCanvas(fresh.id);
+      runKeyRef.current = newIdempotencyKey();
+      setQuote(q);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      showToast(message);
+    } finally {
+      setRunBusy(false);
+    }
+  };
+
+  const confirmRun = async () => {
+    if (!doc || !quote || runBusy) return;
+    setRunBusy(true);
+    try {
+      const run = await createCanvasRunApi({
+        canvasId: doc.id,
+        quoteHash: quote.hash,
+        idempotencyKey: runKeyRef.current ?? newIdempotencyKey(),
+      });
+      runKeyRef.current = null;
+      lastRunStatus.current = "running";
+      setLatestRun(run);
+      setQuote(null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      // 报价过期：关掉弹层让用户重走「运行整图」拿新报价。
+      if (e instanceof ApiError && e.code === "quote_stale") setQuote(null);
+      setError(message);
+      showToast(message);
+    } finally {
+      setRunBusy(false);
+    }
+  };
+
+  const cancelRun = async () => {
+    if (!latestRun || latestRun.status !== "running") return;
+    try {
+      setLatestRun(await cancelCanvasRunApi(latestRun.id));
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -439,7 +570,14 @@ export default function CanvasView() {
                 {node.kind === "gen_image" || node.kind === "gen_video" ? (
                   <GenBody
                     node={node}
-                    job={node.jobId ? jobs[node.jobId] : undefined}
+                    job={(() => {
+                      // D 包 overlay：节点显示最近一次 run 的执行产物，没有 run
+                      // 记录时回退手动运行的 node.jobId。
+                      const exec = execOf(node.id);
+                      const jid = exec?.jobId ?? node.jobId;
+                      return jid ? jobs[jid] : undefined;
+                    })()}
+                    exec={execOf(node.id)}
                     running={running.has(node.id)}
                     inputOf={inputOf(node.id)}
                     candidates={candidatesFor(node)}
@@ -487,6 +625,69 @@ export default function CanvasView() {
         </div>
       ) : null}
 
+      {doc && doc.nodes.length > 0 ? (
+        <div className="canvas-topright">
+          {latestRun?.status === "running" ? (
+            <button type="button" className="canvas-topright__btn" onClick={() => void cancelRun()}>
+              {t("canvas.runCancel")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="canvas-topright__btn"
+              disabled={runBusy}
+              onClick={() => void runAll()}
+            >
+              <IconBolt size={12} />
+              {t("canvas.runAll")}
+            </button>
+          )}
+        </div>
+      ) : null}
+
+      {quote ? (
+        <div className="canvas-quote" role="dialog" aria-label={t("canvas.quote.title")}>
+          <div className="canvas-quote__head">
+            <span className="canvas-quote__title">{t("canvas.quote.title")}</span>
+            <button
+              type="button"
+              className="canvas-quote__close"
+              aria-label={t("canvas.quote.cancel")}
+              onClick={() => setQuote(null)}
+            >
+              <IconClose size={12} />
+            </button>
+          </div>
+          <div className="canvas-quote__items">
+            {quote.items.map((item) => (
+              <div className="canvas-quote__item" key={item.nodeId}>
+                <span className="canvas-quote__item-kind">
+                  {t(`canvas.kind.${item.kind}` as Parameters<typeof t>[0])}
+                </span>
+                <span className="canvas-quote__item-summary" title={item.summary}>
+                  {item.productName ?? item.mode} · {item.summary}
+                </span>
+                <span className="canvas-quote__item-price">¥{item.priceCny.toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="canvas-quote__foot">
+            <span className="canvas-quote__note">{t("canvas.quote.note")}</span>
+            <span className="canvas-quote__total">
+              {t("canvas.quote.total")} ¥{quote.totalCny.toFixed(2)}
+            </span>
+            <button
+              type="button"
+              className="canvas-quote__confirm"
+              disabled={runBusy}
+              onClick={() => void confirmRun()}
+            >
+              {t("canvas.quote.confirm")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {error ? <p className="agent-view__error" style={{ position: "absolute", left: 24, bottom: 16 }}>{error}</p> : null}
 
       <input
@@ -503,10 +704,11 @@ export default function CanvasView() {
   );
 }
 
-/** 生成节点的正文体：提示词 + 上游选择 + 运行 + 产物预览。 */
+/** 生成节点的正文体：提示词 + 上游选择 + 运行 + 产物预览（D 包：叠加 run 执行态徽标）。 */
 function GenBody({
   node,
   job,
+  exec,
   running,
   inputOf,
   candidates,
@@ -516,6 +718,7 @@ function GenBody({
 }: {
   node: CanvasNode;
   job: JobPublic | undefined;
+  exec: CanvasNodeExecution | undefined;
   running: boolean;
   inputOf: string;
   candidates: CanvasNode[];
@@ -559,10 +762,21 @@ function GenBody({
           <IconBolt size={12} />
           {running || (status && !TERMINAL.has(status)) ? t("canvas.running") : t("canvas.run")}
         </button>
-        {status ? (
+        {exec ? (
+          <span className="canvas-node__exec" data-exec={exec.status}>
+            {t(`canvas.exec.${exec.status}` as Parameters<typeof t>[0])}
+          </span>
+        ) : status ? (
           <span className="canvas-node__state">{t(`canvas.job.${status}` as Parameters<typeof t>[0])}</span>
         ) : null}
       </div>
+      {exec?.errorCode ? (
+        <span className="canvas-node__err">
+          {EXEC_ERR_KEYS.has(exec.errorCode)
+            ? t(`canvas.err.${exec.errorCode}` as Parameters<typeof t>[0])
+            : exec.errorCode}
+        </span>
+      ) : null}
       {job?.output?.kind === "image" ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img className="canvas-node__img" src={job.output.imageUrl} alt={job.prompt} />

@@ -1,13 +1,18 @@
 import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import Busboy, { type BusboyInstance } from "@fastify/busboy";
 import { probeDurationSec } from "@/lib/ffmpeg";
 import { tmpDir } from "@/lib/jobs/store";
 import { preprocessImage } from "@/lib/media/preprocess";
-import { uploadRoleSchema, type UploadRole, type UploadSidecar } from "@/lib/jobs/schema";
+import {
+  UPLOAD_ID_RE,
+  uploadRoleSchema,
+  type UploadRole,
+  type UploadSidecar,
+} from "@/lib/jobs/schema";
 import { ProviderHttpError } from "@/lib/providers/types";
 
 /**
@@ -237,4 +242,63 @@ async function cleanupUpload(dest: string) {
     rm(dest, { force: true }),
     rm(`${dest}.json`, { force: true }),
   ]);
+}
+
+/**
+ * 读上传 sidecar 并校验归属与角色（D 包：从 `create.ts` 提出来，画布校验与
+ * `createJob` 认领共用同一段判定）。
+ *
+ * 别人的上传与「不存在」必须不可区分（plan §5.3）：message 与 code 保持一致，
+ * 使 uploadId 不能被用来探测存在性。本函数只读不动——不 move 文件、不删 sidecar。
+ */
+export async function readUploadSidecar(
+  uploadId: string,
+  expected: UploadSidecar["role"],
+  ownerId: string,
+): Promise<UploadSidecar> {
+  if (!UPLOAD_ID_RE.test(uploadId)) {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
+  }
+  const p = path.join(tmpDir(), `${uploadId}.json`);
+  let raw: UploadSidecar;
+  try {
+    raw = JSON.parse(await readFile(p, "utf8")) as UploadSidecar;
+  } catch {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
+  }
+  if (raw.uploadId !== uploadId || !UPLOAD_ID_RE.test(raw.uploadId)) {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
+  }
+  // Someone else's upload — and an ownerless one from before the user system —
+  // must be indistinguishable from a missing upload (plan §5.3): the message
+  // and code stay the same so the id cannot be probed for existence. Nothing is
+  // moved or deleted, so the real owner's file stays where it is.
+  if (raw.ownerId !== ownerId) {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
+  }
+  if (raw.role !== expected) {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件角色不匹配");
+  }
+  return raw;
+}
+
+/**
+ * 复制一份已上传的图片成新的可认领上传（D 包）。`createJob` 的 `claim()` 会 move
+ * 文件并删 sidecar——直接把画布 material 的 `uploadId` 传进去会让素材变成一次性
+ * 消耗品（第二个消费它的节点、以及同一节点的第二次运行，都会拿到 400）。画布路径
+ * 一律复制：原件留在 `data/tmp/` 里可被反复引用，复制品交给 createJob 认领。
+ */
+export async function copyUpload(
+  uploadId: string,
+  role: Exclude<UploadRole, "source_video">,
+  ownerId: string,
+): Promise<UploadSidecar> {
+  await readUploadSidecar(uploadId, role, ownerId);
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(path.join(tmpDir(), uploadId));
+  } catch {
+    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
+  }
+  return storeUploadFromBuffer(bytes, role, ownerId);
 }

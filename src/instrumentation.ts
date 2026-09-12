@@ -16,6 +16,10 @@ export async function register() {
   await tuneSharp();
   const { startJobRunner } = await import("./lib/jobs/runner");
   await startJobRunner();
+  // 画布 DAG 运行的周期泵（D 包）：非终态 run 的节点刷新与续跑全靠它，
+  // 重启后自动接管——run 文件是事实源，泵无状态。
+  const { startCanvasRunPump } = await import("./lib/canvas/dag");
+  startCanvasRunPump();
 }
 
 /**

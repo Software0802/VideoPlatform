@@ -188,9 +188,22 @@ describe("runCanvasNode", () => {
 
     const { job } = await runCanvasNode(owner, doc.id, "n_bb000002");
     expect(job.mode).toBe("image_to_video");
-    // 素材被 createJob 认领：sidecar 已从 tmp 挪走、任务记录里留着引用。
     const rec = await readJobForUser(job.id, owner);
     expect(rec?.mode).toBe("image_to_video");
+    // D 包起画布路径复制素材再交给 createJob：原 sidecar 不被 claim() 消耗，
+    // 同一份素材可以喂多个节点、也可以支撑同一节点的重复运行。
+    const { readUploadSidecar } = await import("@/lib/jobs/upload");
+    await expect(readUploadSidecar(side.uploadId, "start", owner)).resolves.toMatchObject({
+      uploadId: side.uploadId,
+    });
+    // 等这条任务终态后再跑一次同节点：素材还在，照样出 image_to_video。
+    for (let i = 0; i < 60; i += 1) {
+      const cur = await readJobForUser(job.id, owner);
+      if (!cur || ["succeeded", "failed", "expired", "canceled"].includes(cur.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const second = await runCanvasNode(owner, doc.id, "n_bb000002");
+    expect(second.job.mode).toBe("image_to_video");
   });
 
   it("runs gen_video as image_to_video off an upstream gen_image node's finished output", async () => {

@@ -258,6 +258,16 @@ flowchart TB
 - **运行** `run.ts`:`POST /api/canvases/:id/nodes/:nodeId/run` 把 `gen_*` 节点变成一次真实 `createJob`——同一套准入、计价、预留与限流,不另起炉灶。提示词 = 连入 text 节点内容(按画布顺序)+ 节点自身 prompt;`gen_video` 有图片输入(material 的 `uploadId`,或上游 `gen_image` 节点已成功的 `outputs/image.jpg` 复制成的 `start` 上传——与 `/api/uploads/from-job` 同链路)即 `image_to_video`,否则 `text_to_video`;`gen_image` 恒 `text_to_image`。幂等键 `canvas:<canvasId>:<nodeId>:<runSeq>`,runSeq 在任务写回后才自增——「建了任务没写回」之间崩溃,重试按同 seq 命中映射;节点已有未终态任务时直接交回,重复点击不重建。
 - **API**:`GET/POST /api/canvases`、`GET/PATCH/DELETE /api/canvases/:id`、`POST /api/canvases/:id/nodes/:nodeId/run`;另有 `GET /api/uploads/:id` 读本人上传素材(owner 校验 + `private, no-cache`,素材节点刷新重显用)。
 - **前端** `CanvasView.tsx`:右键菜单加四类节点、拖拽定位、文本/提示词防抖 600ms 落盘、素材上传走 `POST /api/uploads`、生成节点轮询 `jobId` 恢复产物;冲突时 toast + 自动刷新到最新版本。
+- **整图运行(D 包,2026-09-12,`dag.ts` + `run-store.ts` + `graph.ts`)**:「运行整图」= 一次报价、一次确认、按依赖跑完全部生成节点。
+  - `CanvasRun` 落 `data/canvas-runs/<userId>/<runId>.json`:冻结 `graphSnapshot` + `documentRevision` + 逐节点报价快照(`quote.items[].priceCny` + `basisHash`)+ `nodeExecutions`(waiting_dependencies/ready/running/succeeded/failed/blocked,各带 `jobId`/`errorCode`)。**run 执行不回写画布文档**——后台写会与用户编辑抢 revision;产物由前端拿最新 run 的执行位 overlay,没有 run 时回退 `node.jobId`。
+  - 报价不落盘:`POST /api/canvases/:id/quotes` 对(文档 revision + 归一参数 + 价目表)确定性重算出逐节点明细 + `quote.hash`;`POST /api/canvas-runs` 带 `quoteHash` 重算比对,图/价变了 409 `quote_stale`。
+  - 静态校验(`validateGraph`):环、容量(节点 ≤50/边 ≤100)、生成节点提示词来源(自身或连入 text)、material 归属(`readUploadSidecar` 只查不消耗);任一不过不产生任何付费提交。
+  - sweep 执行器:周期泵(3s)+ 创建/取消即踢,重启后按非终态 run 目录扫描续跑,泵无状态、run 文件是事实源。每轮:从 `job.json` 刷新在途节点 → 依赖失败/被拦传播 `blocked` → 依赖全成功的节点经 `createJob` 提交(同一套准入/计价/预留/幂等,子任务键 `run:<runId>:<nodeId>:<attempt>`)。`queue_full` 退避 15s 再试,其余准入拒绝(如 402 余额不足)节点 `failed`。run 终态:`succeeded`/`partially_failed`/`failed`/`canceled`。
+  - 两道价关:创建时比 `quoteHash`;执行器提交节点前再按报价快照比对归一价,不一致即节点 `failed`/`price_changed` + 下游 blocked——不按新价静默扣款。
+  - 崩溃窗口:提交前先 `lookupIdempotency(ownerId, key)` 查回既有任务接管,不重新解析输入(素材复制每次产生新 uploadId,重建请求只会撞 `idempotency_conflict`)。单节点 `runCanvasNode` 同一修法。
+  - 素材不消耗:`createJob` 的 `claim()` 会 move 文件并删 sidecar,画布路径(material 与上游产物)一律 `copyUpload`/`storeUploadFromBuffer` 复制成新上传再交出——一份素材可喂多个节点、可支撑重复运行。
+  - 取消是持久化意图:`POST /api/canvas-runs/:id/cancel` 只落 `cancelRequestedAt`;泵见它即停提交新节点(未提交的标 `blocked`),在途子任务逐个走 `cancelOwnedJob`(R09 checkpoint 语义不变),全部终态后 run 才落 `canceled`。
+  - 前端:顶栏「运行整图」→ 报价弹层(逐节点价 + 总价 + 逐节点扣费说明)→ 确认建 run;节点徽标显示执行态,3s 轮询 `GET /api/canvas-runs/:id`,运行中可「取消运行」。
 
 ## 3. Job 生命周期
 
@@ -305,6 +315,11 @@ flowchart TB
 | `POST /api/auth/logout` | 清除会话 Cookie,并递增 `sessionEpoch`(2026-09-06 深夜起,与改密同一套失效机制) |
 | `POST /api/auth/password`(2026-09-06 深夜) | 需校验旧密码;成功后 `sessionEpoch+1`,本机当次会话不掉线,其余会话失效 |
 | `GET /api/me` | 当前用户 email + `balance:{balanceCny,reservedCny,availableCny}` + `prices`(售价表)+ `quota:{limit,used,inFlight,remaining,resetsAt,blocked}`(§2d、§12.3) |
+| `POST /api/canvases/:id/quotes`(D 包) | 整图确定性报价:`{canvasId, revision, quote:{hash,totalCny,items[]}}`;不落盘,图非法/越权素材 400,非本人 404 |
+| `GET /api/canvases/:id/runs`(D 包) | 该画布的 run 列表(倒序),前端取最新一次做产物 overlay |
+| `POST /api/canvas-runs`(D 包) | `{canvasId, quoteHash, idempotencyKey}`;同 key 同参重放交回原 run(200),异参 409 `idempotency_conflict`,报价过期 409 `quote_stale` |
+| `GET /api/canvas-runs/:id`(D 包) | run 详情(轮询真相);非本人 404 |
+| `POST /api/canvas-runs/:id/cancel`(D 包) | 落 `cancelRequestedAt`:停提交新节点、在途子任务走 job cancel,全终态后 run → `canceled`;终态 run 幂等交回 |
 
 `src/proxy.ts` 对全部 `/api/*`(除 register/login/logout/health)校验 HMAC 签名会话 Cookie,零 I/O 验签,校验通过后网关层再读一次 `user.json` 确认 `disabled` 不为真;未登录访问非 `/api/*` 页面由页面本身(`/`)服务端 307 到 `/login`。旧的 `LUMEN_ACCESS_TOKEN` / `POST/DELETE /api/auth/session` 已删除,详见 §12。
 

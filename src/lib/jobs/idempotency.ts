@@ -77,7 +77,15 @@ async function readMapping(ownerId: string, key: string): Promise<Entry | null> 
 export function idempotencyRequestHash(body: Record<string, unknown>): string {
   const rest = { ...body };
   delete rest.idempotencyKey;
-  return createHash("sha256").update(stableStringify(rest)).digest("hex");
+  return stableJsonHash(rest);
+}
+
+/**
+ * 任意值的正则哈希（D 包：画布报价 hash 与幂等 requestHash 共用同一种
+ * 「键名排序后序列化」口径，避免两处各自实现再漂移）。
+ */
+export function stableJsonHash(value: unknown): string {
+  return createHash("sha256").update(stableStringify(value)).digest("hex");
 }
 
 function stableStringify(value: unknown): string {

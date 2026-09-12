@@ -41,9 +41,13 @@ async function mintInvite(dataDir: string): Promise<{ code: string; file: string
  */
 async function fundAccount(dataDir: string): Promise<void> {
   const script = path.resolve(__dirname, "../scripts/grant-balance.mjs");
-  await promisify(execFile)(process.execPath, [script, EMAIL, "1000", "--note", "playwright e2e"], {
-    env: { ...process.env, DATA_DIR: dataDir },
-  });
+  // R01/R03 起管理 CLI 要求 --offline 声明；这里是刚注册的新账号、没有任何
+  // 在途任务，并发写窗口不存在。--ref 让 setup 重跑同一账号时不重复入账。
+  await promisify(execFile)(
+    process.execPath,
+    [script, EMAIL, "1000", "--offline", "--ref", `e2e-fund:${EMAIL}`, "--note", "playwright e2e"],
+    { env: { ...process.env, DATA_DIR: dataDir } },
+  );
 }
 
 async function login(request: APIRequestContext): Promise<boolean> {

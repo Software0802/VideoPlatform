@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { access, cp, mkdir, readFile, rename, rm } from "node:fs/promises";
+import { access, cp, mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { estimateCostUsd, estimateHarnessCostUsd, type ImagePricingHint } from "@/lib/cost";
 import { reserveJobFunds } from "@/lib/billing/admission";
@@ -32,6 +32,7 @@ import { assertCreateJobFields } from "@/lib/jobs/request-validation";
 import { resolveLocalOutput } from "@/lib/jobs/local-output";
 import { purgedBlock, retryBlock } from "@/lib/jobs/retry-guard";
 import { readJob, tmpDir, toPublic, writeJob } from "@/lib/jobs/store";
+import { readUploadSidecar } from "@/lib/jobs/upload";
 import { isHarnessDuration, isImageMode } from "@/lib/providers/grok/mode-matrix";
 import { imageConfigFor } from "@/lib/providers/openai-image/config";
 import {
@@ -509,30 +510,9 @@ async function loadSidecar(
   expected: UploadSidecar["role"],
   ownerId: string,
 ): Promise<UploadSidecar> {
-  if (!UPLOAD_ID_RE.test(uploadId)) {
-    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
-  }
-  const p = path.join(tmpDir(), `${uploadId}.json`);
-  let raw: UploadSidecar;
-  try {
-    raw = JSON.parse(await readFile(p, "utf8")) as UploadSidecar;
-  } catch {
-    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
-  }
-  if (raw.uploadId !== uploadId || !UPLOAD_ID_RE.test(raw.uploadId)) {
-    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
-  }
-  // Someone else's upload — and an ownerless one from before the user system —
-  // must be indistinguishable from a missing upload (plan §5.3): the message
-  // and code stay the same so the id cannot be probed for existence. Nothing is
-  // moved or deleted, so the real owner's file stays where it is.
-  if (raw.ownerId !== ownerId) {
-    throw new ProviderHttpError(400, "invalid_argument", "上传文件不存在或已过期");
-  }
-  if (raw.role !== expected) {
-    throw new ProviderHttpError(400, "invalid_argument", "上传文件角色不匹配");
-  }
-  return raw;
+  // 实现挪到 `upload.ts` 的 `readUploadSidecar`（D 包）：画布校验素材归属时
+  // 需要同一段「只读不消耗」的判定，不复制第二份以免口径漂移。
+  return readUploadSidecar(uploadId, expected, ownerId);
 }
 
 async function claim(jobId: string, side: UploadSidecar, destRel: string) {
