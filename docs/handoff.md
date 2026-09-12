@@ -8,7 +8,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 基线 | `main` @ `24bc5c2`（R01–R09 + A–C 切片 + D 全部：画布 DAG 运行切片一 `b91df6c`——`data/canvas-runs/`、确定性报价 `quoteHash`、sweep 执行器、持久化取消意图；切片二 `d38dc05`——run 级预算预留/审批门/产物复用；另有部署修复 `b6a220f`/`6a46154`/`24bc5c2`）。**已部署生产 2026-09-12**（含 4 个存量账号资金迁移）；本地领先 origin/main 8 个提交，未推送 |
+| 基线 | `main` @ `04efdce`（R01–R09 + A–C 切片 + D 全部：画布 DAG 运行切片一 `b91df6c`——`data/canvas-runs/`、确定性报价 `quoteHash`、sweep 执行器、持久化取消意图；切片二 `d38dc05`——run 级预算预留/审批门/产物复用；部署修复 `b6a220f`/`6a46154`/`24bc5c2`；`04efdce` canvas/agent 三个 store 统一走 `writeJsonAtomic`、画布页积分即时刷新、顶栏加载前显示 `—`）。**已部署生产 2026-09-12**（`04efdce`，含 4 个存量账号资金迁移）；本地领先 origin/main 7 个提交，未推送 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
 | 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；**未配 `XAI_API_KEY`**，grok 只作为路由兜底不会被选中 |
