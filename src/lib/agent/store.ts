@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/lib/env";
 import { log } from "@/lib/log";
 import { ProviderHttpError } from "@/lib/providers/types";
+import { writeJsonAtomic } from "@/lib/storage/atomic-json";
 import { assertUserId } from "@/lib/users/store";
 import {
   AGENT_SESSION_ID_RE,
@@ -95,11 +96,7 @@ export async function readSession(ownerId: string, sessionId: string): Promise<A
 
 /** 原子写：先写临时文件再 rename，半截 JSON 不会成为某个人的会话。 */
 export async function writeSession(session: AgentSession): Promise<AgentSession> {
-  const file = agentSessionPath(session.ownerId, session.id);
-  await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
-  await writeFile(tmp, JSON.stringify(session, null, 2), "utf8");
-  await rename(tmp, file);
+  await writeJsonAtomic(agentSessionPath(session.ownerId, session.id), session);
   return session;
 }
 

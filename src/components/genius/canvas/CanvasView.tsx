@@ -100,7 +100,7 @@ function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, clo
  */
 export default function CanvasView() {
   const t = useT();
-  const { showToast } = useShell();
+  const { showToast, refreshMe } = useShell();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -222,16 +222,28 @@ export default function CanvasView() {
     const prev = lastRunStatus.current;
     lastRunStatus.current = latestRun.status;
     if (prev === "running" && latestRun.status !== "running") {
-      const failed = latestRun.nodeExecutions.filter((e) => e.status === "failed").length;
+      const unfinished = latestRun.nodeExecutions.filter(
+        (e) => e.status === "failed" || e.status === "blocked",
+      ).length;
       const key =
         latestRun.status === "partially_failed" ? "canvas.run.toast.partially_failed" : `canvas.run.toast.${latestRun.status}`;
       showToast(
         latestRun.status === "partially_failed"
-          ? t(key as Parameters<typeof t>[0], { n: failed })
+          ? t(key as Parameters<typeof t>[0], { n: unfinished })
           : t(key as Parameters<typeof t>[0]),
       );
     }
   }, [latestRun, showToast, t]);
+
+  const execSignature = (latestRun?.nodeExecutions ?? [])
+    .map((e) => `${e.nodeId}:${e.status}`)
+    .join(",");
+  useEffect(() => {
+    if (!latestRun) return;
+    refreshMe();
+    // 执行位状态每变一次（提交/成功/失败/驳回/取消）余额或在途预留都会变，顶栏读数跟着重拉
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestRun?.id, latestRun?.status, execSignature]);
 
   /* 生成节点轮询：有 jobId 未终态的节点每 3s 问一次（含 run 执行位的 jobId）。 */
   const execOf = useCallback(
@@ -344,6 +356,7 @@ export default function CanvasView() {
       const { canvas, job } = await runCanvasNodeApi(fresh.id, nodeId);
       setDoc(canvas);
       setJobs((map) => ({ ...map, [job.id]: job }));
+      refreshMe();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(message);

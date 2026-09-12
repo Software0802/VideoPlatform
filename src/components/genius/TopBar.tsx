@@ -76,9 +76,12 @@ export function TopBar({ view }: { view: ShellView }) {
             {shortName(email)}
           </span>
           <span className="top__sep" aria-hidden="true" />
-          <span className="top__credits" aria-label={t("common.creditsN", { n: credits })}>
+          <span
+            className="top__credits"
+            aria-label={credits === null ? undefined : t("common.creditsN", { n: credits })}
+          >
             <IconBolt size={12} />
-            {credits}
+            {credits ?? "—"}
           </span>
           <span className="top__plan">{t("shell.top.plan.basic")}</span>
         </div>

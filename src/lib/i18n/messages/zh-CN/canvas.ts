@@ -105,7 +105,7 @@ export const canvas = {
   "canvas.run.approve": "批准",
   "canvas.run.reject": "驳回",
   "canvas.run.toast.succeeded": "整图运行完成",
-  "canvas.run.toast.partially_failed": "部分节点失败（{n} 个）",
+  "canvas.run.toast.partially_failed": "部分节点未完成（{n} 个）",
   "canvas.run.toast.failed": "整图运行失败",
   "canvas.run.toast.canceled": "已取消",
   "canvas.err.price_changed": "价格已变动，请重新报价后再运行",

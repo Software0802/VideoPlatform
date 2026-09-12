@@ -10,5 +10,5 @@ import { useShell } from "@/components/genius/ShellContext";
  */
 export default function SubscriptionPage() {
   const { credits } = useShell();
-  return <SubscriptionView credits={credits} />;
+  return <SubscriptionView credits={credits ?? 0} />;
 }

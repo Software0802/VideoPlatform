@@ -190,7 +190,7 @@ type Shell = {
   caps: ShellCaps;
   me: MePublic | null;
   email: string;
-  credits: number;
+  credits: number | null;
   refreshMe: () => void;
   signOut: () => void;
   signingOut: boolean;
@@ -546,7 +546,7 @@ export function ShellProvider({ caps, children }: { caps: ShellCaps; children: R
   const balance = me?.balance;
   const quota = me?.quota;
   const quotaExhausted = !!quota && quota.remaining <= 0 && tab === "image";
-  const credits = balance ? creditsOf(balance.availableCny) : 0;
+  const credits = balance ? creditsOf(balance.availableCny) : null;
 
   const signOut = useCallback(() => {
     if (signingOut) return;

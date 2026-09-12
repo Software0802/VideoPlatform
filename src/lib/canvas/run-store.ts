@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/lib/env";
 import { log } from "@/lib/log";
@@ -10,6 +10,7 @@ import {
 } from "@/lib/canvas/schema";
 import type { JobReservation } from "@/lib/jobs/schema";
 import { ProviderHttpError } from "@/lib/providers/types";
+import { writeJsonAtomic } from "@/lib/storage/atomic-json";
 import { assertUserId } from "@/lib/users/store";
 
 /**
@@ -74,13 +75,9 @@ export async function readCanvasRun(ownerId: string, runId: string): Promise<Can
   return parsed.data;
 }
 
-/** 原子写：先临时文件再 rename。 */
+/** 原子写：先临时文件再 rename（含 Windows EPERM/EBUSY 重试，见 atomic-json）。 */
 export async function writeCanvasRun(run: CanvasRun): Promise<CanvasRun> {
-  const file = canvasRunPath(run.ownerId, run.id);
-  await mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
-  await writeFile(tmp, JSON.stringify(run, null, 2), "utf8");
-  await rename(tmp, file);
+  await writeJsonAtomic(canvasRunPath(run.ownerId, run.id), run);
   return run;
 }
 

@@ -99,7 +99,7 @@ export const canvas: Record<keyof typeof zh, string> = {
   "canvas.run.approve": "Approve",
   "canvas.run.reject": "Reject",
   "canvas.run.toast.succeeded": "Run finished",
-  "canvas.run.toast.partially_failed": "{n} node(s) failed",
+  "canvas.run.toast.partially_failed": "{n} node(s) did not finish",
   "canvas.run.toast.failed": "Run failed",
   "canvas.run.toast.canceled": "Canceled",
   "canvas.err.price_changed": "Price changed; request a fresh quote before running",
