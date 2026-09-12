@@ -168,12 +168,15 @@ export type RunHeldFunds = {
   remainingCny: number;
   remainingMemberCny: number;
   /**
-   * 已转移、但份额锚定的 job 在索引里不存在的部分——job 没落盘就不能由
-   * `job.reservation` 计，由 transfer 记录兜底：宁可多占不超卖。
+   * 已转移、但份额锚定的 job 在索引里不存在、且对应执行位仍非终态的部分——
+   * job 没落盘就不能由 `job.reservation` 计，由 transfer 记录兜底：宁可多占不超卖。
    */
   transferCny: number;
   transferMemberCny: number;
 };
+
+/** 执行位终态集合：份额已随子任务生命周期结算/退回，不再计 run 占用。 */
+const EXEC_SETTLED = new Set(["succeeded", "failed", "blocked", "canceled"]);
 
 /**
  * 资金口径的严格读：与列表用的容错读相反——目录不存在（ENOENT）算「没有 run」，
@@ -219,6 +222,13 @@ async function listCanvasRunsStrict(ownerId: string): Promise<CanvasRun[]> {
  * 该用户非终态 run 当前占用的资金（D 切片二）。`jobEntries` 必须是该用户的
  * **全量**任务索引（不能只传非终态——transfer 份额是否还计占用，取决于锚定的
  * job 是否存在，终态 job 表示份额已结算/释放）。
+ *
+ * transfer 份额的判定（transfers 以 nodeId 为 key）：
+ * - 锚定 jobId 在索引里 → 份额由 `job.reservation` 计，这里跳过；
+ * - jobId 不在索引、且该节点执行位**终态** → 份额已随子任务结算/退回
+ *   （典型场景：用户删除了已终态子任务，索引移除但钱已结清），不再占用；
+ * - jobId 不在索引、且执行位**非终态或缺失** → job 没落盘是崩溃孤儿，
+ *   份额照旧计占用（宁可多占不超卖）。
  */
 export async function runHeldFunds(
   ownerId: string,
@@ -233,8 +243,10 @@ export async function runHeldFunds(
     if (run.status !== "running" || !run.reservation) continue;
     remainingCny += run.reservation.remainingCny;
     remainingMemberCny += run.reservation.remainingMemberCny;
-    for (const t of Object.values(run.reservation.transfers)) {
+    for (const [nodeId, t] of Object.entries(run.reservation.transfers)) {
       if (jobIds.has(t.jobId)) continue;
+      const exec = run.nodeExecutions.find((e) => e.nodeId === nodeId);
+      if (exec && EXEC_SETTLED.has(exec.status)) continue;
       transferCny += t.amountCny;
       transferMemberCny += t.memberCny;
     }

@@ -954,3 +954,256 @@ describe("审批门", () => {
     });
   }, 30000);
 });
+
+/* ---------- 审查修复回归（2026-09-12 p4 审查报告 #1/#2/#3/#5/#11） ---------- */
+
+describe("审查修复回归 2026-09-12", () => {
+  it("F1: a terminal child's transfer does not come back as run-held after its job is deleted", async () => {
+    const { deleteJobById } = await import("@/lib/jobs/delete");
+    const owner = "usr_0000000000000610";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "删除终态子任务");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [
+        { id: "n_06100001", kind: "gen_image", x: 0, y: 0, prompt: "甲" },
+        { id: "n_06100002", kind: "gen_image", x: 300, y: 0, prompt: "乙" },
+      ],
+    });
+    const quote = await computeQuote(owner, patched!);
+    // 先实跑一张 run，只为拿到一个「已终态、在索引里」的真实子任务 jobA。
+    const { run: seeded } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote.hash,
+      idempotencyKey: "test-run-key-00000040",
+    });
+    const seededFinal = await runToTerminal(owner, seeded.id);
+    const jobA = seededFinal.nodeExecutions.find((e) => e.nodeId === "n_06100001")?.jobId;
+    expect(jobA).toBeTruthy();
+
+    // 手搓一张仍在跑的 run：A 执行位已终态、份额锚定 jobA；B 在途、份额锚定
+    // 一个从未落盘的 jobId（转移已写、任务没建出来的崩溃孤儿）。
+    const orphanJobId = "job_0000000000ff";
+    const now = new Date().toISOString();
+    const run: CanvasRun = {
+      schemaVersion: 1,
+      id: newCanvasRunId(),
+      ownerId: owner,
+      canvasId: doc.id,
+      documentRevision: patched!.revision,
+      graphSnapshot: { nodes: patched!.nodes, edges: patched!.edges },
+      quote,
+      reservation: {
+        amountCny: 10,
+        memberCny: 0,
+        purchasedCny: 10,
+        remainingCny: 0,
+        remainingMemberCny: 0,
+        remainingPurchasedCny: 0,
+        transfers: {
+          n_06100001: { amountCny: 7, memberCny: 0, purchasedCny: 7, jobId: jobA! },
+          n_06100002: { amountCny: 3, memberCny: 0, purchasedCny: 3, jobId: orphanJobId },
+        },
+        createdAt: now,
+      },
+      status: "running",
+      nodeExecutions: [
+        { nodeId: "n_06100001", attempt: 1, status: "succeeded", jobId: jobA! },
+        { nodeId: "n_06100002", attempt: 1, status: "running", jobId: orphanJobId },
+      ],
+      createdAt: now,
+      updatedAt: now,
+    };
+    await writeCanvasRun(run);
+
+    // 用户删掉已终态的 jobA：任务目录与索引项一起消失。它的份额早已随任务
+    // 生命周期结算，不允许因为「jobId 不在索引」复活成 run 占用。
+    await deleteJobById(jobA!);
+    const entries = await listJobIndex({ ownerId: owner });
+    expect(entries.some((e) => e.id === jobA)).toBe(false);
+
+    const held = await runHeldFunds(owner, entries);
+    // 只剩 B 这笔真孤儿（job 没落盘且执行位还在途）继续计占用。
+    expect(held.transferCny).toBeCloseTo(3, 2);
+    expect(held.remainingCny).toBeCloseTo(0, 2);
+  }, 30000);
+
+  it("F2: idempotent adoption wins over the price check (crash window + price drift)", async () => {
+    const owner = "usr_0000000000000611";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "崩溃窗口价变");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_06110001", kind: "gen_image", x: 0, y: 0, prompt: "接管+价变" }],
+    });
+    const quote = await computeQuote(owner, patched!);
+    const { run } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote.hash,
+      idempotencyKey: "test-run-key-00000041",
+    });
+
+    // 等执行位拿到 jobId（建任务的异步 kick 落地）。
+    let observed = await readCanvasRun(owner, run.id);
+    for (let i = 0; i < 40 && !observed?.nodeExecutions[0]?.jobId; i += 1) {
+      await sleep(200);
+      observed = await readCanvasRun(owner, run.id);
+    }
+    const jobId = observed?.nodeExecutions[0]?.jobId;
+    expect(jobId).toBeTruthy();
+
+    // 崩溃窗口 × 价变叠加：job 已建出但 run 没写回 jobId，同时报价快照与
+    // 当前归一价已不一致。接管必须先于比价——job 存在说明价在 carve 份额
+    // 那一刻就锁定了，比价只会把照常执行的份额误判成 price_changed。
+    await updateCanvasRun(owner, run.id, (r) => ({
+      ...r,
+      quote: {
+        ...r.quote,
+        items: r.quote.items.map((i) => ({ ...i, priceCny: i.priceCny + 100 })),
+      },
+      nodeExecutions: r.nodeExecutions.map((e) => ({
+        ...e,
+        jobId: undefined,
+        status: "ready" as const,
+      })),
+    }));
+
+    await sweepCanvasRun(owner, run.id);
+    const adopted = await readCanvasRun(owner, run.id);
+    // 幂等键查回同一条任务：jobId 接管、状态跟随 job，绝不能判 price_changed。
+    expect(adopted?.nodeExecutions[0]?.jobId).toBe(jobId);
+    expect(adopted?.nodeExecutions[0]?.status).not.toBe("failed");
+    expect(adopted?.nodeExecutions[0]?.errorCode).not.toBe("price_changed");
+
+    const final = await runToTerminal(owner, run.id);
+    expect(final.status).toBe("succeeded");
+  }, 30000);
+
+  it("F3: 409 quote_stale when the adopted job is deleted before the run is created", async () => {
+    const { deleteJobById } = await import("@/lib/jobs/delete");
+    const owner = "usr_0000000000000612";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "采纳任务被删");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_06120001", kind: "gen_image", x: 0, y: 0, prompt: "同样的图" }],
+    });
+    const quote1 = await computeQuote(owner, patched!);
+    const { run: run1 } = await createCanvasRun(owner, {
+      canvasId: doc.id,
+      quoteHash: quote1.hash,
+      idempotencyKey: "test-run-key-00000042",
+    });
+    const final1 = await runToTerminal(owner, run1.id);
+    const jobIdA = final1.nodeExecutions[0]?.jobId;
+    expect(jobIdA).toBeTruthy();
+
+    // 报价采纳历史产物 J（¥0 复用条目）。
+    const doc2 = (await readCanvas(owner, doc.id))!;
+    const reuse = await resolveReuseForQuote(owner, doc2, new Set());
+    const quote2 = await computeQuote(owner, doc2, { reuse });
+    expect(quote2.items[0]).toMatchObject({ reused: true, adoptedJobId: jobIdA });
+
+    // 报价与建 run 的间隙里 J 被用户整个删掉（TOCTOU 窗口）。
+    // 注意覆盖范围：删除发生在 createCanvasRun 调用之前，所以它重算的 reuse 已经
+    // 没有 J，命中的是外层 `quote.hash !== body.quoteHash` 校验；createCanvasRun
+    // 内部「computeQuote 之后、admission 锁内」那段采纳复核针对的是同一次调用里
+    // 的更窄窗口，没有注入点无法从外部触发，这条用例不证明那段代码——它只钉住
+    // 对外可观察的结果：采纳产物消失后建 run 必须 409 quote_stale 且不留 run 文件。
+    await deleteJobById(jobIdA!);
+
+    await expect(
+      createCanvasRun(owner, {
+        canvasId: doc.id,
+        quoteHash: quote2.hash,
+        idempotencyKey: "test-run-key-00000043",
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "quote_stale" });
+    // 失败关闭：不留下半个 run。
+    expect(await listCanvasRuns(owner)).toHaveLength(1);
+  }, 30000);
+
+  it("F5: approving after the cancel intent landed is 409 invalid_state and writes no decision", async () => {
+    const owner = "usr_0000000000000613";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "取消后审批");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_06130001", kind: "gen_image", x: 0, y: 0, prompt: "图" }],
+    });
+    const quote = await computeQuote(owner, patched!);
+    const now = new Date().toISOString();
+    const run: CanvasRun = {
+      schemaVersion: 1,
+      id: newCanvasRunId(),
+      ownerId: owner,
+      canvasId: doc.id,
+      documentRevision: patched!.revision,
+      graphSnapshot: { nodes: patched!.nodes, edges: patched!.edges },
+      quote,
+      gatedNodeIds: ["n_06130001"],
+      status: "running",
+      nodeExecutions: [{ nodeId: "n_06130001", attempt: 1, status: "awaiting_approval" }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    await writeCanvasRun(run);
+
+    // 只落「取消意图」本身、不起泵——cancelCanvasRun 会立刻 kick 一轮 sweep，
+    // 那轮先把执行位收敛成 blocked/canceled，就测不到「仍 awaiting_approval
+    // 时撞上已持久化的取消意图」这个精确时序了。
+    await updateCanvasRun(owner, run.id, (r) => ({
+      ...r,
+      cancelRequestedAt: new Date().toISOString(),
+    }));
+
+    await expect(
+      decideCanvasRunApproval(owner, run.id, {
+        nodeId: "n_06130001",
+        decision: "approve",
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "invalid_state" });
+
+    const after = await readCanvasRun(owner, run.id);
+    expect(after?.nodeExecutions[0]?.status).toBe("awaiting_approval");
+    expect(after?.nodeExecutions[0]?.approval).toBeUndefined();
+  }, 30000);
+
+  it("F11: a missing quote snapshot entry fails closed with internal_error — no job is created", async () => {
+    const owner = "usr_0000000000000614";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "报价快照缺项");
+    const patched = await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [{ id: "n_06140001", kind: "gen_image", x: 0, y: 0, prompt: "图" }],
+    });
+    const quote = await computeQuote(owner, patched!);
+    const now = new Date().toISOString();
+    // schema 合法但残缺的 run：quote.items 里偏偏没有这个节点的条目——
+    // 「报的价 = 会扣的价」自检失效时必须失败关闭，不能放行去建任务。
+    const run: CanvasRun = {
+      schemaVersion: 1,
+      id: newCanvasRunId(),
+      ownerId: owner,
+      canvasId: doc.id,
+      documentRevision: patched!.revision,
+      graphSnapshot: { nodes: patched!.nodes, edges: patched!.edges },
+      quote: { ...quote, items: [] },
+      status: "running",
+      nodeExecutions: [{ nodeId: "n_06140001", attempt: 1, status: "ready" }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    await writeCanvasRun(run);
+
+    await sweepCanvasRun(owner, run.id);
+    const after = await readCanvasRun(owner, run.id);
+    expect(after?.status).toBe("failed");
+    expect(after?.nodeExecutions[0]).toMatchObject({
+      status: "failed",
+      errorCode: "internal_error",
+    });
+    expect(after?.nodeExecutions[0]?.jobId).toBeUndefined();
+    expect(await listJobIndex({ ownerId: owner })).toHaveLength(0);
+  }, 30000);
+});

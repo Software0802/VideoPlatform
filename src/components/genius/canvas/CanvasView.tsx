@@ -134,6 +134,12 @@ export default function CanvasView() {
   useDismiss(quote !== null, quoteRef, () => setQuote(null));
 
   /* 载入：最新一张画布，没有就建一张；再拉它的最新一次 run 做产物 overlay。 */
+  // `t` 随语言切换换引用；载入 effect 若依赖它，切语言会整份重拉画布并清掉防抖中的
+  // 未落盘编辑。错误文案只在失败那一刻取当前 `t`，走 ref，effect 只跑一次。
+  const tRef = useRef(t);
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -146,14 +152,14 @@ export default function CanvasView() {
         const runs = await fetchCanvasRuns(next.id).catch(() => []);
         if (alive && runs[0]) setLatestRun(runs[0]);
       } catch (e) {
-        if (alive) setError(errorText(t, e));
+        if (alive) setError(errorText(tRef.current, e));
       }
     })();
     return () => {
       alive = false;
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [t]);
+  }, []);
 
   /* fit：作者坐标 900×620 缩放进视口。 */
   useEffect(() => {
@@ -212,9 +218,12 @@ export default function CanvasView() {
   useEffect(() => {
     if (!latestRun || latestRun.status !== "running") return;
     const timer = setInterval(() => {
-      void fetchCanvasRun(latestRun.id).then((run) => {
-        if (run) setLatestRun(run);
-      });
+      // 轮询的 5xx/断网按「这拍跳过」吞掉，下拍再来；401 已由 parseAuthed 整页跳登录。
+      void fetchCanvasRun(latestRun.id)
+        .then((run) => {
+          if (run) setLatestRun(run);
+        })
+        .catch(() => {});
     }, POLL_MS);
     return () => clearInterval(timer);
     // 只按「哪张 run、是否还在跑」重建定时器；run 对象内容刷新不该重启轮询。
@@ -263,9 +272,12 @@ export default function CanvasView() {
     if (!pendingJobIds.length) return;
     const timer = setInterval(() => {
       for (const id of pendingJobIds) {
-        void fetchJob(id).then((job) => {
-          if (job) setJobs((map) => ({ ...map, [id]: job }));
-        });
+        // 同上：轮询失败吞掉等下拍，401 由 parseAuthed 跳登录。
+        void fetchJob(id)
+          .then((job) => {
+            if (job) setJobs((map) => ({ ...map, [id]: job }));
+          })
+          .catch(() => {});
       }
     }, POLL_MS);
     return () => clearInterval(timer);
@@ -280,9 +292,12 @@ export default function CanvasView() {
     ];
     for (const id of ids) {
       if (id && !jobs[id]) {
-        void fetchJob(id).then((job) => {
-          if (job) setJobs((map) => ({ ...map, [id]: job }));
-        });
+        // 同上：失败吞掉——这是轮询的补拉，下一拍还会再来；401 由 parseAuthed 跳登录。
+        void fetchJob(id)
+          .then((job) => {
+            if (job) setJobs((map) => ({ ...map, [id]: job }));
+          })
+          .catch(() => {});
       }
     }
   }, [doc, jobs, latestRun]);

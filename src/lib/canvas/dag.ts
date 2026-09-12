@@ -219,6 +219,19 @@ export async function createCanvasRun(
     if (!fresh || fresh.revision !== doc.revision) {
       throw new ProviderHttpError(409, "quote_stale", "画布已修改，请重新获取报价");
     }
+    // 采纳复核（TOCTOU）：报价 → 建 run 的间隙里被采纳的历史产物可能已被
+    // 用户删除或留存清理——任一失效即 409，不能带着引用空气产物的
+    // `succeeded + reused` 执行位开跑（下游会随后 input_missing）。
+    for (const decision of reuse.values()) {
+      if (decision === "purged") continue;
+      if (!(await jobOutputUsable(ownerId, decision.jobId))) {
+        throw new ProviderHttpError(
+          409,
+          "quote_stale",
+          "报价引用的历史产物已不可用，请重新获取报价",
+        );
+      }
+    }
     // 总价冻结：分池口径与 createJob 的 reserveJobFunds 完全相同——建 run
     // 成功 = 全程钱够；不足即 402，run 文件不留痕。
     const hold = await reserveJobFunds(ownerId, quote.totalCny);
@@ -272,6 +285,11 @@ export async function decideCanvasRunApproval(
   body: CanvasRunApprovalBody,
 ): Promise<CanvasRun> {
   const run = await updateCanvasRun(ownerId, runId, (r) => {
+    // 已请求取消的 run 不再接受审批——批了也会被下一轮 sweep 收敛成
+    // blocked，只留下一条永不生效的批准记录。
+    if (r.cancelRequestedAt) {
+      throw new ProviderHttpError(409, "invalid_state", "运行已请求取消，不能再审批");
+    }
     const exec = r.nodeExecutions.find((e) => e.nodeId === body.nodeId);
     if (!exec) throw new ProviderHttpError(404, "not_found", "节点不在这次运行里");
     const want = body.decision === "approve" ? "approved" : "rejected";
@@ -477,27 +495,11 @@ async function sweepOnce(run: CanvasRun): Promise<CanvasRun> {
         continue;
       }
 
-      const node = graph.nodes.find((n) => n.id === exec.nodeId)!;
-      const quoted = run.quote.items.find((i) => i.nodeId === exec.nodeId);
-      // 成交价校验：归一价与报价快照不一致就停这条节点，不按新价静默扣款。
-      try {
-        const plan = planNodeJob(graph, node);
-        if (quoted && plan.priceCny !== quoted.priceCny) {
-          Object.assign(exec, { status: "failed", errorCode: "price_changed", finishedAt: now });
-          continue;
-        }
-      } catch (e) {
-        Object.assign(exec, {
-          status: "failed",
-          errorCode: e instanceof ProviderHttpError ? e.code : "internal_error",
-          finishedAt: now,
-        });
-        continue;
-      }
-
       const key = `run:${run.id}:${exec.nodeId}:${exec.attempt}`;
       // 崩溃窗口：可能上次已把任务建出来而没来得及写回。先按幂等键查回接管，
       // 不重新解析输入（素材复制每次产生新 uploadId，重建请求会撞 409）。
+      // 接管必须先于成交价校验：job 已建出说明价在 carve 那一刻已锁定，此时
+      // 再比价只会把仍在正常执行的份额误判成 price_changed。
       const priorJobId = await lookupIdempotency(run.ownerId, key);
       if (priorJobId) {
         const job = await readJob(priorJobId);
@@ -508,6 +510,34 @@ async function sweepOnce(run: CanvasRun): Promise<CanvasRun> {
           Object.assign(exec, jobToExecStatus(exec, job.status, job.error?.code));
           continue;
         }
+      }
+
+      const node = graph.nodes.find((n) => n.id === exec.nodeId)!;
+      const quoted = run.quote.items.find((i) => i.nodeId === exec.nodeId);
+      // 报价快照缺失 = 无法保证「报价即扣价」（只有残缺的 run 文件才会走到这），
+      // 失败关闭，不提交。
+      if (!quoted) {
+        Object.assign(exec, {
+          status: "failed",
+          errorCode: "internal_error",
+          finishedAt: now,
+        });
+        continue;
+      }
+      // 成交价校验：归一价与报价快照不一致就停这条节点，不按新价静默扣款。
+      try {
+        const plan = planNodeJob(graph, node);
+        if (plan.priceCny !== quoted.priceCny) {
+          Object.assign(exec, { status: "failed", errorCode: "price_changed", finishedAt: now });
+          continue;
+        }
+      } catch (e) {
+        Object.assign(exec, {
+          status: "failed",
+          errorCode: e instanceof ProviderHttpError ? e.code : "internal_error",
+          finishedAt: now,
+        });
+        continue;
       }
 
       try {
