@@ -8,7 +8,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 基线 | `main` @ `1f3077f`（R01–R09 + A–C 切片）+ **工作区未提交的 D 切片一**（画布 DAG 运行：`data/canvas-runs/`、确定性报价 `quoteHash`、sweep 执行器、持久化取消意图；方案 `docs/plan-dag-canvas-run-2026-09-12.md`，过 Codex 评审后实装）。本地领先 origin/main 4 个提交，未推送未部署 |
+| 基线 | `main` @ `b91df6c`（R01–R09 + A–C 切片 + D 切片一：画布 DAG 运行——`data/canvas-runs/`、确定性报价 `quoteHash`、sweep 执行器、持久化取消意图；方案 `docs/plan-dag-canvas-run-2026-09-12.md`，过 Codex 评审后实装）。本地领先 origin/main 5 个提交，未推送未部署 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
 | 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；**未配 `XAI_API_KEY`**，grok 只作为路由兜底不会被选中 |
@@ -49,7 +49,7 @@
 
 ### 1.3 数据落盘（完整清单见 `docs/design.md` §5）
 
-`data/{jobs/index.json 派生缓存, jobs/{id}/job.json 事实源, users/, invites/, gift-codes/, ledger/<userId>.jsonl, agent/<userId>/<sessionId>.json, canvases/<userId>/<canvasId>.json, canvas-runs/<userId>/<runId>.json, templates/*.json, tmp/, idempotency/}`；生产另有 `/opt/genius/backups/*.tgz`（`scripts/backup.sh`，白名单含 canvases/，**canvas-runs 尚未进备份白名单**，部署前需补）与阿里云 ECS 自动快照两层备份。
+`data/{jobs/index.json 派生缓存, jobs/{id}/job.json 事实源, users/, invites/, gift-codes/, ledger/<userId>.jsonl, agent/<userId>/<sessionId>.json, canvases/<userId>/<canvasId>.json, canvas-runs/<userId>/<runId>.json, templates/*.json, tmp/, idempotency/}`；生产另有 `/opt/genius/backups/*.tgz`（`scripts/backup.sh`，白名单含 canvases/ 与 canvas-runs/）与阿里云 ECS 自动快照两层备份。
 
 ### 1.4 环境变量分组（权威源 `src/lib/env.ts`，说明见 `.env.example`）
 
@@ -71,7 +71,7 @@
 
 - **资金与执行恢复缺陷索引**（证据与历史复现见 `docs/review-2026-09-08.md`）：R01–R09 均已在工作区修复——R01 余额+流水同一原子写（`e564ab6`）；R02 Agent 退款经 `refundOf` 按原扣款的 `memberCny` 拆回原池；R03 订阅购买外层 admission 锁；R04 扣款行带订单快照（planId/cycle/priceCny/orderedAt），「已扣款、订阅记录缺失」按快照补建且不再判余额，同 key 异参 409；R05 `assertBalance` 先惰性结算再判可用额，跨期旧积分不再进 `availableCny`；R06 submit 的 5xx/超时/断连算「结果不确定」，先 `lookupByExternalId` 查回接管，查不到则 `failed`+`uncertain_submit` 锁死重试；R07 幂等键与请求哈希落 `job.json`（事实源），`data/idempotency/*.json` 降级为可重建缓存（原子写、命中回读校验、miss 从任务索引重建），同 key 异参 409 `idempotency_conflict`；R08 请求体加 `turnId`，同 turnId 重放原样交回、换文本 409、已退款轮次同键重发 409；R09 产物字节已 checkpoint（persisting / localOutputPath / remoteUrl）时取消不再成立，终态由 persist 落盘结算。绿门禁不代替专项验收，生产行为未实测。
 - **部署阻断项（新资金模型）**：本工作区版本一旦部署，**所有存量账号的余额变动会一律 409 `billing_migration_required`**，必须先停服、逐账号用 `scripts/migrate-billing.mjs --offline --baseline <人工核对的基线.json>` 迁移（基线含双 sha256 + reviewedBy/evidence，见 `docs/runbook.md`「充值与资金迁移」）。新注册账号不受影响。
-- **未实装计划（A–C 已提交 `1f3077f`，D 切片一已实装未提交）**：`docs/plan-unimplemented-2026-09-08.md` 于 2026-09-09 经 Codex 评审为 `VERDICT: BLOCK`，用户随后逐项拍板实施：A 显式 Reservation（`job.reservation` earmark + 恢复中心 `recovery/reconcile/resume` + 创作页「核验上游」入口）；B 智能体 Turn 状态机 + 默认批准制提案 + 会话预算 + `imageRef` + 技能 `kinds` + locale 回复；C 画布持久化 + revision 409 + 四类节点接 `createJob`；D 切片一画布 DAG 运行已实装并过全门禁（`docs/plan-dag-canvas-run-2026-09-12.md`，工作区未提交）。其余 E–J（Harness 长片放行、F 视频模式 UI、G 支付网关、H 账号页/通知落盘、I 运维扩容）仍未实施。
+- **未实装计划（A–C 已提交 `1f3077f`，D 切片一已提交 `b91df6c`）**：`docs/plan-unimplemented-2026-09-08.md` 于 2026-09-09 经 Codex 评审为 `VERDICT: BLOCK`，用户随后逐项拍板实施：A 显式 Reservation（`job.reservation` earmark + 恢复中心 `recovery/reconcile/resume` + 创作页「核验上游」入口）；B 智能体 Turn 状态机 + 默认批准制提案 + 会话预算 + `imageRef` + 技能 `kinds` + locale 回复；C 画布持久化 + revision 409 + 四类节点接 `createJob`；D 切片一画布 DAG 运行（`docs/plan-dag-canvas-run-2026-09-12.md`）。其余 D 切片二与 E–J（run 级总预算预留/审批门、Harness 长片放行、F 视频模式 UI、G 支付网关、H 账号页/通知落盘、I 运维扩容）仍未实施。
 - 生产未配 `XAI_API_KEY`：grok 只是路由兜底，实际不可达；`edit_video`/`extend_video`/harness 长片依赖 grok，生产目前不可用。
 - Harness（30/45/60 秒一致性管线）代码完整但 `HARNESS_ENABLED` 生产关闭；视觉 QC 阈值未经 `evals/runs` 校准，默认跳过。
 - 服务端 API 错误文案不做多语言翻译（前端按错误码映射的部分除外）。
@@ -88,7 +88,7 @@
 
 ## 5. 下一刀建议
 
-1. A–C 切片已实装、过全量门禁、已提交（`1f3077f`）；D 切片一（画布 DAG 运行）已实装、过全门禁（含 e2e 29 条）、**在工作区未提交**，等用户指示是否提交；部署仍受 §3 部署阻断项约束（存量账号须先迁移），且部署前要把 `canvas-runs/` 加进 `scripts/backup.sh` 白名单。
+1. A–C（`1f3077f`）与 D 切片一（`b91df6c`）已提交，门禁全绿；`canvas-runs/` 已进 `scripts/backup.sh` 白名单（本机无 bash 无法实测脚本执行，改动为机械性白名单扩充，随下次部署生效）。部署仍受 §3 部署阻断项约束（存量账号须先迁移）。
 2. D 切片二起（run 级总预算预留、运行中人工审批门、改图 stale/复用语义）与 E（Harness 放行）、F（视频模式 UI）、G（支付网关）、H、I 按文档建议不同时开工，未批准不实施；G 的支付/退款 unknown 态与 PaymentOrder/webhook 仍未动。
 3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
 4. 生产配置、备份与 ECS 快照核实、Harness 质量校准和移动端完整体验按后续授权另排；本轮未做生产操作或真实上游验收。
