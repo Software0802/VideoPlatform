@@ -104,14 +104,152 @@ PrivateTmp=yes
 
 密钥只在服务器 `/opt/genius/.env`（`genius:genius` 640），不进代码仓库、不进聊天。
 
+## 告警渠道（R7）
+
+`ALERT_WEBHOOK_URL` 指向的目标由 `ALERT_WEBHOOK_FORMAT` 决定，四个取值：`generic`（平铺 JSON `{event, at, ...}`，默认）、`feishu`、`dingtalk`、`wecom`。三种机器人都收到同一条文本消息，首行固定 `[Lumen] <事件名>`，下面每行一个 `key: value` 字段。`.env` 三个变量：
+
+| 变量 | 说明 |
+| --- | --- |
+| `ALERT_WEBHOOK_URL` | 机器人 webhook 完整地址（http/https）；不设 = 不外发，只留日志 |
+| `ALERT_WEBHOOK_FORMAT` | `generic`（默认）/ `feishu` / `dingtalk` / `wecom`；非法值回落 `generic` 并 warn 一次 |
+| `ALERT_WEBHOOK_SECRET` | 飞书「签名校验」或钉钉「加签」的密钥（`SEC...` 串）；企微无签名机制，留空 |
+
+机器人创建与安全设置要点（各自控制台，群设置 → 机器人 → 自定义机器人）：
+
+- **飞书**：添加自定义机器人拿 `https://open.feishu.cn/open-apis/bot/v2/hook/...`。安全设置三选一：自定义关键词 / IP 白名单 / **签名校验**。开签名校验时把密钥填进 `ALERT_WEBHOOK_SECRET`；签名算法是 `base64(HmacSHA256(key = "${timestamp秒}\n${secret}", message = ""))`（官方文档 open.feishu.cn/document/ukTMukTMukTM/ucTM5YjL3ETO24yNxkjN），timestamp 距请求时间不能超过 1 小时。
+- **钉钉**：添加自定义机器人拿 `https://oapi.dingtalk.com/robot/send?access_token=...`。安全设置若选**自定义关键词**，必须填 `Lumen`——文案首行就是 `[Lumen]`，关键词不匹配会被拒。若选**加签**，把 `SEC...` 密钥填进 `ALERT_WEBHOOK_SECRET`；签名算法是 `urlencode(base64(HmacSHA256(key=secret, message="${timestamp毫秒}\n${secret}")))`，追加在 URL query 上（官方文档 open.dingtalk.com/document/orgapp/customize-robot-security-settings）。
+- **企微（WeCom）**：群机器人拿 `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...`，无签名机制，`ALERT_WEBHOOK_SECRET` 留空即可。
+
+验证（服务在跑时，令牌走 .env 或环境变量）：
+
+```bash
+sudo -u genius node scripts/alert-test.mjs --note "上线验证"
+# stderr 打 format=<格式> sent=<true|false>；sent=false 时查服务日志里的 warn
+```
+
+**去重窗口 10 分钟**：同一 dedupeKey（事件名或调用方拼的「事件+主体」）10 分钟内只发一次——`alert-test` 每次都带时间戳所以不撞，但真实的 `disk_low`/`relay_unhealthy` 重复触发时只看到一条属预期，不是丢了。
+
 ## 备份恢复
 
-完整操作步骤见 `scripts/backup-restore.md`（包内容、crontab 配置、恢复到空 `DATA_DIR` 的完整命令序列、排错表、充值 CLI 无跨进程锁的已知限制与核对方法）。本节只列心智地图：
+两层缺一不可：本机每日备份防**误删与坏写**，异地加密副本防**磁盘 / 实例丢失**。`scripts/backup.sh` 只打「丢了就重建不出来」的事实源：
 
-- 同机备份 cron 已核实，但不能防整机/磁盘丢失；ECS 自动快照未取得控制台证据，异地加密副本与恢复演练仍待 R4。
-- 当前仓库 backup.sh 白名单为 `users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ notifications/ assets/ relays.json jobs/*/job.json`；不含任务 `outputs/inputs/shots` 与 tmp。新增素材是输入事实源，必须备份；旧生产包是否具备新白名单需部署后查 tar 清单，不能由本地测试代替。
-- `relay-catalog/` 是可重拉目录缓存；`provider-health.json` 是暂态冷却状态，不在元数据备份内。恢复后可能提前探路，但不得因此重买已有/模糊提交任务。
-- 活服务 tar 不是一致性快照；仅暂停创作准入不足以阻止账号、通知、画布与后台任务写入。R4 需覆盖全部写者的维护屏障或明确停服窗口后再验证恢复一致性。
+| 路径 | 说明 |
+| --- | --- |
+| `users/` | 账号事实源（含 scrypt 密码哈希）与 `index.json` 派生缓存 |
+| `invites/` | 一次性邀请码 |
+| `gift-codes/` | 已铸未兑换的礼品码 |
+| `ledger/` | 余额流水（派生导出物，与 `user.json.billing` 不一致时以 user.json 为准重建） |
+| `agent/` | 智能体会话 |
+| `templates/` | 创作模板 |
+| `canvases/` | 画布文档 |
+| `canvas-runs/` | 画布整图运行记录（含冻结的图快照、节点执行位、预算预留台账） |
+| `notifications/` | 通知落盘（含已读游标） |
+| `assets/` | 画布素材（输入事实源） |
+| `relays.json` | 中转配置事实源 |
+| `jobs/<id>/job.json` | 任务记录本身 |
+
+**不在包里**：`jobs/<id>/outputs|inputs|shots`（成片与上传素材）、`idempotency/`、`tmp/`、`relay-catalog/`（可重拉缓存）、`provider-health.json`（暂态冷却）。成片体积是记录的几百倍，且 `DATA_RETENTION_DAYS`(30) 到期本来就会删；这份备份保的是「账号与账目不丢」。
+
+> 恢复后的直接后果：老任务的记录在、产物不在。前端仍按 `job.json` 显示这些作品，点开取 `/api/media` 会 404（`artifactsPurgedAt` 没写，所以不是「已过期清理」占位卡）；介意的话恢复后可给这批 job.json 补 `artifactsPurgedAt`。画布历史 run 的成功节点因产物缺失不能再复用，新 run 会判 `blocked`/`output_purged`，报价时勾「重跑」显式重生成（设计行为，不是损坏）。`relay-catalog/` 恢复后可能提前探路，但不得因此重买已有/模糊提交任务。
+
+包权限 600，里面有密码哈希与未使用的邀请码，不要随手 `scp` 到公共位置。
+
+### 日常：cron 热备份（现状）
+
+```bash
+# 脚本随 deploy.sh 上传到 /opt/genius/scripts/backup.sh；备份目录只有 root 能进
+mkdir -p /opt/genius/backups && chmod 700 /opt/genius/backups
+/opt/genius/scripts/backup.sh          # 先手跑一次，确认输出是 backup ok
+crontab -e                             # root 的 crontab：
+```
+
+```
+17 3 * * * /opt/genius/scripts/backup.sh >> /opt/genius/backups/backup.log 2>&1
+```
+
+选 03:17 错开整点（别和同机其它定时任务撞）。失败非零退出并在日志留 `backup fail: ...`，可 `grep -c "backup fail" backup.log` 巡检。默认路径与保留份数可覆盖：`--data-dir` / `--backup-dir` / `--keep`（或 `DATA_DIR`/`BACKUP_DIR`/`KEEP`）。
+
+### 一致性快照（--stop-service）
+
+热备份在服务活着时打包，跨文件之间可能撞到「run 预留 vs user 余额」这类两个原子写之间的窗口（`restore-check --compare` 能对账发现）。数据集 <1MB、打包 <1s，停服窗口 ≈10s——需要严格一致时（资金迁移前后、月度存档）跑：
+
+```bash
+sudo bash /opt/genius/scripts/backup.sh --stop-service
+# systemctl stop genius → 打包 → systemctl start → 等 /api/health 200（上限 60s）
+# 输出带「一致性快照」；打包无论成败 trap 都会把服务拉回来
+```
+
+仅 root 且有 `systemctl` 时可用（否则退出码 2）。默认 cron 仍是热备份，不停服。
+
+### 异地加密副本（阿里云 OSS）
+
+`backup.sh` 末尾：本地 `.tgz` 成功后，若 `BACKUP_OSS_BUCKET` 非空则 `openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt` 加密成 `.tgz.enc` 再 `ossutil cp` 上传；上传成功才删本地 `.enc`（本地 `.tgz` 永不删）。异地是附加步骤：ossutil 缺失 / 加密失败 / 上传失败只打 `backup offsite warn|fail` 日志行，不影响本地备份退出码。`.env` 需要：
+
+```bash
+BACKUP_OSS_BUCKET=<bucket>
+BACKUP_OSS_PREFIX=genius/               # 对象前缀，默认 genius/
+BACKUP_ENC_PASSPHRASE=<openssl rand -hex 32 生成>
+OSS_ACCESS_KEY_ID=<RAM 子账号 AK>        # ossutil 2.x 读这些环境变量
+OSS_ACCESS_KEY_SECRET=<SK>
+OSS_REGION=cn-<region>                  # 2.x 签名 V4 必填；或 OSS_ENDPOINT=<endpoint>
+```
+
+服务器装 ossutil（官方一键脚本，装到 /usr/bin；文档 help.aliyun.com/zh/oss/developer-reference/ossutil-overview）：
+
+```bash
+curl https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
+```
+
+bucket 建议开 30 天生命周期规则自动清旧副本（远端只作最近窗口的异地副本，长期留存靠本地 KEEP 份数）；AK 用只授权该 bucket `PutObject` 的 RAM 子账号。脚本只从 `/opt/genius/.env` 挑 `BACKUP_*`/`OSS_*` 变量，不整文件 source。
+
+### 恢复演练与恢复流程
+
+```bash
+# 0. 看包里是什么 / 先拿摘要（不解包到 DATA_DIR，只读）
+node scripts/restore-check.mjs --archive /opt/genius/backups/genius-data-XXX.tgz
+#    .enc 副本先解密核对：BACKUP_ENC_PASSPHRASE=... node scripts/restore-check.mjs --archive x.tgz.enc
+#    摘要含：用户数、每人两池余额、ledger ref 集合大小与重复数、job.json /
+#    canvases / canvas-runs / assets 计数、relays.json 有无
+
+# 1. 停服务。恢复期间绝不能让 runner 写 data/
+systemctl stop genius
+
+# 2. 现有 data/ 挪开而不是删掉——恢复错包还能换回来
+mv /opt/genius/data /opt/genius/data.broken.$(date +%Y%m%d-%H%M%S)
+
+# 3. 解包到 data.restore 而不是直接覆盖
+mkdir -p /opt/genius/data.restore
+tar -xzf /opt/genius/backups/genius-data-XXX.tgz -C /opt/genius/data.restore
+#   .enc：先 openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+#         -pass env:BACKUP_ENC_PASSPHRASE -in x.tgz.enc -out x.tgz
+
+# 4. 与挪开的旧目录对账（逐文件字节比对 + 余额 / ref 集合核对）
+node scripts/restore-check.mjs --archive /opt/genius/backups/genius-data-XXX.tgz \
+  --compare /opt/genius/data.broken.XXX   # 全一致退出 0，有差异退出 1 并列 diff
+
+# 5. 切换目录、修属主（服务以 genius 跑）
+mv /opt/genius/data.restore /opt/genius/data
+chown -R genius:genius /opt/genius/data && chmod 700 /opt/genius/data
+
+# 6. 起服务、验证
+systemctl start genius
+curl -sS http://127.0.0.1:3000/api/health   # 必须 ok:true
+ls /opt/genius/data/users | head          # users/index.json 是派生缓存，启动重建
+```
+
+登录一个已知账号、首页看得到历史任务列表才算恢复成功；确认后删 `data.broken.*`（空间紧张时优先删它，别删 `backups/`）。
+
+### 排错
+
+| 现象 | 原因与处理 |
+| --- | --- |
+| `backup fail: DATA_DIR 不存在` | cron 里没有 `.env` 的环境变量，默认路径又不对。用 `--data-dir` 写死绝对路径 |
+| `backup fail: ... 没有可备份的内容` | `DATA_DIR` 指错了（指到了空目录），检查路径 |
+| `backup warn: 打包过程中有文件被改写` | 热备份时服务正在写 job.json，属正常；原子 rename 保证读到的是完整旧版或新版 |
+| `backup fail: 包内出现不该有的条目` | 白名单校验拦下异常内容，`.tmp` 已丢弃。把条目名贴出来排查 |
+| `backup offsite warn/fail: ...` | 异地步骤失败不影响本地包；按提示补 ossutil / BACKUP_ENC_PASSPHRASE / OSS_* 后手工 `ossutil cp` 补传留在原地的 `.enc` |
+| 恢复后登录提示密码错 | 密码哈希存 `user.json`，与 `LUMEN_SESSION_SECRET` 无关；先确认恢复的是同一环境的包 |
+| 恢复后老作品打不开 | 预期行为，见上文「恢复后的直接后果」 |
 
 画布素材迁移：`node scripts/migrate-canvas-assets.mjs --data-dir <目录>` 默认只读预检；写入须维护窗口、备份与 `--write --offline`。应用启动也会在 tmp 清理前保护存量素材；缺原件标 missing，无法恢复已清字节。首次迁移起保留 30 天，重复迁移不延长到期日。
 
@@ -121,7 +259,7 @@ PrivateTmp=yes
 
 1. `df -h /opt/genius` 确认剩余空间与挂载点。
 2. 先看 `data/jobs/*/outputs` 与 `data/tmp` 是不是异常堆积（`DATA_RETENTION_DAYS` 到期清理是否在正常跑，`runner` 每小时的 `maintenance()` 是否有报错）。
-3. 空间紧急时优先清 `data/tmp`（24h TTL 内的临时上传，`sweepTmp` 会自动清但可以手动提前跑一次逻辑对应的清理）；不要手动删 `data/jobs/*/outputs`（会造成「记录在、产物不在」但 `artifactsPurgedAt` 未写的不一致状态，见 `scripts/backup-restore.md` 的恢复后果说明）。
+3. 空间紧急时优先清 `data/tmp`（24h TTL 内的临时上传，`sweepTmp` 会自动清但可以手动提前跑一次逻辑对应的清理）；不要手动删 `data/jobs/*/outputs`（会造成「记录在、产物不在」但 `artifactsPurgedAt` 未写的不一致状态，见上文「备份恢复」节的恢复后果说明）。
 4. 长期方案是扩容磁盘或调低 `DATA_RETENTION_DAYS`，不是本手册范围内的一次性操作。
 
 ## provider 耗尽处理
@@ -212,7 +350,7 @@ sudo -u genius node scripts/disable-user.mjs <邮箱|usr_id> --enable
 sudo -u genius node scripts/reset-password.mjs <邮箱|usr_id>
 ```
 
-两个脚本默认走 HTTP 管理接口（令牌见上文「管理 CLI 的运行身份与令牌」），服务端在 `withUserLock` 里改 `user.json` + `sessionEpoch`。`--offline` 退回直写文件，但会先探测服务确实没在跑（`GET /api/health` ECONNREFUSED）才放行；服务在跑时直写会被 billing 链校验拦下或与服务端写盘交错（见 `scripts/backup-restore.md`「已知限制」），正确姿势永远是让 HTTP 路径生效。`sessionEpoch` 在每次请求时校验，禁用/重置立即生效，无需重启。`reset-password.mjs` 打印的新口令只应口头/密码管理器传递给用户，不要写进工单或聊天记录。
+两个脚本默认走 HTTP 管理接口（令牌见上文「管理 CLI 的运行身份与令牌」），服务端在 `withUserLock` 里改 `user.json` + `sessionEpoch`。`--offline` 退回直写文件，但会先探测服务确实没在跑（`GET /api/health` ECONNREFUSED）才放行；服务在跑时直写会被 billing 链校验拦下或与服务端写盘交错（CLI 拿不到服务端的 `withUserLock`），正确姿势永远是让 HTTP 路径生效。`sessionEpoch` 在每次请求时校验，禁用/重置立即生效，无需重启。`reset-password.mjs` 打印的新口令只应口头/密码管理器传递给用户，不要写进工单或聊天记录。
 
 ## 充值与资金迁移
 

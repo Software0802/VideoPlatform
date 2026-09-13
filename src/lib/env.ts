@@ -140,6 +140,39 @@ export function alertWebhookTimeoutMs(): number {
   return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 30_000) : 5_000;
 }
 
+/** R7：`ALERT_WEBHOOK_URL` 指向的机器人/通用渠道。实现见 `@/lib/alerts`。 */
+export type AlertWebhookFormat = "generic" | "feishu" | "dingtalk" | "wecom";
+
+const ALERT_WEBHOOK_FORMATS = new Set<string>([
+  "generic",
+  "feishu",
+  "dingtalk",
+  "wecom",
+]);
+
+let warnedInvalidAlertFormat = false;
+
+/**
+ * 缺省与非法值一律回落 `generic`（旧的平铺 JSON）——告警是观测链路，不能
+ * 因为一个写错的环境变量开始抛异常或静默不发。非法值只 warn 一次。
+ * env 不 import `@/lib/log`（本文件要求保持只有 node:path 依赖），用 console。
+ */
+export function alertWebhookFormat(): AlertWebhookFormat {
+  const raw = process.env.ALERT_WEBHOOK_FORMAT?.trim().toLowerCase();
+  if (!raw) return "generic";
+  if (ALERT_WEBHOOK_FORMATS.has(raw)) return raw as AlertWebhookFormat;
+  if (!warnedInvalidAlertFormat) {
+    warnedInvalidAlertFormat = true;
+    console.warn(`[env] ALERT_WEBHOOK_FORMAT 非法值 ${JSON.stringify(raw)}，回落 generic`);
+  }
+  return "generic";
+}
+
+/** 飞书 / 钉钉机器人的签名密钥（两家各自的「签名校验/加签」secret），可空。 */
+export function alertWebhookSecret(): string | undefined {
+  return process.env.ALERT_WEBHOOK_SECRET?.trim() || undefined;
+}
+
 /**
  * 磁盘剩余低于这个百分比就算不健康（方案 §3.2）。
  *

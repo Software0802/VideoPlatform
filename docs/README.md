@@ -52,5 +52,5 @@
 
 - `design_handoff/design_handoff_genius_app/README.md` 与 `Genius App.dc.html`：UI 交接原型；有意偏离以当前 `DESIGN.md` 为准。
 - `evals/README.md`、`evals/rubric.md`、`evals/prompts.json`：评测输入、授权素材要求与评分口径；缺运行记录就不声称质量已校准。
-- `scripts/backup-restore.md`：备份恢复命令；涉及生产数据的操作必须先确认目标与维护窗口。
+- 备份恢复：命令与演练流程在 `docs/runbook.md`「备份恢复」节；涉及生产数据的操作必须先确认目标与维护窗口。
 - `PRODUCT.md`、`IDEA.md`：历史产品探索；当前定位以优化计划引用的三项卖点为准。

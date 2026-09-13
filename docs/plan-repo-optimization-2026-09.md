@@ -154,7 +154,7 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 | R2.1 | N3.4 收口：合入后跑 R0.5 的全量 e2e；`provider-health.json` 进 `/api/health` 与管理接口；文档（design §2l、runbook「provider 耗尽」）改写 | 单测覆盖 `plan-relay-provider` §4c 表每一行；mock 注入「第一家结构化 5xx → 第二家成片」端到端 |
 | R2.2 | N3.5 管理页（列表 + 健康灯 + discover / probe + 排序）| e2e：管理员登录可见，非管理员 404 |
 | R2.3 | N4 创作面板：产品按供应商分组、显示售价 / costHint / 时长档 / 分辨率 / 参考图数；与动态目录联动 | e2e：下架默认模型后下拉不再出现该产品 |
-| R2.4 | N1.4 `minimax-h3` 真实积分核对进 `yman/catalog.ts` | `costUsdActual` 不再用兜底估价 |
+| R2.4 | N1.4 `minimax-h3` 真实积分核对进 `yman/catalog.ts` | `costUsdActual` 不再用兜底估价。待用户提供 YMan 账单实付积分，无法从代码侧核实 |
 | R2.5 | `relays.json` 写锁（F-11）；`smoke:live` 改为按当前 ORDER 的 t2v/i2v/t2i 三条（不再依赖 XAI） | 并发 PATCH 单测；生产 smoke 一次成功记录 |
 | R2.6 | `jobs/runner.ts`（1125 行）按既有函数边界拆 `runner/{submit,poll,persist,failover}.ts`，行为不变；**排在 N3.4 合入之后**（N3.4 正在改换家逻辑） | 既有 `runner.test / failover.test / uncertain-submit.test` 不改断言全过 |
 
@@ -170,11 +170,20 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 | R3.4 | 档 B（YMan r2v 参考图）长片一条（N1.2） | `harnessPlan` 含 `r2v` 镜、参考图为角色表 | |
 | R3.5 | 常态化：每次改 Director / keyframe / shot 路由 / QC / stitch，合并条件加「跑 `harnessCases` 中指定 2 条并附记录」（写进 AGENTS 规则） | 规则落地 | |
 
+**首轮校准报价（2026-09-13，按 `src/lib/cost.ts` 估算器、kling-2.6、720p、无声，汇率按 1 USD = 7.2 CNY 折算）**
+
+- 单价：kling-2.6 720p 5s $0.15 / 10s $0.30；1080p $0.25 / $0.50。
+- 长片估价（不含首帧图 ≈ $0.02/张）：30s = 3 镜 $1.35，45s = 5 镜 $1.90，60s = 6 镜 $2.40——含 Director 预留 $0.30 与视觉 QC $0.05/镜；QC 重试预算上限 = 片段费 ×0.5（30/45/60s 分别 +$0.45 / +$0.68 / +$0.90）。对照组 `naive_concat` 3×10s = $0.90。
+- 仅 scene 用例（无授权人物素材时：`h45-t2v-zh/en-scene` ×2 次 + 对照 + 两个 operator 场景）：名义 ≈ $16.3，重试到顶 ≈ $20 → **≈ ¥117–¥145**。
+- 全部 8 条（需两张授权人物照）：名义 ≈ $48.7，重试到顶 ≈ $59 → **≈ ¥350–¥425**；1080p 约 +60%。
+- 说明：LLM 单价按 grok-4.6 列表价占位，生产 Director 实际走 `gpt-5.6-luna`（ccgoai 中转）价目未核实；报告轮（R3.3）成本量级约等于再来一轮。
+- 状态：**已报价，未开跑，等用户批预算**。
+
 ### R4 · 数据层（§3；R4.0 S，R4.1 M，R4.2 L 触发式）
 
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
-| R4.0（已决：异地副本落阿里云 OSS） | 备份 drain 接口 + 异地加密副本 + `restore-check.mjs` 恢复演练 | 一次完整演练记录进 runbook：恢复出的用户数 / 两池余额 / `ref` 集合与源一致 |
+| R4.0（已决：异地副本落阿里云 OSS；代码已落地：`backup.sh --stop-service` 一致性快照 + openssl/OSS 加密副本 + `restore-check.mjs`；生产配置与演练待执行） | 备份 drain 接口 + 异地加密副本 + `restore-check.mjs` 恢复演练 | 一次完整演练记录进 runbook：恢复出的用户数 / 两池余额 / `ref` 集合与源一致 |
 | R4.1（进行中：D-4=b 管理令牌 + CLI 走 `/api/admin/*` 已落地，`admission_ms` 埋点已进 health；索引增量写与 run 归档未做） | CLI 走 admin 接口（D-4）；`admission_ms` 埋点；索引增量写；run 归档 | CLI 在服务运行时 `--offline` 被拒绝的测试 / 手测；health 有 `admission.p95Ms`；`runHeldFunds` 只读活跃目录的回归用例 |
 | R4.2 | repository 接口 + JSON 实现（行为不变）→ SQLite 实现按 §3.2 顺序迁移 | 每模块迁移前后：既有单测不改断言全过；users+billing 迁移前后双 sha256 + 流水重放余额一致（沿用 `migrate-billing` 纪律） |
 
@@ -190,7 +199,9 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 
 ### R6 · 支付网关（D4：微信 + 支付宝；L）
 
-前置：R1（发布可追溯）+ R4.0（备份可恢复）+ R4.1（CLI 与服务互斥——对账脚本会成为账本的第二个写者）。方案正文沿用 `plan-unimplemented` §8：`PaymentOrder` 状态机、回调验签（微信 v3 平台证书 / 支付宝公钥）、`ref:pay:<orderId>` 走 `applyBalanceChange`、退款 unknown 态、对账只查未定订单。**已决：无商户主体，继续走礼品码，R6 不开工。**
+**状态：2026-09-13 用户确认无商户主体 → 停止条件成立，R6 不开工，继续走礼品码。重开条件：取得可开通微信/支付宝商户号的主体。**
+
+前置：R1（发布可追溯）+ R4.0（备份可恢复）+ R4.1（CLI 与服务互斥——对账脚本会成为账本的第二个写者）。方案正文沿用 `plan-unimplemented` §8：`PaymentOrder` 状态机、回调验签（微信 v3 平台证书 / 支付宝公钥）、`ref:pay:<orderId>` 走 `applyBalanceChange`、退款 unknown 态、对账只查未定订单。
 
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
@@ -204,7 +215,7 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 
 ### R7 · 运维扩容（N6；M）
 
-告警接实际渠道（已决：飞书/钉钉/企微机器人 webhook；`ALERT_WEBHOOK_URL` 生产配置 + 一次真实触发验证）；指标（`submission_unknown`、`settlement_pending`、备份年龄、队列等待、`admission_ms`）进 health 与日志；`MemoryMax` 下长片 + 生图 + 拼接峰值实测并定 `HARNESS_SHOT_CONCURRENCY`；会话 / 画布留存策略（沿媒体 30 天，明示；D-6）；`data/` 增长与 run 归档巡检进 runbook；服务器 Node 版本、Caddy 版本与 XFF 行为写进 runbook「环境事实」一节。
+告警接实际渠道（已决：飞书/钉钉/企微机器人 webhook；代码已落地 `ALERT_WEBHOOK_FORMAT`/`ALERT_WEBHOOK_SECRET` + `POST /api/admin/alerts/test` + `scripts/alert-test.mjs`；`ALERT_WEBHOOK_URL` 生产配置 + 一次真实触发验证待执行）；指标（`submission_unknown`、`settlement_pending`、备份年龄、队列等待、`admission_ms`）进 health 与日志；`MemoryMax` 下长片 + 生图 + 拼接峰值实测并定 `HARNESS_SHOT_CONCURRENCY`；会话 / 画布留存策略（沿媒体 30 天，明示；D-6）；`data/` 增长与 run 归档巡检进 runbook；服务器 Node 版本、Caddy 版本与 XFF 行为写进 runbook「环境事实」一节。
 
 ### J · 暂缓
 

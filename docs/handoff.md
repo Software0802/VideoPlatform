@@ -15,7 +15,7 @@
 | 入口 | `https://genius.homeaistack.online`；本地 `pnpm dev` 后访问 `http://localhost:3000`，不用 127.0.0.1（Next dev 可能 403） |
 | 整合门禁 | `fb37e53 + R0` 在隔离副本依次通过 typegen/tsc/eslint/test：107 文件、1245 通过、1 既有跳过；生产构建通过且无全仓追踪警告；整合 e2e 36/36，画布重复三轮 10/10。R1 起 eslint 范围为 `src e2e scripts`（CI 与 deploy.sh 同步），`scripts/**/*.mjs` 带 `// @ts-check` 纳入 tsc；e2e 走独立 workflow（`.github/workflows/e2e.yml`，每日 UTC 20:00 定时 + 手动，不挂 PR）。单测与 e2e 错开运行，未放宽全局超时 |
 | 测试环境 | 独立验证 worktree `D:\dev\repos\VideoPlatFrom-optimization-20260913`；e2e 端口 3178、E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1；不读生产密钥，不调用真实上游 |
-| 备份 | root cron 每日 03:17 跑新版 backup.sh（白名单已随 d7f34eb 上线）；部署前手动包 `backups/genius-data-20260913-174421.tgz` 为旧脚本产物、不含 relays.json；ECS 自动快照未获控制台证据，异地副本（已决：阿里云 OSS）与一致性恢复演练未完成 |
+| 备份 | root cron 每日 03:17 跑新版 backup.sh（白名单已随 d7f34eb 上线）；部署前手动包 `backups/genius-data-20260913-174421.tgz` 为旧脚本产物、不含 relays.json；ECS 自动快照未获控制台证据。R4.0 代码已落地：`--stop-service` 一致性快照、openssl/OSS 加密异地副本、`restore-check.mjs`；生产 OSS 变量配置与恢复演练未完成 |
 
 `37123bd` 部署记录中的 provider 配置：视频 ORDER `kling,yman,grok`，图片 ORDER `openai,yman`，无 XAI key；Grok 只是未启用的后备项。对话走 ccgoai `gpt-5.6-luna`，图片 `gpt-image-2/medium`，可灵 `kling-2.6`，YMan t2v `minimax-h3`、i2v `minimax-h3-933-图文`；Harness 与 OpenAI image edits 已开。原始真实验收见 `docs/acceptance-2026-09-13.md`，本轮未重新付费验证这些上游。
 
@@ -79,14 +79,14 @@
 
 ## 4. 未完成与边界
 
-- 无支付网关，订阅收入仍是内部记账；微信/支付宝都接的方向已定，但商户资质、渠道政策与沙箱条件未确认，R6 不直接开工。
-- R3 尚无预算授权与授权人物素材；现有场景用例只覆盖 h45-t2v-zh/en-scene，不能代替人物身份阈值校准。YMan 长片的 r2v 档 B、minimax-h3 真账单价格仍待验证。
+- 无支付网关，订阅收入仍是内部记账；2026-09-13 用户确认无商户主体 → R6 停止条件成立、不开工，继续礼品码；重开条件：取得可开通微信/支付宝商户号的主体。
+- R3 首轮校准报价已冻结（plan R3 节，2026-09-13）：仅 scene 用例 ≈¥117–¥145，全 8 条（需授权人物照）≈¥350–¥425；状态「已报价，未开跑，等用户批预算」。授权人物素材仍缺，现有场景用例只覆盖 h45-t2v-zh/en-scene。YMan 长片的 r2v 档 B、minimax-h3 真账单价格仍待验证（R2.4 待用户提供账单实付积分）。
 - 常规管理变更（充值/重置密码/停用/铸码）已改走应用内唯一写者（管理令牌 + HTTP）；`--offline` 直写保留但须先探测服务未运行。migrate-billing 与备份仍要求停服窗口；备份不能只停创作准入就声称一致性。
 - SQLite 只在多写者/准入 p95/备份约束实际触发时选型。生产 Node 22.22.2 可支持内置模块，但 Node 22 文档仍标 1.1 Active development，不据此迁资金。
 - 会话/画布/run 的整体归档与留存未做；画布素材的 30 天期限已单独实现，不等于删除画布或资金记录。
 - 游离空 material 节点仍使整图报价失败；准入仍 strict 读用户 run 文件；这些行为尚未改变。
 - 移动软键盘需真机验证，mock e2e 不能证明它；质量与成本不能由 mock 成片证明。
-- 无异地备份恢复证据、无已核实的 ECS 自动快照设置；构建 SHA 回显（BUILD_INFO/health `build.sha`）已随 d7f34eb 部署生效，非 root 迁移（R1.5）已执行。
+- 异地副本与恢复演练的代码已就绪（backup.sh `--stop-service` / OSS 加密上传 / `restore-check.mjs`），但生产 OSS 变量未配置、演练未执行、ECS 自动快照设置仍未核实；构建 SHA 回显（BUILD_INFO/health `build.sha`）已随 d7f34eb 部署生效，非 root 迁移（R1.5）已执行。
 
 ## 5. R5.1 前端重渲基线（2026-09-13 实测）
 
