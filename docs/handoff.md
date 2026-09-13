@@ -11,7 +11,7 @@
 | 基线 | `main` @ `bb22d75`（**未部署**：E1+E2 Harness 供应商无关化已落地——`02163a0` 去 xAI 路由层/长片走 ORDER/Director·QC 走 agent LLM，`bb22d75` 三视图角色表 + `supportsImageReference` + 档A 每镜首帧 + `/images/edits` 开关；mock 端到端 30s 成片已验证）。此前部署基线 `98759a5`（**已部署生产 2026-09-13**，本机 health 200 ok=true，公网 `/login` 200、`/` 307 跳登录；已推送 origin）——本轮两个修复：`4690767` 智能体上游失败错误码拆分、`f6b8c88` 画布 DAG 运行审查修复。此前 `da0348c` 为 H 包（`docs/plan-h-account-notifications-2026-09-12.md`，Codex 评审后实施）：通知落盘 `data/notifications/`、错误码前端本地化（`errorText` + `common.err.*` 72 码）、`/account` 账户页 + `logout-all`、移动端回归 `e2e/mobile.spec.ts`；再往前 `04efdce` 为 R01–R09 + A–D 包 + 资金迁移 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
-| 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；`OPENAI_BASE_URL=https://ccgoai.club/v1`、`OPENAI_IMAGE_MODEL=gpt-image-2`、`KLING_BASE_URL=https://api-singapore.klingai.com`、`KLING_VIDEO_MODEL=kling-2.6`、`KLING_USD_PER_UNIT=0.10`、`USD_CNY_RATE=7.2`、`YMAN_BASE_URL=https://vip.yman.cc/v1`、`HARNESS_ENABLED=false`；**未配 `XAI_API_KEY`**——grok 排在 ORDER 尾部但无 key，不会被选中 |
+| 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.6-luna`（2026-09-13 起；ccgoai 已下架 `gpt-5.4-mini`）；`OPENAI_BASE_URL=https://ccgoai.club/v1`、`OPENAI_IMAGE_MODEL=gpt-image-2`、`OPENAI_IMAGE_QUALITY=medium`（ccgoai 对 `high` 一律 503 `service_busy`）、`YMAN_T2V_MODEL=minimax-h3` + `LUMEN_PRODUCTS=[{"id":"video-fast","models":{...minimax-h3...}}]`（YMan 已下架 `minimax-H3 文字`）、`KLING_BASE_URL=https://api-singapore.klingai.com`、`KLING_VIDEO_MODEL=kling-2.6`、`KLING_USD_PER_UNIT=0.10`、`USD_CNY_RATE=7.2`、`YMAN_BASE_URL=https://vip.yman.cc/v1`、`HARNESS_ENABLED=false`；**未配 `XAI_API_KEY`**——grok 排在 ORDER 尾部但无 key，不会被选中 |
 | 生产订阅价格 | 标准 ¥19.1 / 专业 ¥49.6 / 尊享 ¥106.8 / 至尊 ¥170.3（月费，`costRatio` 按当前 provider 配置算出，非固定值，见 §2） |
 | 门禁 | `f6b8c88` 上实跑：`pnpm exec tsc --noEmit` 0 错 / `pnpm exec eslint src` 0 错 0 警告 / `pnpm test` 99 文件、1154 通过、1 skip、0 失败 / `pnpm e2e`（`E2E_PORT=3100 E2E_ISOLATED=1`）33 通过、0 失败（2.5 分钟），均退出 0 |
 | 本地运行 | `pnpm dev` → `http://localhost:3000`（**用 `localhost`，`127.0.0.1` 会被 Next 16 dev 403**）；无任何生图/视频 key 时整实例回落 mock 模式（ffmpeg 水印片）；未登录访问任意路由 307 到 `/login`，注册需一次性邀请码（`node scripts/mint-invites.mjs N --note "..."`） |
@@ -76,7 +76,7 @@
 - Harness（30/45/60 秒一致性管线）已供应商无关（`02163a0`+`bb22d75`，见 `docs/design.md` §7）但 `HARNESS_ENABLED` 生产关闭、未部署；视觉 QC 阈值未经 `evals/runs` 校准，默认跳过。档A（三视图 + 每镜生成首帧）依赖生图通道开 `*_IMAGE_EDITS_ENABLED`，ccgoai / YMan 是否透传 `/images/edits` 未验证。
 - 服务端 API 错误 `message` 仍是中文（日志/CLI 依赖）；用户可见文案已按码本地化（H 包），仅上游透传原文与「参数细节在 message 里」的三个码（`invalid_argument`/`invalid_state`/`conflict`）会在英文界面露出中文后半段，属明示的服务端细节。
 - 无支付网关，已购余额只能靠礼品码或管理员 CLI 充值，订阅收入是内部记账而非真实收款（`docs/runbook.md`「订阅对账」）。
-- 智能体依赖单独配置的 `AGENT_API_KEY`/`AGENT_BASE_URL`（生产已配 ccgoai `gpt-5.4-mini`；只出图/视频的中转 key 没有对话模型，不能复用）；会话与画布无留存清理（会话每人上限 200）。
+- 智能体依赖单独配置的 `AGENT_API_KEY`/`AGENT_BASE_URL`（生产已配 ccgoai `gpt-5.6-luna`；只出图/视频的中转 key 没有对话模型，不能复用）；会话与画布无留存清理（会话每人上限 200）。
 - `data/jobs/*/job.json` 是事实源、`index.json` 是可重建缓存；`hasChargeFor`/幂等扣款全量扫流水文件，未建索引，内测规模无感。
 - `scripts/grant-balance.mjs`/其余管理 CLI 与线上服务无跨进程锁，操作前后建议核对 `data/ledger/<userId>.jsonl`。
 - 生产 crontab 已有每日 03:17 的 `scripts/backup.sh`（2026-09-07 核实，`/opt/genius/backups/` 已有两份）；阿里云 ECS 自动快照策略只能在控制台看，SSH 核实不了，未确认。
@@ -92,6 +92,6 @@
 1. 全部改动已推送 origin 并部署生产（`98759a5`）。`bash scripts/deploy.sh` 在本机 Git Bash（`/usr/bin/bash`，GNU bash 5.3）上一次跑通：本地 tsc → `pnpm build` → 18M 包 → 上传 → 服务器切换，两个 Turbopack 别名（sharp / ffmpeg-static）自动补软链，`systemctl is-active genius` = active，本机 health 200 ok=true，未触发回滚。脚本末尾的公网检查请求 `/login`（匿名可访问、预期 200；`/` 未登录会 307 跳登录页，不作判定对象）。此前踩过的打包坑（`src/lib/billing/*.mjs` 不在包内、Windows junction 被解引用、`*.sh` CRLF）均已在脚本与 `.gitattributes` 里修掉，本次未复现。
 2. H 包已落地（通知落盘/错误码本地化/账户页/移动端回归）；E（Harness 放行）、F（视频模式 UI）、G（支付网关）、I（运维扩容）按文档建议不同时开工，未批准不实施；G 的支付/退款 unknown 态与 PaymentOrder/webhook 仍未动。
 3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
-4. 智能体上游失败错误码拆分与画布 DAG 运行审查修复（`4690767`+`f6b8c88`）已上线；画布审查未采纳的 4 条见 §3，需产品决策后再排。本轮未做真实上游验收（生产 provider 的实际生成链路没跑过任务）。这一轮交给独立审查者复核的清单（已验证 / 未验证的边界、建议重点查的位置、未采纳项的行号）在 `docs/review-2026-09-13.md`。
-5. **真实上游验收（约 ¥5）**：文生图、Kling t2v、画布 i2v、YMan t2v、智能体一图；外加 ccgoai `/images/edits` 探针一张（验 `OPENAI_IMAGE_EDITS_ENABLED` 能否开）+ 一条 30s 长片在可灵上成片——通过后决定生产是否开 `HARNESS_ENABLED` 并部署 `bb22d75`。
+4. 智能体上游失败错误码拆分与画布 DAG 运行审查修复（`4690767`+`f6b8c88`）已上线；画布审查未采纳的 4 条见 §3，需产品决策后再排。独立审查清单在 `docs/review-2026-09-13.md`。
+5. **真实上游验收已做**（`docs/acceptance-2026-09-13.md`）：文生图、Kling t2v、i2v（复用 #1 产物）、YMan t2v、智能体一图全部成片，账目对平；ccgoai 透传 `/images/edits`（`OPENAI_IMAGE_EDITS_ENABLED=true` 可开）。过程中修了三处上游漂移造成的生产故障（生图 quality、YMan 模型名、智能体模型名，均改 `.env`），暴露 4 条待修代码问题（见该文档「暴露的代码问题」：5xx 结构化错误体被判 `uncertain_submit`、`video-fast` 模型名写死、`minimax-h3` 价目缺失、模型下架无告警）。**未做**：30s 长片（需先部署 `ecfef47`）、画布 DAG 经 UI 走真实上游。
 6. `edit_video`/`extend_video` 待有中转站承接（当前只有 grok 声明，生产无 XAI key，提交 503）。
