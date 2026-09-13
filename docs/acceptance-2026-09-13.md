@@ -51,7 +51,16 @@ API 提交，与前端走同一条 `POST /api/jobs` / 智能体路由。
 
 前一次尝试 `job_5ddb3cdfaf19` 因问题 5 在 Director 阶段失败，未产生任何付费分镜，预留已释放。
 
+## YMan 30s 长片（部署 `9e0441c` 后，点名产品「快速」）
+
+第一次 `job_db872d508168` 在 keyframing 之后全部 shot 本地被拒：shot 共用 `job.model`（t2v 模型 `minimax-h3`）发 i2v，YMan `validate` 拒「模型不接受参考图」——**bug**，`9e0441c` 修复：shot 按各自原生 mode 经 `modelForProvider(provider, mode, product)` 取模型。角色表 4 张图（$0.55）已花，预留 ¥20 释放。
+
+修复后 `job_e080688fb3b9`：**31.2s 成片**，17.5 分钟（YMan 每镜排队 4–5 分钟，三镜串行），售价 ¥20，实付 $0.97（估 $1.24——补足图片 / LLM 预留后估价首次高于实付）。三镜全部 `i2v`（shot0 生成首帧，其后尾帧续接），模型 `minimax-h3-933-图文`；三视图 + 首帧生效；首帧人物（圆框眼镜、米色针织衫、旧书店斜射光）与提示一致。**注意**：档 A 优先于档 B——生图 provider 支持参考图时所有镜都走首帧 i2v，`r2v` 路径（档 B）没有被走到，仍未在真实上游验证。
+
+另在这一步之前发现并修了：点名产品提交长片被产品时长档（5/10/15）拒绝（`28246db`），以及产品目录 `supportsLongForm` 只有 grok 为真、选中产品时前端无 30/45/60 芯片（`a83903e`）。
+
 ## 未完成
 
 - 画布 DAG 未经 UI 走真实上游（#3 走的是与画布 `gen_video` 节点相同的 `createJob` + `from-job` 复用路径，DAG 预留转移未在生产验）。
-- YMan 上的长片（档 B：r2v 参考图）未验。
+- 档 B（`r2v` 参考图路径）未在真实上游验证：需要生图 provider 不支持参考图、而视频 provider 支持 r2v 的组合，当前生产不满足。
+- `minimax-h3` / `minimax-h3-933-图文` 真实积分未核对（`costUsdActual` 用目录档估算）。
