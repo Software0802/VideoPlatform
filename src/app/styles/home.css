@@ -1,0 +1,413 @@
+/* ══ 主页 ══════════════════════════════════════════════════════════ */
+
+/*
+  落底空间：底部悬浮层是 `main` 的兄弟、盖在内容上，所以最后一行卡片与「加载更多」
+  必须自己躲开它，否则点不到（`.bar` 会把点击吃掉）。收起态只有 60px 的输入条，
+  展开成创作面板后约 200px，两档分别留——恒定按面板的高度留会在主页留下一大片空白。
+  `.create` 那一页面板恒展开，所以它自己写死了 236px（见下面）。
+*/
+.home {
+  padding: 18px 20px 104px;
+  animation: fade-up 0.35s ease both;
+}
+.col[data-composer="open"] .home {
+  padding-bottom: 236px;
+}
+.home__banner {
+  width: 100%;
+  height: clamp(170px, 24vh, 300px);
+  border-radius: 16px;
+  background-color: #111114;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.home__tabs {
+  display: flex;
+  gap: 22px;
+  padding: 22px 2px 0;
+}
+.home__tab {
+  padding: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--weak);
+  border-bottom: 2px solid transparent;
+  transition: color 0.16s ease;
+}
+.home__tab:hover {
+  color: var(--fg);
+}
+.home__tab[data-on="true"] {
+  color: var(--fg);
+  border-bottom-color: #fff;
+}
+.home__tab[aria-disabled="true"] {
+  color: var(--off);
+}
+.home__cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 14px 0 18px;
+}
+.home__cat {
+  height: 30px;
+  padding: 0 13px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--fg-3);
+  background: var(--chip);
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+.home__cat:hover {
+  color: var(--fg);
+}
+.home__cat[data-on="true"] {
+  color: var(--fg);
+  background: var(--chip-on);
+}
+.home__empty {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--weak);
+}
+.masonry {
+  columns: 220px 5;
+  column-gap: 10px;
+}
+/* `.masonry__sample` 是空态占位样片，长相与作品卡一致但类名分开（契约 §7.1 #6）。 */
+.masonry__item,
+.masonry__sample {
+  display: block;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  break-inside: avoid;
+  background-color: #141417;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.masonry__item:hover,
+.masonry__sample:hover {
+  transform: translateY(-3px);
+}
+.masonry__item[data-purged="true"] {
+  background-size: 46px;
+  background-color: #0f0f12;
+}
+.masonry__title {
+  position: absolute;
+  left: 9px;
+  top: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: calc(100% - 18px);
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  background: rgba(10, 10, 12, 0.62);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.masonry__purged {
+  position: absolute;
+  left: 9px;
+  bottom: 9px;
+  font-size: 11px;
+  color: var(--fg-3);
+  background: rgba(10, 10, 12, 0.62);
+  border-radius: 6px;
+  padding: 3px 7px;
+}
+
+/* 分页：哨兵负责触底自动续页，按钮是它的手动兜底（无 IntersectionObserver / 已滚到底） */
+.home__more-wrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 4px;
+}
+.home__sentinel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -200px;
+  height: 1px;
+  pointer-events: none;
+}
+.home__more {
+  /* 被 scrollIntoView 滚进视口时别贴着底边停下：底边那 80px 归悬浮输入条，
+     贴边就等于滚进了一个点不到的位置。 */
+  scroll-margin-bottom: 120px;
+  height: 34px;
+  padding: 0 18px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-1);
+  background: var(--chip);
+  transition: background 0.16s ease;
+}
+.home__more:hover:not(:disabled) {
+  background: var(--chip-hover);
+  color: var(--fg);
+}
+.home__more:disabled {
+  color: var(--weak);
+}
+.home__more-err {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--danger);
+}
+
+/* ── 模板页签 ── */
+
+.tpl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+.tpl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 8px 12px;
+  border-radius: 12px;
+  text-align: left;
+  background: var(--card);
+  box-shadow: var(--ring-soft);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.tpl-card:hover {
+  transform: translateY(-3px);
+}
+.tpl-card__cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 9px;
+  background-color: #17171b;
+  background-image: var(--grad-d);
+  background-size: cover;
+  background-position: center;
+  opacity: 0.9;
+}
+.tpl-card__name {
+  padding: 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tpl-card__cat {
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--weak);
+}
+
+/* 作品详情浮层 */
+.work {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(6, 6, 8, 0.72);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  animation: pop-in 0.2s ease both;
+}
+.work__panel {
+  width: min(880px, 100%);
+  max-height: 86vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-radius: 16px;
+  background: rgba(24, 24, 28, 0.98);
+  box-shadow: var(--ring), var(--shadow-modal);
+  padding: 18px;
+}
+.work__media {
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0f0f12;
+  min-height: 180px;
+}
+.work__media video,
+.work__media img {
+  max-width: 100%;
+  max-height: 58vh;
+  display: block;
+}
+.work__purged {
+  margin: 0;
+  padding: 32px 18px;
+  font-size: 13px;
+  color: var(--fg-3);
+  text-align: center;
+}
+.work__info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.work__meta {
+  font-size: 11.5px;
+  color: var(--weak);
+}
+.work__prompt {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--fg-1);
+}
+.work__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.work__btn,
+.work__close {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-1);
+  background: var(--chip);
+  transition: background 0.16s ease;
+}
+.work__btn:hover,
+.work__close:hover {
+  background: var(--chip-hover);
+  color: var(--fg);
+}
+.work__btn--light {
+  color: #15161a;
+  background: #f0f0f2;
+}
+.work__btn--light:hover {
+  background: #fff;
+  color: #15161a;
+}
+.work__btn:disabled {
+  color: var(--off);
+  background: rgba(255, 255, 255, 0.04);
+}
+.work__btn--danger {
+  color: #2a0f12;
+  background: #ff9b9b;
+}
+.work__btn--danger:hover:not(:disabled) {
+  background: #ffb3b3;
+  color: #2a0f12;
+}
+.work__close {
+  margin-left: auto;
+}
+
+/* 标签编辑（预置芯片多选 + 自定义输入 → PATCH /api/jobs/:id） */
+.work__tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.work__tags-label {
+  font-size: 11.5px;
+  color: var(--weak);
+  margin-right: 2px;
+}
+.work__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--fg-3);
+  background: var(--chip);
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+.work__tag:hover:not(:disabled) {
+  background: var(--chip-hover);
+  color: var(--fg);
+}
+.work__tag[data-on="true"] {
+  color: var(--fg);
+  background: var(--chip-on);
+}
+.work__tag:disabled {
+  color: var(--off);
+}
+.work__tag-input {
+  height: 26px;
+  width: 110px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: var(--ring-soft);
+}
+.work__shared {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--fg-3);
+  word-break: break-all;
+}
+.work__shared-url {
+  color: var(--fg-1);
+}
+.work__err {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+.work__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 155, 155, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 155, 155, 0.24);
+}
+.work__confirm-text {
+  flex: 1;
+  min-width: 180px;
+  font-size: 12.5px;
+  color: var(--fg-2);
+}
+

@@ -39,6 +39,10 @@ export const ICON_GRADS = [
 export const SCENE_W = 900;
 export const SCENE_H = 620;
 
+/** 节点几何：标签条高与卡宽（连线端点与卡片定位共用）。 */
+export const LABEL_H = 22;
+export const NODE_W = 260;
+
 /** 场景层左侧要给浮动工具栏留出的空间 + 上下留白（fit 公式里的 108 / 72）。 */
 export const FIT_PAD_X = 108;
 export const FIT_PAD_Y = 16;
