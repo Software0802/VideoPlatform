@@ -45,7 +45,7 @@ node scripts/disable-user.mjs <邮箱> --disable    # 封禁账号（--enable �
 node scripts/usage.mjs --days 7                   # 按天/用户/provider 统计用量并与流水对账
 ```
 
-界面上的「模型」下拉列的是产品名（不露供应商），内置七档见 `src/lib/products/catalog.ts`，可用 `.env.example` 里的 `LUMEN_PRODUCTS`（JSON）按 id 覆盖或追加档位。
+界面上的「模型」下拉列的是产品（产品名为主，供应商与上游模型名作次级信息；2026-09-13 起 relay 中转的模型目录自动生成产品），内置七档见 `src/lib/products/catalog.ts`，可用 `.env.example` 里的 `LUMEN_PRODUCTS`（JSON）按 id 覆盖或追加档位。
 
 可选：配置 `KLING_API_KEY`（可灵直连视频）、`YMAN_API_KEY`（YMan 中转，视频 + 生图）或 `OPENAI_API_KEY`（文生图走 OpenAI 兼容 provider），并用 `VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER` 声明各自的优先级次序——配了 key 却没写进 ORDER 的 provider 不会被选中；一把 key 都没有才走模拟模式。`DATA_DIR` 默认 `./data`。
 

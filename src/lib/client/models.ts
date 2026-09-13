@@ -38,6 +38,11 @@ export type Product = {
   supportsLongForm: boolean;
   maxReferenceImages: number;
   imageResolutions?: ImageResolution[];
+  /** 供应商 id / 展示名与上游模型展示名（N3.3 起下发，分组与成本档展示用）。 */
+  providerId?: string;
+  providerName?: string;
+  upstreamModel?: string;
+  costHint?: "low" | "mid" | "high";
   description: string;
   /** 下拉里 ⚡ 读数的基准价（人民币元），乘 100 就是积分。 */
   samplePriceCny: number;
@@ -107,6 +112,13 @@ function readProduct(raw: unknown): Product | null {
     supportsLongForm: p.supportsLongForm === true,
     maxReferenceImages: Math.max(0, Math.trunc(num(p.maxReferenceImages, 0))),
     imageResolutions: imageResolutions.length ? imageResolutions : undefined,
+    providerId: str(p.providerId) || undefined,
+    providerName: str(p.providerName) || undefined,
+    upstreamModel: str(p.upstreamModel) || undefined,
+    costHint:
+      p.costHint === "low" || p.costHint === "mid" || p.costHint === "high"
+        ? p.costHint
+        : undefined,
     description: str(p.description),
     samplePriceCny: Math.max(0, num(p.samplePriceCny, 0)),
   };

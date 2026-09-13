@@ -114,6 +114,14 @@ curl.exe -b "lumen_session=<...>" -X DELETE https://genius.homeaistack.online/ap
 - 隐式次序：没显式配 `*_PROVIDER_ORDER` 时 relay 按 `priority` 降序排在内置默认之后；生产显式写了 ORDER，要让新 relay 接流量就把它加进 `VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER`。
 - `yman` / `openai` 是老 env 折算的预设，PATCH/DELETE 它们会 404；要覆盖就 POST 一条同 id 的文件配置。
 
+## 中转上游下架模型时系统会怎样
+
+`catalog.source:"models-endpoint"` 的 relay 每 `RELAY_CATALOG_REFRESH_MS`（默认 30 分钟）自动重拉 `/models` 并写快照（也可随时 `POST /:id/discover` 手动刷）：
+
+- **普通模型消失**：记 warn + `upstream_model_missing` 告警（`reason:"catalog"`，按 `relay:model` 去重）；由该模型生成的产品（`<relayId>:<slug>`）立刻从 `/api/models` 消失，用户选不到它。
+- **`video.defaults` 指的默认模型消失**：该 mode 立刻从 relay 的 `capabilities().modes` 收缩，路由自动跳到下一家能接的 provider，不等用户撞 404；模型回到目录后 mode 与产品自动恢复，不用重启。
+- 拉取失败保留上次快照照常运行，只在日志 warn；从未成功过时目录退回 `catalog.models` 配置表。
+
 ## ccgoai 生图 503 `service_busy`
 
 现象：OpenAI 兼容通道（ccgoai）对 `gpt-image-2` 的 `quality=high` 一律回 503 `{"error":{"code":"service_busy","type":"api_error",...}}`。这是结构化错误体，代码已按**确定拒单**处理（普通 failed、可重试，不会锁 `uncertain_submit`）。

@@ -256,6 +256,15 @@ export function lumenRelaysRaw(): string | undefined {
 }
 
 /**
+ * `catalog.source:"models-endpoint"` 的中转目录刷新周期（毫秒），默认 30 分钟，
+ * 下限 60 秒——`/models` 是免费查询，但也不必拿它当心跳打。
+ */
+export function relayCatalogRefreshMs(): number {
+  const n = Number(process.env.RELAY_CATALOG_REFRESH_MS ?? 1_800_000);
+  return Number.isFinite(n) && n >= 1 ? Math.max(Math.floor(n), 60_000) : 1_800_000;
+}
+
+/**
  * gpt-image-1 常要 30–120 秒才返回，远超通用的 `UPSTREAM_TIMEOUT_MS`（默认 30s）。
  * 用通用超时会在图片已经生成、正要返回时 abort，而这一次调用照样计费。
  */

@@ -1,4 +1,10 @@
-import { openaiImageTaskTimeoutMs, openaiImageTimeoutMs, usdCnyRate } from "@/lib/env";
+import {
+  openaiImageTaskTimeoutMs,
+  openaiImageTimeoutMs,
+  relayCatalogRefreshMs,
+  usdCnyRate,
+} from "@/lib/env";
+import { notifyAlert } from "@/lib/alerts";
 import { imagePriceTableFromRaw } from "@/lib/cost";
 import { log } from "@/lib/log";
 import type { OpenaiImageConfig } from "@/lib/providers/openai-image/config";
@@ -71,6 +77,25 @@ export function viewForConfig(cfg: RelayConfig, source: RelayView["source"]): Re
       }
     : null;
   const perCny = cfg.creditsPerCny ?? 100;
+  // 目录刷新发现默认模型消失 → 收缩该 mode 的声明（路由自动跳家，模型回来自动恢复）。
+  // 只在有快照时判：从未拉成功过的时候配置目录就是全部认知，不能拿它当「上游真没有」。
+  const unavailableModes =
+    catalogSource === "models-endpoint" && catalog
+      ? () => {
+          const snapshot = readRelayCatalogSnapshot(cfg.id);
+          if (!Object.keys(snapshot).length) return EMPTY_MODE_SET;
+          const merged: Record<string, RelayModelSpec> = {
+            ...snapshot,
+            ...((cfg.catalog?.models ?? {}) as Record<string, RelayModelSpec>),
+          };
+          const out = new Set<NativeMode>();
+          for (const mode of VIDEO_MODES) {
+            const configured = cfg.video?.defaults[mode as "text_to_video"];
+            if (configured && !isKnownInTable(merged, configured)) out.add(mode);
+          }
+          return out;
+        }
+      : undefined;
   return {
     id: cfg.id,
     name: cfg.name,
@@ -89,6 +114,7 @@ export function viewForConfig(cfg: RelayConfig, source: RelayView["source"]): Re
     creditsPerCny: cfg.creditsPerCny,
     creditsToUsd: (credits) =>
       Math.round((credits / perCny / usdCnyRate()) * 1_000_000) / 1_000_000,
+    unavailableModes,
     source,
   };
 }
@@ -171,9 +197,81 @@ export function currentRelayViews(): RelayView[] {
   return desiredRelayEntries().map((e) => e.view);
 }
 
+const EMPTY_MODE_SET: ReadonlySet<NativeMode> = new Set();
+
+/** 在合并目录（快照 ∪ 配置覆盖）里查模型名——展示名与别名都算命中。 */
+function isKnownInTable(table: Record<string, RelayModelSpec>, name: string): boolean {
+  const raw = name.trim();
+  if (table[raw]) return true;
+  for (const spec of Object.values(table)) {
+    if (spec.aliases?.includes(raw)) return true;
+  }
+  return false;
+}
+
 const POLL_MS = 10_000;
 let lastMtime: number | null = null;
 let watcherStarted = false;
+
+/**
+ * 对一条 relay 拉一次 `/models` 并处理 diff：新增记 info；消失记 warn +
+ * `upstream_model_missing` 告警（按 `relay:model` 去重）。默认模型消失带来的
+ * mode 收缩不需要额外动作——`unavailableModes` 是调用时读快照的 thunk，
+ * 快照落盘后下一次 `capabilities()` 自然就少了那个 mode。
+ */
+export async function refreshRelayCatalog(view: RelayView): Promise<void> {
+  const previous = Object.keys(readRelayCatalogSnapshot(view.id));
+  const result = await fetchRelayModels(view, previous);
+  if (result.diff.added.length) {
+    log("info", "relay 目录刷新：新增模型", { relay: view.id, added: result.diff.added.join(",") });
+  }
+  for (const model of result.diff.removed) {
+    log("warn", "relay 目录刷新：模型从上游目录消失", { relay: view.id, model });
+    void notifyAlert(
+      "upstream_model_missing",
+      { provider: view.id, model, base: view.base(), reason: "catalog" },
+      `${view.id}:${model}`,
+    );
+  }
+}
+
+/**
+ * 周期目录刷新：启动 30s 后首拉（快照文件已经给了可用目录，启动路径不能被
+ * 一家中转的慢响应拖住），之后每 `RELAY_CATALOG_REFRESH_MS` 刷一次。只对
+ * `models-endpoint` 且有 key 的 relay 拉取；失败保留上次快照。
+ */
+export function startRelayCatalogRefresh(): void {
+  if (process.env.VITEST) return;
+  const pullAll = async () => {
+    for (const view of liveRelayViews()) {
+      if (view.catalogSource !== "models-endpoint" || !view.enabled) continue;
+      if (!view.apiKey()) continue;
+      try {
+        await refreshRelayCatalog(view);
+      } catch (error) {
+        log("warn", "relay 目录刷新失败，继续使用旧快照 / 配置目录", {
+          relay: view.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    // 目录变了不改变「该注册谁」，但 `implicitOrder` / 可用性读的是调用时状态，
+    // reconcile 一次保证 view 与注册表对齐（比如快照里的默认模型回来）。
+    try {
+      reconcileRelays();
+    } catch (error) {
+      log("error", "relay 目录刷新后的 reconcile 失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  setTimeout(() => {
+    void pullAll().then(() => {
+      const timer = setInterval(() => void pullAll(), relayCatalogRefreshMs());
+      if (typeof timer.unref === "function") timer.unref();
+    });
+  }, 30_000).unref();
+}
 
 /**
  * 模块加载时装配一次 + 起 mtime 轮询。`fs.watch` 在 Windows 对编辑器「写临时文件
@@ -188,24 +286,7 @@ export function assembleRelays(): void {
   // 一律显式调 `reconcileRelays()`。
   if (process.env.VITEST) return;
   watcherStarted = true;
-  // models-endpoint 的首次拉取延迟 30s：启动路径不能被一家中转的慢响应拖住，
-  // 快照文件已经给了它一个可用的旧目录。
-  setTimeout(() => {
-    void (async () => {
-      for (const view of liveRelayViews()) {
-        if (view.catalogSource !== "models-endpoint" || !view.enabled) continue;
-        try {
-          await fetchRelayModels(view);
-        } catch (error) {
-          log("warn", "relay 目录首次拉取失败，继续使用旧快照 / 配置目录", {
-            relay: view.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-      reconcileRelays();
-    })();
-  }, 30_000).unref();
+  startRelayCatalogRefresh();
   const timer = setInterval(() => {
     const mtime = relaysFileMtime();
     if (mtime === lastMtime) return;

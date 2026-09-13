@@ -34,6 +34,13 @@ export type RelayView = {
   creditsPerCny: number | undefined;
   /** 积分 → USD 折算；非积分制中转也应实现（返回 0），调用方按 catalog 存在与否分流。 */
   creditsToUsd(credits: number): number;
+  /**
+   * 目录刷新发现**默认模型消失**时收缩出的 mode 集合（方案 §4c）：该 mode 不再进
+   * `capabilities().modes`，路由自然跳到下一家，模型回来时自动恢复。只在
+   * `catalogSource==="models-endpoint"` 且已有快照时才会非空；静态目录与 env 预设
+   * 不设置它。
+   */
+  unavailableModes?(): ReadonlySet<NativeMode>;
   /** 来源：手工配置文件 / LUMEN_RELAYS 种子 / 老 env 折算。 */
   source: "file" | "env-seed" | "legacy";
 };
@@ -59,7 +66,8 @@ export function liveRelayViews(): RelayView[] {
 /** 这条 relay 的视频通道声明了哪些原生 mode（由 defaults 里配了模型的那几项决定）。 */
 export function relayVideoModes(view: RelayView): NativeMode[] {
   if (!view.catalog) return [];
+  const unavailable = view.unavailableModes?.();
   return (["text_to_video", "image_to_video", "reference_to_video"] as const).filter(
-    (mode) => Boolean(view.catalog?.configuredModel(mode)),
+    (mode) => Boolean(view.catalog?.configuredModel(mode)) && !unavailable?.has(mode),
   );
 }

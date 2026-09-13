@@ -29,10 +29,12 @@ const modelSpecSchema = z.object({
   resolutions: z.array(z.enum(["720p", "1080p"])).optional(),
   ratios: z.array(z.string()).optional(),
   maxReferenceImages: z.number().int().min(0).optional(),
+  kind: z.enum(["video", "image", "chat"]).optional(),
   credits: z
     .object({
       resolution: z.record(z.string(), z.number().min(0)).optional(),
       duration: z.record(z.string(), z.number().min(0)).optional(),
+      flat: z.number().min(0).optional(),
     })
     .optional(),
 });

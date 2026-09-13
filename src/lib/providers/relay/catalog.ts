@@ -22,10 +22,17 @@ export type RelayModelSpec = {
   ratios: AspectRatio[];
   /** 0 表示这个模型根本不收参考图（纯文生）。 */
   maxReferenceImages: number;
+  /**
+   * `/v1/models` 快照带来的上游分类。`undefined` = 配置里手写的条目，按视频模型
+   * 参与产品生成；快照里的 image / chat 模型不生成视频产品。
+   */
+  kind?: "video" | "image" | "chat";
   /** 积分 = 分辨率价 + 时长价。键分别是分辨率名与时长的十进制字符串。 */
   credits: {
     resolution: Partial<Record<RelayResolution, number>>;
     duration: Record<string, number>;
+    /** 上游 `/models` 直接给单次价（不分档）时的平摊积分。 */
+    flat?: number;
   };
 };
 
@@ -145,7 +152,7 @@ export function makeRelayCatalog(opts: {
       if (!spec) return opts.unknownCredits();
       const res = spec.credits.resolution[resolution];
       const dur = spec.credits.duration[String(durationSec)];
-      if (res == null && dur == null) return opts.unknownCredits();
+      if (res == null && dur == null) return spec.credits.flat ?? opts.unknownCredits();
       // 只缺一半时用已知的一半，另一半按该模型最贵的一档补——宁可高估。
       const resCredits = res ?? maxOf(Object.values(spec.credits.resolution)) ?? 0;
       const durCredits = dur ?? maxOf(Object.values(spec.credits.duration)) ?? 0;

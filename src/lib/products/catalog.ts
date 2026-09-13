@@ -3,6 +3,7 @@ import { isMockMode, klingVideoAudio, lumenProductsRaw } from "@/lib/env";
 import { log } from "@/lib/log";
 import { isExhausted } from "@/lib/providers/exhaustion";
 import { envModelFor } from "@/lib/providers/model-name";
+import { liveRelayViews, relayViewFor } from "@/lib/providers/relay/live";
 import { servesResolution } from "@/lib/providers/resolution";
 import {
   currentProviderId,
@@ -72,6 +73,11 @@ export type Product = {
   maxReferenceImages: number;
   /** 图片产品的档位；视频产品省略。 */
   imageResolutions?: ImageResolution[];
+  /**
+   * 这个产品钉死发给上游的模型展示名（relay 目录生成的产品才有）。写了它的产品，
+   * 可用性还受「该模型此刻仍在 relay 目录里」约束——上游下架时产品自动隐藏。
+   */
+  upstreamModel?: string;
   description: string;
 };
 
@@ -211,11 +217,86 @@ export const DEFAULT_PRODUCTS: readonly Product[] = [
   },
 ];
 
-type CatalogCache = { raw: string | undefined; list: Product[]; byId: Map<string, Product> };
+type CatalogCache = { key: string; list: Product[]; byId: Map<string, Product> };
 
 let cache: CatalogCache | null = null;
 
-/** 默认表叠加 `LUMEN_PRODUCTS`（按 id 覆盖，新 id 追加）。坏 JSON 记一条 warn 后回落默认表。 */
+/**
+ * relay 目录生成的产品（方案 §3.4）：每个**显式配置**的 relay（file / env-seed，
+ * 老 env 折算的预设不生成——那条路径要保持行为不变）把它目录里的每个视频模型
+ * 变成一个可选产品，id 形如 `relayId:model-slug`。目录是调用时读的：上游下架
+ * 一个模型，对应产品立刻从列表消失（`isProductAvailable` 的目录判据）；
+ * `LUMEN_PRODUCTS` 仍能按 id 覆盖它们。
+ */
+function generatedRelayProducts(): Product[] {
+  const out: Product[] = [];
+  for (const view of liveRelayViews()) {
+    if (!view.enabled || !view.catalog || view.source === "legacy") continue;
+    const taken = new Set<string>();
+    for (const [display, spec] of Object.entries(view.catalog.table())) {
+      if (spec.kind && spec.kind !== "video") continue;
+      let slug = display
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 28);
+      if (!slug) slug = "model";
+      let candidate = slug;
+      for (let n = 2; taken.has(candidate) || out.some((p) => p.id === `${view.id}:${candidate}`); n += 1) {
+        candidate = `${slug}-${n}`;
+      }
+      taken.add(candidate);
+      const acceptsImages = spec.maxReferenceImages > 0;
+      const modes: NativeMode[] = acceptsImages
+        ? ["text_to_video", "image_to_video", "reference_to_video"]
+        : ["text_to_video"];
+      out.push({
+        id: `${view.id}:${candidate}`,
+        name: display,
+        kind: "video",
+        provider: view.id,
+        models: {
+          text_to_video: display,
+          image_to_video: display,
+          reference_to_video: display,
+        },
+        modes,
+        resolutions: spec.resolutions,
+        defaultResolution: [...spec.resolutions].sort()[0],
+        aspectRatios: spec.ratios,
+        durations: spec.durations,
+        audio: "uncontrolled",
+        supportsLastFrame: false,
+        supportsLongForm:
+          modes.includes("text_to_video") &&
+          modes.includes("image_to_video") &&
+          spec.durations.includes(10),
+        maxReferenceImages: spec.maxReferenceImages,
+        upstreamModel: display,
+        description: `${view.name} 目录模型，按上游档位计费。`,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * 目录缓存键：除了 `LUMEN_PRODUCTS` 原文，还要含 relay 目录的状态——快照刷新 /
+ * reconcile 改了目录键集合时，生成的产品列表必须重算。
+ */
+function catalogKey(): string {
+  const relaySig = liveRelayViews()
+    .map(
+      (v) =>
+        `${v.id}:${v.source}:${v.enabled ? 1 : 0}:${
+          v.catalog ? Object.keys(v.catalog.table()).sort().join(",") : ""
+        }`,
+    )
+    .join(";");
+  return `${lumenProductsRaw() ?? ""}#${relaySig}`;
+}
+
+/** 默认表 ∪ relay 生成表，叠加 `LUMEN_PRODUCTS`（按 id 覆盖，新 id 追加）。坏 JSON 记 warn 后回落。 */
 export function allProducts(): Product[] {
   return catalog().list;
 }
@@ -250,6 +331,12 @@ export function isProductAvailable(product: Product): boolean {
   if (isExhausted(product.provider, product.kind)) return false;
   if (product.provider === "kling" && product.audio === "native" && klingVideoAudio() !== "native") {
     return false;
+  }
+  // relay 目录生成的产品钉死了上游模型：模型从目录消失（上游下架）时产品同步隐藏，
+  // 而不是等用户提交撞 404。
+  if (product.upstreamModel) {
+    const catalog = relayViewFor(product.provider)?.catalog;
+    if (!catalog || !catalog.isKnownModel(product.upstreamModel)) return false;
   }
   return true;
 }
@@ -352,10 +439,12 @@ export function productServesResolution(product: Product, resolution?: Resolutio
 }
 
 function catalog(): CatalogCache {
+  const key = catalogKey();
+  if (cache && cache.key === key) return cache;
   const raw = lumenProductsRaw();
-  if (cache && cache.raw === raw) return cache;
-  const list = raw ? merge(DEFAULT_PRODUCTS, parseOverrides(raw)) : [...DEFAULT_PRODUCTS];
-  cache = { raw, list, byId: new Map(list.map((p) => [p.id, p])) };
+  const base: Product[] = [...DEFAULT_PRODUCTS, ...generatedRelayProducts()];
+  const list = raw ? merge(base, parseOverrides(raw, base)) : base;
+  cache = { key, list, byId: new Map(list.map((p) => [p.id, p])) };
   return cache;
 }
 
@@ -375,7 +464,7 @@ function merge(base: readonly Product[], overrides: Product[]): Product[] {
  * modes，缺了就跳过——没有 provider 的产品连交给谁都不知道）。`model` 不是必填：省略
  * 就是「用实例给这家配的那个模型」（`modelForProduct` 的最后一档）。
  */
-function parseOverrides(raw: string): Product[] {
+function parseOverrides(raw: string, base: readonly Product[]): Product[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -392,8 +481,7 @@ function parseOverrides(raw: string): Product[] {
     if (!isRecord(entry)) continue;
     const id = typeof entry.id === "string" ? entry.id.trim() : "";
     if (!id) continue;
-    const base = DEFAULT_PRODUCTS.find((p) => p.id === id);
-    const product = parseProduct(id, entry, base);
+    const product = parseProduct(id, entry, base.find((p) => p.id === id));
     if (product) out.push(product);
     else log("warn", "LUMEN_PRODUCTS 里的产品缺少必填字段，已跳过", { id });
   }
@@ -437,6 +525,7 @@ function parseProduct(id: string, value: Record<string, unknown>, base?: Product
         : (base?.maxReferenceImages ?? 0),
     imageResolutions:
       (strArray(value.imageResolutions) as ImageResolution[] | undefined) ?? base?.imageResolutions,
+    upstreamModel: str(value.upstreamModel) ?? base?.upstreamModel,
     description: str(value.description) ?? base?.description ?? "",
   };
   if (!merged.provider || !merged.modes.length) return null;
