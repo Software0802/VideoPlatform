@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Session login for the smoke scripts.
  *
@@ -24,6 +25,7 @@ function readCredentials() {
   return { email, password, invite: process.env.LUMEN_SMOKE_INVITE?.trim() || undefined };
 }
 
+/** @param {Response} response */
 async function readError(response) {
   const text = await response.text();
   try {
@@ -33,7 +35,10 @@ async function readError(response) {
   }
 }
 
-/** All `Set-Cookie` headers, whether the runtime exposes them joined or as a list. */
+/**
+ * All `Set-Cookie` headers, whether the runtime exposes them joined or as a list.
+ * @param {Response} response
+ */
 function setCookies(response) {
   const list = response.headers.getSetCookie?.();
   if (list && list.length) return list;
@@ -41,6 +46,7 @@ function setCookies(response) {
   return joined ? [joined] : [];
 }
 
+/** @param {Response} response */
 function sessionCookieFrom(response) {
   for (const raw of setCookies(response)) {
     const pair = raw.split(";", 1)[0]?.trim();
@@ -51,6 +57,7 @@ function sessionCookieFrom(response) {
   return null;
 }
 
+/** @param {string} baseUrl @param {string} email @param {string} password */
 async function login(baseUrl, email, password) {
   const response = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
@@ -63,6 +70,7 @@ async function login(baseUrl, email, password) {
 /**
  * Log in and return the `Cookie` header value to attach to every request.
  * Registers first when the account is unknown and an invite code was supplied.
+ * @param {string} baseUrl
  */
 export async function loginForSmoke(baseUrl) {
   const { email, password, invite } = readCredentials();

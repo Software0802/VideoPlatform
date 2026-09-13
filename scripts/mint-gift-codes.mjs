@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 /**
  * 生成礼品码（自助充值码）。
  *
@@ -21,6 +22,7 @@ const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LENGTH = 12;
 const MAX_AMOUNT = 100000;
 
+/** @param {string} message */
 function usage(message) {
   process.stderr.write(
     `${message}\n用法: node scripts/mint-gift-codes.mjs <数量> <面额元> [--note "说明"]\n`,
@@ -55,6 +57,7 @@ function generateCode() {
   return out;
 }
 
+/** @param {string} file */
 async function exists(file) {
   return access(file).then(
     () => true,
@@ -62,7 +65,11 @@ async function exists(file) {
   );
 }
 
-/** 与服务端同款：临时文件 + rename 原子替换。 */
+/**
+ * 与服务端同款：临时文件 + rename 原子替换。
+ * @param {string} destination
+ * @param {unknown} value
+ */
 async function writeJsonAtomic(destination, value) {
   const temporary = `${destination}.${process.pid}.tmp`;
   try {

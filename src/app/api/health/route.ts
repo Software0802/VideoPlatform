@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { access, mkdir, statfs } from "node:fs/promises";
 import { notifyAlert } from "@/lib/alerts";
+import { buildInfo } from "@/lib/build-info";
 import {
   DISK_FREE_PCT_FLOOR,
   dataDir,
@@ -113,6 +114,10 @@ async function handler(request: Request) {
   return Response.json(
     {
       ok,
+      // 发布指纹：deploy.sh 写入 BUILD_INFO.json；本地开发 / 旧部署没有该文件时为 null。
+      // 对照 `git rev-parse HEAD` 即可确认线上跑的是哪个 commit（dirty:true 表示
+      // 该包出自未提交的工作树，不等于 sha 对应的干净构建）。
+      build: buildInfo(),
       mockMode: mock,
       harnessRunnable: harnessEnabled(),
       ffmpeg: { present: Boolean(ffmpegPath), path: ffmpegPath },

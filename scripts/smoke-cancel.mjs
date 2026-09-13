@@ -1,8 +1,10 @@
 #!/usr/bin/env node
+// @ts-check
 
 import { loginForSmoke } from "./lib/smoke-session.mjs";
 
 const args = new Set(process.argv.slice(2));
+/** @param {string} name */
 const valueFor = (name) => {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
@@ -14,14 +16,24 @@ const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 30_000);
 /** `lumen_session=…`, obtained in run() before the first API call. */
 let sessionCookie = "";
 
-const headers = (extra = {}) => ({
+/** @param {Record<string, string>} [extra] */
+const headers = (extra = {}) => /** @type {Record<string, string>} */ ({
   ...(sessionCookie ? { Cookie: sessionCookie } : {}),
   ...extra,
 });
 
+/**
+ * @param {string} route
+ * @param {RequestInit} [init]
+ * @returns {Promise<any>}
+ */
 async function json(route, init = {}) {
-  const response = await fetch(`${baseUrl}${route}`, { ...init, headers: headers(init.headers) });
+  const response = await fetch(`${baseUrl}${route}`, {
+    ...init,
+    headers: headers(/** @type {Record<string, string> | undefined} */ (init.headers)),
+  });
   const text = await response.text();
+  /** @type {any} */
   let body = {};
   try {
     body = text ? JSON.parse(text) : {};
@@ -32,6 +44,7 @@ async function json(route, init = {}) {
   return body;
 }
 
+/** @param {number} ms */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function run() {

@@ -1,6 +1,6 @@
 # 设计计划书 · 全仓优化与路线重排（2026-09 起）
 
-状态：2026-09-13 **实施中，本文已作为当前执行路线**。用户已确认：D-1 移除 Tailwind；D-2 e2e 定时+手动；D-3 删除 skip-check；D-4 CLI 走应用管理入口；D-6 素材 30 天并明示；D-7 先出批次报价，未批准实际花费；D-8 本轮准备非 root 迁移，具体停服/改归属逐项确认；D-9 新路线生效。D-5 待 SQLite 触发条件成立再定（生产 Node 22.22.2，22.x 的 node:sqlite 仍为 1.1 Active development）。N3.1–N3.4 已合入 `37123bd`；R0 代码与文档已通过本地门禁（107 单测文件、1245 通过/1 跳过，e2e 36/36，生产构建通过），推送后 CI 待验收；当前证据/剩余工作见 `docs/handoff.md`。用户允许门禁通过后提交推送 main，不等于允许部署或付费评测。本文取代 `docs/plan-next-2026-09-13.md` 的排期表；该文与 `docs/plan-unimplemented-2026-09-08.md` 的契约仍为引用源。以下正文保留起草时方案，实际进度以上述状态与 as-built 为准。
+状态：2026-09-13 **实施中，本文已作为当前执行路线**。用户已确认：D-1 移除 Tailwind；D-2 e2e 定时+手动；D-3 删除 skip-check；D-4 CLI 走应用管理入口；D-6 素材 30 天并明示；D-7 先出批次报价，未批准实际花费；D-8 本轮准备非 root 迁移，具体停服/改归属逐项确认；D-9 新路线生效。D-5 待 SQLite 触发条件成立再定（生产 Node 22.22.2，22.x 的 node:sqlite 仍为 1.1 Active development）。N3.1–N3.4 已合入 `37123bd`；R0 代码与文档已通过本地门禁（107 单测文件、1245 通过/1 跳过，e2e 36/36，生产构建通过），`main` 首条绿 CI 为 `6b5449d`（R0.1 验收成立）；R1.1–R1.3 已落地，e2e 定时运行与 deploy.sh 新流程待 CI/下一次部署验证；当前证据/剩余工作见 `docs/handoff.md`。用户允许门禁通过后提交推送 main，不等于允许部署或付费评测。本文取代 `docs/plan-next-2026-09-13.md` 的排期表；该文与 `docs/plan-unimplemented-2026-09-08.md` 的契约仍为引用源。以下正文保留起草时方案，实际进度以上述状态与 as-built 为准。
 
 沿用的既定决策（不再讨论）：产品三卖点（`plan-next` §0.1）；D1 长片定价 ¥20/30/40；D2 `edit_video`/`extend_video` 移出路线图；D3 通用中转 provider（N3.1–N3.3 已提交，N3.4 进行中）；D4 微信 + 支付宝都接。
 
@@ -138,12 +138,12 @@ R2 / R3 / R4 / R5 在 R1 之后可**并行**（不同文件域，见每片「触
 
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
-| R1.1 | e2e workflow：`workflow_dispatch` + 每日定时（`E2E_REQUIRE_MOCK=1`，装浏览器，上传 report 工件）；是否挂 PR 见 §8 D-2 | 定时运行连续 3 次绿 |
-| R1.2 | eslint 范围加 `e2e scripts`；`scripts/*.mjs` 加 `// @ts-check` 并纳入 `tsc`（`allowJs` 已开） | 三条门禁覆盖全部可执行代码 |
-| R1.3 | `deploy.sh`：`git archive HEAD` 到临时目录构建；拒绝脏工作树（或显式 `--allow-dirty` 并打印 diffstat）；写 `BUILD_INFO.json {sha, builtAt, node}`；`/api/health` 登录态回显 `build.sha`；服务器 `pnpm install --prod --frozen-lockfile`；三条门禁齐跑，`--skip-check` 去留见 §8 D-3 | 部署后 `curl /api/health`（登录态）的 sha = 本地 `git rev-parse HEAD`；handoff「生产基线」行改为从 health 读 |
-| R1.4 | 发布目录 `releases/<sha>` + `current` 软链（`plan-unimplemented` §10）；回滚 = 切软链 | 一次演练：部署 → 切回上一 sha → health 绿 |
-| R1.5 | 服务专用用户运行（非 root），`data/` 归属迁移；runbook 相应改写 | `systemctl show genius -p User` ≠ root；全部管理 CLI 以该用户执行成功 |
-| R1.6 | 安全收紧评估（审查 F-19 / F-20）：核对 Caddyfile 对 XFF 是覆盖而非追加；评估 `proxy.ts` 对「带会话 Cookie 且 Origin/Referer 双缺」的非 GET 请求改为 403 | runbook 记录 Caddy 核对结果；若收紧，`proxy.test.ts` 补该用例且 e2e / smoke 不受影响 |
+| R1.1（已落地，待 CI 定时验证） | e2e workflow：`workflow_dispatch` + 每日定时（`E2E_REQUIRE_MOCK=1`，装浏览器，上传 report 工件）；是否挂 PR 见 §8 D-2 | 定时运行连续 3 次绿 |
+| R1.2（已落地） | eslint 范围加 `e2e scripts`；`scripts/*.mjs` 加 `// @ts-check` 并纳入 `tsc`（`allowJs` 已开） | 三条门禁覆盖全部可执行代码 |
+| R1.3（已落地，待下一次部署验证） | `deploy.sh`：`git archive HEAD` 到临时目录构建；拒绝脏工作树（或显式 `--allow-dirty` 并打印 diffstat）；写 `BUILD_INFO.json {sha, builtAt, node}`；`/api/health` 登录态回显 `build.sha`；服务器 `pnpm install --prod --frozen-lockfile`；三条门禁齐跑，`--skip-check` 去留见 §8 D-3 | 部署后 `curl /api/health`（登录态）的 sha = 本地 `git rev-parse HEAD`；handoff「生产基线」行改为从 health 读 |
+| R1.4（待生产窗口） | 发布目录 `releases/<sha>` + `current` 软链（`plan-unimplemented` §10）；回滚 = 切软链 | 一次演练：部署 → 切回上一 sha → health 绿 |
+| R1.5（待生产窗口） | 服务专用用户运行（非 root），`data/` 归属迁移；runbook 相应改写 | `systemctl show genius -p User` ≠ root；全部管理 CLI 以该用户执行成功 |
+| R1.6（下一轮） | 安全收紧评估（审查 F-19 / F-20）：核对 Caddyfile 对 XFF 是覆盖而非追加；评估 `proxy.ts` 对「带会话 Cookie 且 Origin/Referer 双缺」的非 GET 请求改为 403 | runbook 记录 Caddy 核对结果；若收紧，`proxy.test.ts` 补该用例且 e2e / smoke 不受影响 |
 
 ### R2 · 产品主线 A：多模型与中转（N3.4 → N3.5 → N4；M）
 

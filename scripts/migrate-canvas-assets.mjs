@@ -1,3 +1,4 @@
+// @ts-check
 import { parseArgs } from "node:util";
 import path from "node:path";
 import { migrateCanvasAssets } from "../src/lib/assets/migrate.mjs";

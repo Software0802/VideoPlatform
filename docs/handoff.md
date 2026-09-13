@@ -8,12 +8,12 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 代码基线 | `main`/`origin/main` 已包含 N3.4 `37123bd` 与交接提交 `fb37e53`；精确当前 SHA 用 `git rev-parse HEAD origin/main` 核对。本轮 R0 修复在当前代码中，见下表 |
+| 代码基线 | `main`/`origin/main` 已包含 N3.4 `37123bd` 与交接提交 `fb37e53`；`main` 首条绿 CI 为 `6b5449d`（R0.1 验收成立）。精确当前 SHA 用 `git rev-parse HEAD origin/main` 核对 |
 | 生产版本依据 | N3.4 会话记录部署 `37123bd`；线上没有 `BUILD_INFO.json`，尚不能由 health 自动核对 SHA。本轮未执行部署，也未运行生产素材迁移 |
 | 本机 | Windows / PowerShell，Node v24.16.0，pnpm 10.33.0，Next 16.3.3，React 19.2.8 |
 | 生产只读核查 | 阿里云 8.209.212.178，`/opt/genius`；Node v22.22.2，pnpm 10.33.0，Caddy v2.11.4；genius.service active，User 未设置即默认 root，MemoryMax 700 MiB；54 个标准任务目录、5 个用户目录 |
 | 入口 | `https://genius.homeaistack.online`；本地 `pnpm dev` 后访问 `http://localhost:3000`，不用 127.0.0.1（Next dev 可能 403） |
-| 整合门禁 | `fb37e53 + R0` 在隔离副本依次通过 typegen/tsc/eslint/test：107 文件、1245 通过、1 既有跳过；生产构建通过且无全仓追踪警告；整合 e2e 36/36，画布重复三轮 10/10。单测与 e2e 错开运行，未放宽全局超时。GitHub CI 等本轮推送验收，不以本地结果替代 |
+| 整合门禁 | `fb37e53 + R0` 在隔离副本依次通过 typegen/tsc/eslint/test：107 文件、1245 通过、1 既有跳过；生产构建通过且无全仓追踪警告；整合 e2e 36/36，画布重复三轮 10/10。R1 起 eslint 范围为 `src e2e scripts`（CI 与 deploy.sh 同步），`scripts/**/*.mjs` 带 `// @ts-check` 纳入 tsc；e2e 走独立 workflow（`.github/workflows/e2e.yml`，每日 UTC 20:00 定时 + 手动，不挂 PR）。单测与 e2e 错开运行，未放宽全局超时 |
 | 测试环境 | 独立验证 worktree `D:\dev\repos\VideoPlatFrom-optimization-20260913`；e2e 端口 3178、E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1；不读生产密钥，不调用真实上游 |
 | 备份 | root cron 每日 03:17，最新本机包 `genius-data-20260913-031701.tgz`，共 4 包；ECS 自动快照未获控制台证据，异地副本与一致性恢复演练未完成 |
 
@@ -55,12 +55,12 @@
 
 | Finding | 当前状态 / 后续 |
 | --- | --- |
-| F-01 | typegen 前置已修并复现前后差异；GitHub main 绿灯待本轮推送验收 |
+| F-01 | typegen 前置已修并复现前后差异；`main` `6b5449d` CI 绿，验收成立 |
 | F-02 | 备份白名单与真实打包回归已修；生产包检查待部署 |
 | F-03 | 独立素材、30 天提示、迁移/归属/过期/刷新回归已落地 |
 | F-04 | 画布三轮重复 10/10；整合 N3.4 后全量 e2e 36/36 |
 | F-05 | 大 Context 结构确认；Profiler 测量与分域拆分待 R5 |
-| F-06 | 仅 typegen 已同步；归档构建、构建 SHA、完整发布/回滚与 skip-check 移除待 R1 |
+| F-06 | R1.3 已落地：deploy.sh 三条门禁齐跑且不可跳过、脏树拒绝/`--allow-dirty`、生成 `BUILD_INFO.json` 并随包发布、服务器 `--frozen-lockfile` 与别名补链共享回滚；health 登录态回显 `build`。`--frozen-lockfile` 与 sha 回显待下一次部署验证；git archive 构建与发布目录（R1.4）未做 |
 | F-07 | 同机 cron 已核实；异地目标、加密、全写者维护屏障与恢复演练待 R4 |
 | F-08 | 交接区分代码/部署/实测，纠正目录数与备份状态；整合门禁按实际结果收口 |
 | F-09 | run/流水线性 IO 仍在，待准入埋点与 R4 分阶段治理 |
@@ -71,7 +71,7 @@
 | F-14 | 已拍板移除 Tailwind；依赖与 reset 替换尚未实施 |
 | F-15 | 旧重定向页仍在，待 R5 统一 redirects 配置 |
 | F-16 | evals:check 实测缺 character-zh/en 两张授权素材；无质量校准记录，先给批次报价，不调用付费接口 |
-| F-17 | eslint src e2e scripts 本轮已实跑 0 错；CI 范围与 JS 类型门禁待 R1 |
+| F-17 | 已落地：eslint 范围 `src e2e scripts`（CI/AGENTS/deploy.sh 同步），`scripts/**/*.mjs` 加 `// @ts-check` 纳入 tsc 并补 JSDoc 类型 |
 | F-18 | docs/README.md 覆盖全部 docs 文件，索引完整性有回归测试 |
 | F-19 | Caddy 2.11.4 配置无 forwarded/trusted-proxy 覆盖，与官方默认行为交叉核对；未做公网伪造头实验 |
 | F-20 | 保留双缺头放行。现有 smoke 与管理客户端使用 Cookie，直接收紧会破坏兼容，不能采纳报告中的相反前提 |
@@ -91,6 +91,6 @@
 ## 5. 下一步与权限
 
 1. R0 整合单测复核、文档契约与差异复核完成后，按用户授权只提交本轮文件并推送 main，等待 GitHub CI；不把 N3.4 归入本轮提交。
-2. 继续审查未修项与 R1/R2：发布可追溯、扩展门禁、relay 写锁，再按路线推进质量/数据层/前端结构。
+2. R1.1–R1.3 已落地：e2e 定时+手动 workflow（连续 3 次绿才算验收）、deploy.sh 新流程待下一次部署实测、health `build.sha` 对照随之生效。R1.4 发布目录/R1.5 非 root 待生产窗口逐项确认；R1.6 安全收紧评估见下一轮。继续审查未修项与 R2：relay 写锁，再按路线推进质量/数据层/前端结构。
 3. 用户已定：移除 Tailwind；e2e 先定时+手动；删除 skip-check；CLI 走应用管理入口；素材 30 天明示；真实评测先报价；本轮准备非 root 迁移；新路线取代旧排期。尚未授权任何实际评测花费。
 4. 全程不启动未授权子代理；本轮 SureForge Standard 为 self-review-only。真实生产变更、停服务、改归属、覆盖/删除数据都须展示具体动作并确认。

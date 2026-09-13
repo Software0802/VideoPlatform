@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 /**
  * 用量与账目汇总（方案 §3.4「管理闭环」）。
  *
@@ -58,7 +59,10 @@ const dayFormat = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 
-/** ISO 时刻 → `YYYY-MM-DD`（Asia/Shanghai）。认不出来的时刻回 null。 */
+/**
+ * ISO 时刻 → `YYYY-MM-DD`（Asia/Shanghai）。认不出来的时刻回 null。
+ * @param {any} iso
+ */
 function dayKey(iso) {
   const ms = Date.parse(iso ?? "");
   return Number.isFinite(ms) ? dayFormat.format(new Date(ms)) : null;
@@ -109,6 +113,7 @@ function emptyBucket() {
   return { total: 0, succeeded: 0, failed: 0, canceled: 0, expired: 0, cny: 0, usd: 0, unknownCost: 0 };
 }
 
+/** @param {Map<string, any>} map @param {string} key @param {any} job */
 function add(map, key, job) {
   const bucket = map.get(key) ?? emptyBucket();
   bucket.total += 1;
@@ -161,6 +166,7 @@ const overall = totals.get("总计") ?? emptyBucket();
 
 /* ── 流水 ── */
 
+/** @param {string} userId */
 async function readLedger(userId) {
   let raw;
   try {
@@ -192,6 +198,7 @@ async function readLedger(userId) {
  *    它们不对应任何一条任务，绝不能进「任务侧扣款」那一列。
  *  · `grant` 的 `ref` 以 `sub:` 开头 → 订阅送的会员积分（进会员池，`pool:"member"`）。
  *    那不是充值，把它算进「充值」等于把我们自己发的券当成收入。
+ * @param {any} row
  */
 function ledgerColumn(row) {
   if (row.kind === "grant") return String(row.ref ?? "").startsWith("sub:") ? "member" : "grant";
@@ -224,11 +231,14 @@ for (const user of users) {
 
 /* ── 打印 ── */
 
-/** 终端里 CJK 是双宽，`padEnd` 只数码点，直接用会把表格排歪。 */
+/**
+ * 终端里 CJK 是双宽，`padEnd` 只数码点，直接用会把表格排歪。
+ * @param {string} text
+ */
 function displayWidth(text) {
   let width = 0;
   for (const ch of String(text)) {
-    const code = ch.codePointAt(0);
+    const code = ch.codePointAt(0) ?? 0;
     width +=
       (code >= 0x1100 && code <= 0x115f) ||
       (code >= 0x2e80 && code <= 0xa4cf) ||
@@ -243,11 +253,13 @@ function displayWidth(text) {
   return width;
 }
 
+/** @param {string} text @param {number} width @param {string} align */
 function pad(text, width, align) {
   const filler = " ".repeat(Math.max(0, width - displayWidth(text)));
   return align === "right" ? filler + text : text + filler;
 }
 
+/** @param {string} title @param {string[]} headers @param {string[][]} rows */
 function table(title, headers, rows) {
   process.stdout.write(`\n${title}\n`);
   if (!rows.length) {
@@ -258,17 +270,22 @@ function table(title, headers, rows) {
   const widths = headers.map((h, i) =>
     Math.max(displayWidth(h), ...rows.map((row) => displayWidth(row[i]))),
   );
+  /** @param {string[]} cells */
   const line = (cells) => `  ${cells.map((c, i) => pad(c, widths[i], aligns[i])).join("  ")}\n`;
   process.stdout.write(line(headers));
   process.stdout.write(`  ${widths.map((w) => "-".repeat(w)).join("  ")}\n`);
   for (const row of rows) process.stdout.write(line(row));
 }
 
+/** @param {number} n */
 const money = (n) => (Math.round(n * 100) / 100).toFixed(2);
+/** @param {any} b */
 const rate = (b) => (b.total ? `${((b.succeeded / b.total) * 100).toFixed(1)}%` : "—");
 
+/** @param {string} first */
 const headersFor = (first) => [first, "任务", "成功", "失败", "取消", "过期", "成功率", "售价¥", "成本$", "缺成本"];
 
+/** @param {string} key @param {any} b */
 function toRow(key, b) {
   return [
     key,
@@ -284,6 +301,7 @@ function toRow(key, b) {
   ];
 }
 
+/** @param {Map<string, any>} map @param {boolean} descending */
 function sortedRows(map, descending) {
   const keys = [...map.keys()].sort();
   if (descending) keys.reverse();

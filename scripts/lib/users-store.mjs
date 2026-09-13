@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * 管理员 CLI 共用的用户存储读写（`reset-password.mjs` / `disable-user.mjs` / `usage.mjs`）。
  *
@@ -23,6 +24,7 @@ import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 
+/** @type {(password: import("node:crypto").BinaryLike, salt: import("node:crypto").BinaryLike, keylen: number, options: import("node:crypto").ScryptOptions) => Promise<Buffer>} */
 const scrypt = promisify(scryptCb);
 
 export const USER_ID_RE = /^usr_[0-9a-f]{16}$/;
@@ -37,10 +39,12 @@ export function resolveDataDir() {
   return path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), "data"));
 }
 
+/** @param {string} dataDir */
 export function usersDirOf(dataDir) {
   return path.join(dataDir, "users");
 }
 
+/** @param {string} file */
 export async function readJson(file) {
   try {
     return JSON.parse(await readFile(file, "utf8"));
@@ -49,11 +53,16 @@ export async function readJson(file) {
   }
 }
 
-/** 与服务端同款：临时文件 + rename 原子替换。 */
+/**
+ * 与服务端同款：临时文件 + rename 原子替换。
+ * @param {string} destination
+ * @param {unknown} value
+ */
 export async function writeJsonAtomic(destination, value) {
   await writeShared(destination, value);
 }
 
+/** @param {unknown} raw */
 export function normalizeEmail(raw) {
   return String(raw ?? "").trim().toLowerCase();
 }
@@ -61,6 +70,8 @@ export function normalizeEmail(raw) {
 /**
  * 邮箱 → 用户 id。index.json 只是派生缓存（服务端会自愈），它没命中就照样扫一遍目录——
  * 失败的正确原因只能是「这个人真的没注册」。
+ * @param {string} usersDir
+ * @param {string} email
  */
 export async function findUserIdByEmail(usersDir, email) {
   const wanted = normalizeEmail(email);
@@ -76,14 +87,19 @@ export async function findUserIdByEmail(usersDir, email) {
   return hits[0].id;
 }
 
-/** 读出全部用户记录（跳过读不出来的）。目录不存在时返回空数组。 */
+/**
+ * 读出全部用户记录（跳过读不出来的）。目录不存在时返回空数组。
+ * @param {string} usersDir
+ */
 export async function listUsers(usersDir) {
+  /** @type {string[]} */
   let names = [];
   try {
     names = await readdir(usersDir);
   } catch {
     return [];
   }
+  /** @type {any[]} */
   const out = [];
   for (const name of names.filter((n) => USER_ID_RE.test(n))) {
     const user = await readJson(path.join(usersDir, name, "user.json"));
@@ -92,12 +108,16 @@ export async function listUsers(usersDir) {
   return out;
 }
 
+/** @param {string} usersDir @param {string} userId */
 export function userFileOf(usersDir, userId) {
   if (!USER_ID_RE.test(userId)) throw new Error(`非法用户 id: ${userId}`);
   return path.join(usersDir, userId, "user.json");
 }
 
-/** 口令散列，格式与 `src/lib/users/password.ts` 的 `hashPassword` 逐字一致。 */
+/**
+ * 口令散列，格式与 `src/lib/users/password.ts` 的 `hashPassword` 逐字一致。
+ * @param {string} password
+ */
 export async function hashPassword(password) {
   const salt = randomBytes(SALT_BYTES);
   const key = await scrypt(String(password).normalize("NFKC"), salt, KEY_LENGTH, {
@@ -114,6 +134,8 @@ export async function hashPassword(password) {
  *
  * 存在的理由是这份实现是**抄**过去的：抄错一个参数（比如漏掉 NFKC）不会报错，只会
  * 生成一个服务端永远验不过的散列，而管理员要等用户回来说「登不上」才知道。
+ * @param {string} password
+ * @param {string} stored
  */
 export async function verifyPassword(password, stored) {
   const parts = String(stored).split("$");
@@ -136,6 +158,7 @@ export async function verifyPassword(password, stored) {
  */
 const PASSWORD_ALPHABET = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
+/** @param {number} [length] */
 export function generatePassword(length = 12) {
   const limit = 256 - (256 % PASSWORD_ALPHABET.length);
   let out = "";
@@ -153,10 +176,14 @@ export function generatePassword(length = 12) {
  * 读 → 改 → 原子写，并把 `updatedAt` 刷新到现在。
  *
  * `mutate` 收到的是记录的浅拷贝，返回改完的那份；返回 `null` 表示不写。
+ * @param {string} usersDir
+ * @param {string} userId
+ * @param {(user: any) => any} mutate
+ * @returns {Promise<any>}
  */
 export async function updateUser(usersDir, userId, mutate) {
   const file = userFileOf(usersDir, userId);
-  const user = validateUserRecord(JSON.parse(await readText(file)), userId);
+  const user = validateUserRecord(JSON.parse(/** @type {string} */ (await readText(file))), userId);
   const next = mutate(structuredClone(user));
   if (!next) return null;
   const written = validateUserRecord({ ...next, updatedAt: new Date().toISOString() }, userId);
@@ -171,23 +198,35 @@ export async function updateUser(usersDir, userId, mutate) {
  *
  * 与服务端 `revokeUserSessions` 同一个机制：epoch 是签名会话载荷的一部分，
  * `sessionUser` 每次请求都拿它与 `user.json` 对一次，对不上就当没登录。
+ * @param {any} user
  */
 export function bumpEpoch(user) {
   const current = Number.isInteger(user.sessionEpoch) && user.sessionEpoch >= 1 ? user.sessionEpoch : 1;
   return { ...user, sessionEpoch: current + 1 };
 }
 
-/** 用法错误统一出口：说明写 stderr，退出码非 0。 */
+/**
+ * 用法错误统一出口：说明写 stderr，退出码非 0。
+ * @param {string} message
+ * @param {string} howto
+ * @returns {never}
+ */
 export function usage(message, howto) {
   process.stderr.write(`${message}\n用法: ${howto}\n`);
   process.exit(1);
 }
 
+/** @param {string[]} argv @param {string} howto */
 export function requireOffline(argv, howto) {
   if (!argv.includes("--offline")) usage("必须以 --offline 声明服务已停止，全部写 CLI 串行执行；这不是跨进程锁，也不自动检测停服", howto);
 }
 
-/** `--flag value` 取值；没有这个 flag 返回 undefined，有 flag 没值就报用法错误。 */
+/**
+ * `--flag value` 取值；没有这个 flag 返回 undefined，有 flag 没值就报用法错误。
+ * @param {string[]} argv
+ * @param {string} flag
+ * @param {string} howto
+ */
 export function optionValue(argv, flag, howto) {
   const at = argv.indexOf(flag);
   if (at < 0) return undefined;

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 /**
  * 生成一次性邀请码。
  *
@@ -18,6 +19,7 @@ import process from "node:process";
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LENGTH = 12;
 
+/** @param {string} message */
 function usage(message) {
   process.stderr.write(`${message}\n用法: node scripts/mint-invites.mjs <数量> [--note "说明"]\n`);
   process.exit(1);
@@ -42,6 +44,7 @@ function generateCode() {
   return out;
 }
 
+/** @param {string} file */
 async function exists(file) {
   return access(file).then(
     () => true,
@@ -49,7 +52,11 @@ async function exists(file) {
   );
 }
 
-/** 与服务端同款：临时文件 + rename 原子替换。 */
+/**
+ * 与服务端同款：临时文件 + rename 原子替换。
+ * @param {string} destination
+ * @param {unknown} value
+ */
 async function writeJsonAtomic(destination, value) {
   const temporary = `${destination}.${process.pid}.tmp`;
   try {

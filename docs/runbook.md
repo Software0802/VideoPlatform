@@ -33,7 +33,13 @@ cd /opt/genius && sudo node scripts/mint-invites.mjs 1
 bash scripts/deploy.sh
 ```
 
-`deploy.sh` 上传前先 `pnpm exec next typegen` 再 `pnpm exec tsc --noEmit`；当前脚本仍有 `--skip-check`，已拍板由 R1 移除。服务器启动后轮询 `/api/health`（10 次 × 6s），非 200/`ok:true` 自动回滚。R0 不包含部署操作；当前工作树构建输入的可追溯性由 R1 继续处理。
+`deploy.sh` 的行为（R1.3 起）：
+
+- **门禁不可跳过**：上传前依次跑 `pnpm exec next typegen && pnpm exec tsc --noEmit`、`pnpm exec eslint src e2e scripts`、`pnpm test`，任一非零即中止。`--no-build` 只跳过 `pnpm build`，不跳过门禁；不再有 `--skip-check`。
+- **脏工作树默认拒绝**：`git status --porcelain` 非空则打印 diffstat 并以退出码 2 中止；确需发布未提交改动用 `--allow-dirty`（打印 diffstat 后继续）。
+- **发布指纹**：打包前在仓库根生成 `BUILD_INFO.json`（`sha`/`shortSha`/`builtAt`/`node`/`dirty`），随包上传到 `/opt/genius`。部署后用**登录态** `GET /api/health` 的 `build.sha` 对照本地 `git rev-parse HEAD` 即可确认线上版本；`dirty:true` 表示该包出自未提交的工作树。匿名请求仍只回 `{ ok }`。
+- **依赖与回滚**：服务器上 `pnpm install --prod --frozen-lockfile` 与 Turbopack 别名补链在同一失败域——任一步失败和 health 检查失败走同一条 `.next.prev` 回滚。注意 `--frozen-lockfile` 是 R1.3 新增、**首次在下一次部署验证**：若 lockfile 与 package.json 不同步会在这一步失败并按 `.next.prev` 回滚（回滚换的是 `.next`，不重建 node_modules）。
+- 服务启动后轮询 `/api/health`（10 次 × 6s），非 200/`ok:true` 自动回滚。
 
 ## 回滚
 

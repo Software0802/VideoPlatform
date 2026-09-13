@@ -40,7 +40,7 @@ jobs:
         run: pnpm exec next typegen && pnpm exec tsc --noEmit
 
       - name: Lint
-        run: pnpm exec eslint src
+        run: pnpm exec eslint src e2e scripts
 
       # 各测试文件自己 set/delete LUMEN_SESSION_SECRET（session.test.ts 还专门断言「没设置就抛」），
       # 所以这里不注入任何假值，注入了反而不真实。

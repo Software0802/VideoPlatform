@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 /**
  * 管理员充值：给一个账号的余额加钱（负数就是扣钱 / 纠正）。
  *
@@ -36,6 +37,10 @@ import { requireOffline } from "./lib/users-store.mjs";
 
 const USER_ID_RE = /^usr_[0-9a-f]{16}$/;
 
+/**
+ * @param {string} message
+ * @returns {never}
+ */
 function usage(message) {
   process.stderr.write(
     `${message}\n用法: node scripts/grant-balance.mjs <邮箱> <金额（元，可为负）> --offline [--ref "同笔操作固定键"] [--note "说明"]\n无 --ref 时每次调用均新增一笔，不能安全重跑未知结果的充值。\n`,
@@ -45,7 +50,9 @@ function usage(message) {
 
 const argv = process.argv.slice(2);
 requireOffline(argv, "node scripts/grant-balance.mjs <邮箱> <金额> --offline [--ref 固定键] [--note 说明]");
+/** @type {string[]} */
 const positional = [];
+/** @type {Record<string, string>} */
 const options = {};
 for (let i = 0; i < argv.length; i += 1) {
   const arg = argv[i];
@@ -73,11 +80,16 @@ const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), "d
 const usersDir = path.join(dataDir, "users");
 const ledgerDir = path.join(dataDir, "ledger");
 
-/** 与服务端同款：临时文件 + rename 原子替换。 */
+/**
+ * 与服务端同款：临时文件 + rename 原子替换。
+ * @param {string} destination
+ * @param {unknown} value
+ */
 async function writeJsonAtomic(destination, value) {
   await writeShared(destination, value);
 }
 
+/** @param {string} file */
 async function readJson(file) {
   try {
     return JSON.parse(await readFile(file, "utf8"));
@@ -95,6 +107,7 @@ async function findUserId() {
   const indexed = index && typeof index === "object" ? index[email] : undefined;
   if (typeof indexed === "string" && USER_ID_RE.test(indexed)) return indexed;
 
+  /** @type {string[]} */
   let names = [];
   try {
     names = await readdir(usersDir);
@@ -119,7 +132,7 @@ if (!userId) {
 }
 
 const userFile = path.join(usersDir, userId, "user.json");
-const user = validateUserRecord(JSON.parse(await readText(userFile)), userId);
+const user = validateUserRecord(JSON.parse(/** @type {string} */ (await readText(userFile))), userId);
 if (user.email !== email) throw new Error("用户索引与邮箱不一致，请离线核对");
 const before = user.balanceCny;
 
@@ -130,7 +143,7 @@ const next = await commitChange(user, {
   options: { pool: "purchased" },
 }, {
   ledgerFile: path.join(ledgerDir, `${userId}.jsonl`),
-  write: async (record) => {
+  write: async (/** @type {any} */ record) => {
     const written = validateUserRecord({ ...record, updatedAt: new Date().toISOString() }, userId);
     validateTransition(user, written);
     await writeJsonAtomic(userFile, written);

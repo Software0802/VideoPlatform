@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # Genius 生产部署：本机（Windows / Git Bash）构建 → 阿里云 Linux 运行。
 #
-#   bash scripts/deploy.sh              # tsc 门禁 → pnpm build → 部署
-#   bash scripts/deploy.sh --no-build   # 复用现有 .next
-#   bash scripts/deploy.sh --skip-check # 跳过本地 tsc 门禁（赶时间时用，慎）
+#   bash scripts/deploy.sh                  # 三条门禁 → pnpm build → 部署
+#   bash scripts/deploy.sh --no-build       # 复用现有 .next（门禁仍跑）
+#   bash scripts/deploy.sh --allow-dirty    # 工作树不干净也继续（打印 diffstat，BUILD_INFO 记 dirty:true）
 #
-# 失败即回滚：服务器起来后 /api/health 不是 200 + ok:true 就把 .next.prev 换回去、
-# 重启、再验一次，然后整个脚本非零退出（G4，见 docs/plan-architecture-2026-09.md §3.2）。
+# 默认拒绝脏工作树：发布包必须能对应到某个 commit。门禁不可跳过——
+# typegen+tsc、eslint（src e2e scripts）、vitest 三条全绿才打包；
+# 包根带 BUILD_INFO.json（sha/builtAt/node/dirty），服务器 /api/health 登录态回显。
+#
+# 失败即回滚：依赖安装/别名补链失败，或服务起来后 /api/health 不是 200 + ok:true，
+# 就把 .next.prev 换回去、重启、再验一次，然后整个脚本非零退出
+# （G4，见 docs/plan-architecture-2026-09.md §3.2）。
 #
 # 步骤与两个坑的来龙去脉见 docs/handoff.md §0.4。要点：
 #   - sharp / ffmpeg-static 是平台相关的原生二进制，必须在服务器 pnpm install，不能传 Windows 的；
@@ -25,27 +30,38 @@ SCP=(scp -i "$KEY" -o IdentitiesOnly=yes)
 cd "$(dirname "$0")/.."
 
 BUILD=1
-CHECK=1
+ALLOW_DIRTY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
-    --skip-check) CHECK=0; shift ;;
+    --allow-dirty) ALLOW_DIRTY=1; shift ;;
     -h|--help)
-      sed -n '2,10p' "$0"
+      sed -n '2,12p' "$0"
       exit 0 ;;
-    *) echo "未知参数: $1（支持 --no-build / --skip-check）" >&2; exit 2 ;;
+    *) echo "未知参数: $1（支持 --no-build / --allow-dirty）" >&2; exit 2 ;;
   esac
 done
 
-if [ "$CHECK" = 1 ]; then
-  echo "== 1/5 类型检查（--skip-check 可跳过）"
-  # 几十秒换掉「构建能过但类型错了照样上线」的一整类事故。tsc 非零时 set -e 直接中止，
-  # 坏代码走不到打包这一步。
-  pnpm exec next typegen
-  pnpm exec tsc --noEmit
-else
-  echo "== 1/5 类型检查（已跳过）"
+if [ -n "$(git status --porcelain)" ]; then
+  if [ "$ALLOW_DIRTY" = 1 ]; then
+    echo "!! 工作树不干净（--allow-dirty 已放行），变更将进发布包但不对应任何 commit："
+    git status --porcelain
+    git diff --stat
+  else
+    echo "!! 工作树不干净，拒绝部署。先提交/暂存，或显式传 --allow-dirty：" >&2
+    git status --porcelain >&2
+    git diff --stat >&2
+    exit 2
+  fi
 fi
+
+echo "== 1/5 本地门禁（typecheck / eslint / vitest，不可跳过）"
+# 几十秒换掉「构建能过但类型/lint/测试错了照样上线」的一整类事故。
+# 任一条非零时 set -e 直接中止，坏代码走不到打包这一步。
+pnpm exec next typegen
+pnpm exec tsc --noEmit
+pnpm exec eslint src e2e scripts
+pnpm test
 
 if [ "$BUILD" = 1 ]; then
   echo "== 2/5 构建"
@@ -55,11 +71,26 @@ else
 fi
 
 echo "== 3/5 打包（排除本地缓存）"
+# 构建指纹：部署后 /api/health 登录态的 build.sha 应与 git rev-parse HEAD 一致；
+# --allow-dirty 的包 dirty:true，提示它不等于该 commit 的干净构建。
+node -e '
+const { execSync } = require("node:child_process");
+const fs = require("node:fs");
+const sha = execSync("git rev-parse HEAD").toString().trim();
+fs.writeFileSync("BUILD_INFO.json", JSON.stringify({
+  sha,
+  shortSha: sha.slice(0, 7),
+  builtAt: new Date().toISOString(),
+  node: process.version,
+  dirty: process.argv[1] === "1",
+}, null, 2) + "\n");
+' "$ALLOW_DIRTY"
+cat BUILD_INFO.json
 PKG="$(mktemp -t genius-deploy-XXXXXX)"
 tar czf "$PKG" \
   --exclude=.next/cache --exclude=.next/dev --exclude=.next/types --exclude=.next/standalone \
   --exclude=.next/node_modules \
-  .next public package.json pnpm-lock.yaml pnpm-workspace.yaml next.config.ts \
+  .next public package.json pnpm-lock.yaml pnpm-workspace.yaml next.config.ts BUILD_INFO.json \
   scripts/mint-invites.mjs scripts/backup.sh scripts/grant-balance.mjs scripts/mint-gift-codes.mjs \
   scripts/reset-password.mjs scripts/disable-user.mjs scripts/usage.mjs scripts/migrate-billing.mjs \
   scripts/lib scripts/migrate-canvas-assets.mjs data-seed \
@@ -109,6 +140,22 @@ wait_healthy() {
   echo "$code"
   return 1
 }
+# 换回上一版构建并再验一次 health；health/install 两种失败共用这一段。
+rollback() {
+  systemctl stop genius
+  if [ -d .next.prev ]; then
+    rm -rf .next
+    mv .next.prev .next
+    echo "   已把 .next.prev 换回 .next"
+  else
+    echo "   !! 没有 .next.prev 可回滚（首次部署？），仍以当前构建重启"
+  fi
+  systemctl start genius
+  sleep 8
+  local back
+  back="$(wait_healthy)" || true
+  echo "   回滚后: 服务=$(systemctl is-active genius) health=HTTP=$back"
+}
 
 systemctl stop genius
 rm -rf .next.prev
@@ -126,9 +173,15 @@ rm -rf .next/node_modules
 # 这层 sed 是给「绕过 git 直接打包」的场景兜底）。
 chmod +x scripts/*.sh 2>/dev/null || true
 sed -i 's/\r$//' scripts/*.sh 2>/dev/null || true
-echo "   依赖: $(pnpm install --prod --no-frozen-lockfile 2>&1 | tail -1)"
-# 补 Turbopack external 别名（部署固定一步，详见 handoff §0.4 坑一）
-node -e '
+# install 与别名补链放在同一个 if ! (...) 里：任一步失败都回滚，不留半装好的依赖树。
+# 注意 if 条件里的子 shell 不吃外层的 set -e，要在里面重新打开。
+# --frozen-lockfile 本次新增：首次在下一次部署验证——若 lockfile 与 package.json
+# 不同步会在这里失败并按上面同一条路径回滚。
+if ! (
+  set -e
+  pnpm install --prod --frozen-lockfile
+  # 补 Turbopack external 别名（部署固定一步，详见 handoff §0.4 坑一）
+  node -e '
 const fs=require("fs"),path=require("path");
 const dir=".next/server/chunks", nm="node_modules", names=new Set();
 for(const f of fs.readdirSync(dir)){
@@ -144,6 +197,11 @@ for(const alias of names){
   fs.symlinkSync(fs.realpathSync(target),link,"dir");
   console.log("   别名:",alias,"->",real);
 }'
+); then
+  echo "   依赖安装/别名补链失败，回滚"
+  rollback
+  exit 1
+fi
 # 模板种子：data/ 不入库，首次部署把示例模板落到 data/templates（已存在则不覆盖）
 if [ ! -d data/templates ] && [ -d data-seed/templates ]; then
   mkdir -p data && cp -r data-seed/templates data/templates && echo "   模板: 已从 data-seed 落种 $(ls data/templates | wc -l) 条"
@@ -157,18 +215,7 @@ if CODE="$(wait_healthy)"; then
 fi
 
 echo "   health 失败（HTTP=$CODE body=$(head -c 300 /tmp/genius-health.json 2>/dev/null)），回滚"
-systemctl stop genius
-if [ -d .next.prev ]; then
-  rm -rf .next
-  mv .next.prev .next
-  echo "   已把 .next.prev 换回 .next"
-else
-  echo "   !! 没有 .next.prev 可回滚（首次部署？），仍以当前构建重启"
-fi
-systemctl start genius
-sleep 8
-BACK="$(wait_healthy)" || true
-echo "   回滚后: 服务=$(systemctl is-active genius) health=HTTP=$BACK"
+rollback
 # 非零退出，本地据此判定这次部署失败。
 exit 1
 REMOTE

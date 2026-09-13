@@ -1,8 +1,10 @@
 #!/usr/bin/env node
+// @ts-check
 
 import { loginForSmoke } from "./lib/smoke-session.mjs";
 
 const args = new Set(process.argv.slice(2));
+/** @param {string} name */
 const valueFor = (name) => {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
@@ -14,23 +16,31 @@ const requireLive = args.has("--require-live");
 const requireMock = args.has("--require-mock");
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 15 * 60 * 1000);
 const pollMs = Number(process.env.SMOKE_POLL_MS ?? 1000);
+/** @type {any[]} */
 const results = [];
 /** `lumen_session=…`, obtained in run() before the first API call. */
 let sessionCookie = "";
 
+/** @param {Record<string, string>} [extra] */
 function requestHeaders(extra = {}) {
-  return {
+  return /** @type {Record<string, string>} */ ({
     ...(sessionCookie ? { Cookie: sessionCookie } : {}),
     ...extra,
-  };
+  });
 }
 
+/**
+ * @param {string} route
+ * @param {RequestInit} [init]
+ * @returns {Promise<any>}
+ */
 async function jsonRequest(route, init = {}) {
   const response = await fetch(`${baseUrl}${route}`, {
     ...init,
-    headers: requestHeaders(init.headers),
+    headers: requestHeaders(/** @type {Record<string, string> | undefined} */ (init.headers)),
   });
   const text = await response.text();
+  /** @type {any} */
   let body = {};
   try {
     body = text ? JSON.parse(text) : {};
@@ -44,6 +54,7 @@ async function jsonRequest(route, init = {}) {
   return body;
 }
 
+/** @param {Uint8Array<ArrayBuffer>} bytes @param {string} role @param {string} filename @param {string} mimeType */
 async function upload(bytes, role, filename, mimeType) {
   const form = new FormData();
   form.set("role", role);
@@ -51,6 +62,7 @@ async function upload(bytes, role, filename, mimeType) {
   return jsonRequest("/api/uploads", { method: "POST", body: form });
 }
 
+/** @param {Record<string, unknown>} body */
 async function createJob(body) {
   const job = await jsonRequest("/api/jobs", {
     method: "POST",
@@ -72,6 +84,7 @@ async function createJob(body) {
   return completed;
 }
 
+/** @param {string} id */
 async function waitForJob(id) {
   const started = Date.now();
   let last;
@@ -83,6 +96,7 @@ async function waitForJob(id) {
   throw new Error(`任务 ${id} 超过 ${Math.round(timeoutMs / 1000)} 秒仍未结束（最后状态 ${last?.status ?? "unknown"}）`);
 }
 
+/** @param {string} url */
 async function mediaBytes(url) {
   const response = await fetch(`${baseUrl}${url}`, {
     headers: requestHeaders(),
@@ -91,6 +105,7 @@ async function mediaBytes(url) {
   return Buffer.from(await response.arrayBuffer());
 }
 
+/** @param {string} url */
 async function assertRange(url) {
   const response = await fetch(`${baseUrl}${url}`, {
     headers: requestHeaders({ Range: "bytes=0-1" }),
@@ -182,6 +197,7 @@ try {
   process.exitCode = 1;
 }
 
+/** @param {number} ms */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -19,6 +19,8 @@
 
 # production
 /build
+# deploy.sh 生成的发布指纹（每次部署覆写，不入库）
+/BUILD_INFO.json
 
 # misc
 .DS_Store
