@@ -1,6 +1,6 @@
 # 方案：通用中转 provider 与动态模型目录（N3）
 
-状态：2026-09-13 起草（用户已拍板 D3「做」，见 `docs/plan-next-2026-09-13.md`）。等用户过目后按 §5 切片实施；每片落地后更新 `docs/design.md` §2 与 `docs/handoff.md`。
+状态：N3.1（`7c6cdb4`）、N3.2（`a9553db`）、N3.3（`dbead84`）、N3.4（`37123bd`）已落地并部署；N3.5（管理页 + 创作面板分组）待做。生产 `.env` 未改，relay 走 legacy 折算。每片落地后更新 `docs/design.md` §2 与 `docs/handoff.md`。
 
 ## 0. 为什么
 
