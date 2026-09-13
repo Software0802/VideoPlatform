@@ -81,6 +81,8 @@ export const common = {
   "common.err.missing_api_key": "服务商密钥未配置",
   "common.err.mock_failure": "模拟失败",
   "common.err.no_provider_available": "暂时没有可用的服务商，请稍后再试",
+  "common.err.relay_exists": "该中转已存在",
+  "common.err.no_probe_channel": "该中转没有可探测的通道",
   "common.err.not_found": "内容不存在或已被删除",
   "common.err.not_supported": "当前操作不受支持",
   "common.err.proposal_expired": "提案报价已过期，请重新发起",

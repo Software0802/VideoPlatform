@@ -11,8 +11,10 @@ import { mapAspectToSize } from "@/lib/providers/openai-image/rest-map";
 import { selectProvider } from "@/lib/providers/router";
 import { resolveKlingSettings } from "@/lib/providers/kling/rest-map";
 import { envModelFor } from "@/lib/providers/model-name";
-import { type YmanResolution } from "@/lib/providers/yman/catalog";
-import { resolveYmanSettings } from "@/lib/providers/yman/rest-map";
+import { type RelayResolution } from "@/lib/providers/relay/catalog";
+import { relayViewFor } from "@/lib/providers/relay/live";
+import { resolveRelaySettings, type RelayRestContext } from "@/lib/providers/relay/rest-map";
+import { YMAN_REST } from "@/lib/providers/yman/rest-map";
 import type { AspectRatio, NativeMode, ProviderId, Resolution } from "@/lib/providers/types";
 import type { CreateJobBody } from "@/lib/jobs/schema";
 
@@ -94,18 +96,32 @@ export function providerSettingsFor(
     });
     return { durationSec: kling.durationSec, resolution: kling.resolution, audio: kling.audio };
   }
-  if (provider === "yman") {
+  // OpenAI `/videos` 兼容中转（YMan 与各 relay）：按它自己的目录归一时长 /
+  // 分辨率 / 画幅。建任务接口没有音频开关（出不出声由模型决定），所以记录一律
+  // 记无声：记成有声就是拿一个我们控制不了的东西向用户收有声的加价。
+  const relay = relayViewFor(provider);
+  // 视图未装配（单测只 import 本文件）时，yman 仍按 env 预设归一。
+  const rt: RelayRestContext | null = relay?.catalog
+    ? {
+        id: relay.id,
+        name: relay.name,
+        base: relay.base,
+        catalog: relay.catalog,
+        creditsToUsd: relay.creditsToUsd,
+      }
+    : provider === "yman"
+      ? YMAN_REST
+      : null;
+  if (rt) {
     if (mode !== "text_to_video" && mode !== "image_to_video" && mode !== "reference_to_video") {
       return null;
     }
-    const yman = resolveYmanSettings(req, { resolution: ymanResolution(product) });
-    // YMan 的建任务接口没有音频开关（出不出声由模型决定），所以记录一律记无声：
-    // 记成有声就是拿一个我们控制不了的东西向用户收有声的加价。
+    const settings = resolveRelaySettings(rt, req, { resolution: relayResolution(product) });
     return {
-      durationSec: yman.durationSec,
-      resolution: yman.resolution,
+      durationSec: settings.durationSec,
+      resolution: settings.resolution,
       audio: "off",
-      ratio: yman.ratio,
+      ratio: settings.ratio,
     };
   }
   return null;
@@ -117,8 +133,8 @@ function klingResolution(product: Product | null): "720p" | "1080p" | undefined 
   return preferred === "1080p" || preferred === "720p" ? preferred : undefined;
 }
 
-/** 同上，收窄到 YMan 的两档。 */
-function ymanResolution(product: Product | null): YmanResolution | undefined {
+/** 同上，收窄到 relay 目录的两档。 */
+function relayResolution(product: Product | null): RelayResolution | undefined {
   const preferred: Resolution | undefined = product ? defaultResolutionOf(product) : undefined;
   return preferred === "1080p" || preferred === "720p" ? preferred : undefined;
 }

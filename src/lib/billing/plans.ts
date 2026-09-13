@@ -1,12 +1,9 @@
 import { priceCny } from "@/lib/billing/prices";
-import {
-  estimateCostUsd,
-  openaiImagePriceTable,
-  ymanImagePriceTable,
-  type ImagePriceTable,
-} from "@/lib/cost";
+import { estimateCostUsd, type ImagePriceTable } from "@/lib/cost";
 import { openaiImageQuality, usdCnyRate } from "@/lib/env";
 import { log } from "@/lib/log";
+import { imageConfigFor } from "@/lib/providers/openai-image/config";
+import { liveRelayViews } from "@/lib/providers/relay/live";
 import {
   effectiveImageProviderOrder,
   effectiveVideoProviderOrder,
@@ -238,15 +235,15 @@ function imageCostRatio(): number | null {
  */
 function imageCostCny(product: Product): number | null {
   const quality = openaiImageQuality();
-  const openaiTable = openaiImagePriceTable();
-  const ymanTable = ymanImagePriceTable();
-  const own =
-    product.provider === "yman" ? ymanTable : product.provider === "openai" ? openaiTable : null;
+  // 每条生图通道（openai / yman 预设与各 relay）读自己的档表——表的单位是人民币
+  // 额度，别家的表不能拿来给这家定价。
+  const own = imageConfigFor(product.provider)?.priceTable() ?? null;
   if (own) {
     const tiered = tier1kPriceCny(own, quality);
     if (tiered != null) return tiered;
   }
-  if (openaiTable || ymanTable) return null;
+  const anyTable = liveRelayViews().some((view) => view.image?.priceTable());
+  if (anyTable) return null;
   const usd = estimateCostUsd(modelForProduct(product, "text_to_image"), 0, {
     size: SAMPLE_IMAGE_SIZE,
     quality,

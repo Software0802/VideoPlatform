@@ -6,6 +6,7 @@ import {
 } from "@/lib/env";
 import { log } from "@/lib/log";
 import { creditsFor, isYmanModel, type YmanResolution } from "@/lib/providers/yman/catalog";
+import { relayViewFor } from "@/lib/providers/relay/live";
 import type { ProviderId } from "@/lib/providers/types";
 
 export const RATE_USD_PER_SEC = {
@@ -131,6 +132,14 @@ export function ymanImagePriceTable(): ImagePriceTable | null {
 
 /** 每张表各自缓存一份：两条生图通道的原文互不相干，共用一个槽会互相踢掉。 */
 const priceTableCaches = new Map<string, { raw: string; table: ImagePriceTable | null }>();
+
+/** relay 配置里的生图档表原文 → 解析结果；`cacheKey` 隔离各家的缓存槽。 */
+export function imagePriceTableFromRaw(
+  raw: string | undefined,
+  cacheKey: string,
+): ImagePriceTable | null {
+  return imagePriceTable(raw, cacheKey);
+}
 
 function imagePriceTable(raw: string | undefined, envName: string): ImagePriceTable | null {
   if (!raw) return null;
@@ -307,8 +316,16 @@ export function estimateCostUsd(
   if (image || model in RATE_USD_PER_IMAGE || IMAGE_MODEL_RE.test(model)) {
     return estimateImageSubmitCostUsd(model, image);
   }
-  // YMan 按「分辨率价 + 时长价」的积分计价，与时长不成正比（10 秒与 15 秒常同价），
-  // 所以既不能按秒也不能按模型单价；目录认得的模型、或路由已经点名 yman 时都走这条。
+  // OpenAI `/videos` 兼容中转（YMan 与各 relay）按「分辨率价 + 时长价」的积分计价，
+  // 与时长不成正比（10 秒与 15 秒常同价），所以既不能按秒也不能按模型单价；
+  // 目录认得的模型、或路由已经点名 relay 时都走这条。
+  const relay = video?.provider ? relayViewFor(video.provider) : undefined;
+  if (relay?.catalog) {
+    return relay.creditsToUsd(
+      relay.catalog.creditsFor(model, durationSec, ymanResolution(video?.resolution)),
+    );
+  }
+  // 视图还没装配（单测只 import 本文件）时，yman 的 env 折算路径仍要成立。
   if (video?.provider === "yman" || isYmanModel(model)) {
     return ymanCreditsToUsd(creditsFor(model, durationSec, ymanResolution(video?.resolution)));
   }
@@ -330,7 +347,14 @@ export function estimateCostUsd(
  */
 function estimateImageSubmitCostUsd(model: string, image?: ImagePricingHint): number {
   if (image) {
-    const table = image.provider === "yman" ? ymanImagePriceTable() : openaiImagePriceTable();
+    // relay（含 yman / openai 两个 env 预设）读自己的档表；视图未装配时保留
+    // 原来的 env 分支，其余回落 openai 表。
+    const relayImage = image.provider ? relayViewFor(image.provider)?.image : undefined;
+    const table = relayImage
+      ? relayImage.priceTable()
+      : image.provider === "yman"
+        ? ymanImagePriceTable()
+        : openaiImagePriceTable();
     const tiered = table ? priceFromTable(table, image.quality, imageSizeTier(image.size)) : null;
     if (tiered != null) return roundMicro(tiered);
   }

@@ -13,6 +13,14 @@ import type { ProviderId, VideoProvider } from "@/lib/providers/types";
 
 const PROVIDERS = new Map<ProviderId, VideoProvider>();
 
+/**
+ * 已注销但保留对象的影子表。relay 被下线 / 改配置时旧 provider 从新任务路由里消失，
+ * 但历史 job.json 里的 provider id 与正在跑的任务手里握着的对象引用都必须还能解析——
+ * 所以注销是「挪进影子表」，不是真删。影子表只参与 `providerForId` 解析，
+ * `isRegisteredProviderId` / ORDER 过滤 / `hasProviderKey` 一律看不到它。
+ */
+const SHADOW = new Map<ProviderId, VideoProvider>();
+
 /** 代码内建的 provider；relay 不在这个列表里，它们是运行时注册的。 */
 export const BUILTIN_PROVIDER_IDS = [
   "grok",
@@ -31,11 +39,24 @@ export function registerProvider(provider: VideoProvider): void {
     throw new Error(`provider already registered: ${provider.id}`);
   }
   PROVIDERS.set(provider.id, provider);
+  // 重新注册同 id 意味着它回来了，影子条目作废。
+  SHADOW.delete(provider.id);
 }
 
-/** 未注册的 id 抛错，与注册表出现之前 `providerForId` 的行为一致。 */
-export function providerForId(id: ProviderId): VideoProvider {
+/**
+ * 注销：新任务路由不再可见（ORDER 过滤 / `hasProviderKey` 都查 `PROVIDERS`），
+ * 对象挪进影子表继续为已存在的任务解析。幂等——没注册过的 id 是 no-op。
+ */
+export function unregisterProvider(id: ProviderId): void {
   const provider = PROVIDERS.get(id);
+  if (!provider) return;
+  PROVIDERS.delete(id);
+  SHADOW.set(id, provider);
+}
+
+/** 未注册的 id 抛错，与注册表出现之前 `providerForId` 的行为一致；影子条目仍可解析。 */
+export function providerForId(id: ProviderId): VideoProvider {
+  const provider = PROVIDERS.get(id) ?? SHADOW.get(id);
   if (!provider) throw new Error(`unknown provider: ${String(id)}`);
   return provider;
 }

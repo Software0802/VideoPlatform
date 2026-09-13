@@ -1,9 +1,6 @@
 import {
   forceMock,
-  hasKlingKey,
-  hasOpenaiKey,
   hasXaiKey,
-  hasYmanKey,
   imageProviderOrderCompat,
   imageProviderOrderRaw,
   klingVideoAudio,
@@ -19,10 +16,12 @@ import { isHarnessDuration } from "@/lib/harness/durations";
 import { mockProvider } from "@/lib/providers/mock";
 import { ProviderHttpError } from "@/lib/providers/types";
 import "@/lib/providers/builtin";
+import { liveRelayViews } from "@/lib/providers/relay/live";
 import {
   hasProviderKey as registryHasProviderKey,
   isRegisteredProviderId,
   providerForId as registryProviderForId,
+  registeredProviderIds,
 } from "@/lib/providers/registry";
 import type {
   AspectRatio,
@@ -68,7 +67,7 @@ export function effectiveVideoProviderOrder(): ProviderId[] {
     const known = raw.filter((id) => knownProviderId("VIDEO_PROVIDER_ORDER", id));
     if (known.length) return known;
   }
-  return videoProviderOrderCompat();
+  return [...videoProviderOrderCompat(), ...implicitRelayIds("video")];
 }
 
 /** 同上，`IMAGE_PROVIDER_ORDER`；默认 `openai,grok`。 */
@@ -78,7 +77,26 @@ export function effectiveImageProviderOrder(): ProviderId[] {
     const known = raw.filter((id) => knownProviderId("IMAGE_PROVIDER_ORDER", id));
     if (known.length) return known;
   }
-  return imageProviderOrderCompat();
+  return [...imageProviderOrderCompat(), ...implicitRelayIds("image")];
+}
+
+/**
+ * 没显式配 ORDER 时自动进次序的 relay：启用中、声明 `implicitOrder`（即配置里
+ * 带了对应通道）、按 `priority` 降序排在内置默认之后。老 env 折算的
+ * yman / openai 预设 `implicitOrder=false`——今天的默认次序一个字都不能动；
+ * 生产显式写了 ORDER 时这段根本不会被走到。
+ */
+function implicitRelayIds(kind: "video" | "image"): ProviderId[] {
+  return liveRelayViews()
+    .filter(
+      (view) =>
+        view.enabled &&
+        view.implicitOrder &&
+        isRegisteredProviderId(view.id) &&
+        (kind === "video" ? Boolean(view.catalog) : Boolean(view.image)),
+    )
+    .sort((a, b) => b.priority - a.priority)
+    .map((view) => view.id);
 }
 
 /** 这个 provider 接不接得下这个画幅。没声明 `aspectRatios` = 不限（xAI / mock）。 */
@@ -129,8 +147,18 @@ const NO_PROVIDER_AVAILABLE = "所有生成服务暂时不可用，请稍后再�
  * 纯生图实例，从没打算接视频单，请求视频时落 mock 是它的正常形态，不该 503。
  */
 function hasAnyRealKey(kind: ExhaustionKind): boolean {
-  if (kind === "image") return hasOpenaiKey() || hasYmanKey() || hasXaiKey();
-  return hasXaiKey() || hasKlingKey() || hasYmanKey();
+  // 注册表里任何一家「有 key 且声明了这一类 mode」的都算真上游——relay 配了 key
+  // 却不在判据里的话，路由落空时会错误地落进 mock。
+  for (const id of registeredProviderIds()) {
+    if (id === "mock" || !hasProviderKey(id)) continue;
+    const modes = registryProviderForId(id).capabilities().modes;
+    const hit =
+      kind === "image"
+        ? modes.includes("text_to_image")
+        : modes.some((mode) => mode !== "text_to_image");
+    if (hit) return true;
+  }
+  return false;
 }
 
 /**
@@ -411,7 +439,9 @@ export function uiProviderId(mode: NativeMode = "text_to_video"): ProviderId {
  */
 export function audioAvailableFor(providerId: ProviderId): boolean {
   if (providerId === "kling") return klingVideoAudio() === "native";
-  if (providerId === "yman") return false;
+  // openai-videos 协议的建任务接口没有音频参数（YMan 与各 relay 同），出不出声由
+  // 模型自己决定——不可控就既不能保证有声，也不该向用户收有声的加价。
+  if (liveRelayViews().some((view) => view.id === providerId && view.catalog)) return false;
   return true;
 }
 

@@ -1,7 +1,8 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { GeniusShell } from "@/components/genius/GeniusShell";
-import { harnessEnabled, isMockMode, klingVideoModel, openaiImageModel, ymanImageModel, ymanT2vModel } from "@/lib/env";
+import { harnessEnabled, isMockMode, klingVideoModel } from "@/lib/env";
+import { relayViewFor } from "@/lib/providers/relay/live";
 import {
   audioAvailableFor,
   imageAspectRatios,
@@ -75,12 +76,15 @@ export default async function ShellLayout({ children }: { children: React.ReactN
 /** 面板上的模型读数。只是展示，跟着当前 provider 走（schema 里没有 model 字段）。 */
 function videoModelName(providerId: ReturnType<typeof uiProviderId>): string {
   if (providerId === "kling") return klingVideoModel();
-  if (providerId === "yman") return ymanT2vModel();
+  // relay（含 yman 预设）：读目录给 t2v 归一出的展示名。
+  const relay = relayViewFor(providerId);
+  if (relay?.catalog) return relay.catalog.modelFor("text_to_video");
   return "grok-imagine-video";
 }
 
 function imageModelName(providerId: ReturnType<typeof uiProviderId>): string {
-  if (providerId === "openai") return openaiImageModel();
-  if (providerId === "yman") return ymanImageModel();
+  // relay（含 openai / yman 预设）：读它配置的生图模型名。
+  const relay = relayViewFor(providerId);
+  if (relay?.image) return relay.image.model();
   return "grok-imagine-image";
 }

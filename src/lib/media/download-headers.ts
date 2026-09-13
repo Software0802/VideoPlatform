@@ -1,5 +1,6 @@
-import { grokApiKey, xaiBase, ymanApiKey, ymanBase } from "@/lib/env";
+import { grokApiKey, openaiApiKey, openaiBase, xaiBase, ymanApiKey, ymanBase } from "@/lib/env";
 import { log } from "@/lib/log";
+import { liveRelayViews } from "@/lib/providers/relay/live";
 import type { ProviderId } from "@/lib/providers/types";
 
 function originOf(url: string): string | null {
@@ -10,15 +11,29 @@ function originOf(url: string): string | null {
   }
 }
 
+type BoundUpstream = { key: () => string | undefined; base: () => string };
+
 /**
  * 哪个 provider 的成片下载需要带哪把 key，以及那把 key 只允许发往哪个 origin。
  *
- * 不在这张表里的 provider（可灵、openai、mock、jimeng）下载走匿名直链，一个头都不带。
+ * relay（含 yman env 预设）从 `live.ts` 的注册视图取——origin 与 keyEnv 都是配置
+ * 来的，这里只动态配对；不在这张表里的 provider（可灵、openai 生图、mock、jimeng）
+ * 下载走匿名直链，一个头都不带。
  */
-const BOUND_UPSTREAM: Partial<Record<ProviderId, { key: () => string | undefined; base: () => string }>> = {
-  grok: { key: grokApiKey, base: xaiBase },
-  yman: { key: ymanApiKey, base: ymanBase },
-};
+function boundUpstreams(): Map<ProviderId, BoundUpstream> {
+  const map = new Map<ProviderId, BoundUpstream>();
+  map.set("grok", { key: grokApiKey, base: xaiBase });
+  // 两个 env 预设的静态兜底：没经过装配（单测只 import 本文件）时 yman / openai
+  // 的 origin 配对仍要成立；`data/relays.json` 里配了同 id 的 view 会覆盖这里。
+  map.set("yman", { key: ymanApiKey, base: ymanBase });
+  map.set("openai", { key: openaiApiKey, base: openaiBase });
+  for (const view of liveRelayViews()) {
+    // relay 的 /videos content 端点需要 Bearer；openai 预设只有生图通道、
+    // 不发可下载的 remoteUrl，但它的 origin 配对留着也无害（key 只认 origin）。
+    map.set(view.id, { key: view.apiKey, base: view.base });
+  }
+  return map;
+}
 
 /**
  * 下载成片时该带哪个 Authorization。
@@ -38,13 +53,15 @@ export function downloadHeadersFor(url: string, providerId?: ProviderId): Record
   const target = originOf(url);
   if (!target) return {};
 
+  const bound = boundUpstreams();
+
   if (providerId) {
-    const bound = BOUND_UPSTREAM[providerId];
-    // 这家的下载本来就不需要鉴权（可灵 / openai / mock）：给空头是正确答案，不是异常。
-    if (!bound) return {};
-    const key = bound.key();
+    const entry = bound.get(providerId);
+    // 这家的下载本来就不需要鉴权（可灵 / openai 生图 / mock）：给空头是正确答案，不是异常。
+    if (!entry) return {};
+    const key = entry.key();
     if (!key) return {};
-    if (target !== originOf(bound.base())) {
+    if (target !== originOf(entry.base())) {
       log("warn", "成片 URL 的 origin 不属于该 provider 的上游，不带任何鉴权头", {
         providerId,
         origin: target,
@@ -54,14 +71,11 @@ export function downloadHeadersFor(url: string, providerId?: ProviderId): Record
     return { Authorization: `Bearer ${key}` };
   }
 
-  const xaiKey = grokApiKey();
-  if (xaiKey && target === originOf(xaiBase())) {
-    return { Authorization: `Bearer ${xaiKey}` };
-  }
-
-  const yman = ymanApiKey();
-  if (yman && target === originOf(ymanBase())) {
-    return { Authorization: `Bearer ${yman}` };
+  for (const entry of bound.values()) {
+    const key = entry.key();
+    if (key && target === originOf(entry.base())) {
+      return { Authorization: `Bearer ${key}` };
+    }
   }
 
   return {};

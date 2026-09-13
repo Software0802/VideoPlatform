@@ -247,6 +247,15 @@ export function lumenProductsRaw(): string | undefined {
 }
 
 /**
+ * `LUMEN_RELAYS`：中转 provider 配置的 JSON 数组原文（方案 `plan-relay-provider` §2）。
+ * 只在 `data/relays.json` 不存在时作首次种子；文件一旦存在就以文件为准。
+ * 解析与合并都在 `providers/relay/config.ts`，这里只取原文。
+ */
+export function lumenRelaysRaw(): string | undefined {
+  return process.env.LUMEN_RELAYS?.trim() || undefined;
+}
+
+/**
  * gpt-image-1 常要 30–120 秒才返回，远超通用的 `UPSTREAM_TIMEOUT_MS`（默认 30s）。
  * 用通用超时会在图片已经生成、正要返回时 abort，而这一次调用照样计费。
  */

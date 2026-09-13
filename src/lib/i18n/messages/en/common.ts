@@ -81,6 +81,8 @@ export const common: Record<keyof typeof zh, string> = {
   "common.err.missing_api_key": "Provider API key is not configured.",
   "common.err.mock_failure": "Simulated failure.",
   "common.err.no_provider_available": "No provider is available right now. Please try again later.",
+  "common.err.relay_exists": "This relay already exists.",
+  "common.err.no_probe_channel": "This relay has no channel that can be probed.",
   "common.err.not_found": "Not found or already deleted.",
   "common.err.not_supported": "This action is not supported.",
   "common.err.proposal_expired": "The proposal quote has expired. Please start a new one.",

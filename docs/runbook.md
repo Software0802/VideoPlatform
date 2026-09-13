@@ -82,6 +82,38 @@ curl -sS http://127.0.0.1:3000/api/health
 2. 改 `/opt/genius/.env` 对应变量：`YMAN_T2V_MODEL` / `YMAN_I2V_MODEL` / `AGENT_CHAT_MODEL` / `OPENAI_IMAGE_MODEL` / `KLING_VIDEO_MODEL`；产品目录里钉死的模型名要用 `LUMEN_PRODUCTS`（JSON 数组）整体覆盖该产品。
 3. `systemctl restart genius` 后公网提一条对应模式的小任务验证；新模型名若不在 `src/lib/providers/yman/catalog.ts` 登记，能跑通但按 `YMAN_UNKNOWN_CREDITS` 估价，随后把新名的档位与积分价目补进目录（或临时用 `YMAN_MODEL_CATALOG` 覆盖）。
 
+## 新增 / 下线 / 停用一条中转（relay）
+
+中转配置的事实源是 `data/relays.json`（结构见 `docs/design.md` §2l）；日常操作用管理接口，管理员账号由 `LUMEN_ADMIN_USER_ID` 指定。所有写操作落盘后立刻生效，不用重启。
+
+```powershell
+# 列表（含 hasKey / 注册状态 / 目录快照时间；永不含 key 值）
+curl.exe -b "lumen_session=<管理员会话cookie>" https://genius.homeaistack.online/api/admin/relays
+
+# 新增一条中转（keyEnv 只写环境变量名；key 值先进 .env，永远不进 relays.json）
+curl.exe -b "lumen_session=<...>" -H "content-type: application/json" `
+  -d '{"id":"ccgoai","name":"CCGO","baseUrl":"https://ccgoai.club/v1","keyEnv":"CCGOAI_API_KEY","priority":10,"image":{"protocol":"openai-images","model":"gpt-image-2","quality":"medium","flexibleSizes":true}}' `
+  https://genius.homeaistack.online/api/admin/relays
+
+# 停用（保留配置、立刻退出路由）/ 重新启用
+curl.exe -b "lumen_session=<...>" -X PATCH -H "content-type: application/json" -d '{"enabled":false}' https://genius.homeaistack.online/api/admin/relays/ccgoai
+
+# 拉一遍上游 /models 写目录快照（返回新增/消失 diff）
+curl.exe -b "lumen_session=<...>" -X POST https://genius.homeaistack.online/api/admin/relays/ccgoai/discover
+
+# 直连探针（不计费）：有生图通道发一张 1K 1:1，否则 chat 一句
+curl.exe -b "lumen_session=<...>" -X POST https://genius.homeaistack.online/api/admin/relays/ccgoai/probe
+
+# 下线（新任务立刻路由不到；历史任务记录与在跑任务仍可解析——影子表）
+curl.exe -b "lumen_session=<...>" -X DELETE https://genius.homeaistack.online/api/admin/relays/ccgoai
+```
+
+要点：
+
+- `keyEnv` 指向的变量必须已在 `/opt/genius/.env` 里配上并 `systemctl restart genius`（env 是进程读的）；`hasKey=false` 的 relay 在列表里可见但不参与路由。
+- 隐式次序：没显式配 `*_PROVIDER_ORDER` 时 relay 按 `priority` 降序排在内置默认之后；生产显式写了 ORDER，要让新 relay 接流量就把它加进 `VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER`。
+- `yman` / `openai` 是老 env 折算的预设，PATCH/DELETE 它们会 404；要覆盖就 POST 一条同 id 的文件配置。
+
 ## ccgoai 生图 503 `service_busy`
 
 现象：OpenAI 兼容通道（ccgoai）对 `gpt-image-2` 的 `quality=high` 一律回 503 `{"error":{"code":"service_busy","type":"api_error",...}}`。这是结构化错误体，代码已按**确定拒单**处理（普通 failed、可重试，不会锁 `uncertain_submit`）。

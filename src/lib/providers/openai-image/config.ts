@@ -12,6 +12,7 @@ import {
 } from "@/lib/env";
 import { openaiImagePriceTable, ymanImagePriceTable, type ImagePriceTable } from "@/lib/cost";
 import { envImageShape, type OpenaiImageShape } from "@/lib/providers/openai-image/rest-map";
+import { relayViewFor } from "@/lib/providers/relay/live";
 import type { ProviderId } from "@/lib/providers/types";
 
 /**
@@ -83,8 +84,14 @@ export const YMAN_IMAGE_CONFIG: OpenaiImageConfig = {
   taskTimeoutMs: openaiImageTaskTimeoutMs,
 };
 
-/** 一个 provider id 对应的生图通道配置；不是生图通道就返回 undefined。 */
+/**
+ * 一个 provider id 对应的生图通道配置；不是生图通道就返回 undefined。
+ * relay（含 yman / openai 两个 env 预设）从注册视图里取；这两个 id 有常量兜底，
+ * 即使视图还没装配（比如单测只 import 本文件）也能解析。
+ */
 export function imageConfigFor(id: ProviderId): OpenaiImageConfig | undefined {
+  const relay = relayViewFor(id);
+  if (relay?.image) return relay.image;
   if (id === "openai") return OPENAI_IMAGE_CONFIG;
   if (id === "yman") return YMAN_IMAGE_CONFIG;
   return undefined;

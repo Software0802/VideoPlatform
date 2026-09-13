@@ -292,6 +292,17 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 - **API**:`GET /api/notifications` 全量 `{epoch, items(seq 倒序), lastReadSeq, unread}`(不分页,≤200 条一次给齐);`POST /api/notifications/read {epoch, upToSeq}` 游标只进不退,epoch 不符 409 `notifications_stale`。
 - **客户端** `ShellContext.syncNotifications()`:整体覆盖本地 notices/unread,触发点为挂载、SSE 每次 open(`useEvents` 的 `onOpen`,含重连——断线期间漏掉的终态靠它补齐)、页面回到前台、本地观察到终态边沿之后;失败 2s/5s/10s 退避三次放弃,在飞合并。SSE 那一跳仍即时插入 Notice + toast(等不了同步),随后 sync 以服务端为准覆盖。「打开铃铛 = 全部已读」:本地持全量,`markNoticesRead` 带 `epoch + 本地最大 seq` POST,409 则重拉不重试。
 
+## 2l. relay provider 与 `data/relays.json`(2026-09-13 N3.2,as-built)
+
+方案 `docs/plan-relay-provider-2026-09-13.md`。OpenAI 兼容中转（`/videos` 三步 + `/images` + `/chat/completions`）由统一工厂 `src/lib/providers/relay/` 承接，`yman` 与 `openai` 是它的两条 env 折算预设——生产 `.env` 不改一行即可升级。
+
+- **配置事实源** `data/relays.json`(`{schemaVersion:1, relays:[...]}`,schema 在 `relay/config.ts`)。三级来源：文件存在 → 以文件为准；文件无而有 `LUMEN_RELAYS` → 解析作**首次种子**写入文件；都没有 → 老 env 折算（`YMAN_*` → yman 预设、`OPENAI_*` → openai 预设，**不写盘**，全部字段调用时读 env）。文件里没写到的 `yman`/`openai` 始终回落 env 预设——`providerForId` 对这两个 id 永远可解析。
+- **装配** `relay/assemble.ts`：模块加载（经 `providers/builtin.ts`）时 `reconcileRelays()` 一次，此后 10s mtime 轮询热重载（测试进程不起轮询）。新增注册、改动换对象、删除走 `unregisterProvider`——对象进**影子表**：新任务路由不可见，正在跑的任务握着旧引用、历史 `job.json` 的 `providerForId` 仍可解析。
+- **能力推导**：`modes` = 配了默认模型的视频 mode + 有 image 通道时的 `text_to_image`；画幅 / 时长档 / 分辨率 / 参考图上限全部从目录（`catalog.models`）推导，积分计价 `credits = 分辨率价 + 时长价`、`creditsPerCny` 折人民币再折 USD。`catalog.source:"models-endpoint"` 时目录 = `/models` 快照（`data/relay-catalog/<id>.json`）∪ 配置覆盖，启动 30s 后拉一次，discover 接口可手动刷。
+- **ORDER**：显式 `*_PROVIDER_ORDER` 时 relay 只按表内位次参与；没显式配时，启用的 relay 按 `priority` 降序排在内置默认之后（env 预设不进隐式次序，今天 grok / `openai,grok` 的默认不变）。
+- **安全**：`keyEnv` 存的是环境变量**名**不是值，`hasKey()` 调用时读 `process.env[keyEnv]`；下载鉴权按「provider × 配置的 base origin」动态配对（`media/download-headers.ts`），认不出的 origin 一律空头。
+- **管理接口** `src/app/api/admin/relays/`（登录 + `LUMEN_ADMIN_USER_ID`，非管理员一律 404）：`GET /`（列表 + hasKey + 注册状态 + 快照时间，不回显 key）、`POST /`、`PATCH /:id`（enabled/priority/模型等，id 不可改）、`DELETE /:id`、`POST /:id/discover`（拉 `/models` 写快照 + 返回 diff）、`POST /:id/probe`（有生图通道发一张 1K 1:1，否则 chat `max_tokens:16`，**不计费** `billed:false`）。写操作落 `relays.json`（`writeJsonAtomic`）后立刻 `reconcileRelays()`。env 预设不由 PATCH/DELETE 管理（404）；要改它们就 POST 一条同 id 的文件配置覆盖。
+
 ## 3. Job 生命周期
 
 状态:`queued → submitting → pending → persisting → succeeded`,终态另有 `failed | expired | canceled`。t2i 同步返回,submit 后直接 `persisting`。长片(30/45/60)走 `queued → directing → keyframing → generating_shots → qc → stitching → persisting → succeeded`,由 orchestrator 推进,runner 只接手最后的 persisting。

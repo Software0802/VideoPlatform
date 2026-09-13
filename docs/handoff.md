@@ -35,6 +35,7 @@
 | Job 生命周期 / runner / 索引 | `src/lib/jobs/{store,create,runner,quota,retention,rate-limit,retry-guard}.ts` | §3、§12.3、§12.4 |
 | Provider 路由（能力 + 优先级） | `src/lib/providers/router.ts`、`exhaustion.ts` | §2b/§2c/§2e |
 | Provider 实现 | `src/lib/providers/{grok,openai-image,kling,yman,mock}/` | §1、§2b、§2c、§2e |
+| relay 中转工厂 / `data/relays.json` / 管理接口 | `src/lib/providers/relay/`、`src/app/api/admin/relays/` | §2l |
 | 产品目录（对用户露出的模型名） | `src/lib/products/catalog.ts` | §2f |
 | 余额与计费 | `src/lib/billing/{prices,admission,ledger}.ts` | §2d |
 | 订阅 / 会员积分池 | `src/lib/billing/{plans,subscription}.ts` | §2i |

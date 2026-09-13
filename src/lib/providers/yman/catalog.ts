@@ -1,27 +1,10 @@
 import { ymanI2vModel, ymanModelCatalogRaw, ymanT2vModel, ymanUnknownCredits } from "@/lib/env";
 import { log } from "@/lib/log";
+import { makeRelayCatalog, type RelayModelSpec } from "@/lib/providers/relay/catalog";
 import type { AspectRatio, NativeMode, Resolution } from "@/lib/providers/types";
 
 export type YmanResolution = Extract<Resolution, "720p" | "1080p">;
-
-export type YmanModelSpec = {
-  /**
-   * 同一个模型在上游的其它叫法（后台内部模型名、旧文档名）。只用于**认出**用户填的
-   * 名字，永远不会被发给上游——发出去的 `model` 一律是目录的键，即 `/v1/models` 的展示名。
-   */
-  aliases: string[];
-  /** 上游认的时长档（秒）。请求里的秒数向上取到最近的一档。 */
-  durations: number[];
-  resolutions: YmanResolution[];
-  ratios: AspectRatio[];
-  /** 0 表示这个模型根本不收参考图（纯文生）。 */
-  maxReferenceImages: number;
-  /** 积分 = 分辨率价 + 时长价。键分别是分辨率名与时长的十进制字符串。 */
-  credits: {
-    resolution: Partial<Record<YmanResolution, number>>;
-    duration: Record<string, number>;
-  };
-};
+export type YmanModelSpec = RelayModelSpec;
 
 const RATIOS_LANDSCAPE_PORTRAIT: AspectRatio[] = ["16:9", "9:16"];
 
@@ -110,42 +93,21 @@ const UNKNOWN_MODEL: YmanModelSpec = {
 type CatalogCache = {
   raw: string | undefined;
   table: Record<string, YmanModelSpec>;
-  /** 别名（含展示名自身）→ 展示名。键已 `trim`，大小写保持原样：上游的 id 区分大小写。 */
-  aliasIndex: Map<string, string>;
 };
 
 let catalogCache: CatalogCache | null = null;
 
 /** 静态表 + `YMAN_MODEL_CATALOG` 覆盖 / 追加的结果。坏 JSON 记一条 warn 后回落静态表。 */
-export function ymanCatalog(): Record<string, YmanModelSpec> {
-  return cache().table;
-}
-
-function cache(): CatalogCache {
+function mergedTable(): Record<string, YmanModelSpec> {
   const raw = ymanModelCatalogRaw();
-  if (catalogCache && catalogCache.raw === raw) return catalogCache;
+  if (catalogCache && catalogCache.raw === raw) return catalogCache.table;
   const table = raw ? { ...YMAN_MODELS, ...parseCatalog(raw) } : { ...YMAN_MODELS };
-  const aliasIndex = new Map<string, string>();
-  for (const [display, spec] of Object.entries(table)) {
-    aliasIndex.set(display.trim(), display);
-    for (const alias of spec.aliases) {
-      const key = alias.trim();
-      // 展示名永远赢：别名只在没有同名展示名时才建立指向。
-      if (key && !table[key]) aliasIndex.set(key, display);
-    }
-  }
-  catalogCache = { raw, table, aliasIndex };
-  return catalogCache;
+  catalogCache = { raw, table };
+  return table;
 }
 
-/**
- * 用户填的名字 → 目录里的**展示名**（`/v1/models` 的 id，也就是发给上游的那一串）。
- * 展示名与别名都能命中；认不出就原样返回（去空白）——上游随时会上新模型，
- * 认不出不等于不能用，只是我们估不准价。
- */
-export function resolveModel(name: string): string {
-  const raw = String(name ?? "").trim();
-  return cache().aliasIndex.get(raw) ?? raw;
+export function ymanCatalog(): Record<string, YmanModelSpec> {
+  return mergedTable();
 }
 
 function parseCatalog(raw: string): Record<string, YmanModelSpec> {
@@ -170,7 +132,7 @@ function parseCatalog(raw: string): Record<string, YmanModelSpec> {
   return out;
 }
 
-/** 只查内置表的别名（`parseCatalog` 期间缓存还没建好，不能走 `resolveModel`）。 */
+/** 只查内置表的别名（`parseCatalog` 期间别名索引还没建好，不能走 `resolveModel`）。 */
 function builtinDisplayName(name: string): string {
   if (YMAN_MODELS[name]) return name;
   for (const [display, spec] of Object.entries(YMAN_MODELS)) {
@@ -211,17 +173,29 @@ function parseSpec(value: unknown, base: YmanModelSpec | undefined): YmanModelSp
   };
 }
 
+/**
+ * 目录引擎（`providers/relay/catalog.ts`）：别名解析、档位归一、积分计价与 YMan 共享
+ * 同一份逻辑；表、unknownCredits 与默认模型名仍按 env 在调用时取。
+ */
+export const ymanRelayCatalog = makeRelayCatalog({
+  table: mergedTable,
+  unknownCredits: ymanUnknownCredits,
+  configuredModel: (mode: NativeMode) =>
+    mode === "text_to_video" ? ymanT2vModel() : ymanI2vModel(),
+});
+
+/**
+ * 用户填的名字 → 目录里的**展示名**（`/v1/models` 的 id，也就是发给上游的那一串）。
+ * 展示名与别名都能命中；认不出就原样返回（去空白）——上游随时会上新模型，
+ * 认不出不等于不能用，只是我们估不准价。
+ */
+export const resolveModel = ymanRelayCatalog.resolveModel;
+
 /** 这个模型的能力；认不出就给通用兜底，绝不抛——路由已经选中 yman 了，此时抛只会打挂任务。 */
-export function ymanCapabilities(model: string): YmanModelSpec {
-  const c = cache();
-  return c.table[resolveModel(model)] ?? UNKNOWN_MODEL;
-}
+export const ymanCapabilities = ymanRelayCatalog.specFor;
 
 /** 上游是否登记过这个模型（`estimateCostUsd` 用它判断该不该走积分口径）。别名也算认得。 */
-export function isYmanModel(model: string): boolean {
-  const c = cache();
-  return Boolean(c.table[resolveModel(model)]);
-}
+export const isYmanModel = ymanRelayCatalog.isKnownModel;
 
 /**
  * 一个 mode 该用哪个上游模型，**已归一成展示名**。t2v 用纯文生模型；i2v / r2v 用收参考图
@@ -230,75 +204,38 @@ export function isYmanModel(model: string): boolean {
  * 归一在这里做而不是在 rest-map：`create.ts` 把它写进 `job.model`，详情卡、账目、日志
  * 看到的就都是「真正发给上游的那一串」，而不是用户随手填的内部名。
  */
-export function modelFor(mode: NativeMode): string {
-  return resolveModel(mode === "text_to_video" ? ymanT2vModel() : ymanI2vModel());
-}
+export const modelFor = ymanRelayCatalog.modelFor;
 
 /**
  * 这一刻 yman 视频侧能出的画幅（t2v 与 i2v 两个模型的**并集**）。
  *
  * 并集而不是交集：路由按画幅挑 provider，交集会把 `SD2.0 满血` 才有的 1:1 白白让出去。
- * 代价是「t2v 出得了、i2v 出不了」的画幅仍可能落到 yman，此时 `mapToYmanRequest` 会 400
+ * 代价是「t2v 出得了、i2v 出不了」的画幅仍可能落到 yman，此时 rest-map 会 400
  * 兜底——两个模型混搭才有的边角，比静默改写用户选的画幅可接受。
  */
-export function ymanVideoRatios(): AspectRatio[] {
-  const out = new Set<AspectRatio>();
-  for (const mode of ["text_to_video", "image_to_video"] as const) {
-    for (const ratio of ymanCapabilities(modelFor(mode)).ratios) out.add(ratio);
-  }
-  return [...out];
-}
+export const ymanVideoRatios = ymanRelayCatalog.videoRatios;
 
 /**
  * 这一刻 yman 视频侧出得了的分辨率档（t2v 与 i2v 两个模型的**并集**，理由同
  * `ymanVideoRatios`）。路由拿它筛选：请求 1080p 时不会被派给只有 720p 的模型。
  */
-export function ymanVideoResolutions(): YmanResolution[] {
-  const out = new Set<YmanResolution>();
-  for (const mode of ["text_to_video", "image_to_video"] as const) {
-    for (const res of ymanCapabilities(modelFor(mode)).resolutions) out.add(res);
-  }
-  return out.size ? [...out] : ["720p"];
-}
+export const ymanVideoResolutions = ymanRelayCatalog.videoResolutions;
 
 /**
  * 参考生视频的上限，取 i2v / r2v 那个模型的（首帧与参考图在上游是同一个
  * `reference_images` 字段）。纯文生模型是 0，不参与这条。
  */
-export function ymanMaxReferenceImages(): number {
-  return ymanCapabilities(modelFor("image_to_video")).maxReferenceImages;
-}
+export const ymanMaxReferenceImages = ymanRelayCatalog.maxReferenceImages;
 
 /**
  * 请求秒数 → 上游认的时长档，**向上**取。4→5、6/8→10、12→15，超出最大档取最大档。
  * 向上而不是就近：上游按档计费，取到更短的一档等于用户少拿了片子还照付这一档的钱。
  * 归一后的值必须写回 job（`create.ts`），账目与详情卡才是「会被计费的那个时长」。
  */
-export function normalizeYmanDuration(model: string, sec: number | undefined): number {
-  const durations = ymanCapabilities(model).durations;
-  const sorted = [...durations].sort((a, b) => a - b);
-  const smallest = sorted[0] ?? 5;
-  if (sec == null || !Number.isFinite(sec)) return smallest;
-  return sorted.find((d) => d >= sec) ?? sorted[sorted.length - 1] ?? smallest;
-}
+export const normalizeYmanDuration = ymanRelayCatalog.normalizeDuration;
 
 /** 这次调用要预扣多少积分。认不出的模型 / 缺档时落到 `YMAN_UNKNOWN_CREDITS`，绝不返回 0。 */
-export function creditsFor(model: string, durationSec: number, resolution: YmanResolution): number {
-  const spec = cache().table[resolveModel(model)];
-  if (!spec) return ymanUnknownCredits();
-  const res = spec.credits.resolution[resolution];
-  const dur = spec.credits.duration[String(durationSec)];
-  if (res == null && dur == null) return ymanUnknownCredits();
-  // 只缺一半时用已知的一半，另一半按该模型最贵的一档补——宁可高估。
-  const resCredits = res ?? maxOf(Object.values(spec.credits.resolution)) ?? 0;
-  const durCredits = dur ?? maxOf(Object.values(spec.credits.duration)) ?? 0;
-  return resCredits + durCredits;
-}
-
-function maxOf(values: (number | undefined)[]): number | undefined {
-  const nums = values.filter((n): n is number => typeof n === "number" && Number.isFinite(n));
-  return nums.length ? Math.max(...nums) : undefined;
-}
+export const creditsFor = ymanRelayCatalog.creditsFor;
 
 function numberArray(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined;
