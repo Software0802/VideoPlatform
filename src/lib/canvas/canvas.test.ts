@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
@@ -112,6 +112,36 @@ describe("canvas store", () => {
   });
 });
 
+describe("canvas material retention", () => {
+  it("keeps saved material usable after temporary uploads age past 24 hours", async () => {
+    const owner = "usr_0000000000000320";
+    await seedUser(owner);
+    const doc = await createCanvas(owner, "长期素材");
+    const jpeg = await sharp({
+      create: { width: 4, height: 3, channels: 3, background: { r: 40, g: 60, b: 80 } },
+    }).jpeg().toBuffer();
+    const upload = await storeUploadFromBuffer(jpeg, "start", owner);
+    await patchCanvas(owner, doc.id, {
+      expectedRevision: 0,
+      nodes: [
+        { id: "n_aa000020", kind: "material", x: 0, y: 0, uploadId: upload.uploadId },
+        { id: "n_bb000020", kind: "gen_video", x: 300, y: 0, prompt: "动起来" },
+      ],
+      edges: [{ id: "e_00000020", from: "n_aa000020", to: "n_bb000020" }],
+    });
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    for (const suffix of ["", ".json"]) {
+      await utimes(path.join(dataRoot, "tmp", `${upload.uploadId}${suffix}`), old, old);
+    }
+    const { sweepTmp } = await import("@/lib/jobs/sweep");
+    await sweepTmp();
+    const saved = await readCanvas(owner, doc.id);
+    expect(saved).not.toBeNull();
+    const { validateGraph } = await import("./graph");
+    await expect(validateGraph(saved!, owner)).resolves.toBeUndefined();
+  });
+});
+
 describe("runCanvasNode", () => {
   it("runs a gen_image node into a real text_to_image job and stamps jobId/runSeq", async () => {
     const owner = "usr_0000000000000310";
@@ -202,9 +232,11 @@ describe("runCanvasNode", () => {
       if (!cur || ["succeeded", "failed", "expired", "canceled"].includes(cur.status)) break;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
+    expect((await readJobForUser(job.id, owner))?.status).toMatch(/^(succeeded|failed|expired|canceled)$/);
     const second = await runCanvasNode(owner, doc.id, "n_bb000002");
     expect(second.job.mode).toBe("image_to_video");
-  });
+    expect(second.job.id).not.toBe(job.id);
+  }, 20_000);
 
   it("runs gen_video as image_to_video off an upstream gen_image node's finished output", async () => {
     const owner = "usr_0000000000000314";

@@ -124,6 +124,7 @@ export default function CanvasView() {
 
   const [doc, setDoc] = useState<CanvasDocument | null>(null);
   const [jobs, setJobs] = useState<Record<string, JobPublic>>({});
+  const [missingMaterials, setMissingMaterials] = useState<Set<string>>(new Set());
   const [fit, setFit] = useState(1);
   const [menu, setMenu] = useState<MenuPos | null>(null);
   const [running, setRunning] = useState<Set<string>>(new Set());
@@ -405,7 +406,9 @@ export default function CanvasView() {
     try {
       const { uploadId } = await uploadFile(file, "start");
       mutate((d) => ({
-        nodes: d.nodes.map((n) => (n.id === nodeId ? { ...n, uploadId } : n)),
+        nodes: d.nodes.map((n) => (n.id === nodeId
+          ? { ...n, uploadId, assetId: undefined, assetExpiresAt: undefined, assetState: undefined }
+          : n)),
       }));
     } catch (e) {
       showToast(errorText(t, e));
@@ -606,6 +609,8 @@ export default function CanvasView() {
     };
   }, [scale, persist]);
 
+  const materialMissing = (node: CanvasNode) => node.assetState === "missing" || node.assetState === "expired" ||
+    missingMaterials.has(node.assetId ?? node.uploadId ?? "");
   const nodeById = (id: string) => doc?.nodes.find((n) => n.id === id);
   const inputOf = (nodeId: string) => doc?.edges.find((e) => e.to === nodeId)?.from ?? "";
   const candidatesFor = (node: CanvasNode) =>
@@ -702,12 +707,13 @@ export default function CanvasView() {
 
                 {node.kind === "material" ? (
                   <div className="canvas-node__body" style={{ minHeight: 120 }}>
-                    {node.uploadId ? (
+                    {(node.assetId || node.uploadId) && !materialMissing(node) ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         className="canvas-node__img"
-                        src={`/api/uploads/${node.uploadId}`}
+                        src={`/api/uploads/${node.assetId ?? node.uploadId}`}
                         alt={t("canvas.kind.material")}
+                        onError={() => setMissingMaterials((current) => new Set(current).add(node.assetId ?? node.uploadId!))}
                       />
                     ) : (
                       <button
@@ -722,6 +728,13 @@ export default function CanvasView() {
                         {t("canvas.upload")}
                       </button>
                     )}
+                    <p className="canvas-node__material-note" data-missing={materialMissing(node)}>
+                      {materialMissing(node)
+                        ? t("canvas.material.missing")
+                        : node.assetExpiresAt
+                          ? t("canvas.material.expires", { time: clockTime(node.assetExpiresAt) })
+                          : t("canvas.material.retention")}
+                    </p>
                   </div>
                 ) : null}
 

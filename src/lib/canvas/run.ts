@@ -3,7 +3,8 @@ import type { CreateJobBody } from "@/lib/jobs/schema";
 import { isTerminalStatus } from "@/lib/jobs/schema";
 import { lookupIdempotency } from "@/lib/jobs/idempotency";
 import { readJobForUser, toPublic } from "@/lib/jobs/store";
-import { copyUpload, storeUploadFromBuffer } from "@/lib/jobs/upload";
+import { storeUploadFromBuffer } from "@/lib/jobs/upload";
+import { copyCanvasMaterial } from "@/lib/assets/store";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { mediaStore } from "@/lib/storage/local-fs";
 import { updateCanvas, readCanvas } from "@/lib/canvas/store";
@@ -48,9 +49,9 @@ async function resolveImageInput(
   const inputs = inputsOf(doc, node.id);
   const imageCapable = inputs.some((n) => n.kind === "material" || n.kind === "gen_image");
   for (const input of inputs) {
-    if (input.kind === "material" && input.uploadId) {
+    if (input.kind === "material" && (input.assetId || input.uploadId)) {
       try {
-        const side = await copyUpload(input.uploadId, "start", ownerId);
+        const side = await copyCanvasMaterial(ownerId, input);
         return side.uploadId;
       } catch {
         continue; // 素材不在了：试下一个候选，全不行才判失败。

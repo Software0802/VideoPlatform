@@ -6,7 +6,7 @@ import {
   providerSettingsFor,
 } from "@/lib/jobs/provider-settings";
 import { chooseProduct, labelProduct } from "@/lib/jobs/product-choice";
-import { readUploadSidecar } from "@/lib/jobs/upload";
+import { readCanvasMaterial } from "@/lib/assets/store";
 import type { CreateJobBody } from "@/lib/jobs/schema";
 import { ProviderHttpError } from "@/lib/providers/types";
 import type { NativeMode } from "@/lib/providers/types";
@@ -38,6 +38,10 @@ export type Graph = Pick<CanvasDocument, "nodes" | "edges">;
 
 export function isGenNode(node: CanvasNode): boolean {
   return node.kind === "gen_image" || node.kind === "gen_video";
+}
+
+function materialInputKey(node: CanvasNode): string {
+  return node.assetId ? `up_${node.assetId.slice(3)}` : node.uploadId ?? "";
 }
 
 /** 连入 `nodeId` 的节点（画布顺序）。 */
@@ -143,11 +147,11 @@ export async function validateGraph(graph: Graph, ownerId: string): Promise<void
   }
   for (const node of graph.nodes) {
     if (node.kind === "material") {
-      if (!node.uploadId) {
+      if (!node.assetId && !node.uploadId) {
         throw new ProviderHttpError(400, "invalid_argument", "素材节点还没有上传图片");
       }
       // 只查不消耗：归属/角色/存在性与 createJob 认领同一段判定。
-      await readUploadSidecar(node.uploadId, "start", ownerId);
+      await readCanvasMaterial(ownerId, node);
     }
   }
 }
@@ -212,7 +216,7 @@ export function nodeInputHash(graph: Graph, nodeId: string): string {
   const node = graph.nodes.find((n) => n.id === nodeId);
   if (!node) return stableJsonHash({ missing: nodeId });
   const inputs = nodeInputs(graph, nodeId).flatMap((n) => {
-    if (n.kind === "material") return [`material:${n.uploadId ?? ""}`];
+    if (n.kind === "material") return [`material:${materialInputKey(n)}`];
     if (isGenNode(n)) return [`gen:${n.id}:${nodeInputHash(graph, n.id)}`];
     return [];
   });
@@ -282,7 +286,7 @@ export async function computeQuote(
           prompt: plan.prompt,
           product: node.product ?? null,
           inputs: nodeInputs(graph, node.id)
-            .map((n) => `${n.kind}:${n.id}:${n.kind === "material" ? (n.uploadId ?? "") : ""}`)
+            .map((n) => `${n.kind}:${n.id}:${n.kind === "material" ? (materialInputKey(n)) : ""}`)
             .sort(),
         }),
       )

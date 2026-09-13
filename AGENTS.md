@@ -1,79 +1,79 @@
-# This is NOT the Next.js you know
+# 项目规则（Genius / 流光 · Lumen）
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+## 阅读与文档维护
 
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+- 会话先读 `docs/handoff.md`；索引 `docs/README.md`，路线 `docs/plan-repo-optimization-2026-09.md`。
+- 后端读 `docs/design.md`，UI 先读 `DESIGN.md`，运维读 `docs/runbook.md`；旧计划不是现状。
+- UI 原型：`design_handoff/design_handoff_genius_app/README.md` + `Genius App.dc.html`；DOM 契约 `docs/plan-ui-genius-app.md`。
+- 更新 handoff/design/DESIGN/runbook/本文件时，直接改写为当前真实状态；失效结论删掉或改正，不留「已过时」段落，不追加新节覆盖旧结论。
+- 交接描述现在，不是变更日志；历史留 git log 与计划正文，`docs/plan-*.md` 只改顶部状态。每条事实须有代码、配置或实测依据；推断须验证或不写。
+- 本文件只留规则/索引，含 CRLF 保持 ≤12,288 字节；详解归领域文档。
 
-# 项目规则（流光 · Lumen）
+## 前端与接口
 
-## 文档维护规则（用户 2026-09-07 定）
+- `(shell)` 共用 GeniusShell；layout 验会话、下发能力，ShellContext/useShell 管共享状态；结构见 DESIGN。
+- 深色令牌见 DESIGN；BEM + ASCII `data-*`，不用 Tailwind 工具类/组件库/图标库；SVG 收进 icons.tsx，Manrope + Noto Sans SC 经 next/font/google。
+- 样式按视图放 `src/app/styles/`，由 `globals.css` 导入；控件 reset 用 `:where()`；fixed 浮层放在 transform 动画祖先之外。
+- 悬浮创作面板必须与 `main` 同级，锚在 `.col`、`position:absolute`；不能放滚动容器，`main` 不为它预留底部 padding。
+- 组件不直接 fetch；浏览器只经 `src/lib/client/*` 访问 API。未登录 shell 页面服务端 307 到 `/login`，401 用 `window.location.assign` 整页跳转；头像菜单为 disclosure（非 role=menu），显示完整邮箱与退出。
+- 文案走 `useT` 和所属视图 namespace；`messages/zh-CN/<ns>.ts` 是键源，English 必须补齐。仅 `DESIGN.md` 明示的原型占位可保留英文；Cookie `lumen_locale` + Accept-Language 兜底，状态值不翻译。
+- 创作请求以 `createJobBodySchema`（strict）为准；model 是产品 id。产品、时长、画幅、分辨率、参考图数按服务端能力，不按 key 猜；`/api/models` 白名单下发供应商/上游展示名/costHint，不下发密钥。
+- t2v/i2v/t2i 为基础路径，参考与首尾帧按产品能力开放；未开放模式置灰并提示，不伪造成功。`reference_to_video/edit_video/extend_video` 后端保留，edit/extend UI 继续置灰。
+- 规格按钮保留 `data-dur/data-ratio/data-res`；Harness 开启才给 t2v/i2v 加 30/45/60 秒，进度按 job.shots 显示分镜。¥1=100 积分只做显示换算，不改后端 priceCny。
+- 一次逻辑创作复用同一 idempotencyKey，成功才清，提示词/选项改变则作废；网络重试不新造 key。智能体每次发送生成 turnId，重试原样带回。
+- 作品用 `GET /api/jobs?before&limit&kind` 分页；标签/删除/分享/模板用既有客户端入口。通知以持久索引为准，SSE 提醒并触发对齐（design §2k）。
 
-- 更新 `docs/handoff.md`、`docs/design.md`、`DESIGN.md`、`docs/runbook.md` 与本文件时，**直接改写成当前真实状态，只保留正确的内容**：过时的结论（「工作区未提交」「审查进行中」「仍是占位」「尚未部署」等）一旦不再成立就删掉或改成事实，不得以「已过时 / 不再适用」标注的方式留在原地，也不得靠追加新小节去覆盖旧小节。
-- 交接文档描述的是「现在是什么」，不是变更日志；历史与决策过程留在 git log 与 `docs/plan-*.md`（计划文档顶部标状态即可，正文不改写）。
-- 写进文档的每条事实都要在代码、配置或实测里能对上；对不上的是推断，要么去验证，要么不写。
+## 供应商与执行
 
-## 先读什么
+- provider 身份走 `registry.ts`，ProviderId 为开放字符串，ORDER 只接受已注册 id；路由与产品目录都按能力 + ORDER + 可用性，不以配 key 代替启用。默认值、旧 VIDEO_PROVIDER 兼容与 fallback 见 design §1/§2e。
+- 配了真 key 但无人可接时返 503 `no_provider_available`，绝不静默 mock；页面/health 用不抛错的 `uiProviderId()`。文生图七种画幅独立于视频能力。
+- 付费创建固定 `maxAttempts:1`；读超时、断连、裸 5xx 属模糊提交，查回接管或 `uncertain_submit` 锁重试，绝不重买。确定拒单才换家；priceCny 只降不升，点名产品不换成别人家的产品。
+- N3.4 治理见 `providers/{health,rejection}.ts` 与 design §2e/§7；排除已试过的家，遵守 RELAY_MAX_SWITCHES 并记录 providerSwitches。分镜只换失败镜，不动成功镜。
+- relay 统一工厂，配置来源为文件 > LUMEN_RELAYS 种子 > 老 env 折算；缺省 yman/openai 仍可解析。注销进影子表以支持历史任务；管理接口 requireAdmin，非管理员 404；keyEnv 只存环境变量名（design §2l）。
+- Grok 只走 xAI REST `/videos/generations|edits|extensions`、`/images/generations`，禁止 `openai.videos.*`。Grok 是普通 provider，不是平台基座。
+- 尾帧永不进入 Grok 请求体（golden 保证）；仅声明 supportsLastFrameLock 的可灵 i2v 发 last_frame，并强制 1080p 写回记录与售价。其它不支持的 provider 只存尾帧；源视频禁止 data URI 兜底。
+- 可灵只有 5/10 秒档，创建与重试都归一并写回；国际账号用 api-singapore.klingai.com。YMan 视频为 POST /videos → GET /videos/:id → GET /content，模型用 /models 展示名、旧名只作别名。
+- 下载鉴权由 `media/download-headers.ts` 按目标 origin 对应上游分发；YMan content 必须 Bearer，未知 origin 不带任何 key。
+- OpenAI 兼容生图的 202 轮询遵循 task-poll；取消后不得再取可能计费的 result。参考图仅在 edits 开关与 supportsImageReference 同时允许时走 multipart /images/edits（design §2b）。
+- Harness 30/45/60 受 HARNESS_ENABLED 控制；关闭时 API 400、orchestrator 抛 HARNESS_NOT_ENABLED，长时长不得进入原生请求体。按 i2v+t2v 能力走 ORDER，shot 为 t2v/i2v/r2v，续接尾帧→i2v，不用 extend。
+- 三视图/档 A 首帧遵循生图参考能力；Director/QC 用 agentLlmConfig，超时 llm_upstream_failed 不产生付费分镜/锁重试；估价含视频+LLM+图，mock 用 mock-director，视觉 QC 须设阈值（design §7）。
+- ffmpeg 一律经 `src/lib/ffmpeg.ts`（ffmpeg-static），不 spawn PATH 中的版本。
 
-- 交接文档 `docs/handoff.md`：当前状态、已完成 / 未完成、下一刀。每次会话从这里开始。
-- 后端真相 `docs/design.md`（as-built）；阶段计划 `docs/plan.md`；架构治理路线 `docs/plan-architecture-2026-09.md`（阶段二：作品管理 / 稳态 / 安全）；智能体 / 多语言 / 订阅定价方案 `docs/plan-agent-i18n-subscription-2026-09.md`；UI 规格 `DESIGN.md`；用户系统 / 配额 / 留存清理方案 `docs/plan-users-quota.md`。
-- 前端设计交接包 `design_handoff/design_handoff_genius_app/README.md`（规格）+ `Genius App.dc.html`（定稿原型），它们是侧栏 + 五视图换壳的依据；实施记录与 DOM 契约见 `docs/plan-ui-genius-app.md`。
+## 数据、安全与资金硬约束
 
-## 前端约定（2026-09-06 晚起，Genius App 换壳：侧栏 + 五视图 + 悬浮创作面板）
+- 状态先写 job.json 再发 SSE，轮询是真相。job.json/user.json 是事实源，索引是可重建缓存；写事实再更索引，启动重建、读取自愈。
+- 配额、余额预留、留存、列表分页、activeCount 读任务索引，不对 jobs 做全表扫描；同一毫秒的任务不能被游标切开。
+- 任务 detail/SSE/media/cancel/retry、幂等 key、上传、素材、会话、画布都校验 ownerId；非本人一律 404、不可探测。上传认领属于请求体校验，统一 400 是明确例外。
+- LUMEN_SESSION_SECRET 缺失拒绝启动；会话同时校验禁用状态与 epoch。分享令牌使用独立 HMAC 派生密钥和信任域，不能复用会话签名/校验；公开分享入口不要求登录。
+- 私有媒体与上传/素材 `Cache-Control: private, no-cache`，owner 校验先于 ETag/304；禁止 max-age/immutable，换账号不能吃到前一账号缓存。
+- Origin/Referer 双缺放行是现有明确取舍，收紧前须确认并核对 Cookie CLI/smoke。请求追踪走 AsyncLocalStorage；`log`/`billing/prices`/`cost` 必须可被客户端 import，不得顶层引入服务端依赖，async_hooks 按需加载。
+- 余额判定必须在 withAdmissionLock 内与 writeJob 同次准入；t2i 配额 create/retry 共用同一临界区。定价×余额为主闸门，日配额/失败限额只防滥用。
+- 锁序恒为 admission → user。扣款在 updateJob 写终态之前完成；扣款、补扣、退款统一走 applyBalanceChange，按 jobId/ref 幂等，不另写资金入口。
+- 退款必须带 refundOf，按原扣款 memberCny 拆回原池；找不到原扣款失败关闭，禁止把会员积分退成永久已购余额。
+- user.json.billing 操作链与两池余额同一次原子写提交；jsonl 只是派生导出物，不一致报 billing_export_corrupt，缺失可重建。同键不同输入 409 billing_idempotency_conflict。
+- 无 billing 的存量账号禁止余额变动；迁移必须离线、人工基线、user/ledger 双 sha256 与重放核对，不支持 --force。管理 CLI 的 --offline 目前只是停服声明，不是跨进程锁，不得与线上服务并发写。
+- 订阅只能用已购池买，绝不允许会员池购买；正常扣款先会员后已购。assertBalance 前先 settleSubscription，跨期旧积分不进可用额；购买扣款保存订单快照，重放补记录不重扣；复用通用 ref 幂等（design §2i）。
+- 媒体留存只清终态产物、写 artifactsPurgedAt，不改 status，不碰非终态；已清产物禁止一键重试。画布素材独立存 assets，30 天到期明示；保存不续期，迁移缺原件标 missing，不伪造字节，不改运行快照（design §2j）。
 
-- 路由用 `src/app/(shell)/` 分组：`layout.tsx` 服务端校验会话、下发 provider 能力，`page.tsx`（主页）/`create/page.tsx`/`agent/page.tsx`/`canvas/page.tsx`/`subscription/page.tsx` 五个路由共享同一个 `GeniusShell`。组件在 `src/components/genius/`：`GeniusShell.tsx`/`ShellContext.tsx`（唯一客户端状态所有者，`useShell()`）/`Sidebar.tsx`/`TopBar.tsx`/`icons.tsx`/`composer/`（创作面板）/`home/`/`create/`/`agent/`/`canvas/`/`subscription/`。视觉是侧栏 `#0c0c0d` + 内容区 `#0a0a0b` 的深色 App 语言：卡片 `#131316`、悬浮面板 `#16161a`（不透明）、描边 `rgba(255,255,255,.07/.09)`、主强调渐变 `linear-gradient(90deg,#ff8a3d,#ff4d8d 60%,#a855f7)`；圆角 14–16 / 12 / 8–9；文案走多语言字典（简体中文默认 / English，见下「多语言」；画布的工具名与节点标签沿用原型英文占位，见 `DESIGN.md`「与交接包的有意偏离」），品牌名 Genius。改 UI 前先读 `DESIGN.md`。
-- 样式：`src/app/globals.css` 覆盖壳 + 主页 + 创作面板 + 创作页 + 登录页；智能体 / 画布 / 订阅各自一个文件 `src/app/styles/{agent,canvas,subscription}.css`，由 `globals.css` 顶部 `@import` 引入。BEM 类名 + `data-*` 状态，不用 Tailwind 工具类，不引组件库 / 图标库（图标内联 SVG，收进 `icons.tsx`）；字体仍是 Manrope + Noto Sans SC 经 `next/font/google`。控件 reset 必须用 `:where()` 包住，否则会盖掉单类规则的权重；带 `transform` 动画的祖先会成为 `position:fixed` 元素的包含块，toast 一类浮层要放在动画层外面，不能指望 `fixed` 逃出去。
-- **悬浮创作面板必须是 `main` 的兄弟节点**（锚在 `.col`，`position:absolute`），不能塞进滚动容器；`main` 不为它预留 `padding-bottom`。
-- 浏览器只经 `src/lib/client/*`（`jobs.ts`/`auth.ts`/`useJobLive.ts`/`http.ts`）访问 `/api/*`；组件不直接 `fetch`。未登录访问任意 `(shell)` 路由服务端 307 到 `/login`；401 时整页跳转 `/login`（`window.location.assign`）。顶栏头像菜单（disclosure，非 `role=menu`）显示完整邮箱 + 「退出」。
-- UI 只暴露三条真实路径：视频页「图文」模式（图片槽为空 → `text_to_video`，放图 → `image_to_video`）与图片页「默认」模式（`text_to_image`）；其余模式行渲染但 `aria-disabled="true"`，点击 toast「即将上线」。`POST /api/jobs` 请求体以 `src/lib/jobs/schema.ts` 的 `createJobBodySchema`（strict）为准，其中可选 `model` = **产品 id**（取值见 `GET /api/models`，该路由按白名单挑字段，2026-09-13 起随「多模型自由选择」定位下发 `providerId`/`providerName`/`upstreamModel`/`costHint`），缺省时由服务端按 mode 路由决定；模型芯片是产品下拉，产品名为主、供应商与上游模型名作为次级信息展示。时长 / 画幅是弹层里的按钮网格（`data-dur`/`data-ratio`/`data-res`），枚举由服务端按 provider 能力下发；`harnessEnabled()` 为真时时长追加 30 / 45 / 60（仅 t2v / i2v），创作页当前任务区按 `job.shots` 显示「生成分镜 n/m」。`reference_to_video / edit_video / extend_video` 仍在 API 与 provider 层，不要从后端删除。
-- 积分口径 **¥1 = 100 积分**，只用于顶栏与创作按钮的显示换算（`ShellContext.creditsOf`），余额模型与后端计费（`priceCny`）不变。
-- 幂等：一次逻辑创作一个 `idempotencyKey`（`ShellContext` 里 `idempotencyKey.current ??= newIdempotencyKey()`），提交成功才清空；用户改了提示词或任一选项就作废重取。服务端把 `{key, requestHash}` 落在 `job.json.idempotency`（事实源），`data/idempotency/*.json` 只是可重建缓存；同 key 撞不同请求体返回 409 `idempotency_conflict`，不得当重放放行。智能体一轮对话的稳定身份是请求体 `turnId`（`msg_*`，`newAgentTurnId()` 每次发送生成）——网络重试原样带回，同 turnId 重放不重扣、不换文本则 409。
-- 作品管理（2026-09-06 深夜）：主页瀑布流按 `GET /api/jobs?before&limit&kind` 游标分页加载，不再一次拉全量；支持分类筛选、标签编辑（`PATCH /api/jobs/:id`）、删除（`DELETE /api/jobs/:id`）、分享复制链接、模板回填。全局通知（toast + 顶栏铃铛）读 `GET /api/events`（`src/lib/client/useEvents.ts`），只在当前会话内生效，刷新页面不保留历史。
-- 多语言（2026-09-07 凌晨，`src/lib/i18n/`）：文案一律走 `useT("ns.key")`，不写死中文/英文字符串；命名空间归属按视图划分（`shell/home/composer/create/canvas/login/share/common/agent/subscription`），新增文案先确认该视图已有的命名空间文件，键名只在 `messages/zh-CN/<ns>.ts` 里新增（它是键的事实源），`messages/en/<ns>.ts` 漏译会编译期报错。语言用 Cookie `lumen_locale`（`zh-CN`/`en`）+ `Accept-Language` 兜底，顶栏与登录页有 `LanguageSwitch.tsx`；`data-*` 状态值（如 `data-mode`）保持 ASCII，不随语言变化。e2e 断言中文文案的用例必须确保运行在 `zh-CN`——`playwright.config.ts` 已钉 `locale: zh-CN` + `accept-language`，新增用例不要自行覆盖这两项。
+## 智能体与画布
 
-## 后端约定
+- Agent LLM 顺序为 mock → AGENT_API_KEY/BASE_URL → XAI → 503 agent_unavailable，不静默 mock；上游调用失败用 502 agent_upstream_failed 并按原池退轮次费，不混淆「未配置」。
+- Agent 默认提案批准：proposal 落报价/有效期，批准才走同一限流桶 createJob；拒绝不建不退轮次费。同 turnId 同参重放、异参 409，陈旧 thinking 惰性退款；轮次/提案均核 budget，校验 imageRef/kinds，按 locale 回复（design §2h）。
+- 画布 PATCH 必带 expectedRevision；409 保留本地并明确二选一，不静默覆盖。单节点与 DAG 统一走 createJob，输入缺失不降为无图生成，素材先复制再认领。
+- DAG 先确定性报价再冻结图与总价；run.reservation → transfer → job.reservation 一份钱恰好预留一次。查回既有 job 先于价变判断；运行不回写画布文档，产物用执行位 overlay。
+- runHeldFunds 不能只靠任务索引：索引缺失但执行位已终态不复活预留，非终态孤儿继续占用。取消意图持久化、停新提交；取消后不接受审批。
+- 审批 24h、排队 1h 超时均收敛 blocked，预留随 run 终态释放；内容寻址复用须校验产物在盘，已清则 output_purged，只有显式 regenerate 才重跑（design §2j）。
 
-- grok provider（`src/lib/providers/grok/`）走 xAI REST（`/videos/generations|edits|extensions`、`/images/generations`），禁止 `openai.videos.*`（Sora 协议，非 xAI）；它只是 `*_PROVIDER_ORDER` 里的普通成员，不是基座。
-- 尾帧永不进入 **grok** 请求体（golden test 保障）；可灵在 `capabilities().supportsLastFrameLock` 为真时以 `last_frame` 发送（仅图生视频）并强制 1080p 写回记录与售价，其余 provider 只落盘。源视频禁止 data URI 兜底。
-- 状态先写 `data/jobs/{id}/job.json` 再发 SSE；轮询是真相。
-- Harness（30/45/60 长视频）由 `HARNESS_ENABLED` 开关：未开启时 `orchestrator.execute` 抛 `HARNESS_NOT_ENABLED`、API 对 30/45/60 返回 400；开启后 `src/lib/harness/orchestrator.ts` 走 directing → keyframing → generating_shots → qc → stitching → persisting。**已供应商无关**：shot 路由枚举 `t2v/i2v/r2v`，续接一律「尾帧→i2v」无 extend；长片按 `image_to_video` + `requireModes:["text_to_video"]` 走 `VIDEO_PROVIDER_ORDER`，可灵 / YMan 都能接；角色表是三视图（正面 t2i，侧/背在生图 provider 声明 `supportsImageReference` 时以正面为参考图生图），档A 每镜首帧同理；Director 与视觉 QC 走 `agentLlmConfig()`（视觉模型 `HARNESS_QC_VISUAL_MODEL` 可覆盖，未设用 agent 模型），LLM 调用超时走 `HARNESS_LLM_TIMEOUT_MS`（默认 120s、上限 5min），上游超时/错误归一成 `HarnessFailure("llm_upstream_failed")`、不产生付费分镜、不锁重试；`harnessSettingsFor` 用 10 秒合法档归一 resolution/audio/ratio、时长仍取目标总长；提交估价 `harnessSubmitEstimateUsd` = 视频片段 + Director 预留 + 4 张生图预留（单角色三视图+一镜首帧经验值）；rest-map golden 保障 30/45/60 不进原生 Grok 请求体；生产 `HARNESS_ENABLED=true` 已开放，可灵 30s 长片已实证。mock 模式用 `mock-director.ts` 的确定性计划；视觉 QC 只在设置 `HARNESS_QC_VISUAL_THRESHOLD` 时启用。
-- ffmpeg 一律经 `src/lib/ffmpeg.ts`（ffmpeg-static），不 spawn PATH 里的 ffmpeg。
-- provider 身份由 `src/lib/providers/registry.ts` 的运行时注册表管理（`builtin.ts` 模块加载时注册内建各家），`ProviderId` 是开放字符串；ORDER 只接受已注册 id，未注册的项忽略并 warn 一次。路由按能力 + 优先级，不按 key 存在性：`VIDEO_PROVIDER_ORDER`（默认 `grok`，兼容旧 `VIDEO_PROVIDER=kling` → `kling,grok`）与 `IMAGE_PROVIDER_ORDER`（默认 `openai,grok`）逐个取「有 key、未被 `src/lib/providers/health.ts`（`exhaustion.ts` 是兼容薄壳）判进冷却、`capabilities().modes` 声明支持该模式、（视频）接得下请求画幅」的第一个 provider；产品目录（`src/lib/products/catalog.ts`）同样只列 ORDER 内的 provider——配了 key 却没写进次序表的那家路由永远不会选中，目录也不摆它的产品；`edit_video`/`extend_video` 目前只有 grok 声明支持，ORDER 内没有可用 provider 声明该模式时提交返 503 `no_provider_available`（生产当前没有供应商承接这两条）。ORDER 全没选中时的 fallback：配了 XAI key 且未耗尽才试 grok，否则配了任何真 key 就 503，完全没 key 才 mock。提交被**确定拒绝**（`providers/rejection.ts` `isCertainRejection`：4xx 业务拒绝、结构化 `upstreamRejected` 信封、连接根本没建起来的 `phase:"connect"`）时先按码冷却（quota 6h / rate_limited 吃 `Retry-After` 否则指数 / transient 三连 5 分钟 + `relay_unhealthy` 告警，冷却到期半开单探路），任务再换到下一家——排除集是已试过的全部家，上限 `RELAY_MAX_SWITCHES`（默认 2，harness 按镜计），留痕 `job.providerSwitches`，`priceCny` **只降不升**（新家更贵且时长档更长时干脆不换，走退避）；用户点名的产品（`productPicked`）不换家，确定拒绝直接 `product_unavailable` 退款。**读超时 / 断连 / 裸 5xx 一律 `uncertain_submit`，绝不重发**；harness 分镜级换家在 `run-persisted-shot.ts` 的 `onCertainRejection`，被拒的家记 `record.excludedProviders`，r2v 落点不支持时经 `downgradeR2vShot` 降级。一家可用的都不剩、但配了真 key 时提交抛 503 `no_provider_available`，**绝不静默落 mock**；页面与 `/api/health` 用不抛的 `uiProviderId()` 渲染读数。文生图画幅由 `imageAspectRatios()` 恒定给七种，不受视频 provider 能力影响。提交阶段的 5xx 默认算「请求可能已送达」的模糊提交（`uncertain_submit` 锁重试），但 openai-image 通道返回的**结构化** 5xx 错误信封会打 `ProviderHttpError.upstreamRejected`，按确定拒单处理、可重试；上游 404（模型下架/改名）在各创建路径额外发 `upstream_model_missing` 告警。
-- relay 中转（`src/lib/providers/relay/`，配置 `data/relays.json`）：OpenAI 兼容中转统一由 `makeRelayProvider(view)` 生成，`yman`/`openai` 是 env 折算预设；三级来源「文件 > `LUMEN_RELAYS` 种子 > 老 env 折算（不写盘）」，文件没写到的 yman/openai 永远回落预设；注销进影子表（新路由不可见、历史任务可解析）；管理接口 `/api/admin/relays`（`requireAdmin`，非管理员 404），key 只存 env 变量名。新增 relay 时：schema 在 `relay/config.ts`，装配与热重载在 `relay/assemble.ts`，目录快照在 `data/relay-catalog/<id>.json`。
-- YMan 中转 provider（`src/lib/providers/yman/`，`https://vip.yman.cc/v1`）：视频三步 `POST /videos` → `GET /videos/{id}` → `GET /videos/{id}/content`；创建请求固定 `maxAttempts:1`（已计费不重发）；下载 content **必须带 Bearer**（不是匿名 CDN 直链），`src/lib/media/download-headers.ts` 按目标 origin 匹配对应上游 key 分发，认不出 origin 就不带任何 key。模型 ID 必须用 `GET /v1/models` 的**展示名**（如 `minimax-h3`），旧展示名与内部名（`minimax-H3 文字`、`minimax_h3_t2v`）作别名识别，见 `src/lib/providers/yman/catalog.ts`。
-- 文生图（`text_to_image`）设置 `OPENAI_API_KEY` 时改走 `src/lib/providers/openai-image/`（OpenAI 官方或兼容中转，如 ccgoai），是否被选中由 `IMAGE_PROVIDER_ORDER`（默认 `openai,grok`）决定，视频路径不受影响；路由见 `src/lib/providers/router.ts` `selectProvider`。上游可能 202 异步出图（`OPENAI_IMAGE_TASK_TIMEOUT_MS` 控制轮询总时限），生成 POST 一旦被接受即计费，故固定 `maxAttempts:1` 不自动重试；取消任务时 `ProviderGenerateRequest.shouldAbort` 会让 `task-poll.ts` 在下次 sleep 后与取 result 前中断，绝不发出计费的 result GET。带参考图的生图请求走 `POST /images/edits`（multipart），由 `OPENAI_IMAGE_EDITS_ENABLED` / `YMAN_IMAGE_EDITS_ENABLED` 两个开关分别打开（默认关，中转是否透传未验证），开启后 provider 声明 `supportsImageReference`。新增环境变量：`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_IMAGE_MODEL`、`OPENAI_IMAGE_FLEXIBLE_SIZES`、`OPENAI_IMAGE_QUALITY`、`OPENAI_IMAGE_PRICE_TABLE`、`OPENAI_IMAGE_TIMEOUT_MS`、`OPENAI_IMAGE_TASK_TIMEOUT_MS`、`OPENAI_IMAGE_EDITS_ENABLED`、`YMAN_IMAGE_EDITS_ENABLED`、`HARNESS_QC_VISUAL_MODEL`、`HARNESS_LLM_TIMEOUT_MS`，说明见 `.env.example` 与 `docs/design.md` §2b。
-- 可灵（Kling）直连视频（`src/lib/providers/kling/`，方案 `docs/plan-kling-video.md`）：默认次序里**没有**可灵，必须显式把 `kling` 写进 `VIDEO_PROVIDER_ORDER`（或用旧开关 `VIDEO_PROVIDER=kling`，等价于 `kling,grok`）再配上 `KLING_API_KEY` 才会生效——只配一把 key 不算开启。开启后只接管 `text_to_video`/`image_to_video` 且非 harness；`reference_to_video` 由声明该模式的 provider（如 yman）承接，`edit_video`/`extend_video` 目前只有 grok 声明支持（extend 依赖 xAI Files API），30/45/60 长片走 harness 管线（按 i2v+t2v 能力走 `VIDEO_PROVIDER_ORDER`，可灵 / YMan 都能接，生产 `HARNESS_ENABLED=true`）；`create.ts` 把任意时长归一为可灵仅支持的 5/10 并写回 `job.durationSec`/`resolution`，`retryJob` 同步重算；`last_frame` 与其它 provider 一样永不发给上游；创建任务固定不重试（已计费不能重发）；国际版账号必须用 `api-singapore.klingai.com`，`api-beijing` 会鉴权失败。详见 `docs/design.md` §2c。
-- 用户系统：`src/lib/users/` 是用户存储与会话事实源（`user.json` 为事实源，`index.json` 为可重建缓存），`src/proxy.ts` 对 `/api/*` 做会话校验（register/login/logout/health 放行）。所有任务读写（detail/SSE/media/cancel/retry）、幂等 key、上传 sidecar 都必须带 `ownerId` 校验，非本人一律 404（上传认领因是请求体字段校验、语义就是 400，例外见 `docs/plan-users-quota.md` §5.3）。配额只算 `text_to_image`，判定与落盘必须在同一个 `withAdmissionLock` 临界区内完成（`src/lib/jobs/quota.ts`），`createJob` 与 `retryJob` 共用；新环境变量 `LUMEN_SESSION_SECRET`（必需，缺失即拒绝启动）、`FREE_DAILY_IMAGE_QUOTA`、`FREE_DAILY_FAILURE_LIMIT`、`LUMEN_ADMIN_USER_ID`。数据留存清理（`src/lib/jobs/retention.ts`）只写 `artifactsPurgedAt`，不改 `status`，不碰非终态任务；新环境变量 `DATA_RETENTION_DAYS`（默认 30，0 关闭）。已清理任务禁止一键重试。方案见 `docs/plan-users-quota.md`。
-- 余额（2026-09-06 阶段一，`src/lib/billing/`，方案 `docs/plan-architecture-2026-09.md` §3.2、§5）：定价 × 余额是主闸门，`FREE_DAILY_IMAGE_QUOTA`/`FREE_DAILY_FAILURE_LIMIT` 降级为防滥用兜底。**硬约束**：余额判定（`assertBalance`）必须在 `withAdmissionLock` 临界区内、与 `writeJob` 同一次调用完成，不得挪到锁外；扣款必须在 `store.updateJob` 里、写终态之前完成（先扣后写），不得反过来写终态再扣款——那会开一个「预留已消失、余额还没减」的窗口；扣款按 `jobId` 幂等（`applyBalanceChange` 扫流水去重），任何补扣路径都必须复用这同一个幂等函数，不能自己再实现一遍扣款。退款同样只能走它：带 `options.refundOf` 指向原扣款 `ref`，由内核按原行的 `memberCny` 拆回会员池/已购池，原扣款不存在即失败关闭——不许把会员池出的钱退进已购池（等于把会过期的积分换成永久余额）。详见 `docs/design.md` §2d。
-- 资金持久化（`e564ab6` 起）：`user.json` 是余额 + 流水的**唯一提交点**——`billing.operations`（自校验操作链）与 `balanceCny`/`memberCreditsCny` 在同一次原子写里落盘；`data/ledger/<userId>.jsonl` 降级为派生导出物，与快照不一致即 `billing_export_corrupt` 失败关闭，缺失时自动重建。协议在 `src/lib/billing/protocol.mjs` + `file-ledger.mjs`（.mjs 因管理 CLI 复用），幂等重放必须**同键同输入**（jobId/giftCode/ref 撞不同输入 → 409 `billing_idempotency_conflict`）。存量无 `billing` 字段的账号可读旧流水但一切余额变动报 `billing_migration_required`，须离线跑 `scripts/migrate-billing.mjs --offline --baseline <人工核对过的基线.json>`（基线含 user/ledger 的 sha256 与 reviewedBy/evidence，不支持 --force）。改 `user.json` 的管理 CLI（grant-balance / reset-password / disable-user）一律要求 `--offline` 声明服务已停，仍不是跨进程锁。
-- 媒体路由（`src/app/api/media/[jobId]/[file]/route.ts`）的 `Cache-Control` 必须是 `private, no-cache`（弱 ETag + 304 做带宽优化），**不得**改成 `max-age`/`immutable`——产物字节不变但「谁能读」会变（同浏览器换账号登录），长缓存会让浏览器跳过下面的 owner 校验直接吃缓存。
-- 智能体（2026-09-07 凌晨，`src/lib/agent/`；2026-09-11 升级为提案审批制）：`llm.ts` 的 LLM 提供方顺序固定为 mock（`isMockMode()`）→ `AGENT_API_KEY`+`AGENT_BASE_URL`（默认 `api.openai.com/v1`，模型 `AGENT_CHAT_MODEL` 默认 `gpt-4o-mini`）→ `XAI_API_KEY`（`grok-4.6`）→ 都没有则 503 `agent_unavailable`，**绝不静默落 mock**；生产已配的 ccgoai / YMan 两家中转实测没有对话模型，必须单独配 `AGENT_API_KEY` 才能真用。**LLM 调用本身失败（502）用 `agent_upstream_failed`，与实例没配对话 provider（503 `agent_unavailable`）区分**——前者本轮费用已退回、后者从未开始计费，二者不共用错误码。会话落 `data/agent/<userId>/<sessionId>.json`，非本人 404，单用户上限 200 条。一轮固定收费 ¥0.05（`priceTable().agent.turn`，`ref:"agent:<turnId>"`）。**默认批准制**：LLM 产出的 action 先进 `turn.proposal`（含报价快照与 `expiresAt`），turn 停 `awaiting_approval`，不建任务；`POST .../turns/:turnId/approve` 才经 `POST /api/jobs` 同一个限流桶走 `createJob`（幂等 key `agent:<turnId>:<i>`），`/reject` 落 `rejected` 不退轮次费。Turn 实体持久化在 `session.turns[]`（状态机 thinking→awaiting_approval→executing→succeeded/failed/rejected），`requestHash`（请求体 sha256）决定同 turnId 重放语义：同参交回现状、异参 409 `idempotency_conflict`、thinking 续跑、超 2 分钟的 thinking 惰性退款置 failed。会话可选 `budget {limitCny,spentCny}`（PATCH `budgetCny`，`null` 解除），轮次费与批准时提案总额都先核预算，超额 402 `budget_exhausted`。LLM 整体失败要走 `ref:"agent:<turnId>:refund"` 退款，不能自己另写一套退款逻辑。action 可带 `imageRef.uploadId`（图生视频），技能可声明 `kinds` 过滤越界 action。`GET/POST /api/agent/sessions` 等 API 与消息发送（20 次/分钟）都要走同一套用户会话鉴权，不得绕过。
-- 画布（2026-09-11，`src/lib/canvas/`）：文档落 `data/canvases/<userId>/<canvasId>.json`，四类节点 `text`/`material`/`gen_image`/`gen_video` + `edges`；PATCH 带 `expectedRevision`，不匹配 409 `revision_conflict`（双标签页不互相覆盖）；`POST /api/canvases/:id/nodes/:nodeId/run` 把 gen 节点走 `createJob`（幂等键 `canvas:<canvasId>:<nodeId>:<runSeq>`），gen_video 有图片输入（material 的 `uploadId` 或上游 gen_image 产物复制成的上传）即 `image_to_video`，否则 `text_to_video`；连入的 text 节点内容并进提示词。`GET /api/uploads/:id` 读本人上传素材（`private, no-cache`）。前端 `CanvasView` 右键加节点、拖拽、防抖落盘、jobId 轮询恢复。整图运行（D 包，2026-09-12）：`POST /api/canvases/:id/quotes` 确定性报价（`quoteHash`）→ `POST /api/canvas-runs` 冻结图建 run（确认即按总价冻结 `run.reservation`，子任务经 `createJob` 的 `reserveFunds` 回调从 run 台账转移份额——恰好计一次，绝不双预留）；sweep 泵按依赖逐节点提交，持久化取消意图 `cancelRequestedAt`；`approvalNodeIds` 设审批门（`awaiting_approval` + `POST .../approvals`，已 `cancelRequestedAt` 的 run 不再接受审批决定），`nodeInputHash` 内容寻址复用历史产物（已清则 `blocked`/`output_purged`，须 `regenerate` 显式重跑）。`runHeldFunds` 判定 transfer 份额是否仍计 run 占用，按该节点**执行位是否终态**而非只看任务索引：索引缺失但执行位已终态（`succeeded/failed/blocked`）说明份额已结算/退回，不再计占用；索引缺失且执行位非终态或缺失才是崩溃孤儿，照旧计占用。**超时收敛（2026-09-13，用户拍板：审批 24h / 排队 1h）**：`awaiting_approval` 记 `awaitingSince`，超时由 sweep 收敛 `blocked`/`approval_timeout`（approvals 端点同样拒收过期决策）；`queue_full` 退避记 `queueWaitSince`，超 1h 收敛 `blocked`/`queue_timeout` 并清 `nextAttemptAt`——两者都没建过 job、份额留在 remaining，run 终态即停计。画布保存 409 `revision_conflict` 不再自动刷成服务端版：保留本地副本，弹层（`.canvas-conflict`）列本地/服务端摘要让用户二选一，严格模态：只能点两个按钮关，Esc/点外层无动作。
-- 订阅 / 会员积分池（2026-09-07 凌晨，`src/lib/billing/plans.ts`、`subscription.ts`）：订阅积分是与已购余额**独立**的会员积分池（`user.json.memberCreditsCny`），到期清零、跨 30 天期重置——**硬约束：订阅只能用已购池购买，绝不能用会员池买订阅**，否则「低于面值的钱买到面值积分」形成无限套利。扣款顺序固定先扣会员池、不足再扣已购池；锁序恒为 admission → user，不得颠倒（否则可能死锁或绕过余额判定）。`assertBalance` 判定前先 `settleSubscription` 惰性结算（admission 锁内、经动态 import 避开静态环），跨期旧积分不得进入 `availableCny`。定价 `costRatio = max(默认视频产品成本占比, 默认图片产品成本占比)`，月费 `= ceil1(积分/100 × costRatio ÷ (1−0.15))`（毛利率 15%，常量 `GROSS_MARGIN`），年费 = 12×月费不打折。`purchaseSubscription`/`settleSubscription` 均在用户锁内完成，幂等键复用 `ledger.ts` 的通用 `ref` 字段（`sub:<key>`），不要为订阅另起一套幂等逻辑。无支付网关，已购余额只能靠礼品码 / 管理员 CLI 充值。
-- 作品管理 / 稳态（2026-09-06 深夜，阶段 B + 架构第二阶段）：`data/jobs/index.json` 是**派生缓存**，不是事实源——写完某个 `job.json` 之后增量维护索引，启动时可重建，读取前自愈；配额、余额预留、留存清理、首页列表、`GET /api/jobs` 分页、`activeCount` 一律读索引，不得再对整个 `jobs/` 目录做全表扫描。分页信封 `{jobs, nextBefore?}` 用任务索引保证同一毫秒的任务不会被切开。分享令牌（`src/lib/share/token.ts`）用独立于会话 Cookie 的 HMAC 派生密钥签发，`GET /api/share/:token` 与 `/api/share/:token/media` 是公开接口（不校验会话），**不要**把会话签名密钥或校验逻辑复用到分享令牌上，两套信任域必须分离。`src/proxy.ts` 对非 GET 请求校验 `Origin`/`Referer`，**两者都缺失时放行**——这是明确的设计取舍（非浏览器客户端 / 某些代理场景不带这两个头），不是遗漏，改动前先确认是否要收紧。日志的 `x-request-id`/`reqId`/`jobId`/`ownerId` 追踪走 `AsyncLocalStorage`（按需 `require`/动态 import `node:async_hooks`，不在模块顶层静态 import）——`@/lib/log`、`@/lib/billing/prices`、`@/lib/cost` 这三个模块必须仍然能被客户端组件 import，新增对它们的修改不得引入服务端专属依赖。
+## 验证、评审与运维
 
-## 验证门禁
-
-- 改代码后依次跑：`pnpm exec tsc --noEmit`、`pnpm exec eslint src`、`pnpm test`，三者绿才算完成。`.github/workflows/ci.yml` 在 push main 与所有 PR 上跑同样三条（Ubuntu，顺带验证 sharp/ffmpeg-static 的 Linux 原生依赖能装上），不跑 `pnpm e2e`。
-- 改 UI 后跑 `pnpm e2e`（Playwright，全部 mock 模式）。用例分七个文件，共 32 条定义 / 35 次运行（`mobile.spec.ts` 一条按三档视口展开为 3 次）：`e2e/genius.spec.ts`（19 条：空态：壳水合/侧栏五项/顶栏标题与积分/收起态输入条/瀑布流空态；文生视频：规格弹层选参数→创作→跳转 `/create`→成片可见→按估价扣积分；`[fail]` 标记：失败态不扣款→重新生成换新任务→取消；图生视频：上传首帧切换 `data-mode`；图片页：文生图产出静态图；长片：30s 一致性管线分镜读数推进；已清理作品：瀑布流占位卡/无成片请求/一键重试被拒；`retryBlocked`：`uncertain_submit` 阻断一键重试；五视图导航：标题与 `aria-current` 联动、画布不横向溢出；手机端 375 宽：五视图都不横向溢出）、`e2e/auth.spec.ts`（2 条：未登录被送到登录页→注册后进首页、头像菜单显示账号→退出后又被挡回；账户页改密→「查看流水」→「退出全部设备」后 Cookie 失效）、`e2e/mobile.spec.ts`（1 条 × 375/390/768 三档：注册→创作→成片→智能体→画布→订阅→账户→退出主路径 + 全程无横向溢出）、`e2e/canvas.spec.ts`（2 条：双标签页保存冲突——后到方弹 `.canvas-conflict` 二选一，「保留本地并覆盖服务端」与「采用服务端」两条路径各走一遍；375×667 下弹层完整在视口内、两按钮 `toBeInViewport`）、`e2e/agent.spec.ts`（2 条：智能体真实闭环——开会话→一轮对话扣 ¥0.05→触发 `text_to_image` action→会话页渲染回复与任务卡）、`e2e/subscription.spec.ts`（4 条：四档显示真实人民币价格→余额不足报错→充值后购买成功→「我的方案」显示生效档位与会员积分）、`e2e/i18n.spec.ts`（2 条：顶栏语言切换即时生效→刷新后 Cookie 落地、服务端首屏与 `<html lang>` 同步→切回中文）。它会复用已在 3000 端口运行的 `next dev`，没有就自己起一个；`CI` 或 `E2E_ISOLATED=1` 时拒绝复用并用隔离 `DATA_DIR`（**Next 16 单实例锁**：3000 已有 dev server 在跑时，`E2E_ISOLATED=1` 会因端口冲突启动失败，此时改用非隔离复用或先停掉已在跑的 dev server），`CI` 或 `E2E_REQUIRE_MOCK=1` 时非 mock 直接失败而非跳过。base URL 必须是 `localhost`，`127.0.0.1` 会被 Next 16 dev 拒 403 导致不水合。仍可再用预览面板（或 Playwright 截图）人工看一眼五个视图。
-- 内置浏览器面板在页面滚动后截图会空白，这是截图工具的问题；用 `translateY` 位移检查下方区块，或在真实浏览器里看。
-
-## PR 评审流程
-
-- PR 上的机器人 / 人工评审意见（Devin、Codex、CodeRabbit、reviewer）逐条判断：成立的修复并推送，不成立的说明理由。
-- 每条成立的意见修复并推送后，用 `gh api` 在原评论线程下回复：修复提交号 + 改了什么 + 怎么验证的，然后把线程标记为已解决。这是用户 2026-09-05 授权的自动动作，不必再询问；不成立的意见也回复说明，不要静默忽略。
-- 回复只针对已推送的修复，不要预告"将要修"。
-- 探索式浏览器验证优先用 Playwright MCP（`.mcp.json` 已配）；回归用 `pnpm e2e`。
-
-## 安全与额度
-
-- 密钥只在 `.env.local`，不进聊天、不进提交。
-- 未设 `LUMEN_ACCESS_TOKEN` 时不要把开发端口暴露到公网。
-- 付费产品的用量控制默认「每种任务定价 × 用户余额」（超出时提示充值），不是日配额。
-
-## 部署
-
-- 生产实例：阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`（以 root 运行），反代借用同机 taiyu 的 Caddy 容器，公网地址 `https://genius.homeaistack.online`。完整打包与踩坑步骤（服务器装依赖、Turbopack 别名软链的必做步骤、`output: "standalone"` 为何在 Windows→Linux 不可用）见 `docs/design.md` §10.1，`docs/handoff.md`「运维与部署要点」一节有当前配置速览。日常运维操作（部署 / 回滚 / key 轮换 / 备份恢复 / 磁盘告警 / provider 耗尽 / 用户禁用与重置密码 / 礼品码 / 智能体不可用 / 订阅对账）见 `docs/runbook.md`。
-- 部署机与构建机跨平台（Windows 构建、Linux 部署）时，`sharp`/`ffmpeg-static` 必须在部署机 `pnpm install --prod`，不能直接拷贝 Windows 的 `node_modules`。
+- 代码门禁依次为 `pnpm exec next typegen && pnpm exec tsc --noEmit`、`pnpm exec eslint src`、`pnpm test`；全绿才完成，不能依赖 dev 遗留类型。CI Ubuntu 同样执行并安装原生依赖。
+- UI 必跑 `pnpm e2e`（mock）；隔离用 E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1、独立 E2E_PORT。中文断言保留 zh-CN locale/accept-language，不把真实 key 导致的 skip 当通过。
+- 端到端清单以 `e2e/*.spec.ts` 为准；画布冲突用独立文档与真实 PATCH 409 断言。移动端须核对 375/390/768，软键盘需真机验证，不能冒充 Playwright 已覆盖。
+- 探索浏览器优先 Playwright MCP，回归用 pnpm e2e；若内置面板滚动截图空白，用真实浏览器或 translateY 检查，不凭空断定 UI 消失。
+- PR 的机器人/人工意见逐条判定；成立的修复并推送后，在原线程用 gh api 回复提交号、修改与验证，再标已解决；不成立的也说明理由。只回复已推送事实，不预告「将要修」。
+- 密钥仅本地 .env.local / 服务器 .env，不进聊天/提交；未设 LUMEN_ACCESS_TOKEN 时不要把开发端口暴露公网。真实上游评测先确认报价与预算，缺授权素材不能用占位图凑绿。
+- 生产 8.209.212.178 `/opt/genius`、genius.service，借用 taiyu Caddy；运维查 runbook。生产变更/停服/改归属单独确认，不自动部署。
+- Windows→Linux 禁止复制原生 node_modules；sharp/ffmpeg-static 在部署机 pnpm install --prod，打包与 external 别名见 design §10.1。开发用 localhost，127.0.0.1 可能被 Next dev 403。
 
 <!-- BEGIN:nextjs-agent-rules -->
 

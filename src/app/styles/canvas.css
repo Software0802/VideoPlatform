@@ -1061,6 +1061,13 @@
   cursor: pointer;
 }
 .canvas-node__upload:hover { color: #fff; border-color: rgba(255,255,255,.3); }
+.canvas-node__material-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--cv-weak);
+}
+.canvas-node__material-note[data-missing="true"] { color: #fbbf24; }
 
 /* ---------- D 包：整图运行（报价弹层 + 执行态徽标） ---------- */
 .canvas-node__exec {

@@ -2,6 +2,21 @@
 
 面向已经读过 `docs/handoff.md`（当前状态）与 `docs/design.md`（as-built）的人，是「出了事怎么办」的操作清单，不重复讲设计。生产实例：阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。
 
+## 环境事实（2026-09-13 只读核查）
+
+| 项 | 已验证事实 |
+| --- | --- |
+| Node / pnpm | v22.22.2 / 10.33.0 |
+| Caddy | v2.11.4，容器 taiyu-caddy-1 |
+| genius.service | active；User 未设置，systemd 默认 root；MemoryMax=734003200（700 MiB） |
+| 磁盘 | /dev/vda3：40G，总已用 24G，可用 14G（65%） |
+| 发布标识 | /opt/genius/BUILD_INFO.json 不存在，不能把本地 HEAD 当作可机器核对的线上版本 |
+| 备份 | root crontab 每日 03:17 跑 backup.sh；最新包 genius-data-20260913-031701.tgz，本机共 4 包 |
+
+`caddy adapt` 的生效文件中未发现 trusted_proxies/client_ip_headers/X-Forwarded-For 覆盖配置。按 [Caddy 官方默认行为](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#defaults)，不信任请求传来的 X-Forwarded-*，由反代生成；本轮核对的是配置与文档，未做公网伪造头实验。以后接 CDN/改 trusted_proxies 必须重新核对。
+
+Node 22.x 的 node:sqlite 官方标注仍为 Stability 1.1（Active development），不是已稳定资金数据库选型；SQLite 迁移等待 R4 的实际触发条件，不因内置模块可用就迁账。
+
 ## 管理 CLI 的运行身份
 
 `genius.service` 以 root 运行，`/opt/genius/data` 整棵树归 root。所有 `scripts/*.mjs`（铸邀请码 / 礼品码、充值、重置密码、停用账号、用量统计）都直接写 `data/`，**必须以 root 或 `sudo` 执行**，普通用户（如 `admin`）会报 `EACCES: permission denied`：
@@ -18,7 +33,7 @@ cd /opt/genius && sudo node scripts/mint-invites.mjs 1
 bash scripts/deploy.sh
 ```
 
-`deploy.sh` 上传前本地跑 `pnpm exec tsc --noEmit`（`--skip-check` 可跳过），服务器侧启动后轮询 `/api/health`（10 次 × 6s），非 200/`ok:true` 会自动回滚（见下）。
+`deploy.sh` 上传前先 `pnpm exec next typegen` 再 `pnpm exec tsc --noEmit`；当前脚本仍有 `--skip-check`，已拍板由 R1 移除。服务器启动后轮询 `/api/health`（10 次 × 6s），非 200/`ok:true` 自动回滚。R0 不包含部署操作；当前工作树构建输入的可追溯性由 R1 继续处理。
 
 ## 回滚
 
@@ -50,9 +65,12 @@ curl -sS http://127.0.0.1:3000/api/health
 
 完整操作步骤见 `scripts/backup-restore.md`（包内容、crontab 配置、恢复到空 `DATA_DIR` 的完整命令序列、排错表、充值 CLI 无跨进程锁的已知限制与核对方法）。本节只列心智地图：
 
-- 本机每日备份（`scripts/backup.sh`，防误删/坏写）+ 阿里云 ECS 自动快照（防磁盘/实例丢失），两层缺一不可。
-- 备份包只含 `users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ jobs/*/job.json`，**不含产物**（`outputs/inputs/shots`）——产物要整盘找回靠 ECS 快照，不靠这份备份。
-- **crontab 与 ECS 自动快照策略均未在生产验证/配置**（阶段一遗留待办，见 `docs/handoff.md`），排期上线前必须补上。
+- 同机备份 cron 已核实，但不能防整机/磁盘丢失；ECS 自动快照未取得控制台证据，异地加密副本与恢复演练仍待 R4。
+- 当前仓库 backup.sh 白名单为 `users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ notifications/ assets/ relays.json jobs/*/job.json`；不含任务 `outputs/inputs/shots` 与 tmp。新增素材是输入事实源，必须备份；旧生产包是否具备新白名单需部署后查 tar 清单，不能由本地测试代替。
+- `relay-catalog/` 是可重拉目录缓存；`provider-health.json` 是暂态冷却状态，不在元数据备份内。恢复后可能提前探路，但不得因此重买已有/模糊提交任务。
+- 活服务 tar 不是一致性快照；仅暂停创作准入不足以阻止账号、通知、画布与后台任务写入。R4 需覆盖全部写者的维护屏障或明确停服窗口后再验证恢复一致性。
+
+画布素材迁移：`node scripts/migrate-canvas-assets.mjs --data-dir <目录>` 默认只读预检；写入须维护窗口、备份与 `--write --offline`。应用启动也会在 tmp 清理前保护存量素材；缺原件标 missing，无法恢复已清字节。首次迁移起保留 30 天，重复迁移不延长到期日。
 
 ## 磁盘告警处理
 
@@ -112,7 +130,7 @@ curl.exe -b "lumen_session=<...>" -X PATCH -H "content-type: application/json" -
 # 拉一遍上游 /models 写目录快照（返回新增/消失 diff）
 curl.exe -b "lumen_session=<...>" -X POST https://genius.homeaistack.online/api/admin/relays/ccgoai/discover
 
-# 直连探针（不计费）：有生图通道发一张 1K 1:1，否则 chat 一句
+# 直连探针（平台不记账，上游可能收费；先确认预算）：一张 1K 1:1 或 chat 一句
 curl.exe -b "lumen_session=<...>" -X POST https://genius.homeaistack.online/api/admin/relays/ccgoai/probe
 
 # 下线（新任务立刻路由不到；历史任务记录与在跑任务仍可解析——影子表）

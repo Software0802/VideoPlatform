@@ -57,7 +57,7 @@ async function probe(request: Request, ctx: { params: Promise<{ id: string }> })
       method: "POST",
       headers: relayHeaders(view, true),
       body: JSON.stringify(body),
-    });
+    }, { maxAttempts: 1 });
     const ms = Date.now() - started;
     const parsed = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     const errMsg =

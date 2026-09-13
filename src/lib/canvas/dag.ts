@@ -6,7 +6,8 @@ import { reserveJobFunds } from "@/lib/billing/admission";
 import type { CreateJobBody, JobStatus } from "@/lib/jobs/schema";
 import { isTerminalStatus } from "@/lib/jobs/schema";
 import { readJob } from "@/lib/jobs/store";
-import { copyUpload, storeUploadFromBuffer } from "@/lib/jobs/upload";
+import { storeUploadFromBuffer } from "@/lib/jobs/upload";
+import { copyCanvasMaterial } from "@/lib/assets/store";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { mediaStore } from "@/lib/storage/local-fs";
 import { log } from "@/lib/log";
@@ -404,9 +405,9 @@ async function resolveRunImageInput(
   const inputs = graph.nodes.filter((n) => from.has(n.id));
   const imageCapable = inputs.some((n) => n.kind === "material" || n.kind === "gen_image");
   for (const input of inputs) {
-    if (input.kind === "material" && input.uploadId) {
+    if (input.kind === "material" && (input.assetId || input.uploadId)) {
       try {
-        const side = await copyUpload(input.uploadId, "start", ownerId);
+        const side = await copyCanvasMaterial(ownerId, input);
         return side.uploadId;
       } catch {
         continue; // 素材在报价后没了：试下一个候选，全不行才判失败。

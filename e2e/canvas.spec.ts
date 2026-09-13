@@ -1,4 +1,8 @@
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import sharp from "sharp";
 import { expect, test, type Page } from "@playwright/test";
+import { DATA_DIR_HINT } from "./paths";
 
 /**
  * 画布保存 409 冲突二选一（2026-09-13）：双标签页各改一笔，后到的一方不再被
@@ -11,6 +15,18 @@ import { expect, test, type Page } from "@playwright/test";
 type Health = { ok: boolean; mockMode: boolean };
 const REQUIRE_MOCK = Boolean(process.env.CI || process.env.E2E_REQUIRE_MOCK);
 
+async function freshCanvas(page: Page) {
+  const created = await page.request.post("/api/canvases", { data: { title: "e2e 独立画布" } });
+  expect(created.status()).toBe(201);
+  const { canvas } = await created.json();
+  const loaded = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/canvases/${canvas.id}` && r.request().method() === "GET");
+  await page.goto("/canvas");
+  expect((await loaded).status()).toBe(200);
+  await expect(page.locator(".shell")).toHaveAttribute("data-ready", "true", { timeout: 60_000 });
+  await expect(page.locator(".canvas-scroll")).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator(".canvas-node")).toHaveCount(0);
+}
+
 test.beforeEach(async ({ page }) => {
   const res = await page.request.get("/api/health");
   const h = (await res.json()) as Health;
@@ -18,9 +34,7 @@ test.beforeEach(async ({ page }) => {
     expect(h.mockMode, "门禁要求 mock 模式的服务在前跑").toBeTruthy();
   }
   test.skip(!h.mockMode, "冒烟只在 mock 模式跑，真 key 环境下这条 skip");
-  await page.goto("/canvas");
-  await expect(page.locator(".shell")).toHaveAttribute("data-ready", "true", { timeout: 60_000 });
-  await expect(page.locator(".canvas-scroll")).toBeVisible({ timeout: 60_000 });
+  await freshCanvas(page);
 });
 
 /** 右键画布空白处 → 菜单里点「文生图」→ 填提示词。返回节点 locator。 */
@@ -37,9 +51,10 @@ async function addImageNode(page: Page, prompt: string) {
 }
 
 /** 等一次 PATCH /api/canvases/:id 完成（600ms 防抖之后发出）。 */
-async function waitPatch(page: Page) {
+async function waitPatch(page: Page, prompt: string) {
   const res = await page.waitForResponse(
-    (r) => r.url().includes("/api/canvases/") && r.request().method() === "PATCH",
+    (r) => r.url().includes("/api/canvases/") && r.request().method() === "PATCH" &&
+      r.request().postDataJSON().nodes?.some((node: { prompt?: string }) => node.prompt === prompt),
     { timeout: 20_000 },
   );
   return res.status();
@@ -51,15 +66,16 @@ test("双标签页保存冲突：弹层二选一，保留本地覆盖 / 采用�
   await pageB.goto("/canvas");
   await expect(pageB.locator(".shell")).toHaveAttribute("data-ready", "true", { timeout: 60_000 });
   await expect(pageB.locator(".canvas-scroll")).toBeVisible({ timeout: 60_000 });
+  await expect(pageB.locator(".canvas-node")).toHaveCount(0);
 
   // 第一段：A 先落盘，B 后到撞 409 → 弹层 → 选「保留本地」。
-  const patchA = waitPatch(pageA);
+  const patchA = waitPatch(pageA, "甲的提示词");
   await addImageNode(pageA, "甲的提示词");
   expect(await patchA).toBe(200);
 
-  const patchB = waitPatch(pageB);
+  const patchB = waitPatch(pageB, "乙的提示词");
   await addImageNode(pageB, "乙的提示词");
-  await patchB;
+  expect(await patchB, "B 的 PATCH 必须先返回真实的 409").toBe(409);
 
   const dialog = pageB.locator(".canvas-conflict");
   await expect(dialog).toBeVisible();
@@ -79,16 +95,18 @@ test("双标签页保存冲突：弹层二选一，保留本地覆盖 / 采用�
   await expect(nodesB.first().locator(".canvas-node__textarea")).toHaveValue("乙的提示词");
 
   // 第二段：再造一次冲突，选「采用服务端」——本地修改被丢弃。
-  // A 的本地 revision 已落后（服务端是 B 覆盖后的版本）：先 reload 同步再改。
-  await pageA.reload();
-  await expect(pageA.locator(".canvas-scroll")).toBeVisible({ timeout: 60_000 });
-  const patchA2 = waitPatch(pageA);
+  // 独立新画布：两个标签页先载入同一份空底稿，不继承第一段的节点与 revision。
+  await freshCanvas(pageA);
+  await pageB.reload();
+  await expect(pageB.locator(".canvas-scroll")).toBeVisible({ timeout: 60_000 });
+  await expect(pageB.locator(".canvas-node")).toHaveCount(0);
+  const patchA2 = waitPatch(pageA, "甲的第二个节点");
   await addImageNode(pageA, "甲的第二个节点");
   expect(await patchA2).toBe(200);
 
-  const patchB2 = waitPatch(pageB);
+  const patchB2 = waitPatch(pageB, "乙不该留下的节点");
   await addImageNode(pageB, "乙不该留下的节点");
-  await patchB2;
+  expect(await patchB2, "第二段 B 的 PATCH 必须先返回真实的 409").toBe(409);
 
   const dialog2 = pageB.locator(".canvas-conflict");
   await expect(dialog2).toBeVisible();
@@ -99,12 +117,11 @@ test("双标签页保存冲突：弹层二选一，保留本地覆盖 / 采用�
   await pageB.reload();
   await expect(pageB.locator(".canvas-scroll")).toBeVisible({ timeout: 60_000 });
   const after = pageB.locator(".canvas-node");
-  await expect(after).toHaveCount(2);
+  await expect(after).toHaveCount(1);
   const values = await Promise.all(
     (await after.locator(".canvas-node__textarea").all()).map((l) => l.inputValue()),
   );
-  expect(values).toContain("乙的提示词");
-  expect(values).toContain("甲的第二个节点");
+  expect(values).toEqual(["甲的第二个节点"]);
   expect(values).not.toContain("乙不该留下的节点");
 });
 
@@ -117,14 +134,15 @@ test.describe("移动端 375×667", () => {
     const pageB = await context.newPage();
     await pageB.goto("/canvas");
     await expect(pageB.locator(".canvas-scroll")).toBeVisible({ timeout: 60_000 });
+    await expect(pageB.locator(".canvas-node")).toHaveCount(0);
 
-    const patchA = waitPatch(pageA);
+    const patchA = waitPatch(pageA, "甲的提示词");
     await addImageNode(pageA, "甲的提示词");
     expect(await patchA).toBe(200);
 
-    const patchB = waitPatch(pageB);
+    const patchB = waitPatch(pageB, "乙的提示词");
     await addImageNode(pageB, "乙的提示词");
-    await patchB;
+    expect(await patchB, "移动端 B 的 PATCH 必须先返回真实的 409").toBe(409);
 
     const dialog = pageB.locator(".canvas-conflict");
     await expect(dialog).toBeVisible();
@@ -148,4 +166,37 @@ test.describe("移动端 375×667", () => {
     await useServer.click();
     await expect(dialog).toBeHidden();
   });
+});
+
+test("素材刷新后可预览，30 天到期显示重新上传而不是失效图片", async ({ page }) => {
+  const image = await sharp({
+    create: { width: 24, height: 18, channels: 3, background: { r: 40, g: 90, b: 150 } },
+  }).jpeg().toBuffer();
+  const saved = page.waitForResponse((r) => r.url().includes("/api/canvases/") &&
+    r.request().method() === "PATCH" &&
+    r.request().postDataJSON().nodes?.some((node: { uploadId?: string }) => Boolean(node.uploadId)));
+  const chooser = page.waitForEvent("filechooser");
+  await page.locator(".canvas-view").click({ button: "right", position: { x: 120, y: 200 } });
+  await page.locator(".canvas-menu").getByRole("button", { name: "素材", exact: true }).click();
+  await (await chooser).setFiles({ name: "canvas.jpg", mimeType: "image/jpeg", buffer: image });
+  const patch = await saved;
+  expect(patch.status()).toBe(200);
+  const { canvas } = await patch.json();
+  const node = canvas.nodes.find((item: { kind: string }) => item.kind === "material");
+  expect(node.assetId).toMatch(/^as_[0-9a-f]{16}$/);
+  await page.reload();
+  const preview = page.locator(".canvas-node__img");
+  await expect(preview).toHaveAttribute("src", `/api/uploads/${node.assetId}`);
+  await expect.poll(() => preview.evaluate((img) => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await expect(page.locator(".canvas-node__material-note")).toContainText("素材保留至");
+
+  const dataRoot = (await readFile(DATA_DIR_HINT, "utf8")).trim();
+  const metadataPath = path.join(dataRoot, "assets", canvas.ownerId, `${node.assetId}.json`);
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+  await writeFile(metadataPath, JSON.stringify({ ...metadata, expiresAt: new Date(Date.now() - 1000).toISOString() }));
+  expect((await page.request.get(`/api/uploads/${node.assetId}`)).status()).toBe(404);
+  await page.reload();
+  await expect(page.getByText("素材已过期或缺失，请重新上传", { exact: true })).toBeVisible();
+  await expect(page.locator(".canvas-node__upload")).toBeVisible();
+  await expect(page.locator(".canvas-node__img")).toHaveCount(0);
 });

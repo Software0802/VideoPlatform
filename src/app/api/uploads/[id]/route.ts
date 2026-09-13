@@ -5,6 +5,8 @@ import { withRequestContext } from "@/lib/request-context";
 import { tmpDir } from "@/lib/jobs/store";
 import { UPLOAD_ID_RE, type UploadSidecar } from "@/lib/jobs/schema";
 import { requireUser } from "@/lib/users/session";
+import { dataDir } from "@/lib/env";
+import { ASSET_ID_RE, AssetUnavailableError, readAsset } from "@/lib/assets/files.mjs";
 
 export const runtime = "nodejs";
 
@@ -25,28 +27,38 @@ async function detail(request: Request, ctx: Ctx): Promise<Response> {
   try {
     const user = await requireUser(request);
     const { id } = await ctx.params;
-    if (!UPLOAD_ID_RE.test(id)) return notFound();
-    let side: UploadSidecar;
-    try {
-      side = JSON.parse(await readFile(path.join(tmpDir(), `${id}.json`), "utf8")) as UploadSidecar;
-    } catch {
-      return notFound();
-    }
-    if (side.uploadId !== id || side.ownerId !== user.id) return notFound();
     let bytes: Buffer;
-    try {
-      bytes = await readFile(path.join(tmpDir(), id));
-    } catch {
-      return notFound();
+    let mimeType: string;
+    if (ASSET_ID_RE.test(id)) {
+      const asset = await readAsset(dataDir(), user.id, id);
+      if (!asset) return notFound();
+      bytes = asset.bytes;
+      mimeType = asset.metadata.mimeType;
+    } else {
+      if (!UPLOAD_ID_RE.test(id)) return notFound();
+      let side: UploadSidecar;
+      try {
+        side = JSON.parse(await readFile(path.join(tmpDir(), `${id}.json`), "utf8")) as UploadSidecar;
+      } catch {
+        return notFound();
+      }
+      if (side.uploadId !== id || side.ownerId !== user.id) return notFound();
+      try {
+        bytes = await readFile(path.join(tmpDir(), id));
+      } catch {
+        return notFound();
+      }
+      mimeType = side.mimeType || "application/octet-stream";
     }
     return new Response(new Uint8Array(bytes), {
       headers: {
-        "content-type": side.mimeType || "application/octet-stream",
+        "content-type": mimeType,
         "content-length": String(bytes.length),
         "cache-control": "private, no-cache",
       },
     });
   } catch (e) {
+    if (e instanceof AssetUnavailableError || e instanceof SyntaxError) return notFound();
     return jsonError(e);
   }
 }

@@ -38,6 +38,9 @@ export const canvasNodeSchema = z
     product: z.string().max(64).optional(),
     /** material 节点的素材（上传 sidecar id）。 */
     uploadId: uploadIdSchema.optional(),
+    assetId: z.string().regex(/^as_[0-9a-f]{16}$/).optional(),
+    assetExpiresAt: z.string().datetime().optional(),
+    assetState: z.enum(["ready", "missing", "expired"]).optional(),
     /** 生成节点最近一次运行建出的任务。 */
     jobId: z.string().optional(),
     /** 已发起过的运行次数；幂等键分量，重试共享、新运行自增。 */

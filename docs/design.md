@@ -136,7 +136,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 ### 请求 / 查询形状
 
 - 鉴权:`Authorization: Bearer <KLING_API_KEY>`,域名 `KLING_BASE_URL`(默认 `https://api-beijing.klingai.com`,国际版账号须换成 `https://api-singapore.klingai.com`,否则鉴权报 `1002`),路径**不带** `/v1`。
-- 创建:`POST /text-to-video/<model>` 或 `/image-to-video/<model>`(`rest-map.ts` 的 `mapToKlingRequest`);首帧走 `contents[].first_frame.url`(data URI 直接发,与 grok 一致),`last_frame` 永不填。创建请求固定 `maxAttempts:1`——任务一旦 `submitted` 就占并发并计费,重发 POST 是第二条任务。
+- 创建:`POST /text-to-video/<model>` 或 `/image-to-video/<model>`(`rest-map.ts` 的 `mapToKlingRequest`);首帧走 `contents[].first_frame.url`(data URI 直接发),带尾帧时追加 `{type:"last_frame", url}` 并强制 1080p（§2c「首尾帧」）。创建请求固定 `maxAttempts:1`——任务一旦 `submitted` 就占并发并计费,重发 POST 是第二条任务。
 - 查询:`GET /tasks?task_ids=<id>`,`mapTask` 把 `submitted/processing/succeeded/failed` 映射到内部 pending/done/failed,`succeeded` 时取 `outputs[0].url` 交给 runner 现有的 `persistRemote` 落盘(URL 公网可下,不带 xAI 的下载头)。
 - 错误:`code !== 0` 转 `ProviderHttpError`;`1301` 归 `moderation`(复用 runner「未通过安全审核」路径);`1302`/`1303`(限速/并发超包)与 `5000–5002` 归 retryable,走 runner 既有指数退避。
 
@@ -196,7 +196,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 
 方案 `docs/plan-frontend-backend-adaptation.md`(2026-09-06 决策「产品名不露供应商」已于 2026-09-13 随多模型定位改为：产品名为主、供应商与上游模型名作次级信息下发)。`src/lib/products/catalog.ts` 定义七档内置`Product`(视频 快速/标准/高清有声/Grok,图片 快速/标准/Grok),每档绑定一个 provider + 上游模型名(可选,缺省回落各 provider 自己的 env 模型)、能力(modes/resolutions/aspectRatios/durations/audio/supportsLastFrame/maxReferenceImages)与描述;`LUMEN_PRODUCTS`(JSON 数组,见 `.env.example`)按 id 覆盖或追加,坏 JSON/缺字段回落内置表并记 warn。
 
-`availableProducts()` 只列这一刻真能下单的产品:provider 有 key(`hasProviderKey`)、该通道(视频/图片分开)未被 `exhaustion.ts` 判定耗尽、可灵有声档还要求实例确实 `KLING_VIDEO_AUDIO=native`;mock 实例(无任何真 key)返回全部产品。`GET /api/models`(需登录)返回这份列表的白名单字段 + `samplePriceCny`(视频按 5 秒+产品默认分辨率+其音轨档估、图片按 1K 估),**不含** `provider`/上游 `model` 字段——浏览器不该也不需要知道供应商。
+`availableProducts()` 只列当前可用的产品：provider 在 ORDER 内、有 key、该通道未进入健康冷却、模型仍在目录，可灵有声档还要求实例允许 native audio；mock 实例按模拟目录返回。`GET /api/models` 需登录，白名单下发能力、samplePriceCny、providerId/providerName/upstreamModel/costHint（§2l），不下发密钥或上游错误详情。样例价不是本次提交的最终报价。
 
 `POST /api/jobs` 的 `model` 字段(`createJobBodySchema`,可选,≤64 字符)传的是产品 id。指定时 `productForProvider`/`defaultProductFor` 解出 provider 与上游模型名,并按该产品的能力做 400 校验(mode 不支持 / 画幅不在列 / 分辨率向上归一后仍不支持 / 时长超上限 / 首尾帧不支持 / 参考图超 `maxReferenceImages`);未指定时沿用 §2b/§2c/§2e 的 ORDER + 能力路由,选中 provider 后反查第一个匹配该 mode 的产品打标签。`JobRecord`/`JobPublic` 新增 `product`(id)/`productName`,前端与详情卡只显示 `productName`。
 
@@ -267,21 +267,23 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 `/canvas` 从纯本地原型升级为持久化画布(`src/lib/canvas/`)。
 
 - **存储** `store.ts`:`data/canvases/<userId>/<canvasId>.json`,一文件一画布;`ownerId` 校验非本人 404,`updatedAt` 倒序列表;全部写路径原子(tmp+rename)+ 单画布锁内读-改-写。
-- **文档**:四类节点 `text`(内容便签)/ `material`(一份 `uploadId`)/ `gen_image` / `gen_video`,加上 `edges {from,to}`;整篇 `revision` 是乐观并发戳——`PATCH /api/canvases/:id` 必带 `expectedRevision`,对不上 409 `revision_conflict`,冲突方保留本地副本并弹层二选一(2026-09-13,见下「前端」),双标签页不互相静默覆盖。
-- **运行** `run.ts`:`POST /api/canvases/:id/nodes/:nodeId/run` 把 `gen_*` 节点变成一次真实 `createJob`——同一套准入、计价、预留与限流,不另起炉灶。提示词 = 连入 text 节点内容(按画布顺序)+ 节点自身 prompt;`gen_video` 有图片输入(material 的 `uploadId`,或上游 `gen_image` 节点已成功的 `outputs/image.jpg` 复制成的 `start` 上传——与 `/api/uploads/from-job` 同链路)即 `image_to_video`,否则 `text_to_video`;`gen_image` 恒 `text_to_image`。幂等键 `canvas:<canvasId>:<nodeId>:<runSeq>`,runSeq 在任务写回后才自增——「建了任务没写回」之间崩溃,重试按同 seq 命中映射;节点已有未终态任务时直接交回,重复点击不重建。
+- **文档**:四类节点 `text`(内容便签)/ `material`(一份 `assetId`，兼容旧 `uploadId`)/ `gen_image` / `gen_video`,加上 `edges {from,to}`;整篇 `revision` 是乐观并发戳——`PATCH /api/canvases/:id` 必带 `expectedRevision`,对不上 409 `revision_conflict`,冲突方保留本地副本并弹层二选一,双标签页不互相静默覆盖。
+- **素材留存（R0.3）**:`src/lib/assets/` 在画布保存时把本人 start 上传复制为 `data/assets/<ownerId>/<as_16hex>{,.json}`，sidecar 含原 uploadId、SHA-256、尺寸、createdAt/expiresAt。首次认领起固定 30 天，重复保存/迁移不续期；到期停止读取、小时清理字节并保留 purgedAt 元数据。节点保存 assetId/assetExpiresAt/assetState，UI 明示期限，缺失或过期可重新上传；`GET /api/uploads/:id` 同时接受 up_ 临时上传与 as_ 素材，均 owner 校验 + private,no-cache。
+- **存量兼容**:启动先迁移画布素材，再启动 runner 与 tmp 清理；`scripts/migrate-canvas-assets.mjs` 默认只读预检，`--write --offline` 才写。缺原件标 missing，不伪造；改画布递增 revision。活动 run 只保护输入字节，不重写冻结图/报价/资金台账；as_ 与旧 up_ 按同一来源键算 inputHash，迁移不改变内容寻址语义。
+- **运行** `run.ts`:`POST /api/canvases/:id/nodes/:nodeId/run` 把 `gen_*` 节点变成一次真实 `createJob`——同一套准入、计价、预留与限流,不另起炉灶。提示词 = 连入 text 节点内容(按画布顺序)+ 节点自身 prompt;`gen_video` 有图片输入(material 的独立 assetId（兼容旧 uploadId）,或上游 `gen_image` 节点已成功的 `outputs/image.jpg` 复制成的 `start` 上传——与 `/api/uploads/from-job` 同链路)即 `image_to_video`,否则 `text_to_video`;`gen_image` 恒 `text_to_image`。幂等键 `canvas:<canvasId>:<nodeId>:<runSeq>`,runSeq 在任务写回后才自增——「建了任务没写回」之间崩溃,重试按同 seq 命中映射;节点已有未终态任务时直接交回,重复点击不重建。
 - **API**:`GET/POST /api/canvases`、`GET/PATCH/DELETE /api/canvases/:id`、`POST /api/canvases/:id/nodes/:nodeId/run`;另有 `GET /api/uploads/:id` 读本人上传素材(owner 校验 + `private, no-cache`,素材节点刷新重显用)。
 - **前端** `CanvasView.tsx`:右键菜单加四类节点、拖拽定位、文本/提示词防抖 600ms 落盘、素材上传走 `POST /api/uploads`、生成节点轮询 `jobId` 恢复产物;PATCH 409 `revision_conflict` 时保留本地 doc 不动、弹 `.canvas-conflict` 弹层列「本地(未保存)/ 服务端」两份摘要(节点/连线数 + 服务端 `updatedAt`)让用户二选一——「保留本地并覆盖服务端」按 `conflict.server.revision` 重发 PATCH(再 409 就刷新服务端栏继续),「采用服务端」丢弃本地;严格模态——只能点这两个按钮关,Esc / 点外层无动作(避免误触替用户选边)。冲突未决期间 `persist` 不再发 PATCH。
 - **整图运行(D 包,2026-09-12,`dag.ts` + `run-store.ts` + `graph.ts`)**:「运行整图」= 一次报价、一次确认、按依赖跑完全部生成节点。
   - `CanvasRun` 落 `data/canvas-runs/<userId>/<runId>.json`:冻结 `graphSnapshot` + `documentRevision` + 逐节点报价快照(`quote.items[].priceCny` + `basisHash` + `inputHash`)+ `nodeExecutions`(waiting_dependencies/ready/awaiting_approval/running/succeeded/failed/blocked,各带 `jobId`/`errorCode`/`reused`/`approval`/`awaitingSince`/`queueWaitSince`)。**run 执行不回写画布文档**——后台写会与用户编辑抢 revision;产物由前端拿最新 run 的执行位 overlay,没有 run 时回退 `node.jobId`。
   - 报价不落盘:`POST /api/canvases/:id/quotes`(可收 `{regenerate?: nodeId[]}`)对(文档 revision + 归一参数 + 价目表 + 复用判定)确定性重算出逐节点明细 + `quote.hash`;`POST /api/canvas-runs` 带 `quoteHash` 重算比对,图/价/复用位变了 409 `quote_stale`。
-  - 静态校验(`validateGraph`):环、容量(节点 ≤50/边 ≤100)、生成节点提示词来源(自身或连入 text)、material 归属(`readUploadSidecar` 只查不消耗);任一不过不产生任何付费提交。
+  - 静态校验(`validateGraph`):环、容量(节点 ≤50/边 ≤100)、生成节点提示词来源(自身或连入 text)、material 归属、期限与字节(`readCanvasMaterial` 只查不消耗);任一不过不产生任何付费提交。
   - sweep 执行器:周期泵(3s)+ 创建/取消即踢,重启后按非终态 run 目录扫描续跑,泵无状态、run 文件是事实源。每轮:从 `job.json` 刷新在途节点 → 依赖失败/被拦传播 `blocked` → 依赖全成功的节点经 `createJob` 提交(同一套准入/计价/预留/幂等,子任务键 `run:<runId>:<nodeId>:<attempt>`)。`queue_full` 退避 15s 再试并记 `queueWaitSince`(首次撞满时刻),累计排队超 1h(`QUEUE_WAIT_TIMEOUT_MS`)收敛 `blocked`/`queue_timeout` 并清 `nextAttemptAt`;其余准入拒绝节点 `failed`。run 终态:`succeeded`/`partially_failed`/`failed`/`canceled`。
   - **run 级预算预留(切片二)**:确认报价即把 `quote.totalCny` 按 `reserveJobFunds` 同款分池冻结成 `run.reservation`(含 `remaining*`/`transfers` 台账),「建 run 成功 = 全程钱够」。子任务的钱不再现押:`createJob` 增 `opts.reserveFunds` 回调,在 admission 锁内调 `carveRunShare` 把该节点份额从 run 余量转移给子 Job(`transfers[nodeId]` 幂等,崩溃重试复用份额换 jobId)。会计恰好计一次:未转移在 remaining,transfer 已写而 job 缺失由 transfer 兜底计占用,job 落盘后由 `job.reservation` 计;run 终态余量与孤儿份额自动停计(释放不写盘)。`loadBalanceUsage` 与 `heldMemberEarmarksCny` 共用 `runHeldFunds`(严格读:run 文件损坏 → `billing_state_corrupt` 失败关闭);旧版无 `reservation` 的 run 子任务回落普通 `reserveJobFunds`,准入闸门不因路径被绕过。**transfer 占用的判定按执行位终态与否而非单看任务索引**:锚定 jobId 在任务索引里 → 由 `job.reservation` 计,跳过;jobId 不在索引且该节点执行位已终态(`succeeded/failed/blocked/canceled`)→ 份额已随子任务结算/退回,不再计占用(修的是:用户删除已终态子任务后索引项消失,份额复活为 run 占用、压低可用余额直到 run 终态);jobId 不在索引且执行位非终态或缺失 → 崩溃孤儿,照旧计占用。
   - **审批门(切片二)**:建 run 体 `approvalNodeIds`(⊆ 生成节点,进 requestHash 不进 quoteHash)冻结成 `run.gatedNodeIds`;节点就绪但被设门且无决策 → `awaiting_approval` 停住不提交并记 `awaitingSince`。`POST /api/canvas-runs/:id/approvals` `{nodeId, decision}`:approve → 回 `ready` 继续提交,reject → `blocked`/`approval_rejected` 传播下游;同决策重放幂等,异决策/时机已过 409 `invalid_state`。**审批 24h 超时**(2026-09-13 产品拍板):sweep 在依赖传播之前先把 `awaitingSince` 超 `APPROVAL_TIMEOUT_MS`(24h)的执行位收敛 `blocked`/`approval_timeout`,下游同轮传播 `upstream_failed`;旧 run 缺 `awaitingSince` 时先补记 `now` 不即超时;超时后 approvals 端点也 409 `invalid_state` 不落决策。两种超时 blocked 都没建过 job、份额从未 carve,留在 `run.reservation.remaining*`,run 终态随既有语义停计。取消路径把 `awaiting_approval` 一并标 `blocked`/`canceled`。
-  - **产物复用(切片二)**:`nodeInputHash` 递归内容寻址(种类/mode/合并提示词/产品/素材 uploadId/上游 gen 哈希,inputs 保画布顺序——顺序本身是语义)。新 run 建时按 `inputHash` 在该画布历史 run(新→旧)找同节点同输入的成功执行:产物仍在盘上(job 成功、无 `artifactsPurgedAt`、`statJobFile` 在)→ 直接采纳(`exec.reused`,不建任务不扣费);有匹配但产物全不可用 → `blocked`/`output_purged`,**不悄悄重生成**。报价条目带 `inputHash`/`reused`/`adoptedJobId`/`purged`,复用条目 ¥0;`regenerate` 点名集沿 gen 依赖闭包展开(`expandRegenerate`,强制重跑上游 ⇒ 下游一并重跑),进 quoteHash 闭环。
+  - **产物复用(切片二)**:`nodeInputHash` 递归内容寻址(种类/mode/合并提示词/产品/素材来源键（assetId 对应原 uploadId）/上游 gen 哈希,inputs 保画布顺序——顺序本身是语义)。新 run 建时按 `inputHash` 在该画布历史 run(新→旧)找同节点同输入的成功执行:产物仍在盘上(job 成功、无 `artifactsPurgedAt`、`statJobFile` 在)→ 直接采纳(`exec.reused`,不建任务不扣费);有匹配但产物全不可用 → `blocked`/`output_purged`,**不悄悄重生成**。报价条目带 `inputHash`/`reused`/`adoptedJobId`/`purged`,复用条目 ¥0;`regenerate` 点名集沿 gen 依赖闭包展开(`expandRegenerate`,强制重跑上游 ⇒ 下游一并重跑),进 quoteHash 闭环。
   - 崩溃窗口:提交前先 `lookupIdempotency(ownerId, key)` 查回既有任务接管,不重新解析输入(素材复制每次产生新 uploadId,重建请求只会撞 `idempotency_conflict`)。**这一步在成交价校验之前**——job 已建出说明价在 carve 那一刻已锁定,若先比价再查接管,崩溃窗口叠加价变时会把仍在正常执行的份额误判成 `price_changed`。单节点 `runCanvasNode` 同一修法。报价快照(`quote.items`)对该节点缺失时(只有残缺的 run 文件才会走到)直接 `failed`/`internal_error` 失败关闭,不提交。
   - 两道价关:创建时比 `quoteHash`——`createCanvasRun` 在 `withAdmissionLock` 内额外对报价采纳的历史产物重跑 `jobOutputUsable` 复核,报价到建 run 之间若被删除/清理则 409 `quote_stale`(防的是同一次调用里 `computeQuote` 之后的窄窗口;外部删除会先被 `quoteHash` 不匹配挡住);执行器提交节点前再按报价快照比对归一价,不一致即节点 `failed`/`price_changed` + 下游 blocked——不按新价静默扣款。
-  - 素材不消耗:`createJob` 的 `claim()` 会 move 文件并删 sidecar,画布路径(material 与上游产物)一律 `copyUpload`/`storeUploadFromBuffer` 复制成新上传再交出——一份素材可喂多个节点、可支撑重复运行。
+  - 素材不消耗:`createJob` 的 `claim()` 会 move 文件并删 sidecar,画布路径(material 与上游产物)一律 `copyCanvasMaterial`/`storeUploadFromBuffer` 复制成新上传再交出——一份素材可喂多个节点、可支撑重复运行。
   - 取消是持久化意图:`POST /api/canvas-runs/:id/cancel` 只落 `cancelRequestedAt`;泵见它即停提交新节点(未提交的标 `blocked`),在途子任务逐个走 `cancelOwnedJob`(R09 checkpoint 语义不变),全部终态后 run 才落 `canceled`。已落 `cancelRequestedAt` 的 run 不再接受审批决定(`decideCanvasRunApproval` 409 `invalid_state`)——批了也会被下一轮 sweep 收敛成 `blocked`,不留一条永不生效的批准记录。
   - 前端:顶栏「运行整图」→ 报价弹层(逐节点价 + 复用行「重跑」勾选 + 可执行行「执行前需我批准」勾选——gen_video 默认勾 + 总价)→ 确认建 run;节点徽标显示执行态(含「待批准」/「已复用」),`awaiting_approval` 节点出批准/驳回按钮并在下方显示批准截止时间(`awaitingSince + 24h`),3s 轮询 `GET /api/canvas-runs/:id`,运行中可「取消运行」。
 
@@ -305,7 +307,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 - **产品生成（N3.3）**：`allProducts()` = 手写内置产品 ∪ 每个**显式配置**（file / env-seed，env 折算预设不生成——那条路径保持原行为）的启用 relay 目录里每个视频模型各一个产品：`id = "<relayId>:<slug>"`（slug 小写、非 `[a-z0-9]` 转 `-`、28 字符截断、重复加 `-2`），`name` = 上游展示名，三个 mode 的 `models` 都指向该模型但 `modes` 只声明 `maxReferenceImages>0 ? [t2v,i2v,r2v] : [t2v]`，档位 / 画幅 / 时长从目录 spec 来，`audio:"uncontrolled"`，`supportsLongForm` = modes 含 t2v+i2v 且 durations 含 10；`LUMEN_PRODUCTS` 按 id 覆盖对生成产品同样有效。`isProductAvailable` 额外要求该模型此刻仍在目录里——上游下架即自动隐藏。`GET /api/models` DTO 新增 `providerId` / `providerName` / `upstreamModel`（展示名）/ `costHint`（估算成本折人民币相对售价：<0.3 low、<0.6 mid、其余 high、估不出 mid），浏览器侧镜像在 `client/models.ts`。
 - **ORDER**：显式 `*_PROVIDER_ORDER` 时 relay 只按表内位次参与；没显式配时，启用的 relay 按 `priority` 降序排在内置默认之后（env 预设不进隐式次序，今天 grok / `openai,grok` 的默认不变）。
 - **安全**：`keyEnv` 存的是环境变量**名**不是值，`hasKey()` 调用时读 `process.env[keyEnv]`；下载鉴权按「provider × 配置的 base origin」动态配对（`media/download-headers.ts`），认不出的 origin 一律空头。
-- **管理接口** `src/app/api/admin/relays/`（登录 + `LUMEN_ADMIN_USER_ID`，非管理员一律 404）：`GET /`（列表 + hasKey + 注册状态 + 快照时间，不回显 key）、`POST /`、`PATCH /:id`（enabled/priority/模型等，id 不可改）、`DELETE /:id`、`POST /:id/discover`（拉 `/models` 写快照 + 返回 diff）、`POST /:id/probe`（有生图通道发一张 1K 1:1，否则 chat `max_tokens:16`，**不计费** `billed:false`）。写操作落 `relays.json`（`writeJsonAtomic`）后立刻 `reconcileRelays()`。env 预设不由 PATCH/DELETE 管理（404）；要改它们就 POST 一条同 id 的文件配置覆盖。
+- **管理接口** `src/app/api/admin/relays/`（登录 + `LUMEN_ADMIN_USER_ID`，非管理员一律 404）：`GET /`（列表 + hasKey + 注册状态 + 快照时间，不回显 key）、`POST /`、`PATCH /:id`（enabled/priority/模型等，id 不可改）、`DELETE /:id`、`POST /:id/discover`（拉 `/models` 写快照 + 返回 diff）、`POST /:id/probe`（有生图通道发一张 1K 1:1，否则 chat `max_tokens:16`，平台不记账 `billed:false`，但探针可能在上游计费，执行前须确认预算；付费 POST 固定 `maxAttempts:1`，不自动重发）。写操作落 `relays.json`（`writeJsonAtomic`）后立刻 `reconcileRelays()`。env 预设不由 PATCH/DELETE 管理（404）；要改它们就 POST 一条同 id 的文件配置覆盖。
 
 ## 3. Job 生命周期
 
@@ -342,7 +344,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 | `POST /api/notifications/read`(H 包) | `{epoch, upToSeq}`;epoch 不符 409 `notifications_stale`(客户端重拉 GET);游标只进不退 |
 | `GET /api/templates`(2026-09-06 深夜) | 读 `data/templates/*.json`(`data-seed/templates` 提供六条示例种子);首页模板回填用 |
 | `GET /api/share/:token` / `GET /api/share/:token/media`(2026-09-06 深夜) | 公开接口,不校验会话;`media` 响应 `public, max-age=3600`;见 §2g |
-| `GET /api/models`(2026-09-06 夜,阶段 A) | 需登录;返回 `availableProducts()` 的白名单字段 + `samplePriceCny`(§2f),不含 `provider`/上游模型名 |
+| `GET /api/models` | 需登录；产品能力与 samplePriceCny 白名单，包含 providerId/providerName/upstreamModel/costHint（§2f/§2l），不含密钥 |
 | `POST /api/uploads/from-job`(阶段 A) | `{ jobId, role }`;把调用者自己一条 `succeeded` 且未清理的图片任务产物复制成一次新上传(走与手动上传相同的 `preprocessImage`),`role ∈ start|last|reference`;别人的/不存在的/非图片/已清理的任务分别 404/400 |
 | `GET /api/me/ledger`(阶段 A) | `?before=&limit=&kind=`;倒序游标分页,`limit≤200`;已迁移账号读 billing 快照(顺带自愈导出文件),未迁移账号读 jsonl、坏行跳过 |
 | `POST /api/me/redeem`(阶段 A) | `{ code }`;礼品码认领 + 入账同一临界区(§5);成功 `{ amountCny, balance }`;404 无效 / 409 已用 / 429(IP+用户各一桶,5 次/分钟) |
@@ -379,6 +381,10 @@ data/
     inputs/sheets/character-N-{view}.jpg    # harness 三视图角色表(front/side/back;R2V 与档A首帧需要)
     shots/{index}/video.mp4 tail.jpg first.jpg  # harness 每镜成片、tail-chain 抽取帧与档A生成首帧
     logs.jsonl
+  assets/<userId>/<assetId> + <assetId>.json
+  relays.json
+  relay-catalog/<id>.json
+  provider-health.json
   tmp/{uploadId} + {uploadId}.json     # 24h TTL
   idempotency/{ownerId,clientKey 的 sha256}.json   # 2026-09-11 起为可重建缓存(R07):原子写;
                                                   # 命中时回读 job.json 校验 owner 与内嵌幂等键,
@@ -408,7 +414,7 @@ data/
 
 `MediaStore` 接口(`storage/types.ts`)由 `LocalFsMediaStore` 实现,id 白名单 `[A-Za-z0-9_-]+`、rel 路径解析后必须落在 jobDir 内;后期 `S3MediaStore` 同接口替换。
 
-生产实例(阿里云)另有 `/opt/genius/backups/genius-data-<时间戳>.tgz`(`scripts/backup.sh`,白名单 `users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ notifications/ + jobs/*/job.json`,不含产物,保留最近 14 份,`chmod 600`)与阿里云 ECS 控制台配置的整盘自动快照(每日一份、保留 7 天),两层数据安全见 §10.2。
+当前 `scripts/backup.sh` 白名单为 `users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ notifications/ assets/ relays.json + jobs/*/job.json`，不含任务产物、tmp、relay-catalog 与 provider-health 暂态；保留最近 14 份、权限 600。素材 sidecar 与字节同备，目录缓存可重拉；丢冷却状态会提前探路，但不得重发已受理任务。生产 `/opt/genius/backups/` 的每日 03:17 cron 已于 2026-09-13 核实；新白名单需部署后检查包内容。ECS 自动快照尚无控制台证据，异地加密副本/一致性恢复演练未完成；活服务 tar 不等于一致性快照，见 runbook。
 
 ## 6. 前端(2026-09-06 晚起:侧栏 + 五视图 Genius App 壳,as-built)
 
@@ -513,9 +519,9 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 
 ### 10.2 部署回滚与 CI(2026-09-06 阶段一,as-built)
 
-- `scripts/deploy.sh`:上传前本地跑 `pnpm exec tsc --noEmit`(`--skip-check` 可跳过);服务器侧把旧 `.next` 先 `mv` 成 `.next.prev` 再解压新包,`systemctl start` 后轮询 `/api/health`(`HEALTH_TRIES=10 × HEALTH_GAP=6s`,要求 HTTP 200 且 body `ok:true`);health 不达标就 `systemctl stop` → 用 `.next.prev` 换回 `.next` → 重启 → 再验一次 → 脚本以非零退出告知本地「已回滚」还是「回滚也没救」。首次部署没有 `.next.prev` 时明确打印警告并保留当前构建重启。
+- `scripts/deploy.sh`:上传前本地跑 `pnpm exec next typegen && pnpm exec tsc --noEmit`(`--skip-check` 可跳过);服务器侧把旧 `.next` 先 `mv` 成 `.next.prev` 再解压新包,`systemctl start` 后轮询 `/api/health`(`HEALTH_TRIES=10 × HEALTH_GAP=6s`,要求 HTTP 200 且 body `ok:true`);health 不达标就 `systemctl stop` → 用 `.next.prev` 换回 `.next` → 重启 → 再验一次 → 脚本以非零退出告知本地「已回滚」还是「回滚也没救」。首次部署没有 `.next.prev` 时明确打印警告并保留当前构建重启。
 - `scripts/backup.sh`:见 §5,cron 每日在服务器本机跑;`--data-dir`/`--backup-dir`/`--keep` 可覆盖,退出码非 0 表示这次没产出可用包。
-- `.github/workflows/ci.yml`:push `main` 与所有 PR 触发,`pnpm exec tsc --noEmit` → `pnpm exec eslint src` → `pnpm test`(与 `AGENTS.md` 验证门禁前三条逐字一致),Ubuntu runner 上装依赖顺带验证 `sharp`/`ffmpeg-static` 的 Linux 原生二进制能装上;不跑 `pnpm e2e`(需要浏览器 + `next build`,留到后续单独 workflow)。同分支连续 push 只保留最后一次运行。
+- `.github/workflows/ci.yml`:push `main` 与所有 PR 触发,`pnpm exec next typegen && pnpm exec tsc --noEmit` → `pnpm exec eslint src` → `pnpm test`(与 `AGENTS.md` 验证门禁前三条逐字一致),Ubuntu runner 上装依赖顺带验证 `sharp`/`ffmpeg-static` 的 Linux 原生二进制能装上;不跑 `pnpm e2e`(需要浏览器 + `next build`,留到后续单独 workflow)。同分支连续 push 只保留最后一次运行。
 
 ## 11. 与 rev 3 的差异清单
 

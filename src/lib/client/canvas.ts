@@ -17,6 +17,9 @@ export type CanvasNode = {
   prompt?: string;
   product?: string;
   uploadId?: string;
+  assetId?: string;
+  assetExpiresAt?: string;
+  assetState?: "ready" | "missing" | "expired";
   jobId?: string;
   runSeq?: number;
 };

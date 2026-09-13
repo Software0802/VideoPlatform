@@ -41,6 +41,7 @@ if [ "$CHECK" = 1 ]; then
   echo "== 1/5 类型检查（--skip-check 可跳过）"
   # 几十秒换掉「构建能过但类型错了照样上线」的一整类事故。tsc 非零时 set -e 直接中止，
   # 坏代码走不到打包这一步。
+  pnpm exec next typegen
   pnpm exec tsc --noEmit
 else
   echo "== 1/5 类型检查（已跳过）"
@@ -61,7 +62,9 @@ tar czf "$PKG" \
   .next public package.json pnpm-lock.yaml pnpm-workspace.yaml next.config.ts \
   scripts/mint-invites.mjs scripts/backup.sh scripts/grant-balance.mjs scripts/mint-gift-codes.mjs \
   scripts/reset-password.mjs scripts/disable-user.mjs scripts/usage.mjs scripts/migrate-billing.mjs \
-  scripts/lib data-seed src/lib/billing/protocol.mjs src/lib/billing/file-ledger.mjs
+  scripts/lib scripts/migrate-canvas-assets.mjs data-seed \
+  src/lib/assets/files.mjs src/lib/assets/migrate.mjs \
+  src/lib/billing/protocol.mjs src/lib/billing/file-ledger.mjs
 ls -lh "$PKG" | awk '{print "   包大小:", $5}'
 
 echo "== 4/5 上传"

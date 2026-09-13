@@ -87,16 +87,17 @@ LISTING="$(mktemp "${TMPDIR:-/tmp}/genius-backup-verify-XXXXXX")"
 # 白名单清单，NUL 分隔，路径相对 DATA_DIR。
 (
   cd "$DATA_DIR"
-  for d in users invites gift-codes ledger agent templates canvases canvas-runs notifications; do
+  for d in users invites gift-codes ledger agent templates canvases canvas-runs notifications assets; do
     if [ -d "$d" ]; then find "$d" -print0; fi
   done
+  if [ -f relays.json ]; then printf '%s\0' relays.json; fi
   # jobs/<id>/job.json 且只有它：mindepth/maxdepth 2 天然挡掉 outputs/ inputs/ shots/。
   if [ -d jobs ]; then
     find jobs -mindepth 2 -maxdepth 2 -type f -name job.json -print0
   fi
 ) > "$LIST" || die "扫描 $DATA_DIR 失败"
 
-[ -s "$LIST" ] || die "$DATA_DIR 里没有可备份的内容（users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ notifications/ jobs/*/job.json 全为空）"
+[ -s "$LIST" ] || die "$DATA_DIR 里没有可备份的内容（users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ notifications/ assets/ relays.json jobs/*/job.json 全为空）"
 
 # 服务是活的，job.json 可能正好在写。GNU tar 遇到「读的时候文件变了」退出 1，
 # 这不是致命错误（原子 rename 保证读到的是完整的旧版或新版），退出 ≥2 才是真失败。
@@ -119,7 +120,7 @@ tar --list --gzip --file "$TMP_OUT" > "$LISTING" || die "无法读回刚生成�
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   case "$entry" in
-    users|users/*|invites|invites/*|gift-codes|gift-codes/*|ledger|ledger/*|agent|agent/*|templates|templates/*|canvases|canvases/*|canvas-runs|canvas-runs/*|notifications|notifications/*) ;;
+    users|users/*|invites|invites/*|gift-codes|gift-codes/*|ledger|ledger/*|agent|agent/*|templates|templates/*|canvases|canvases/*|canvas-runs|canvas-runs/*|notifications|notifications/*|assets|assets/*|relays.json) ;;
     jobs/*/job.json) ;;
     *) die "包内出现不该有的条目「$entry」，已丢弃 $TMP_OUT" ;;
   esac

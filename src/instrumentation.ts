@@ -14,6 +14,8 @@ export async function register() {
   const { ensureJobIndex } = await import("./lib/jobs/index");
   await ensureJobIndex();
   await tuneSharp();
+  const { initializeCanvasAssets } = await import("./lib/assets/store");
+  await initializeCanvasAssets();
   const { startJobRunner } = await import("./lib/jobs/runner");
   await startJobRunner();
   // 画布 DAG 运行的周期泵（D 包）：非终态 run 的节点刷新与续跑全靠它，

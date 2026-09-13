@@ -6,6 +6,7 @@ import { log } from "@/lib/log";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { writeJsonAtomic } from "@/lib/storage/atomic-json";
 import { assertUserId } from "@/lib/users/store";
+import { retainCanvasMaterials } from "@/lib/assets/store";
 import {
   CANVAS_ID_RE,
   canvasDocSchema,
@@ -147,10 +148,13 @@ export async function patchCanvas(
         `画布已被别处修改（当前 revision ${current.revision}），请刷新后再改`,
       );
     }
+    const nodes = patch.nodes !== undefined
+      ? await retainCanvasMaterials(ownerId, patch.nodes, current.nodes)
+      : undefined;
     return writeCanvas({
       ...current,
       ...(patch.title !== undefined ? { title: patch.title } : {}),
-      ...(patch.nodes !== undefined ? { nodes: patch.nodes } : {}),
+      ...(nodes !== undefined ? { nodes } : {}),
       ...(patch.edges !== undefined ? { edges: patch.edges } : {}),
       revision: current.revision + 1,
       updatedAt: new Date().toISOString(),
