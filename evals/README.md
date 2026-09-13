@@ -3,7 +3,7 @@
 `prompts.json` 有两组固定输入（审查 2026-09-05 R03 起分开）：
 
 - `cases`（20 条）：原生五模式回归集——T2V、I2V、R2V、Edit、Extend，中英各半，每模式两个边界档位。它按 grok provider（xAI）的字段约束写成，覆盖的 Edit / Extend 目前只有 grok 声明支持，跑这组需要 `XAI_API_KEY` 或 Sub2API；它证明这五条原生链路没有回退，**不能**用来验收长片一致性，也不覆盖可灵 / YMan 路由。
-- `harnessCases`（8 条）：30 / 45 / 60 秒一致性管线用例——t2v / i2v、人物 / 场景、`tail_chain` / `hard_cut` / 用户尾帧定格。`harnessProtocol` 规定每条重复 2 次、与"三段原生 T2V 直接 concat"的基线盲评、两个操作场景（QC 重试、中断续跑）以及"失败样本不得移出分母"。Harness 现已供应商无关（shot 路由 `t2v/i2v/r2v`、续接尾帧→i2v、无 extend）；链路回归可用 mock 端到端代替上游——`LUMEN_FORCE_MOCK=1 HARNESS_ENABLED=true` 起 dev server 提一条 30s `text_to_video`，断言 `harnessPlan` 路由/续接/落盘文件即可，质量与成本评分仍须真实上游。
+- `harnessCases`（8 条）：30 / 45 / 60 秒一致性管线用例——t2v / i2v、人物 / 场景、`tail_chain` / `hard_cut` / 用户尾帧定格。`harnessProtocol` 规定每条重复 2 次、与"三段原生 T2V 直接 concat"的基线盲评、两个操作场景（QC 重试、中断续跑）以及"失败样本不得移出分母"。Harness 现已供应商无关（shot 路由 `t2v/i2v/r2v`、续接尾帧→i2v、无 extend）；链路回归可用 mock 端到端代替上游——`LUMEN_FORCE_MOCK=1 HARNESS_ENABLED=true` 起 dev server 提一条 30s `text_to_video`，断言 `harnessPlan` 路由/续接/落盘文件即可，质量与成本评分仍须真实上游。生产可灵 30s 已实证一例（`job_fb97db94e2a4`，30.97s 成片，档 A 三视图 + 首帧生效，见 `docs/acceptance-2026-09-13.md`）。
 
 当前仓库只提供输入和人工评分规范（`rubric.md` v2），不会在 `pnpm test` 中自动调用上游，也不会伪造生成质量结果。
 

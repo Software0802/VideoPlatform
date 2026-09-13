@@ -1,6 +1,6 @@
 # 方案：Harness 长片供应商无关化（E 重做）
 
-状态：2026-09-13 用户批准方案 A（改造自有 Harness，不引入 ViMax 代码；参照 ViMax 的一致性做法）。E1（`02163a0`）与 E2（`bb22d75`）已落地，E3 文档同步本次；生产开放（`HARNESS_ENABLED=true`）待真实上游验收一条 30s 成片。
+状态：**已完成**。E1（`02163a0`）、E2（`bb22d75`）、E3 文档同步与验收修复（`545580f`）全部落地；生产 `HARNESS_ENABLED=true` + `OPENAI_IMAGE_EDITS_ENABLED=true`，可灵 30s 长片已实证（`docs/acceptance-2026-09-13.md`）。后续以 `docs/plan-next-2026-09-13.md` 为准。
 实施切片见 §6；每片完成后更新 `docs/handoff.md` 与 `docs/design.md` §7 为当前事实。
 
 ## 0. 目标与非目标

@@ -28,14 +28,14 @@ API 提交，与前端走同一条 `POST /api/jobs` / 智能体路由。
 
 `.env` 改前备份：`/opt/genius/backups/.env.bak.20260913-acceptance`。
 
-## 暴露的代码问题（待修，未改代码）
+## 暴露的代码问题（均已在 `545580f` 修复并部署）
 
-1. **5xx + 结构化错误体被判 `uncertain_submit`**：ccgoai 的 503 带 `{"error":{"code":"service_busy"}}`，明确是拒单未计费，但 `runner.isAmbiguousSubmitError` 按 `status >= 500` 一律视为「可能已接单」→ 标 `uncertain_submit` 并锁死重试。上游繁忙时用户只能换提示词重提。建议：OpenAI 兼容通道对「5xx 且响应体是合法 OpenAI error 形状」按确定失败处理。
-2. `products/catalog.ts` 里 `video-fast` 的 t2v 模型名写死 `minimax-H3 文字`，`env.ts` 的 `DEFAULT_YMAN_T2V_MODEL` 同样过期——应改默认值为 `minimax-h3`，`.env.example` 的 YMan 模型清单同步（2026-09-13 实测 21 个 id：gpt-image-2、Runway Gen-4 Turbo video (图生视频)、gpt-image-2.5-flare、gpt-image-2.5-sunburst、sd2.0-MX、minimax-h3 768p、minimax_h3、wan3.0-video、sd-2.0-fast-真人、grok-video-1.5、minimax-h3-933-图文、seedance2.0-fast满血、seedance2.0-不卡人脸、seedance2.0-900-720p、minimax-h3、gemini-3-pro-image-run、nano-banana-2、firefly-gpt-image-2 等）。
-3. `minimax-h3` 不在 YMan 本地价目表，记账用 ¥1.5 兜底，`costUsdActual` 因此是高估；应登记它的积分档（或从 `GET /v1/models` 的 `credits` 字段读）。
-4. 智能体默认模型 / Director 模型名依赖中转的存量：中转下架模型时整条链路 502，建议 `agent/llm.ts` 在 404 `model_not_found` 时给出可读的运维错误码并进告警。
-5. Director / 视觉 QC 的 LLM 调用复用 `UPSTREAM_TIMEOUT_MS`（默认 30s），gpt-5.6-luna 产出完整计划要 ~50s → 第一次长片 `Request timed out.`（`error.code=internal`）。需要独立的 `HARNESS_LLM_TIMEOUT_MS`。生产临时把 `UPSTREAM_TIMEOUT_MS=120000`。
-6. 长片提交时 `costUsdEstimate` 只算视频片段（$0.9），实付 $1.45（含三视图 + 首帧 4 张图与 Director），1.61× 触发 `costOverTarget` 软线；多一个角色就会撞 2× 硬上限。估价需把图片与 LLM 预留算进去。
+1. **5xx + 结构化错误体被判 `uncertain_submit`**：ccgoai 的 503 带 `{"error":{"code":"service_busy"}}`，明确是拒单未计费，但 `runner.isAmbiguousSubmitError` 按 `status >= 500` 一律视为「可能已接单」→ 标 `uncertain_submit` 并锁死重试。修复：`ProviderHttpError.upstreamRejected` 标记，openai-image 通道对「5xx 且响应体是合法 OpenAI error 形状」打标，runner 按确定失败处理、可重试。
+2. `products/catalog.ts` 里 `video-fast` 的 t2v 模型名与 `env.ts` 的 `DEFAULT_YMAN_T2V_MODEL` 过期——已改默认值为 `minimax-h3`，旧名 `minimax-H3 文字` / `minimax_h3_t2v` 降级为别名，`.env.example` 的 YMan 模型清单已同步为 2026-09-13 实测 21 个 id：gpt-image-2、Runway Gen-4 Turbo video (图生视频)、gpt-image-2.5-flare、gpt-image-2.5-sunburst、sd2.0-MX、minimax-h3 768p、minimax_h3、wan3.0-video、sd-2.0-fast-真人、grok-video-1.5、minimax-h3-933-图文、seedance2.0-fast满血、seedance2.0-不卡人脸、seedance2.0-900-720p、minimax-h3、gemini-3-pro-image-run、nano-banana-2、firefly-gpt-image-2 等。
+3. `minimax-h3` 不在 YMan 本地价目表——已登记进 `yman/catalog.ts`（沿用旧档 720p:10 + 5/10/15 = 40/90/140，注释标明未经账单核实）。
+4. 智能体默认模型 / Director 模型名依赖中转的存量——`agent/llm.ts`、openai-image 与 yman 的创建 POST 在上游 404（`model_not_found` / `not_found`）时发 `upstream_model_missing` 告警（`{provider,model,base}`，按 `provider:model` 去重），错误照常抛出。
+5. Director / 视觉 QC 的 LLM 调用复用 `UPSTREAM_TIMEOUT_MS`（默认 30s），gpt-5.6-luna 产出完整计划要 ~50s → 第一次长片 `Request timed out.`（`error.code=internal`）。已新增 `HARNESS_LLM_TIMEOUT_MS`（默认 120s、上限 5min），Director 上游/超时错误归一成 `HarnessFailure("llm_upstream_failed")`（不产生付费分镜、不锁重试）。生产已撤掉临时的 `UPSTREAM_TIMEOUT_MS=120000`，回到默认 30s。
+6. 长片提交时 `costUsdEstimate` 只算视频片段（$0.9），实付 $1.45。已改为 `harnessSubmitEstimateUsd`（`provider-settings.ts`）= 视频片段 + `LLM_RESERVE_USD.director` + 4 张 16:9/1k 生图预留（单角色三视图 + 一镜首帧的经验值），创建 / 重试 / 耗尽换家三处共用。
 
 ## 30s 长片（部署 `16f145e` 后，`HARNESS_ENABLED=true` + `OPENAI_IMAGE_EDITS_ENABLED=true`）
 

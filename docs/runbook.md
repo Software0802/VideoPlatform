@@ -72,6 +72,22 @@ curl -sS http://127.0.0.1:3000/api/health
 3. 充值到账后不需要手动清除标记——到 `PROVIDER_EXHAUSTED_TTL_MS` 会自动放回去重试；如果急需立即恢复，重启服务会清空内存态的耗尽标记（`data/provider-state.json` 落盘状态会在下次读取时按 TTL 重新判定）。
 4. 配置了 `ALERT_WEBHOOK_URL` 时会收到 `provider_exhausted` 告警，同一件事 10 分钟内只发一次。
 
+## 上游下架 / 改名模型（`upstream_model_missing`）
+
+现象：任务或智能体报 404 `model_not_found`（YMan 报 `not_found`），`ALERT_WEBHOOK_URL` 收到 `upstream_model_missing` 告警（payload 带 `provider` / `model` / `base`，按 `provider:model` 去重 10 分钟）。中转站随时上下架模型，本地默认名不会自己跟着改。
+
+处理：
+
+1. 拿通道的 base + key 调 `GET {base}/models` 核对现在返回的展示名（YMan 是 `https://vip.yman.cc/v1/models`）。
+2. 改 `/opt/genius/.env` 对应变量：`YMAN_T2V_MODEL` / `YMAN_I2V_MODEL` / `AGENT_CHAT_MODEL` / `OPENAI_IMAGE_MODEL` / `KLING_VIDEO_MODEL`；产品目录里钉死的模型名要用 `LUMEN_PRODUCTS`（JSON 数组）整体覆盖该产品。
+3. `systemctl restart genius` 后公网提一条对应模式的小任务验证；新模型名若不在 `src/lib/providers/yman/catalog.ts` 登记，能跑通但按 `YMAN_UNKNOWN_CREDITS` 估价，随后把新名的档位与积分价目补进目录（或临时用 `YMAN_MODEL_CATALOG` 覆盖）。
+
+## ccgoai 生图 503 `service_busy`
+
+现象：OpenAI 兼容通道（ccgoai）对 `gpt-image-2` 的 `quality=high` 一律回 503 `{"error":{"code":"service_busy","type":"api_error",...}}`。这是结构化错误体，代码已按**确定拒单**处理（普通 failed、可重试，不会锁 `uncertain_submit`）。
+
+处理：把 `OPENAI_IMAGE_QUALITY` 降到 `medium`（生产当前值）或 `low`；`high` 在该中转上不可用属上游限制，不是本服务故障。
+
 ## 用户禁用与重置密码
 
 ```bash

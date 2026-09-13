@@ -1,7 +1,7 @@
 # 流光（Lumen）Web 视频生成平台 — 架构与一致性控制管线设计
 
 > **⚠️ 本文为 Phase 0 历史设计(rev 3),部分内容已与实现漂移。**
-> 当前真相以下列文档为准:设计书 [`docs/design.md`](design.md)(rev 4,as-built)、计划书 [`docs/plan.md`](plan.md)、审查报告 [`docs/review-2026-08-29.md`](review-2026-08-29.md) 与 [`docs/review-2026-09-05.md`](review-2026-09-05.md)。文中「orchestrator 恒 throw / PR 13 才读取 HARNESS_ENABLED」自 2026-09-05 起已过时:Harness 已接入并由 `HARNESS_ENABLED` 开关。本文保留作为决策依据(Key Decisions、Grok 能力矩阵、Alternatives)。2026-09-13 起产品方向为多中转按能力路由，Grok 为普通可选成员；本文 Grok 主视角部分为历史决策，现状以 `docs/design.md` 为准。
+> 当前真相以下列文档为准:设计书 [`docs/design.md`](design.md)(rev 4,as-built)、计划书 [`docs/plan.md`](plan.md)、审查报告 [`docs/review-2026-08-29.md`](review-2026-08-29.md) 与 [`docs/review-2026-09-05.md`](review-2026-09-05.md)。文中「orchestrator 恒 throw / PR 13 才读取 HARNESS_ENABLED」自 2026-09-05 起已过时:Harness 已接入并由 `HARNESS_ENABLED` 开关。本文保留作为决策依据(Key Decisions、Grok 能力矩阵、Alternatives)。2026-09-13 起产品方向为多中转按能力路由，Grok 为普通可选成员；Harness 长片（E）已完成并生产实证（`545580f`，`HARNESS_ENABLED=true`），本文 Grok 主视角部分为历史决策，现状以 `docs/design.md` 为准，后续计划见 `docs/plan-next-2026-09-13.md`。
 
 | 字段 | 值 |
 | --- | --- |
