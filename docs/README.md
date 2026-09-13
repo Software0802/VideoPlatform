@@ -20,7 +20,7 @@
 
 | 文档 | 主题 |
 | --- | --- |
-| [plan-relay-provider-2026-09-13.md](plan-relay-provider-2026-09-13.md) | 中转注册、目录、治理与管理页；N3.1–N3.4 已落地，后续由 R2 排期 |
+| [plan-relay-provider-2026-09-13.md](plan-relay-provider-2026-09-13.md) | 中转注册、目录、治理与管理页；N3.1–N3.5 已落地 |
 | [plan-next-2026-09-13.md](plan-next-2026-09-13.md) | 前一版排期；产品定位及 D1–D4 决策仍有效 |
 | [plan-unimplemented-2026-09-08.md](plan-unimplemented-2026-09-08.md) | Reservation、Agent、Canvas、支付与运维契约引用源 |
 | [plan-harness-provider-agnostic-2026-09.md](plan-harness-provider-agnostic-2026-09.md) | Harness 供应商无关化与角色三视图 |
@@ -40,7 +40,7 @@
 
 | 文档 | 范围 |
 | --- | --- |
-| [review-repo-2026-09-13.md](review-repo-2026-09-13.md) | dbead84 全仓审查，21 条 finding；修复进度看当前交接 |
+| [review-repo-2026-09-13.md](review-repo-2026-09-13.md) | dbead84 全仓审查，21 条 finding；顶部有 2026-09-13 收口状态表 |
 | [review-2026-09-13.md](review-2026-09-13.md) | 当时的专项审查与验证边界 |
 | [review-2026-09-08.md](review-2026-09-08.md) | 资金与执行恢复 R01–R09 |
 | [review-2026-09-05.md](review-2026-09-05.md) | 2026-09-05 审查快照 |

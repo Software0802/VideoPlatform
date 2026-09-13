@@ -11,7 +11,7 @@
 
 ## 前端与接口
 
-- `(shell)` 共用 GeniusShell；layout 验会话、下发能力，ShellContext/useShell 管共享状态；结构见 DESIGN。
+- `(shell)` 共用 GeniusShell；layout 验会话、下发能力，ShellContext 已拆四域 Provider；结构见 DESIGN。
 - 深色令牌见 DESIGN；BEM + ASCII `data-*`；无 Tailwind（reset：`styles/reset.css`），不引组件库/图标库；SVG 收进 icons.tsx，字体经 next/font/google。
 - 样式按视图放 `app/styles/`，由 `globals.css` 导入；控件 reset 用 `:where()`；fixed 浮层放在 transform 动画祖先之外。
 - 悬浮创作面板必须与 `main` 同级，锚在 `.col`、`position:absolute`；不能放滚动容器，`main` 不为它预留底部 padding。

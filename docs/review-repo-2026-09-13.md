@@ -4,6 +4,34 @@
 
 本文只写核对过的事实与标明的推断；「已验证」= 有命令输出 / 文件行号可复现，「推断」= 从代码读出但未在运行态复现。
 
+## 收口状态（2026-09-13，`main` @ `d9675ab`）
+
+下表是对 §3 各条按当前代码的逐项复核；正文（dbead84 基线的证据）保留不改。
+
+| ID | 状态 | 依据 |
+| --- | --- | --- |
+| F-01 | confirmed-fixed | `ci.yml` typecheck 步骤为 `pnpm exec next typegen && pnpm exec tsc --noEmit`；`deploy.sh` 同步；`main` 首条绿 CI `6b5449d` |
+| F-02 | confirmed-fixed | `scripts/backup.sh` 白名单含 `relays.json` 与 `assets/`，`backup.test.ts` 有真实打包回归；新白名单已随 `d7f34eb` 上线 |
+| F-03 | confirmed-fixed | `4a6c605` + `src/lib/assets/`（store.ts/files.mjs）：画布素材复制进 `data/assets/`、30 天独立期限、`migrate-canvas-assets.mjs` 迁移缺原件标 missing |
+| F-04 | confirmed-fixed | `e2e/canvas.spec.ts` 每段独立画布并断言真实 PATCH 409；`8f2dfba` 在途保存序列化；收口轮 e2e 40/40 |
+| F-05 | confirmed-fixed | `b1c71d0`：`ShellContext` 拆为 Session/Notices/Jobs/Composer 四个 Provider（`src/components/genius/shell/`），`useShell()` 为聚合兼容层，消费者迁域 hook |
+| F-06 | partially | `74248a5`：三条门禁进 deploy.sh、脏树默认拒绝、`BUILD_INFO.json`、`pnpm install --prod --frozen-lockfile`；部署 `d7f34eb` 实测 `build.sha` 回显。剩余：`git archive` 构建输入与 `releases/<sha>` 发布目录 + 回滚演练（R1.4，待生产窗口） |
+| F-07 | pending-external | 代码已落地 `34a8ac1`：`backup.sh --stop-service` 一致性快照、openssl 加密 + ossutil 异地副本、`restore-check.mjs`；生产 `BACKUP_OSS_*`/`OSS_*` 变量、ossutil 安装与恢复演练待配置 |
+| F-08 | confirmed-fixed | `docs/handoff.md` 已重写为现状文档：代码/部署/实测分列，门禁数字按实测填写，目录数与备份状态已纠正 |
+| F-09 | partially | `d7f34eb`：`admission_ms` 等锁/持锁耗时埋点进 `/api/health`（登录态 `admission.wait/hold` 分位数，`src/lib/jobs/admission-stats`）；run 文件线性 IO、索引增量写与 run 归档仍待 R4 后续 |
+| F-10 | confirmed-fixed | `8f2dfba`：本机管理令牌（`LUMEN_ADMIN_TOKEN`，Bearer + XFF/Host loopback 三判据，`src/lib/admin-token.ts`），五个管理 CLI 走 `/api/admin/*`；`--offline` 须先探测 ECONNREFUSED |
+| F-11 | confirmed-fixed | `9e11ea0`：`withRelayLock` 进程级串行锁包住 relays.json 读-改-写，`relay.test.ts` 并发不丢写回归 |
+| F-12 | confirmed-fixed | `AGENTS.md` 现 12,201 字节 ≤12,288；`project-contracts.test.ts` 有大小回归门禁 |
+| F-13 | confirmed-fixed | `9e11ea0` runner 拆 `runner/{submit,poll,persist,failover,state}.ts`（壳 288 行）；`538f99c` `globals.css` 按视图拆 `styles/` + CanvasView 拆节点卡/报价层/冲突弹层/轮询 hook；`exhaustive-deps` 0 disable |
+| F-14 | confirmed-fixed | `a1e5a1e`：Tailwind/postcss 依赖移除，`src/app/styles/reset.css` = preflight 逐字拷贝 |
+| F-15 | confirmed-fixed | `a1e5a1e`：`/gallery`、`/studio(/:kind)`、`/jobs/:id` stub 页删除，`next.config.ts` `redirects()` 307 到 `/` |
+| F-16 | pending-external | R3 首轮校准报价已冻结（plan R3 节：scene-only ≈¥117–145，全 8 条 ≈¥350–425）；等用户批预算与两张授权人物照，未调用付费接口 |
+| F-17 | confirmed-fixed | `74248a5`：eslint 范围 `src e2e scripts`（CI/AGENTS/deploy.sh 同步），`scripts/**/*.mjs` 加 `// @ts-check` 纳入 tsc 并补 JSDoc 类型 |
+| F-18 | confirmed-fixed | `docs/README.md` 索引覆盖 `docs/` 全部 27 个文件；`project-contracts.test.ts` 有索引完整性回归 |
+| F-19 | confirmed-fixed | runbook「环境事实」记录 Caddy v2.11.4 源码级核对：不受信客户端 XFF 被覆盖为对端 IP，`clientIp()`/`expectedHost()` 取首跳在现拓扑成立 |
+| F-20 | decided-keep | Origin/Referer 双缺头放行保留：Cookie CLI/smoke 依赖该行为，取舍已写入 runbook 与 AGENTS |
+| F-21 | decided-keep | 对话继续用 OpenAI SDK（ccgoai `gpt-5.6-luna`），无需要替换的事实依据 |
+
 ## 0. 结论先行
 
 | 维度 | 评级 | 一句话 |

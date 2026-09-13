@@ -1,6 +1,6 @@
 # 设计计划书 · 全仓优化与路线重排（2026-09 起）
 
-状态：2026-09-13 **实施中，本文已作为当前执行路线**。已决（§8 标注）：D-1 a 移除 Tailwind（已落地）；D-2 a e2e 定时+手动（`74248a5` 已绿一次）；D-3 a 删除 skip-check；D-4 b 本机管理令牌（R4.1 已落地）；D-6 b 素材 30 天并明示；D-8 a 非 root（已执行）；D-9 是。另已决：R3 先出报价不开跑；R6 无商户主体→继续礼品码，R6 不开工；R7 告警接飞书/钉钉/企微机器人；R4.0 异地副本落阿里云 OSS；R5.2 本轮做。D-5 待 SQLite 触发条件成立再定（生产 Node 22.22.2，22.x 的 node:sqlite 仍为 1.1 Active development）；D-7 预算未定。N3.1–N3.4 已合入 `37123bd`；R0 代码与文档已通过本地门禁，`main` 首条绿 CI 为 `6b5449d`（R0.1 验收成立）；R1.1–R1.3 已落地并于 2026-09-13 部署 `d7f34eb` 实测通过（`--frozen-lockfile` 首过、`build.sha` 回显生效），R1.5 非 root 已执行，R1.4 发布目录仍待生产窗口；当前证据/剩余工作见 `docs/handoff.md`。用户允许门禁通过后提交推送 main，不等于允许部署或付费评测。本文取代 `docs/plan-next-2026-09-13.md` 的排期表；该文与 `docs/plan-unimplemented-2026-09-08.md` 的契约仍为引用源。以下正文保留起草时方案，实际进度以上述状态与 as-built 为准。
+状态：2026-09-13 **收口，本文已作为当前执行路线**。代码基线 `main` @ `d9675ab`（已推送，CI 绿）；生产在 `d7f34eb`，最新 main 待部署。已决（§8 标注）：D-1 a 移除 Tailwind（`a1e5a1e` 已落地）；D-2 a e2e 定时+手动（`74248a5` 已绿，验收口径连续 3 次绿）；D-3 a 删除 skip-check；D-4 b 本机管理令牌（`8f2dfba` 已落地）；D-6 b 素材 30 天并明示；D-8 a 非 root（已执行）；D-9 是。另已决：R3 先出报价不开跑；R6 无商户主体→继续礼品码，R6 不开工；R7 告警接飞书/钉钉/企微机器人（`34a8ac1` 代码已落地，生产 webhook 配置待执行）；R4.0 异地副本落阿里云 OSS（`34a8ac1` 代码已落地，生产 OSS 变量与恢复演练待执行）；R5.2 已做（`b1c71d0`）。D-5 待 SQLite 触发条件成立再定（生产 Node 22.22.2，22.x 的 node:sqlite 仍为 1.1 Active development）；D-7 预算未定。N3.1–N3.4 已合入 `37123bd`，N3.5 管理页与 N4 面板分组随 `d9675ab` 落地；R0/R1.1–R1.3/R1.5/R1.6/R2/R5 全部代码落地，`main` 首条绿 CI 为 `6b5449d`，`d7f34eb` 已部署实测（`--frozen-lockfile` 首过、`build.sha` 回显生效）；R1.4 发布目录/回滚演练待生产窗口。当前证据/剩余工作见 `docs/handoff.md`。用户允许门禁通过后提交推送 main，不等于允许部署或付费评测。本文取代 `docs/plan-next-2026-09-13.md` 的排期表；该文与 `docs/plan-unimplemented-2026-09-08.md` 的契约仍为引用源。以下正文保留起草时方案，实际进度以上述状态与 as-built 为准。
 
 沿用的既定决策（不再讨论）：产品三卖点（`plan-next` §0.1）；D1 长片定价 ¥20/30/40；D2 `edit_video`/`extend_video` 移出路线图；D3 通用中转 provider（N3.1–N3.3 已提交，N3.4 进行中）；D4 微信 + 支付宝都接。
 
@@ -125,12 +125,12 @@ R2 / R3 / R4 / R5 在 R1 之后可**并行**（不同文件域，见每片「触
 
 | 片 | 内容 | 触碰范围 | 验收 |
 | --- | --- | --- | --- |
-| R0.1 | CI Typecheck 改 `pnpm exec next typegen && pnpm exec tsc --noEmit`；`deploy.sh` 同步 | `.github/workflows/ci.yml`、`scripts/deploy.sh` | `main` 上出现第一条绿的 CI 运行（`gh run list` 可查）；干净 clone 三条门禁全过 |
-| R0.2 | `backup.sh` 白名单补 `relays.json`；文档写明 `relay-catalog/`、`provider-health.json` 可不备的理由 | `scripts/backup.sh`、`docs/runbook.md` | 服务器跑一次备份，`tar tzf` 列表含 `relays.json` |
-| R0.3 | 画布素材留存：新建 `data/assets/<userId>/<assetId>{,.json}`；画布 material 节点建立时把 `data/tmp` 字节复制进 assets 并改引 `assetId`；`GET /api/uploads/:id` 兼容读两处；存量画布文档迁移脚本（找不到原件的节点标 `missing`）；`sweepTmp` 不变 | `src/lib/jobs/upload.ts`、`src/lib/canvas/{schema,run,dag,graph}.ts`、`CanvasView.tsx`、新 `src/lib/assets/`、`scripts/migrate-canvas-assets.mjs` | 单测：素材建立 25h 后 `validateGraph` 仍通过；e2e：画布素材节点刷新后缩略图可见；备份白名单加 `assets/` |
-| R0.4 | `docs/handoff.md` §0 改写到当前基线与实测门禁数字 | `docs/handoff.md` | 基线 = `git rev-parse origin/main`；门禁数字 = 本轮 §2.1 |
-| R0.5 | e2e `canvas.spec.ts:48` 稳定化：每段新建画布、断言 `patchB` 状态 409、拆断言；随后跑一次全量 e2e 留记录（N1.5） | `e2e/canvas.spec.ts`、`docs/handoff.md` | `--repeat-each 3` 全过；全量 35/35 |
-| R0.6 | `AGENTS.md` 瘦身到 ≤12KB：只留规则与「去哪读」，as-built 细节回 `docs/design.md`；新增 `docs/README.md` 一张「现行 / 历史」文档索引表（F-18） | `AGENTS.md`、`docs/design.md`、`docs/README.md` | 字节数 ≤ 12,288；规则条数不减（逐条对照表附在 PR 描述）；索引表覆盖 `docs/` 下全部文件 |
+| R0.1（已落地，`6b5449d` 首绿 CI） | CI Typecheck 改 `pnpm exec next typegen && pnpm exec tsc --noEmit`；`deploy.sh` 同步 | `.github/workflows/ci.yml`、`scripts/deploy.sh` | `main` 上出现第一条绿的 CI 运行（`gh run list` 可查）；干净 clone 三条门禁全过 |
+| R0.2（已落地，已随 `d7f34eb` 上线） | `backup.sh` 白名单补 `relays.json`；文档写明 `relay-catalog/`、`provider-health.json` 可不备的理由 | `scripts/backup.sh`、`docs/runbook.md` | 服务器跑一次备份，`tar tzf` 列表含 `relays.json` |
+| R0.3（已落地，`4a6c605` + `src/lib/assets/`） | 画布素材留存：新建 `data/assets/<userId>/<assetId>{,.json}`；画布 material 节点建立时把 `data/tmp` 字节复制进 assets 并改引 `assetId`；`GET /api/uploads/:id` 兼容读两处；存量画布文档迁移脚本（找不到原件的节点标 `missing`）；`sweepTmp` 不变 | `src/lib/jobs/upload.ts`、`src/lib/canvas/{schema,run,dag,graph}.ts`、`CanvasView.tsx`、新 `src/lib/assets/`、`scripts/migrate-canvas-assets.mjs` | 单测：素材建立 25h 后 `validateGraph` 仍通过；e2e：画布素材节点刷新后缩略图可见；备份白名单加 `assets/` |
+| R0.4（已落地，handoff 持续按现状重写） | `docs/handoff.md` §0 改写到当前基线与实测门禁数字 | `docs/handoff.md` | 基线 = `git rev-parse origin/main`；门禁数字 = 本轮 §2.1 |
+| R0.5（已落地） | e2e `canvas.spec.ts:48` 稳定化：每段新建画布、断言 `patchB` 状态 409、拆断言；随后跑一次全量 e2e 留记录（N1.5） | `e2e/canvas.spec.ts`、`docs/handoff.md` | `--repeat-each 3` 全过；全量 35/35 |
+| R0.6（已落地） | `AGENTS.md` 瘦身到 ≤12KB：只留规则与「去哪读」，as-built 细节回 `docs/design.md`；新增 `docs/README.md` 一张「现行 / 历史」文档索引表（F-18） | `AGENTS.md`、`docs/design.md`、`docs/README.md` | 字节数 ≤ 12,288；规则条数不减（逐条对照表附在 PR 描述）；索引表覆盖 `docs/` 下全部文件 |
 
 门禁：R0 全部完成后，`main` 上一次 CI 绿 + 一次 e2e 全绿记录进 handoff，才进入 R1。
 
@@ -151,12 +151,12 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
-| R2.1 | N3.4 收口：合入后跑 R0.5 的全量 e2e；`provider-health.json` 进 `/api/health` 与管理接口；文档（design §2l、runbook「provider 耗尽」）改写 | 单测覆盖 `plan-relay-provider` §4c 表每一行；mock 注入「第一家结构化 5xx → 第二家成片」端到端 |
+| R2.1（已落地，`37123bd`；health 已含 `src: healthList()`） | N3.4 收口：合入后跑 R0.5 的全量 e2e；`provider-health.json` 进 `/api/health` 与管理接口；文档（design §2l、runbook「provider 耗尽」）改写 | 单测覆盖 `plan-relay-provider` §4c 表每一行；mock 注入「第一家结构化 5xx → 第二家成片」端到端 |
 | R2.2 | N3.5 管理页（列表 + 健康灯 + discover / probe + 排序）| e2e：管理员登录可见，非管理员 404。**已落地（本批）**：`/admin/relays` 页 + `client/relays.ts` + `caps.isAdmin` 入口；排序用按钮而非拖动（有意偏离，见 DESIGN） |
 | R2.3 | N4 创作面板：产品按供应商分组、显示售价 / costHint / 时长档 / 分辨率 / 参考图数；与动态目录联动 | **已落地（本批）**：`ModelPop` 分组 + meta 行；e2e 断言组头=DTO providerName、每 option 有 `data-cost` 徽标、弹层项数与 `/api/models` 一致（下架即消失由服务端可用性过滤承担） |
 | R2.4 | N1.4 `minimax-h3` 真实积分核对进 `yman/catalog.ts` | `costUsdActual` 不再用兜底估价。待用户提供 YMan 账单实付积分，无法从代码侧核实 |
-| R2.5 | `relays.json` 写锁（F-11）；`smoke:live` 改为按当前 ORDER 的 t2v/i2v/t2i 三条（不再依赖 XAI） | 并发 PATCH 单测；生产 smoke 一次成功记录 |
-| R2.6 | `jobs/runner.ts`（1125 行）按既有函数边界拆 `runner/{submit,poll,persist,failover}.ts`，行为不变；**排在 N3.4 合入之后**（N3.4 正在改换家逻辑） | 既有 `runner.test / failover.test / uncertain-submit.test` 不改断言全过 |
+| R2.5（已落地，`9e11ea0` 写锁 + relay.test 并发回归；`smoke:live` 走 ORDER 的 t2v/i2v/t2i 三条） | `relays.json` 写锁（F-11）；`smoke:live` 改为按当前 ORDER 的 t2v/i2v/t2i 三条（不再依赖 XAI） | 并发 PATCH 单测；生产 smoke 一次成功记录 |
+| R2.6（已落地，`9e11ea0`：`runner/{submit,poll,persist,failover,state}.ts`，壳 288 行） | `jobs/runner.ts`（1125 行）按既有函数边界拆 `runner/{submit,poll,persist,failover}.ts`，行为不变；**排在 N3.4 合入之后**（N3.4 正在改换家逻辑） | 既有 `runner.test / failover.test / uncertain-submit.test` 不改断言全过 |
 
 ### R3 · 产品主线 B：产出质量成为一等公民（M，需付费预算）
 
@@ -192,9 +192,9 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
 | R5.1（已测，数字见 handoff §5） | React Profiler 量化：提示词击键、SSE 进度到达两种场景下的消费者重渲次数与耗时（375 宽移动视口） | 数字进 PR 描述，作为拆分前基线 |
-| R5.2（已决：本轮做；R5.1 基线见 handoff §5） | `ShellContext` 拆 `SessionProvider` / `JobsProvider` / `ComposerProvider` / `NoticesProvider`；`useShell()` 改为聚合四者的兼容 hook；组件逐个改用细粒度 hook | e2e 全绿；Profiler 重渲次数下降（与 R5.1 对比） |
-| R5.3 | `CanvasView.tsx` 拆节点卡 / 报价层 / 冲突弹层 / 轮询 hook；清掉 3 处 `exhaustive-deps` 禁用（改 ref 或正确依赖） | `react-hooks/exhaustive-deps` 0 disable；canvas e2e 全过 |
-| R5.4 | `globals.css` 按视图拆到 `styles/{shell,home,composer,create,login}.css` | 视觉回归：e2e 截图对比或人工五视图核对 |
+| R5.2（已落地，`b1c71d0`；R5.1 基线见 handoff §5） | `ShellContext` 拆 `SessionProvider` / `JobsProvider` / `ComposerProvider` / `NoticesProvider`；`useShell()` 改为聚合四者的兼容 hook；组件逐个改用细粒度 hook | e2e 全绿；Profiler 重渲次数下降（与 R5.1 对比） |
+| R5.3（已落地，`538f99c`；`exhaustive-deps` 0 disable） | `CanvasView.tsx` 拆节点卡 / 报价层 / 冲突弹层 / 轮询 hook；清掉 3 处 `exhaustive-deps` 禁用（改 ref 或正确依赖） | `react-hooks/exhaustive-deps` 0 disable；canvas e2e 全过 |
+| R5.4（已落地，`538f99c`） | `globals.css` 按视图拆到 `styles/{shell,home,composer,create,login}.css` | 视觉回归：e2e 截图对比或人工五视图核对 |
 | R5.5（已落地） | Tailwind 去留（D-1）；legacy 重定向页改 `next.config.ts` `redirects()` | `pnpm build` 通过；四个旧路径 307 到 `/` |
 
 ### R6 · 支付网关（D4：微信 + 支付宝；L）
@@ -223,18 +223,18 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 
 ## 5. 覆盖与验收清单（交付时逐行勾）
 
-| ID | 单元 | 检查 | 环境 |
-| --- | --- | --- | --- |
-| C-1 | CI `main` | 最近一次运行 conclusion = success | GitHub Actions |
-| C-2 | 干净 clone | `pnpm i --frozen-lockfile && next typegen && tsc && eslint src e2e scripts && vitest run` 全过 | Ubuntu（CI）+ Windows（本机） |
-| C-3 | e2e | 35/35，`--repeat-each 3` 下 canvas.spec 稳定 | mock，3177 隔离端口 |
-| C-4 | 备份 | `tar tzf` 含 `relays.json`、`assets/`；异地副本可下载解密；restore-check 通过 | 服务器 |
-| C-5 | 画布素材 | 建节点 → 人为把 sidecar mtime 改到 25h 前 → sweep → 节点仍可用 | 本地 |
-| C-6 | 部署 | health 回显 sha = 部署 commit；回滚演练一次 | 服务器 |
-| C-7 | 资金基线 | R4 每次迁移前后：全部账号两池余额 + `ref` 集合逐字节一致 | 服务器（离线窗口） |
-| C-8 | 前端 | Profiler 基线 vs 拆分后；五视图 375/390/768/1440 视觉核对 | 本机 Chrome |
-| C-9 | 质量 | `evals/runs/` 至少一份校准 + 一份报告；`HARNESS_QC_VISUAL_THRESHOLD` 写进生产 `.env` 并记录依据 | 真实上游，预算显式 |
-| C-10 | 文档 | handoff / design / runbook / AGENTS 与上述全部一致；AGENTS ≤ 12KB | 仓库 |
+| ID | 单元 | 检查 | 环境 | 状态（2026-09-13） |
+| --- | --- | --- | --- | --- |
+| C-1 | CI `main` | 最近一次运行 conclusion = success | GitHub Actions | ✅ `main` @ `d9675ab` run success（`gh run list` 34758361483） |
+| C-2 | 干净 clone | `pnpm i --frozen-lockfile && next typegen && tsc && eslint src e2e scripts && vitest run` 全过 | Ubuntu（CI）+ Windows（本机） | ✅ CI 绿 + 本机收口轮门禁全绿（数字见 handoff §0） |
+| C-3 | e2e | 35/35，`--repeat-each 3` 下 canvas.spec 稳定 | mock，3177 隔离端口 | ✅ 收口轮 40/40（spec 集重构后口径）；canvas 用例断言真实 409，此前 `--repeat-each 3` 三轮已验 |
+| C-4 | 备份 | `tar tzf` 含 `relays.json`、`assets/`；异地副本可下载解密；restore-check 通过 | 服务器 | ⏳ 白名单已上线（`d7f34eb`）；异地副本/restore-check 代码就绪（`34a8ac1`），**缺**：生产 `BACKUP_OSS_*`/`OSS_*` 配置、ossutil 安装、恢复演练 |
+| C-5 | 画布素材 | 建节点 → 人为把 sidecar mtime 改到 25h 前 → sweep → 节点仍可用 | 本地 | ✅ R0.3 落地（`4a6c605` + `src/lib/assets/`），保留期/迁移/过期回归在测 |
+| C-6 | 部署 | health 回显 sha = 部署 commit；回滚演练一次 | 服务器 | ⏳ sha 回显已生效（`d7f34eb` 部署实测）；**缺**：`releases/<sha>` 目录与回滚演练（R1.4 待生产窗口） |
+| C-7 | 资金基线 | R4 每次迁移前后：全部账号两池余额 + `ref` 集合逐字节一致 | 服务器（离线窗口） | ◻ 未触发：R4.2 迁移未开始，无对照对象 |
+| C-8 | 前端 | Profiler 基线 vs 拆分后；五视图 375/390/768/1440 视觉核对 | 本机 Chrome | ✅ Profiler 基线 vs 拆分后已测（handoff §5，拆分前后持平、无 longtask）；375/1440 截图已核对，390/768 未单独截图 |
+| C-9 | 质量 | `evals/runs/` 至少一份校准 + 一份报告；`HARNESS_QC_VISUAL_THRESHOLD` 写进生产 `.env` 并记录依据 | 真实上游，预算显式 | ⏳ **缺**：预算未批 + 两张授权人物照；报价已冻结（R3 节） |
+| C-10 | 文档 | handoff / design / runbook / AGENTS 与上述全部一致；AGENTS ≤ 12KB | 仓库 | ✅ 收口轮已同步；AGENTS 12,201 字节 ≤12,288（`project-contracts.test.ts` 回归门禁） |
 
 ## 6. 风险登记
 
