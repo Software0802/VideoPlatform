@@ -182,7 +182,7 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
-| R5.1 | React Profiler 量化：提示词击键、SSE 进度到达两种场景下的消费者重渲次数与耗时（375 宽移动视口） | 数字进 PR 描述，作为拆分前基线 |
+| R5.1（已测，数字见 handoff §5） | React Profiler 量化：提示词击键、SSE 进度到达两种场景下的消费者重渲次数与耗时（375 宽移动视口） | 数字进 PR 描述，作为拆分前基线 |
 | R5.2 | `ShellContext` 拆 `SessionProvider` / `JobsProvider` / `ComposerProvider` / `NoticesProvider`；`useShell()` 改为聚合四者的兼容 hook；组件逐个改用细粒度 hook | e2e 全绿；Profiler 重渲次数下降（与 R5.1 对比） |
 | R5.3 | `CanvasView.tsx` 拆节点卡 / 报价层 / 冲突弹层 / 轮询 hook；清掉 3 处 `exhaustive-deps` 禁用（改 ref 或正确依赖） | `react-hooks/exhaustive-deps` 0 disable；canvas e2e 全过 |
 | R5.4 | `globals.css` 按视图拆到 `styles/{shell,home,composer,create,login}.css` | 视觉回归：e2e 截图对比或人工五视图核对 |

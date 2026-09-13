@@ -15,6 +15,7 @@ import {
 } from "@/lib/env";
 import { assertFfmpeg, ffmpegBinary } from "@/lib/ffmpeg";
 import { queueStats, runnerStarted } from "@/lib/jobs/active";
+import { admissionStats } from "@/lib/jobs/admission";
 import { exhaustedList, healthList } from "@/lib/providers/health";
 import { mockHasFont } from "@/lib/providers/mock";
 import {
@@ -169,6 +170,10 @@ async function handler(request: Request) {
       providerHealth: healthList(),
       // 全站在途任务数，口径与 `MAX_QUEUED_JOBS` 的准入判据一致（= queued + running）。
       queued: queue.queued + queue.running,
+      // 准入锁的等锁 / 持锁耗时（最近 256 次，最近邻分位）——F-09「准入 IO 随历史
+      // 线性增长」的观测入口；`hold.p95Ms` 持续走高是 R4.2（SQLite 迁移）触发条件之一。
+      // 进程启动后还没有过一次准入时为 null。
+      admission: admissionStats(),
     },
     { status: ok ? 200 : 503 },
   );
