@@ -144,7 +144,7 @@ describe("end-to-end ledger: a recovered requeue still adds onto priorCostUsd", 
       bible,
       record: recovered,
       provider: providerFor(submit, poll),
-      model: "mock-video",
+      models: { text_to_video: "mock-video", image_to_video: "mock-video", reference_to_video: "mock-video" },
       resolveAsset: () => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,x" }),
       persistOutput: async () => "shots/0/video.mp4",
       pollIntervalMs: 0,
@@ -227,7 +227,6 @@ describe("runPersistedPlan treats a recovered needs_review shot as terminal", ()
 
     const final = await runPersistedPlan(id, {
       maxParallel: 2,
-      model: "mock-video",
       provider: {
         id: "mock",
         capabilities: () => ({

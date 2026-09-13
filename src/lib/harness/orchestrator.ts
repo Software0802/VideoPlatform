@@ -461,7 +461,6 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
     const final = await runPersistedPlan(job.id, {
       maxParallel: deps.shotConcurrency(),
       provider,
-      model: job.model,
       pollIntervalMs: deps.pollIntervalMs,
       aspectRatio: job.aspectRatio ?? undefined,
       resolution: job.resolution ?? undefined,
@@ -931,6 +930,8 @@ export function budgetCap(
 /**
  * shot 预留用的计价形状：任务落定时选定的上游模型 + 记录里的分辨率/音轨/provider。
  * 可灵按积分档、YMan 按时长价、其余按模型每秒单价——与 `create.ts` 的估价同一个口径。
+ * 注意 `model` 恒为 `job.model`（t2v 档）：按 mode 分模型的 provider（YMan 的 i2v/r2v
+ * 用另一个模型）此处仍按 t2v 模型估——两家该口径下同档同价，换模型名只是徒增复杂。
  */
 export type ShotPricing = { model: string; video?: VideoPricingHint };
 

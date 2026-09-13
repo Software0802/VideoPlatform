@@ -32,6 +32,13 @@ const resolveAsset = (assetId: string) => ({
   dataUri: `data:image/jpeg;base64,${assetId}`,
 });
 
+// 按 mode 分模型的 provider（YMan）：t2v 与 i2v/r2v 是两个不同模型，不能共用 job.model。
+const models = {
+  text_to_video: "kling-2.6",
+  image_to_video: "minimax-h3-933-图文",
+  reference_to_video: "minimax-h3-933-图文",
+};
+
 const caps: ProviderCaps = {
   modes: ["text_to_video", "image_to_video", "reference_to_video"],
   durations: [5, 10],
@@ -62,7 +69,7 @@ describe("shot router", () => {
       shot: shot({ characterIds: ["char_main"], locationId: "loc_cinema" }),
       bible,
       resolveAsset,
-      model: "kling-2.6",
+      models,
       caps,
       aspectRatio: "16:9",
       resolution: "720p",
@@ -88,11 +95,13 @@ describe("shot router", () => {
       }),
       bible,
       resolveAsset,
-      model: "kling-2.6",
+      models,
       caps,
     });
     const call = mapToGrokRest(request);
     expect(request.mode).toBe("image_to_video");
+    // i2v 走 i2v 的模型，不是 job 的 t2v 模型（YMan 按 mode 分模型，混用会被上游拒）。
+    expect(request.model).toBe("minimax-h3-933-图文");
     expect(request.startImage).toEqual({
       kind: "data_uri",
       dataUri: "data:image/jpeg;base64,shots/0/link.jpg",
@@ -107,11 +116,12 @@ describe("shot router", () => {
       shot: shot({ route: "r2v", characterIds: ["char_main"], locationId: "loc_cinema" }),
       bible,
       resolveAsset,
-      model: "minimax-H3 参考",
+      models,
       caps,
     });
     const call = mapToGrokRest(request);
     expect(request.mode).toBe("reference_to_video");
+    expect(request.model).toBe("minimax-h3-933-图文");
     expect(request.referenceImages).toHaveLength(2);
     expect(call.path).toBe("/videos/generations");
     expect(call.body.reference_images).toEqual([
@@ -126,7 +136,7 @@ describe("shot router", () => {
       shot: shot({ route: "r2v", characterIds: ["char_main"], locationId: "loc_cinema" }),
       bible,
       resolveAsset,
-      model: "kling-2.6",
+      models,
       caps: { ...caps, maxReferenceImages: 1 },
     });
     expect(request.referenceImages).toEqual([
@@ -141,7 +151,7 @@ describe("shot router", () => {
         shot: shot({ durationSec: 10 }),
         bible,
         resolveAsset,
-        model: "kling-2.6",
+        models,
         caps: { ...caps, durations: [5] },
       }),
     ).toThrow("当前 provider 不支持该时长档");
@@ -154,7 +164,7 @@ describe("shot router", () => {
         shot: shot({ route: "i2v" }),
         bible,
         resolveAsset,
-        model: "kling-2.6",
+        models,
         caps,
       }),
     ).toThrow("I2V 需要 startFrame");
@@ -164,7 +174,7 @@ describe("shot router", () => {
         shot: shot({ route: "r2v", characterIds: [] }),
         bible: { ...bible, locations: [] },
         resolveAsset,
-        model: "minimax-H3 参考",
+        models,
         caps,
       }),
     ).toThrow("R2V 缺少参考资产");
@@ -174,7 +184,7 @@ describe("shot router", () => {
         shot: shot({ route: "t2v", continuity: "tail_chain" }),
         bible,
         resolveAsset,
-        model: "kling-2.6",
+        models,
         caps,
       }),
     ).toThrow("tail-chain 必须使用 I2V");
@@ -184,7 +194,7 @@ describe("shot router", () => {
         shot: shot({ route: "r2v", characterIds: ["char_main"] }),
         bible,
         resolveAsset,
-        model: "kling-2.6",
+        models,
         caps: { ...caps, maxReferenceImages: 0 },
       }),
     ).toThrow("当前 provider 不收参考图");

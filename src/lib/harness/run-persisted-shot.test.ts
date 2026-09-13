@@ -12,7 +12,6 @@ let readJob: (id: string) => Promise<JobRecord | null>;
 let saveHarnessPlan: (jobId: string, plan: HarnessPlan) => Promise<JobRecord>;
 let runPersistedShot: (jobId: string, shotId: string, options: {
   provider?: VideoProvider;
-  model: string;
   resolveAsset: (assetId: string) => { kind: "data_uri"; dataUri: string };
   persistOutput: (shot: unknown, handle: unknown) => Promise<string>;
   pollIntervalMs?: number;
@@ -142,7 +141,6 @@ describe("persisted shot runner", () => {
     });
     const options = {
       provider,
-      model: "mock-video",
       resolveAsset: (assetId: string) => ({ kind: "data_uri" as const, dataUri: assetId }),
       persistOutput,
       pollIntervalMs: 0,

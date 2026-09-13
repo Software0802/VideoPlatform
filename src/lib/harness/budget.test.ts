@@ -77,7 +77,11 @@ describe("R05 shot cost ledger", () => {
       bible,
       record: createShotRecords([shot])[0]!,
       provider: provider(submit, poll),
-      model: "grok-imagine-video-1.5",
+      models: {
+        text_to_video: "grok-imagine-video-1.5",
+        image_to_video: "grok-imagine-video-1.5",
+        reference_to_video: "grok-imagine-video-1.5",
+      },
       resolveAsset: () => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,x" }),
       persistOutput: async () => {
         persistCalls += 1;
@@ -99,7 +103,11 @@ describe("R05 shot cost ledger", () => {
       bible,
       record: createShotRecords([shot])[0]!,
       provider: provider(submit, poll),
-      model: "grok-imagine-video-1.5",
+      models: {
+        text_to_video: "grok-imagine-video-1.5",
+        image_to_video: "grok-imagine-video-1.5",
+        reference_to_video: "grok-imagine-video-1.5",
+      },
       resolveAsset: () => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,x" }),
       persistOutput: async () => "shots/0/video.mp4",
       pollIntervalMs: 0,
@@ -179,7 +187,11 @@ describe("R06 budget gate runs before every attempt", () => {
       bible,
       record: createShotRecords([shot])[0]!,
       provider: provider(submit, poll),
-      model: "grok-imagine-video-1.5",
+      models: {
+        text_to_video: "grok-imagine-video-1.5",
+        image_to_video: "grok-imagine-video-1.5",
+        reference_to_video: "grok-imagine-video-1.5",
+      },
       resolveAsset: () => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,x" }),
       beforeAttempt: async (_shot, record) => {
         attempts.push(record.retries);
@@ -220,7 +232,11 @@ describe("R06 budget gate runs before every attempt", () => {
       bible,
       record: createShotRecords([shot])[0]!,
       provider: provider(submit, poll),
-      model: "grok-imagine-video-1.5",
+      models: {
+        text_to_video: "grok-imagine-video-1.5",
+        image_to_video: "grok-imagine-video-1.5",
+        reference_to_video: "grok-imagine-video-1.5",
+      },
       resolveAsset: () => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,x" }),
       beforeAttempt: async (_shot, record) => {
         attempts.push(record.retries);

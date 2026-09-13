@@ -277,6 +277,49 @@ describe("harness orchestrator", () => {
     expect((await readJob(id))?.status).toBe("persisting");
   }, 120_000);
 
+  it("按 mode 分模型的 provider：i2v shot 用 i2v 模型，不拿 job 的 t2v 模型", async () => {
+    // YMan 的 t2v（minimax-h3）与 i2v/r2v（minimax-h3-933-图文）是两个模型；
+    // 混用会被上游按「模型不接受参考图」拒掉（生产 job_db872d508168 的教训）。
+    const id = "job_harness_yman_models";
+    await writeJob(record(id, { provider: "yman", model: "minimax-h3" }));
+    // 关掉档A（不声明图生图），让 hard_cut 首镜保持 t2v——本用例要同时覆盖两种 mode 的模型名。
+    imageStub.provider = sheetProvider({ supportsImageReference: false });
+    const base = clipProvider((req) => req.durationSec ?? 8);
+    const provider: VideoProvider & { submit: typeof base.submit } = {
+      ...base,
+      id: "yman",
+      capabilities: () => ({
+        modes: ["text_to_video", "image_to_video", "reference_to_video"],
+        maxDurationSec: 15,
+        supportsLastFrameLock: false,
+        maxResolution: "1080p",
+      }),
+    };
+    const orchestrator = createHarnessOrchestrator({
+      enabled: () => true,
+      provider,
+      // provider.id 不是 mock 时 orchestrator 会走真实 Director——本用例只关心 shot 模型名。
+      director: async (input: Parameters<typeof mockDirectorPlan>[0]) => mockDirectorPlan(input),
+      pollIntervalMs: 0,
+      stitchSize: () => ({ width: 64, height: 36 }),
+    });
+    try {
+      await orchestrator.execute(id);
+    } finally {
+      imageStub.provider = undefined;
+    }
+
+    const job = await readJob(id);
+    expect(job?.status).toBe("persisting");
+    const submitted = provider.submit.mock.calls.map(([r]) => r as ProviderGenerateRequest);
+    // mock 计划：shot0 hard_cut → t2v，shot1/2 tail_chain → i2v。
+    const t2v = submitted.filter((r) => r.mode === "text_to_video");
+    const i2v = submitted.filter((r) => r.mode === "image_to_video");
+    expect(t2v.map((r) => r.model)).toEqual(["minimax-h3"]);
+    expect(i2v).toHaveLength(2);
+    for (const r of i2v) expect(r.model).toBe("minimax-h3-933-图文");
+  }, 120_000);
+
   it("档A：支持图生图时生成三视图角色表与每镜首帧", async () => {
     const id = "job_harness_first_frame";
     await writeJob(record(id));

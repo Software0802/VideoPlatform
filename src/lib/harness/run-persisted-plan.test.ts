@@ -13,7 +13,6 @@ let saveHarnessPlan: (jobId: string, plan: HarnessPlan) => Promise<JobRecord>;
 let runPersistedPlan: (jobId: string, options: {
   maxParallel: number;
   provider?: VideoProvider;
-  model: string;
   resolveAsset: (assetId: string) => { kind: "data_uri"; dataUri: string };
   persistOutput: (shot: Shot, handle: ProviderHandle) => Promise<string>;
   pollIntervalMs?: number;
@@ -145,7 +144,6 @@ describe("persisted shot plan", () => {
     const options = {
       maxParallel: 2,
       provider,
-      model: "mock-video",
       resolveAsset: (assetId: string) => ({ kind: "data_uri" as const, dataUri: assetId }),
       persistOutput,
       pollIntervalMs: 0,
@@ -196,7 +194,6 @@ describe("persisted shot plan", () => {
         submit,
         poll,
       },
-      model: "mock-video",
       resolveAsset: (assetId: string) => ({ kind: "data_uri" as const, dataUri: assetId }),
       persistOutput,
       pollIntervalMs: 0,
