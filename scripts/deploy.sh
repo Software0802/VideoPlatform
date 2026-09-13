@@ -93,7 +93,7 @@ tar czf "$PKG" \
   .next public package.json pnpm-lock.yaml pnpm-workspace.yaml next.config.ts BUILD_INFO.json \
   scripts/mint-invites.mjs scripts/backup.sh scripts/grant-balance.mjs scripts/mint-gift-codes.mjs \
   scripts/reset-password.mjs scripts/disable-user.mjs scripts/usage.mjs scripts/migrate-billing.mjs \
-  scripts/lib scripts/migrate-canvas-assets.mjs data-seed \
+  scripts/lib scripts/migrate-canvas-assets.mjs scripts/alert-test.mjs scripts/restore-check.mjs data-seed \
   src/lib/assets/files.mjs src/lib/assets/migrate.mjs \
   src/lib/billing/protocol.mjs src/lib/billing/file-ledger.mjs
 ls -lh "$PKG" | awk '{print "   包大小:", $5}'
