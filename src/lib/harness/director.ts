@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { agentLlmConfig } from "@/lib/agent/llm";
-import { upstreamTimeoutMs } from "@/lib/env";
+import { harnessLlmTimeoutMs } from "@/lib/env";
 import { HarnessFailure } from "./harness-failure";
 import { normalizeCompletion, usageFromResponse, type LlmCompletion, type LlmUsage } from "./llm-usage";
 import type { HarnessPlan } from "./types";
@@ -225,7 +225,13 @@ export async function createDirectorPlan(
       await options.onUsage?.(completion.usage ?? null);
     } catch (error) {
       // The upstream client owns transport retries; do not duplicate billable calls here.
-      throw error;
+      // 超时 / 上游错误归一成 llm_upstream_failed：Director 不产生付费分镜，任务可重试，
+      // 用户不该只看到一个裸的 "Request timed out."。
+      if (error instanceof HarnessFailure) throw error;
+      throw new HarnessFailure(
+        "llm_upstream_failed",
+        "导演规划超时或上游失败，未产生任何付费分镜，可重试",
+      );
     }
     try {
       const value: unknown = JSON.parse(raw);
@@ -279,7 +285,7 @@ function completerFor(): DirectorCompleter {
     apiKey: config.apiKey,
     baseURL: config.baseURL,
     maxRetries: 0,
-    timeout: upstreamTimeoutMs(),
+    timeout: harnessLlmTimeoutMs(),
   });
   return (request) => completeWithAgent(client, request);
 }

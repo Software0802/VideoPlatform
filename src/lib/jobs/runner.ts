@@ -1,13 +1,14 @@
 import { access, copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { priceCny } from "@/lib/billing/prices";
-import { estimateCostUsd, estimateHarnessCostUsd } from "@/lib/cost";
+import { estimateCostUsd } from "@/lib/cost";
 import { jobConcurrency, upstreamPollMaxMs, upstreamRetryBaseMs } from "@/lib/env";
 import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { emitJob } from "@/lib/jobs/events";
 import {
   harnessSettingsFor,
+  harnessSubmitEstimateUsd,
   modelForProvider,
   providerSettingsFor,
   videoPricingOf,
@@ -280,6 +281,8 @@ const CERTAIN_SUBMIT_FAILURE_CODES = new Set(["missing_api_key", "mock_failure"]
 function isAmbiguousSubmitError(error: unknown): boolean {
   if (!(error instanceof ProviderHttpError)) return false;
   if (error.status < 500) return false;
+  // 结构化错误体 = 上游明确拒单，确定没受理没计费（openai-image 通道打这个标记）。
+  if (error.upstreamRejected) return false;
   return !CERTAIN_SUBMIT_FAILURE_CODES.has(error.code);
 }
 
@@ -482,7 +485,7 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
     r.costUsdEstimate = isImageMode(r.mode)
       ? r.costUsdEstimate
       : isHarness
-        ? estimateHarnessCostUsd(packHarnessDuration(r.durationSec as 30 | 45 | 60), {
+        ? harnessSubmitEstimateUsd(packHarnessDuration(r.durationSec as 30 | 45 | 60), {
             model,
             video: videoPricingOf(hSettings, next) ?? {
               resolution: r.resolution ?? "720p",

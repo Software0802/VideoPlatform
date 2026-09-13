@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ymanGet, ymanPost } from "./client";
 
+const { notifyAlertMock } = vi.hoisted(() => ({ notifyAlertMock: vi.fn(async () => {}) }));
+vi.mock("@/lib/alerts", () => ({ notifyAlert: notifyAlertMock }));
+
 afterEach(() => {
+  notifyAlertMock.mockClear();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -139,5 +143,33 @@ describe("YMan REST client", () => {
       code: "missing_api_key",
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("alerts upstream_model_missing when a create POST gets a 404, while still throwing not_found", async () => {
+    vi.stubEnv("YMAN_API_KEY", "test-key");
+    vi.stubEnv("UPSTREAM_RETRY_BASE_MS", "0");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ error: { code: "not_found", message: "model gone" } }, 404)),
+    );
+
+    await expect(ymanPost("/videos", { model: "minimax-H3 文字", prompt: "p" })).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+    });
+    expect(notifyAlertMock).toHaveBeenCalledWith(
+      "upstream_model_missing",
+      expect.objectContaining({ provider: "yman", model: "minimax-H3 文字" }),
+      "yman:minimax-H3 文字",
+    );
+  });
+
+  it("does not alert on a GET 404 — a lost task handle is not a missing model", async () => {
+    vi.stubEnv("YMAN_API_KEY", "test-key");
+    vi.stubEnv("UPSTREAM_RETRY_BASE_MS", "0");
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 404)));
+
+    await expect(ymanGet("/videos/vid_gone")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    expect(notifyAlertMock).not.toHaveBeenCalled();
   });
 });

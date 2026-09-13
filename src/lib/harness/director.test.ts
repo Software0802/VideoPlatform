@@ -136,6 +136,23 @@ describe("director", () => {
     expect(() => directorPlanSchema.parse({ ...validPlan, typo: true })).toThrow();
   });
 
+  it("wraps upstream timeout/error into HarnessFailure llm_upstream_failed — retryable, not internal", async () => {
+    let calls = 0;
+    await expect(
+      createDirectorPlan(
+        { prompt: "连续动作", targetDurationSec: 30 },
+        {
+          complete: async () => {
+            calls += 1;
+            throw new Error("Request timed out.");
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ name: "HarnessFailure", code: "llm_upstream_failed" });
+    // 上游传输错误不重发：补一次调用就是再付一次模型费。
+    expect(calls).toBe(1);
+  });
+
   it("rejects invalid director input before calling the model", async () => {
     let calls = 0;
     await expect(

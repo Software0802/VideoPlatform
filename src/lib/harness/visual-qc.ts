@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { agentLlmConfig } from "@/lib/agent/llm";
-import { harnessQcVisualModel, upstreamTimeoutMs } from "@/lib/env";
+import { harnessLlmTimeoutMs, harnessQcVisualModel } from "@/lib/env";
 import { HarnessFailure } from "./harness-failure";
 import { normalizeCompletion, usageFromResponse, type LlmCompletion, type LlmUsage } from "./llm-usage";
 import type { IdentityBible, Shot } from "./types";
@@ -162,7 +162,7 @@ function completerFor(): VisualQcCompleter {
     apiKey: config.apiKey,
     baseURL: config.baseURL,
     maxRetries: 0,
-    timeout: upstreamTimeoutMs(),
+    timeout: harnessLlmTimeoutMs(),
   });
   return (request) => completeWithAgent(client, request);
 }

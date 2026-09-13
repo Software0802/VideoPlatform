@@ -6,7 +6,7 @@ import { ProviderHttpError } from "@/lib/providers/types";
 // catalog.ts 的键是 `/v1/models` 展示名（发给上游的那一串）；旧的内部名（如
 // `minimax_h3_t2v`）降级成了 alias，仍能作为输入被认出，但不再是权威输出——见
 // catalog.test.ts 的 resolveModel 测试。这里只用展示名做输出断言。
-const T2V_DISPLAY = "minimax-H3 文字";
+const T2V_DISPLAY = "minimax-h3";
 const REF2V_DISPLAY = "minimax-h3-933-图文";
 const SEEDANCE_DISPLAY = "SD2.0 满血";
 
@@ -401,7 +401,7 @@ describe("resolveYmanSettings — user resolution & product defaults (契约 A1)
   it("honours an explicit req.resolution the model supports, over the product default", () => {
     vi.stubEnv(
       "YMAN_MODEL_CATALOG",
-      JSON.stringify({ "minimax-H3 文字": { resolutions: ["720p", "1080p"] } }),
+      JSON.stringify({ "minimax-h3": { resolutions: ["720p", "1080p"] } }),
     );
     const settings = resolveYmanSettings(base({ durationSec: 5, resolution: "1080p" }), { resolution: "720p" });
     expect(settings.resolution).toBe("1080p");
@@ -410,7 +410,7 @@ describe("resolveYmanSettings — user resolution & product defaults (契约 A1)
   it("falls back to the product default resolution when the request names none", () => {
     vi.stubEnv(
       "YMAN_MODEL_CATALOG",
-      JSON.stringify({ "minimax-H3 文字": { resolutions: ["720p", "1080p"] } }),
+      JSON.stringify({ "minimax-h3": { resolutions: ["720p", "1080p"] } }),
     );
     const settings = resolveYmanSettings(base({ durationSec: 5 }), { resolution: "1080p" });
     expect(settings.resolution).toBe("1080p");
@@ -419,7 +419,7 @@ describe("resolveYmanSettings — user resolution & product defaults (契约 A1)
   it("without any ask or product default, settles on the model's lowest (cheapest) tier", () => {
     vi.stubEnv(
       "YMAN_MODEL_CATALOG",
-      JSON.stringify({ "minimax-H3 文字": { resolutions: ["720p", "1080p"] } }),
+      JSON.stringify({ "minimax-h3": { resolutions: ["720p", "1080p"] } }),
     );
     expect(resolveYmanSettings(base({ durationSec: 5 })).resolution).toBe("720p");
   });

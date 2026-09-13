@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openaiPost } from "./client";
 
+const { notifyAlertMock } = vi.hoisted(() => ({ notifyAlertMock: vi.fn(async () => {}) }));
+vi.mock("@/lib/alerts", () => ({ notifyAlert: notifyAlertMock }));
+
 /**
  * `normalizeImageUpstreamError` (client.ts): a relay's "no money left" answer comes back in
  * more than one shape, and it must always become the one code `switchAwayFromExhausted`
@@ -22,6 +25,7 @@ function jsonResponse(body: unknown, status: number): Response {
 }
 
 afterEach(() => {
+  notifyAlertMock.mockClear();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -154,5 +158,93 @@ describe("openaiPost — upstream quota/credit exhaustion normalizes to 429 quot
     expect(thrown).toMatchObject({ status: 429, code: "quota_exhausted" });
     const serialized = `${(thrown as Error).message} ${(thrown as Error).stack ?? ""}`;
     expect(serialized).not.toContain(key);
+  });
+});
+
+describe("openaiPost — structured 5xx is a definite rejection, unstructured stays ambiguous", () => {
+  it("marks a structured 503 error envelope as upstreamRejected, keeping code and message", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-busy");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          { error: { code: "service_busy", type: "api_error", message: "当前服务繁忙，请稍后再试 (Ref abc123)" } },
+          503,
+        ),
+      ),
+    );
+
+    await expect(openaiPost("/images/generations", { model: "gpt-image-2", prompt: "p" })).rejects.toMatchObject({
+      status: 503,
+      code: "service_busy",
+      message: "当前服务繁忙，请稍后再试 (Ref abc123)",
+      upstreamRejected: true,
+    });
+  });
+
+  it("also accepts error.type alone as the structured marker", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-typeonly");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ error: { type: "api_error", message: "upstream busy" } }, 502)),
+    );
+
+    await expect(openaiPost("/images/generations", { prompt: "p" })).rejects.toMatchObject({
+      status: 502,
+      code: "api_error",
+      upstreamRejected: true,
+    });
+  });
+
+  it("leaves a 5xx without the error envelope ambiguous — the request may have landed", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-bare500");
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 503)));
+
+    await expect(openaiPost("/images/generations", { prompt: "p" })).rejects.toMatchObject({
+      status: 503,
+      upstreamRejected: false,
+    });
+  });
+
+  it("leaves a 5xx whose error object carries only a message ambiguous", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-msgonly");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ error: { message: "internal error" } }, 500)),
+    );
+
+    await expect(openaiPost("/images/generations", { prompt: "p" })).rejects.toMatchObject({
+      status: 500,
+      upstreamRejected: false,
+    });
+  });
+});
+
+describe("openaiPost — 404 model missing raises upstream_model_missing", () => {
+  it("alerts once per provider:model while still throwing the mapped error", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-404");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ error: { code: "model_not_found", message: "The model `gpt-image-2` does not exist" } }, 404),
+      ),
+    );
+
+    await expect(
+      openaiPost("/images/generations", { model: "gpt-image-2", prompt: "p" }),
+    ).rejects.toMatchObject({ status: 404, code: "model_not_found" });
+    expect(notifyAlertMock).toHaveBeenCalledWith(
+      "upstream_model_missing",
+      expect.objectContaining({ provider: "openai", model: "gpt-image-2" }),
+      "openai:gpt-image-2",
+    );
+  });
+
+  it("does not alert on non-404 failures", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-noalert");
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 500)));
+
+    await expect(openaiPost("/images/generations", { prompt: "p" })).rejects.toMatchObject({ status: 500 });
+    expect(notifyAlertMock).not.toHaveBeenCalled();
   });
 });

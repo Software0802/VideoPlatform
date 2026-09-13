@@ -1,6 +1,7 @@
 // The transport (timeout, abort, transient-status retry) is provider-agnostic and already
 // hardened for the xAI client; only the base URL and headers differ here.
 import { fetchUpstream, upstreamError } from "@/lib/providers/grok/client";
+import { notifyAlert } from "@/lib/alerts";
 import {
   OPENAI_IMAGE_CONFIG,
   type OpenaiImageConfig,
@@ -62,7 +63,12 @@ export async function openaiPost(
     // it is polled, never resubmitted.)
     { timeoutMs: cfg.timeoutMs(), maxAttempts: 1 },
   );
-  return readUpstreamBody(res);
+  try {
+    return await readUpstreamBody(res);
+  } catch (err) {
+    alertModelMissing(err, cfg, modelOfBody(body));
+    throw err;
+  }
 }
 
 /**
@@ -84,7 +90,13 @@ export async function openaiPostForm(
     },
     { timeoutMs: cfg.timeoutMs(), maxAttempts: 1 },
   );
-  return readUpstreamBody(res);
+  try {
+    return await readUpstreamBody(res);
+  } catch (err) {
+    const field = form.get("model");
+    alertModelMissing(err, cfg, typeof field === "string" && field ? field : undefined);
+    throw err;
+  }
 }
 
 /**
@@ -204,7 +216,50 @@ export function normalizeImageUpstreamError(
   if (status === 402 || (status === 429 && QUOTA_CODE.test(error.code))) {
     return new ProviderHttpError(429, "quota_exhausted", error.message);
   }
+  // 5xx + 合法 OpenAI 错误信封（error.message 是字符串且 code/type 有其一）= 上游明确
+  // 拒单、没受理也没计费——与「请求可能已送达」的断连 / 裸 5xx 是两回事，打上
+  // `upstreamRejected` 让 runner 按普通失败处理而不是锁进 `uncertain_submit`。
+  if (status >= 500 && isStructuredErrorEnvelope(data)) {
+    return new ProviderHttpError(status, error.code, error.message, { upstreamRejected: true });
+  }
   return error;
+}
+
+/** `{"error":{"message": string, "code"|"type": string}}` 的最低合法形状。 */
+function isStructuredErrorEnvelope(data: Record<string, unknown>): boolean {
+  const raw = data.error;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const err = raw as Record<string, unknown>;
+  return (
+    typeof err.message === "string" &&
+    (typeof err.code === "string" || typeof err.type === "string")
+  );
+}
+
+/** 请求体 / 表单里带的 model 名；读不到就用通道默认值。 */
+function modelOfBody(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const model = (body as Record<string, unknown>).model;
+  return typeof model === "string" && model ? model : undefined;
+}
+
+/**
+ * 404 = 上游「查不到该模型」：任务照常失败，同时给运维发一条去重告警——模型在中转
+ * 上架 / 下架时本地配置不会自己更新。GET 路径（轮询 / 取 result）的 404 是任务句柄
+ * 丢失，不是模型问题，只在创建 POST 上告警。
+ */
+function alertModelMissing(
+  err: unknown,
+  cfg: OpenaiImageConfig,
+  model: string | undefined,
+): void {
+  if (!(err instanceof ProviderHttpError) || err.status !== 404) return;
+  const name = model ?? cfg.model();
+  void notifyAlert(
+    "upstream_model_missing",
+    { provider: cfg.id, model: name, base: cfg.base() },
+    `${cfg.id}:${name}`,
+  );
 }
 
 function bodyReadFailed(status: number, cause: unknown): ProviderHttpError {

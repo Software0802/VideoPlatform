@@ -1,6 +1,6 @@
 # 真实上游验收 · 2026-09-13
 
-生产 `https://genius.homeaistack.online`，运行旧构建（`98759a5`，不含 E1–E3）。专用账号
+生产 `https://genius.homeaistack.online`。#1–#5 与探针在旧构建（`98759a5`）上跑；30s 长片在部署 `16f145e` 之后跑。专用账号
 `acceptance-20260913@lumen.test`（`usr_b3129585642b4c89`，注册赠 ¥5 + 礼品码 ¥5）。全部经公网
 API 提交，与前端走同一条 `POST /api/jobs` / 智能体路由。
 
@@ -34,8 +34,24 @@ API 提交，与前端走同一条 `POST /api/jobs` / 智能体路由。
 2. `products/catalog.ts` 里 `video-fast` 的 t2v 模型名写死 `minimax-H3 文字`，`env.ts` 的 `DEFAULT_YMAN_T2V_MODEL` 同样过期——应改默认值为 `minimax-h3`，`.env.example` 的 YMan 模型清单同步（2026-09-13 实测 21 个 id：gpt-image-2、Runway Gen-4 Turbo video (图生视频)、gpt-image-2.5-flare、gpt-image-2.5-sunburst、sd2.0-MX、minimax-h3 768p、minimax_h3、wan3.0-video、sd-2.0-fast-真人、grok-video-1.5、minimax-h3-933-图文、seedance2.0-fast满血、seedance2.0-不卡人脸、seedance2.0-900-720p、minimax-h3、gemini-3-pro-image-run、nano-banana-2、firefly-gpt-image-2 等）。
 3. `minimax-h3` 不在 YMan 本地价目表，记账用 ¥1.5 兜底，`costUsdActual` 因此是高估；应登记它的积分档（或从 `GET /v1/models` 的 `credits` 字段读）。
 4. 智能体默认模型 / Director 模型名依赖中转的存量：中转下架模型时整条链路 502，建议 `agent/llm.ts` 在 404 `model_not_found` 时给出可读的运维错误码并进告警。
+5. Director / 视觉 QC 的 LLM 调用复用 `UPSTREAM_TIMEOUT_MS`（默认 30s），gpt-5.6-luna 产出完整计划要 ~50s → 第一次长片 `Request timed out.`（`error.code=internal`）。需要独立的 `HARNESS_LLM_TIMEOUT_MS`。生产临时把 `UPSTREAM_TIMEOUT_MS=120000`。
+6. 长片提交时 `costUsdEstimate` 只算视频片段（$0.9），实付 $1.45（含三视图 + 首帧 4 张图与 Director），1.61× 触发 `costOverTarget` 软线；多一个角色就会撞 2× 硬上限。估价需把图片与 LLM 预留算进去。
+
+## 30s 长片（部署 `16f145e` 后，`HARNESS_ENABLED=true` + `OPENAI_IMAGE_EDITS_ENABLED=true`）
+
+`job_fb97db94e2a4`：kling-2.6，售价 ¥12，成片 **30.97s / 9.0 MB**，6 分 49 秒完成（Director 50s → 三视图 + 首帧 ~2 分 → 3 镜串行 ~3 分 → 拼接）。
+
+| 阶段 | 事实 |
+| --- | --- |
+| Director | gpt-5.6-luna，2802 → 1548 tokens，$0.03；计划 3 × 10s，shot0 `i2v`/`hard_cut`/`generated` 首帧，shot1–2 `i2v`/`tail_chain` |
+| 角色表 | 档 A 生效：`inputs/sheets/character-0-{front,side,back}.jpg` 三张（正面 t2i，侧/背走 `/images/edits`） |
+| 首帧 | `shots/0/first.jpg` 以三视图为参考生成；肉眼核对：首帧、第二镜尾帧与三视图是同一人物、同一深青风衣、同一街道 |
+| 分镜 | 3 镜全部一次成功（retries 0），每镜 $0.15 |
+| 账目 | `costUsdActual` $1.45（估 $0.9，见问题 6）；余额 17.95 → 5.95（¥12） |
+
+前一次尝试 `job_5ddb3cdfaf19` 因问题 5 在 Director 阶段失败，未产生任何付费分镜，预留已释放。
 
 ## 未完成
 
-- 30s 长片（E1/E2 供应商无关化）需先部署 `ecfef47` 到生产再验；`OPENAI_IMAGE_EDITS_ENABLED=true` 可以开（探针已证明 ccgoai 透传 edits）。
 - 画布 DAG 未经 UI 走真实上游（#3 走的是与画布 `gen_video` 节点相同的 `createJob` + `from-job` 复用路径，DAG 预留转移未在生产验）。
+- YMan 上的长片（档 B：r2v 参考图）未验。

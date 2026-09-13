@@ -155,8 +155,16 @@ export class ProviderHttpError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    opts?: { upstreamRejected?: boolean },
   ) {
     super(message);
     this.name = "ProviderHttpError";
+    /**
+     * 上游以结构化错误体**明确拒单**的 5xx（已确定没受理、没计费），区别于
+     * 「请求可能已送达」的断连 / 裸 5xx——runner 据此不把它判成 `uncertain_submit`。
+     * 目前只有 OpenAI 兼容生图通道会打这个标记。
+     */
+    this.upstreamRejected = opts?.upstreamRejected === true;
   }
+  public readonly upstreamRejected: boolean;
 }

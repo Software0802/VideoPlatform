@@ -97,10 +97,10 @@ describe("retryJob on a harness job (review R09)", () => {
     // Only the kept shot's money carries over; the reviewed shot's spend stays on the old job.
     expect(retried?.costUsdActual).toBe(1.2);
     // The estimate is re-priced for the provider the retry routed to (mock here), not copied.
-    const { estimateHarnessCostUsd } = await import("@/lib/cost");
+    const { harnessSubmitEstimateUsd } = await import("@/lib/jobs/provider-settings");
     const { packHarnessDuration } = await import("@/lib/harness/pack-duration");
     expect(retried?.costUsdEstimate).toBe(
-      estimateHarnessCostUsd(packHarnessDuration(30), {
+      harnessSubmitEstimateUsd(packHarnessDuration(30), {
         model: retried!.model,
         video: { resolution: "720p", audio: "off", provider: "mock" },
       }),

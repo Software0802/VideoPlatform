@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { notifyAlert } from "@/lib/alerts";
 import {
   agentApiKey,
   agentBase,
@@ -165,15 +166,29 @@ function completerFor(config: AgentLlmConfig): AgentCompleter {
       maxRetries: 0,
       timeout: upstreamTimeoutMs(),
     });
-    const response = await client.chat.completions.create({
-      model: request.model,
-      messages: request.messages,
-      temperature: request.temperature,
-      max_tokens: request.maxTokens,
-      // 不用 `json_schema`：中转站对它的支持参差不齐，一家不认就整条通道不可用。
-      // `json_object` 是最低公分母，形状仍由本地 zod 说了算。
-      response_format: { type: "json_object" },
-    });
+    let response;
+    try {
+      response = await client.chat.completions.create({
+        model: request.model,
+        messages: request.messages,
+        temperature: request.temperature,
+        max_tokens: request.maxTokens,
+        // 不用 `json_schema`：中转站对它的支持参差不齐，一家不认就整条通道不可用。
+        // `json_object` 是最低公分母，形状仍由本地 zod 说了算。
+        response_format: { type: "json_object" },
+      });
+    } catch (err) {
+      // 404 = 上游没有这个模型（中转下架 / 改名）：错误照常抛给用户，另发一条去重
+      // 告警，本地默认模型名需要人工跟进。
+      if (err instanceof OpenAI.APIError && err.status === 404) {
+        void notifyAlert(
+          "upstream_model_missing",
+          { provider: config.provider, model: request.model, base: config.baseURL },
+          `${config.provider}:${request.model}`,
+        );
+      }
+      throw err;
+    }
     const content = response.choices[0]?.message?.content;
     if (typeof content !== "string" || !content.trim()) throw new Error("智能体未返回内容");
     return content;

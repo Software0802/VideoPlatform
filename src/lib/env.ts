@@ -15,7 +15,7 @@ export const OFFICIAL_YMAN_BASE = "https://vip.yman.cc/v1";
  * 后台内部名（`minimax_h3_t2v` / `minimax_h3_ref2v`）只作为别名被认出来，见
  * `@/lib/providers/yman/catalog`。
  */
-export const DEFAULT_YMAN_T2V_MODEL = "minimax-H3 文字";
+export const DEFAULT_YMAN_T2V_MODEL = "minimax-h3";
 export const DEFAULT_YMAN_I2V_MODEL = "minimax-h3-933-图文";
 /** YMan 也兼容 OpenAI Images API；生图默认走它的 gpt-image-2。 */
 export const DEFAULT_YMAN_IMAGE_MODEL = "gpt-image-2";
@@ -412,7 +412,7 @@ export function ymanBase(): string {
   return normalizeApiBase(raw, OFFICIAL_YMAN_BASE);
 }
 
-/** 文生视频的上游模型名。默认 minimax_h3_t2v（纯文生，不收参考图）。 */
+/** 文生视频的上游模型名。默认 `minimax-h3`（纯文生，不收参考图）。 */
 export function ymanT2vModel(): string {
   return process.env.YMAN_T2V_MODEL?.trim() || DEFAULT_YMAN_T2V_MODEL;
 }
@@ -516,6 +516,16 @@ function normalizeApiBase(input: string, fallback: string): string {
 export function upstreamTimeoutMs(): number {
   const n = Number(process.env.UPSTREAM_TIMEOUT_MS ?? 30_000);
   return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 5 * 60_000) : 30_000;
+}
+
+/**
+ * Harness 的 LLM 调用（Director 规划 / 视觉 QC）独立超时：Director 要一次产出整份
+ * 长片计划，实测 gpt-5.6-luna 经常超过通用 `UPSTREAM_TIMEOUT_MS` 的 30s 默认值。
+ * 默认 120s，上限 5 分钟。
+ */
+export function harnessLlmTimeoutMs(): number {
+  const n = Number(process.env.HARNESS_LLM_TIMEOUT_MS ?? 120_000);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 5 * 60_000) : 120_000;
 }
 
 /** M2.4：一致性管线总开关。未开启时 30/45/60 仍由 API 拒绝，orchestrator 恒抛。 */

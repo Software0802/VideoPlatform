@@ -14,7 +14,8 @@ import {
 // YMAN_MODELS 的键是 `/v1/models` 的展示名（发给上游的那一串），2026-09-06 coder 实测后从早期
 // 的内部名（如 `minimax_h3_t2v`）改过来——旧内部名现在是 `aliases`，仍然能被
 // resolveModel/modelFor/creditsFor/normalizeYmanDuration 认出，只是不再是权威输出。
-const T2V_DISPLAY = "minimax-H3 文字";
+// 2026-09-13：上游把 `minimax-H3 文字` 下架改名 `minimax-h3`，旧名同样降级为 alias。
+const T2V_DISPLAY = "minimax-h3";
 const REF2V_DISPLAY = "minimax-h3-933-图文";
 const SEEDANCE_SVIP_DISPLAY = "seedance2.0-900-720p";
 const SEEDANCE_DISPLAY = "SD2.0 满血";
@@ -34,7 +35,7 @@ describe("YMAN_MODELS", () => {
   });
 
   it("keeps each model's old internal name reachable only as an alias, not as a table key", () => {
-    for (const alias of ["minimax_h3_t2v", "minimax_h3_ref2v", "seedance2.0", "sd2.5"]) {
+    for (const alias of ["minimax-H3 文字", "minimax_h3_t2v", "minimax_h3_ref2v", "seedance2.0", "sd2.5"]) {
       expect(Object.keys(YMAN_MODELS)).not.toContain(alias);
     }
   });
@@ -43,6 +44,7 @@ describe("YMAN_MODELS", () => {
 describe("resolveModel", () => {
   it("resolves a legacy internal alias to the current /v1/models display name", () => {
     expect(resolveModel("minimax_h3_t2v")).toBe(T2V_DISPLAY);
+    expect(resolveModel("minimax-H3 文字")).toBe(T2V_DISPLAY);
     expect(resolveModel("seedance2.0")).toBe(SEEDANCE_DISPLAY);
     expect(resolveModel("sd2.5")).toBe(SD25_DISPLAY);
   });

@@ -30,8 +30,8 @@ const RATIOS_LANDSCAPE_PORTRAIT: AspectRatio[] = ["16:9", "9:16"];
  *
  * **键是 `GET /v1/models` 返回的展示名**，文档明确要求 `model` 用这一串，不要用后台内部
  * 模型名；内部名（`minimax_h3_t2v` 之类）降级成 `aliases`，只用来认出用户填的旧名字。
- * 2026-09-06 实测 `/v1/models` 还返回 `minimax-h3`、`seedance2.0-900-3`、`Seedance2.0-933-条`、
- * `seedance2.0-fast满血`、`sd-2.0-fast-真人`、`seedance2.5-9图` 六个 id，文档没给它们的
+ * 2026-09-06 实测 `/v1/models` 还返回 `seedance2.0-900-3`、`Seedance2.0-933-条`、
+ * `seedance2.0-fast满血`、`sd-2.0-fast-真人`、`seedance2.5-9图` 五个 id，文档没给它们的
  * 档位与价目，所以这里不登记（照样能填进 `YMAN_*_MODEL` 直接发，只是按
  * `YMAN_UNKNOWN_CREDITS` 估价）——宁可承认不知道，也不编一张价目表。
  *
@@ -41,8 +41,9 @@ const RATIOS_LANDSCAPE_PORTRAIT: AspectRatio[] = ["16:9", "9:16"];
  * `YMAN_MODEL_CATALOG` 这条覆盖 / 追加的口子。
  */
 export const YMAN_MODELS: Record<string, YmanModelSpec> = {
-  "minimax-H3 文字": {
-    aliases: ["minimax_h3_t2v"],
+  // 价目 2026-09-13 沿用旧档（`minimax-H3 文字`），未经账单核实。
+  "minimax-h3": {
+    aliases: ["minimax-H3 文字", "minimax_h3_t2v"],
     durations: [5, 10, 15],
     resolutions: ["720p"],
     ratios: RATIOS_LANDSCAPE_PORTRAIT,

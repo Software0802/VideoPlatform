@@ -90,7 +90,7 @@ export const DEFAULT_PRODUCTS: readonly Product[] = [
     // 文生用纯文生模型，图生 / 参考生用收参考图的那个（上游是两个模型，同一个产品）。
     // 三个 mode 各自钉死，所以不需要兜底的 `model`。
     models: {
-      text_to_video: "minimax-H3 文字",
+      text_to_video: "minimax-h3",
       image_to_video: "minimax-h3-933-图文",
       reference_to_video: "minimax-h3-933-图文",
     },

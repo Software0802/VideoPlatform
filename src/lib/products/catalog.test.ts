@@ -297,7 +297,7 @@ describe("defaultProductFor", () => {
 describe("modelForProduct / defaultResolutionOf", () => {
   it("modelForProduct returns the per-mode override for video-fast (yman has two upstream models)", () => {
     const fast = productById("video-fast")!;
-    expect(modelForProduct(fast, "text_to_video")).toBe("minimax-H3 文字");
+    expect(modelForProduct(fast, "text_to_video")).toBe("minimax-h3");
     expect(modelForProduct(fast, "image_to_video")).toBe("minimax-h3-933-图文");
   });
 
@@ -387,7 +387,7 @@ describe("LUMEN_PRODUCTS override", () => {
         {
           id: "video-custom",
           provider: "yman",
-          model: "minimax-H3 文字",
+          model: "minimax-h3",
           modes: ["text_to_video"],
           description: "自定义产品",
         },

@@ -328,7 +328,7 @@ describe("createJob provider selection — YMan", () => {
     );
 
     expect(job.provider).toBe("yman");
-    expect(job.model).toBe("minimax-H3 文字"); // /v1/models display name — see yman/catalog.test.ts
+    expect(job.model).toBe("minimax-h3"); // /v1/models display name — see yman/catalog.test.ts
     expect(job.durationSec).toBe(5); // 4s rounds up to the 5s tier (catalog.normalizeYmanDuration)
     expect(job.generateAudio).toBe(false);
     expect(job.aspectRatio).toBe("16:9"); // default ratio when the request names none
@@ -906,6 +906,16 @@ describe("createJob — harness keeps target duration, still normalizes resoluti
     expect(job.generateAudio).toBe(false);
     expect(job.aspectRatio).toBe("16:9");
     expect(job.priceCny).toBeGreaterThan(0);
+
+    // 长片估价 = 视频片段 + Director 预留 + 角色表/首帧生图预留（provider-settings.ts
+    // harnessSubmitEstimateUsd）。只算视频片段的系统性低估会提前撞 costOverTarget。
+    const { estimateHarnessCostUsd } = await import("@/lib/cost");
+    const { packHarnessDuration } = await import("@/lib/harness/pack-duration");
+    const videoOnly = estimateHarnessCostUsd(packHarnessDuration(30), {
+      model: job.model,
+      video: { resolution: "720p", audio: "off", provider: "kling" },
+    });
+    expect(job.costUsdEstimate).toBeGreaterThan(videoOnly);
 
     await drainToTerminal(job.id);
     const rec = await readJob(job.id);

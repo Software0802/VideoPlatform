@@ -1,13 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { access, cp, mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { estimateCostUsd, estimateHarnessCostUsd, type ImagePricingHint } from "@/lib/cost";
+import { estimateCostUsd, type ImagePricingHint } from "@/lib/cost";
 import { reserveJobFunds } from "@/lib/billing/admission";
 import { priceCny } from "@/lib/billing/prices";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { harnessEnabled, maxQueuedJobs, maxQueuedJobsPerUser } from "@/lib/env";
 import {
   harnessSettingsFor,
+  harnessSubmitEstimateUsd,
   modelForProvider,
   providerSettingsFor,
   videoPricingOf,
@@ -311,7 +312,7 @@ async function createJobUnlocked(
     harness: { enabled: harness },
     priceCny: priceCny({ mode, durationSec: dur, resolution, generateAudio, imageResolution }),
     costUsdEstimate: harness
-      ? estimateHarnessCostUsd(packHarnessDuration(dur as 30 | 45 | 60), {
+      ? harnessSubmitEstimateUsd(packHarnessDuration(dur as 30 | 45 | 60), {
           model,
           video: videoPricingOf(hSettings, provider) ?? {
             resolution: resolution ?? "720p",
@@ -481,7 +482,7 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     harness: { enabled: harness },
     priceCny: priceCny({ mode: source.mode, durationSec, resolution, generateAudio, imageResolution }),
     costUsdEstimate: harness
-      ? estimateHarnessCostUsd(packHarnessDuration(durationSec as 30 | 45 | 60), {
+      ? harnessSubmitEstimateUsd(packHarnessDuration(durationSec as 30 | 45 | 60), {
           model,
           video: videoPricingOf(hSettings, provider) ?? {
             resolution: resolution ?? "720p",

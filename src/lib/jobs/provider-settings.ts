@@ -1,5 +1,14 @@
-import type { VideoPricingHint } from "@/lib/cost";
+import {
+  estimateCostUsd,
+  estimateHarnessCostUsd,
+  LLM_RESERVE_USD,
+  type HarnessClip,
+  type VideoPricingHint,
+} from "@/lib/cost";
 import { defaultResolutionOf, modelForProduct, type Product } from "@/lib/products/catalog";
+import { imageConfigFor } from "@/lib/providers/openai-image/config";
+import { mapAspectToSize } from "@/lib/providers/openai-image/rest-map";
+import { selectProvider } from "@/lib/providers/router";
 import { resolveKlingSettings } from "@/lib/providers/kling/rest-map";
 import { envModelFor } from "@/lib/providers/model-name";
 import { type YmanResolution } from "@/lib/providers/yman/catalog";
@@ -133,6 +142,54 @@ export function harnessSettingsFor(
   const { durationSec, ...rest } = settings;
   void durationSec;
   return rest;
+}
+
+/**
+ * 长片在视频片段之外的固定开销预留：单角色三视图 + 一镜首帧的经验值。
+ * 多角色 / 多 hard_cut 镜会超出——届时 `costOverTarget` 软线与 ×2 硬上限照常告警，
+ * 估价的职责是把常态情形估到不离谱，不是封顶。
+ */
+export const HARNESS_IMAGE_SHOT_COUNT = 4;
+
+/**
+ * 4 张 16:9/1k 图按「当前 IMAGE_PROVIDER_ORDER 首选 provider」的口径估价，与
+ * orchestrator 里 `sheetPrice` 同一条公式（`mapAspectToSize` + 通道 quality）。
+ * 没有生图 provider（或只剩 mock）时为 0——估不出来不等于免费，只是这里不预加。
+ */
+export function harnessImageAllowanceUsd(): number {
+  let provider: ReturnType<typeof selectProvider>;
+  try {
+    provider = selectProvider({
+      jobId: "harness-estimate",
+      mode: "text_to_image",
+      prompt: "",
+      model: "",
+      generateAudio: false,
+    });
+  } catch {
+    return 0;
+  }
+  if (provider.id === "mock") return 0;
+  const imageModel = modelForProvider(provider.id, "text_to_image");
+  const imageShape = imageConfigFor(provider.id)?.shape();
+  const each = estimateCostUsd(imageModel, 0, {
+    size: mapAspectToSize("16:9", "1k", imageShape).size,
+    quality: imageShape?.quality ?? "high",
+    provider: provider.id,
+  });
+  return Math.round(each * HARNESS_IMAGE_SHOT_COUNT * 100) / 100;
+}
+
+/**
+ * 长片提交时的完整成本预估 = 视频片段计价 + Director 预留 + 角色表/首帧生图预留。
+ * 只算视频片段会系统性低估（实测 30s 估 $0.9 / 实付 $1.45），低估值会提前撞
+ * `costOverTarget` 软线甚至 ×2 硬上限把正常任务停掉。
+ */
+export function harnessSubmitEstimateUsd(
+  clips: readonly HarnessClip[],
+  pricing: { model: string; video?: VideoPricingHint },
+): number {
+  return estimateHarnessCostUsd(clips, pricing) + LLM_RESERVE_USD.director + harnessImageAllowanceUsd();
 }
 
 export function videoPricingOf(

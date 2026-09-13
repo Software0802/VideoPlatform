@@ -193,7 +193,7 @@ describe("video failover — switches provider and takes the lower recalculated 
 
     // Wait for the switch to land: provider flips to yman once switchAwayFromExhausted commits.
     const switched = await waitUntil(job.id, (rec) => rec.provider === "yman");
-    expect(switched.model).toBe("minimax-H3 文字"); // yman/catalog.ts display name for the t2v model
+    expect(switched.model).toBe("minimax-h3"); // yman/catalog.ts display name for the t2v model
     // YMan's only resolution is 720p and providerSettingsFor forces yman audio to "off" (its
     // create-task API has no audio switch) — so the recalculated price is table.video["10"]=4,
     // no hd multiplier, no audio surcharge. min(7, 4) = 4.

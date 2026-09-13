@@ -1,4 +1,5 @@
 import { ymanApiKey, ymanBase } from "@/lib/env";
+import { notifyAlert } from "@/lib/alerts";
 // 传输层（超时、abort、瞬时状态重试）与 provider 无关，xAI 客户端里已经打磨过，
 // 这里只换 base URL、鉴权头与错误信封。
 import { fetchUpstream } from "@/lib/providers/grok/client";
@@ -32,7 +33,25 @@ export async function ymanPost(
     },
     { maxAttempts: 1 },
   );
-  return readYmanBody(res);
+  try {
+    return await readYmanBody(res);
+  } catch (err) {
+    // 创建任务的 404 = 上游查不到这个模型名（下架 / 改名），错误照抛、另发去重告警；
+    // GET 轮询的 404 是任务句柄丢失，不在这里告警。
+    if (err instanceof ProviderHttpError && err.status === 404) {
+      const model =
+        body && typeof body === "object" && !Array.isArray(body)
+          ? (body as Record<string, unknown>).model
+          : undefined;
+      const name = typeof model === "string" && model ? model : "unknown";
+      void notifyAlert(
+        "upstream_model_missing",
+        { provider: "yman", model: name, base: ymanBase() },
+        `yman:${name}`,
+      );
+    }
+    throw err;
+  }
 }
 
 /** 查询任务。免费、无副作用，所以保留通用的瞬时状态重试。 */

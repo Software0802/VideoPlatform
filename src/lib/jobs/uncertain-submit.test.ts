@@ -80,6 +80,8 @@ beforeAll(async () => {
 afterEach(async () => {
   vi.unstubAllGlobals();
   delete process.env.VIDEO_PROVIDER_ORDER;
+  delete process.env.IMAGE_PROVIDER_ORDER;
+  delete process.env.OPENAI_API_KEY;
   delete process.env.KLING_API_KEY;
   delete process.env.XAI_API_KEY;
   process.env.LUMEN_FORCE_MOCK = "1";
@@ -253,6 +255,38 @@ describe("R06：提交结果不确定的恢复", () => {
     const settled = await waitUntil(job.id, (rec) => rec.status === "failed");
     expect(settled.error?.code).toBe("kling_9999");
     expect(settled.error?.code).not.toBe("uncertain_submit");
+    expect(retryBlock(settled)).toBeNull();
+  });
+
+  it("结构化 5xx 应答是确定拒单：普通失败、不锁重试（openai-image 通道）", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.IMAGE_PROVIDER_ORDER = "openai";
+    process.env.OPENAI_API_KEY = "sk-test-busy";
+    const id = owner("a6");
+    await seedBalance(id, 1000);
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("openai.com")) {
+        // ccgoai 实测形状：HTTP 503 + 合法 OpenAI 错误信封 = 明确拒单、未计费。
+        return new Response(
+          JSON.stringify({
+            error: { code: "service_busy", type: "api_error", message: "当前服务繁忙 (Ref abc)" },
+          }),
+          { status: 503, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected upstream call: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { job } = await createJob(
+      { mode: "text_to_image", prompt: "海报", aspectRatio: "16:9" },
+      id,
+    );
+    const settled = await waitUntil(job.id, (rec) => rec.status === "failed");
+    expect(settled.error?.code).toBe("service_busy");
+    expect(settled.error?.code).not.toBe("uncertain_submit");
+    expect(settled.error?.detail ?? settled.error?.message).toContain("当前服务繁忙");
     expect(retryBlock(settled)).toBeNull();
   });
 });
