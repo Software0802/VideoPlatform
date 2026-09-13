@@ -186,7 +186,7 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 | R5.2 | `ShellContext` 拆 `SessionProvider` / `JobsProvider` / `ComposerProvider` / `NoticesProvider`；`useShell()` 改为聚合四者的兼容 hook；组件逐个改用细粒度 hook | e2e 全绿；Profiler 重渲次数下降（与 R5.1 对比） |
 | R5.3 | `CanvasView.tsx` 拆节点卡 / 报价层 / 冲突弹层 / 轮询 hook；清掉 3 处 `exhaustive-deps` 禁用（改 ref 或正确依赖） | `react-hooks/exhaustive-deps` 0 disable；canvas e2e 全过 |
 | R5.4 | `globals.css` 按视图拆到 `styles/{shell,home,composer,create,login}.css` | 视觉回归：e2e 截图对比或人工五视图核对 |
-| R5.5 | Tailwind 去留（D-1）；legacy 重定向页改 `next.config.ts` `redirects()` | `pnpm build` 通过；四个旧路径 307 到 `/` |
+| R5.5（已落地） | Tailwind 去留（D-1）；legacy 重定向页改 `next.config.ts` `redirects()` | `pnpm build` 通过；四个旧路径 307 到 `/` |
 
 ### R6 · 支付网关（D4：微信 + 支付宝；L）
 

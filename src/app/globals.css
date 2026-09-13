@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "./styles/reset.css";
 @import "./styles/account.css";
 @import "./styles/agent.css";
 @import "./styles/canvas.css";
@@ -9,16 +9,10 @@
   来源：design_handoff/design_handoff_genius_app（README 为规格，`Genius App.dc.html` 为定稿原型，
   两者冲突以原型为准）。令牌逐条对应交接包 §1。
 
-  约定：BEM 块名 + `data-*` 状态，不用 Tailwind 工具类，不引组件库 / 图标库（图标在
+  约定：BEM 块名 + `data-*` 状态；无 Tailwind，reset 为上面的 `styles/reset.css`，不引组件库 / 图标库（图标在
   `src/components/genius/icons.tsx`）。账户 / 智能体 / 画布 / 订阅四个视图的样式在
   `src/app/styles/{account,agent,canvas,subscription}.css`，由上面的 @import 引入。
 */
-
-@theme {
-  --color-page: #0a0a0b;
-  --color-accent: #ff8a3d;
-  --font-sans: var(--font-manrope), var(--font-noto), "Noto Sans SC", -apple-system, "PingFang SC", system-ui, sans-serif;
-}
 
 :root {
   /* 底色 */

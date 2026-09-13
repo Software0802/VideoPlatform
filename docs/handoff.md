@@ -68,8 +68,8 @@
 | F-11 | relay 读-改-写仍无锁，N3.4 合入后可独立修复 |
 | F-12 | 规则压到 12KB 内，保留资金/安全约束与框架管理块，大小有回归门禁 |
 | F-13 | 大文件拆分待 R2/R5，不借修复改变业务行为 |
-| F-14 | 已拍板移除 Tailwind；依赖与 reset 替换尚未实施 |
-| F-15 | 旧重定向页仍在，待 R5 统一 redirects 配置 |
+| F-14 | 已落地：Tailwind 依赖与 postcss 插件移除，`preflight.css`（tailwindcss@4.3.3，MIT）逐字拷贝为 `src/app/styles/reset.css`（`--theme()` 取回落值）；`@theme` 三变量无人使用已删 |
+| F-15 | 已落地：`/gallery`、`/studio`、`/studio/:kind`、`/jobs/:id` 四个 stub page 删除，改由 `next.config.ts` `redirects()` 307 到 `/` |
 | F-16 | evals:check 实测缺 character-zh/en 两张授权素材；无质量校准记录，先给批次报价，不调用付费接口 |
 | F-17 | 已落地：eslint 范围 `src e2e scripts`（CI/AGENTS/deploy.sh 同步），`scripts/**/*.mjs` 加 `// @ts-check` 纳入 tsc 并补 JSDoc 类型 |
 | F-18 | docs/README.md 覆盖全部 docs 文件，索引完整性有回归测试 |
