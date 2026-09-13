@@ -572,6 +572,34 @@ describe("createJob — model / product selection (契约 A1)", () => {
     await drainToTerminal(job.id);
   });
 
+  it("accepts a 30s long-form job on a named product whose durations stop at 15 (harness packs 10s shots)", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    process.env.HARNESS_ENABLED = "true";
+    stubYmanFetch();
+    const id = productOwner("f3a");
+    await seedProductBalance(id, 1000);
+    try {
+      const { job } = await createJob(
+        {
+          mode: "text_to_video",
+          prompt: "旧书店里的午后",
+          model: "video-fast",
+          durationSec: 30,
+        } as Parameters<typeof createJob>[0],
+        id,
+      );
+      expect(job.provider).toBe("yman");
+      expect(job.product).toBe("video-fast");
+      expect(job.durationSec).toBe(30);
+      expect(job.harness.enabled).toBe(true);
+      await drainToTerminal(job.id);
+    } finally {
+      delete process.env.HARNESS_ENABLED;
+    }
+  });
+
   it("still stamps a product when no model is given, based on whichever provider the router picks", async () => {
     delete process.env.LUMEN_FORCE_MOCK;
     process.env.VIDEO_PROVIDER_ORDER = "yman";

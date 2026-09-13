@@ -71,11 +71,18 @@ export function chooseProduct(input: ChooseProductInput): ProductChoice {
 
 /** 用户点名的产品接不接得下这次请求。每一条都是他自己点过的东西，不能靠改写来满足。 */
 function assertProductFits(product: Product, input: ChooseProductInput): void {
-  if (input.harness || isHarnessDuration(input.durationSec)) {
+  const harness = input.harness || isHarnessDuration(input.durationSec);
+  if (harness) {
     // 30 / 45 / 60 秒是一致性管线的长片：管线会把任务拆成 t2v + i2v 两类 shot，
-    // 产品背后那家必须两条 mode 都声明（例如可灵、YMan；jimeng 只占位不算）。
+    // 产品背后那家必须两条 mode 都声明（例如可灵、YMan；jimeng 只占位不算），且产品
+    // 自己声明 supportsLongForm、时长档收得下单段 10 秒。
     const modes = providerForId(product.provider).capabilities().modes;
-    if (!modes.includes("text_to_video") || !modes.includes("image_to_video")) {
+    if (
+      !modes.includes("text_to_video") ||
+      !modes.includes("image_to_video") ||
+      !product.supportsLongForm ||
+      (product.durations?.length ? !product.durations.includes(10) : false)
+    ) {
       throw new ProviderHttpError(
         400,
         "invalid_argument",
@@ -92,7 +99,8 @@ function assertProductFits(product: Product, input: ChooseProductInput): void {
   // 时长只允许**向上**归一（4 秒的请求按 5 秒那一档下单，多给不少给）。超过最长的那一档
   // 就没有归一可言了：10 秒档的模型接一条 15 秒的请求，只能交付 10 秒——那是另一个东西，
   // 而用户会照 15 秒被报价。`durations` 省略 = 时长连续（grok），不在这条判据里。
-  if (product.durations?.length && input.durationSec != null) {
+  // 长片的 30/45/60 是管线目标总长，单段已在上面按 10 秒档校验过，不与产品时长档比较。
+  if (!harness && product.durations?.length && input.durationSec != null) {
     const longest = Math.max(...product.durations);
     if (input.durationSec > longest) {
       throw new ProviderHttpError(400, "invalid_argument", "所选模型不支持该时长");
