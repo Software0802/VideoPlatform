@@ -8,14 +8,14 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 代码基线 | `main`/`origin/main` = `d9675ab`（已推送，CI run 34758361483 success）；含 N3.4 `37123bd`、非 root/管理令牌 `8f2dfba`、ShellContext 拆分 `b1c71d0`、告警与备份 `34a8ac1`、管理页与面板分组 `d9675ab`。精确 SHA 用 `git rev-parse HEAD origin/main` 核对 |
-| 生产版本依据 | 生产部署在 `d7f34eb`（2026-09-13 deploy.sh：三条门禁、`--frozen-lockfile`、别名补链、health、公网 /login 全过），**最新 main `d9675ab` 待部署**；`/opt/genius/BUILD_INFO.json` 与登录态 `GET /api/health` 的 `build.sha` 可机器核对线上版本。`build.node` 是构建机 Node（v24.16.0），运行时仍是 v22.22.2 |
+| 代码基线 | `main`/`origin/main` = `1de057b`（已推送）；含 N3.4 `37123bd`、非 root/管理令牌 `8f2dfba`、ShellContext 拆分 `b1c71d0`、告警与备份 `34a8ac1`、管理页与面板分组 `d9675ab`、restore-check 幂等键口径与 tar 路径修正 `81b0a34`/`1de057b`。精确 SHA 用 `git rev-parse HEAD origin/main` 核对 |
+| 生产版本依据 | 生产 = `c44f8a1` 构建 + `1de057b` 脚本：2026-09-13 第二次部署 `c44f8a1`（deploy.sh 全流程：门禁、build、`--frozen-lockfile`、health 200、公网 200 全过，BUILD_INFO shortSha c44f8a1）；随后 `81b0a34`/`1de057b` 的 `alert-test.mjs`/`restore-check.mjs` 经 scp 单独同步到 `/opt/genius/scripts`（无需重启）。main 现为 `1de057b`。`/opt/genius/BUILD_INFO.json` 与登录态 `GET /api/health` 的 `build.sha` 可机器核对线上版本。`build.node` 是构建机 Node（v24.16.0），运行时仍是 v22.22.2 |
 | 本机 | Windows / PowerShell，Node v24.16.0，pnpm 10.33.0，Next 16.3.3，React 19.2.8 |
 | 生产只读核查 | 阿里云 8.209.212.178，`/opt/genius`；Node v22.22.2，pnpm 10.33.0，Caddy v2.11.4；genius.service active，`User=genius`（uid 989，R1.5 drop-in 已生效），MemoryMax 700 MiB；`/opt/genius` 整树 genius:genius，`.env` 640；生产画布 1 份文档、0 处 legacy uploadId，`data/assets/` 待首个素材节点创建 |
 | 入口 | `https://genius.homeaistack.online`；本地 `pnpm dev` 后访问 `http://localhost:3000`，不用 127.0.0.1（Next dev 可能 403） |
 | 整合门禁 | 收口轮（`d9675ab` 工作树）实测：typegen+tsc 0 错、eslint 0、`vitest` 116 文件 1296 通过 / 1 既有跳过、`next build` 通过、e2e 40/40（隔离端口，mock+harness）。eslint 范围为 `src e2e scripts`（CI 与 deploy.sh 同步），`scripts/**/*.mjs` 带 `// @ts-check` 纳入 tsc；e2e 走独立 workflow（`.github/workflows/e2e.yml`，每日 UTC 20:00 定时 + 手动，不挂 PR）。单测与 e2e 错开运行，未放宽全局超时 |
 | 测试环境 | 独立验证 worktree `D:\dev\repos\VideoPlatFrom-optimization-20260913`；e2e 端口 3177/3178、E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1；不读生产密钥，不调用真实上游 |
-| 备份 | root cron 每日 03:17 跑 backup.sh（白名单含 `relays.json`+`assets/`，已随 d7f34eb 上线）；部署前手动包 `backups/genius-data-20260913-174421.tgz` 为旧脚本产物、不含 relays.json；ECS 自动快照未获控制台证据。R4.0 代码已落地（`34a8ac1`）：`--stop-service` 一致性快照、openssl/OSS 加密异地副本、`restore-check.mjs`；生产 OSS 变量配置与恢复演练未完成 |
+| 备份 | root cron 每日 03:17 跑 backup.sh（白名单含 `relays.json`+`assets/`）；2026-09-13 部署前手动包 `backups/genius-data-20260913-211416.tgz`（新脚本）已做首次真实恢复核对：`restore-check --compare data` 一致（users 4、ledger 幂等键 54 重复 0、jobs 54、canvases 2、canvas-runs 1、relays.json 有），未做切换恢复；ECS 自动快照未获控制台证据。R4.0 代码已落地（`34a8ac1`）：`--stop-service` 一致性快照、openssl/OSS 加密异地副本、`restore-check.mjs`；生产 OSS 变量配置仍待执行 |
 
 `37123bd` 部署记录中的 provider 配置：视频 ORDER `kling,yman,grok`，图片 ORDER `openai,yman`，无 XAI key；Grok 只是未启用的后备项。对话走 ccgoai `gpt-5.6-luna`，图片 `gpt-image-2/medium`，可灵 `kling-2.6`，YMan t2v `minimax-h3`、i2v `minimax-h3-933-图文`；Harness 与 OpenAI image edits 已开。原始真实验收见 `docs/acceptance-2026-09-13.md`，本轮未重新付费验证这些上游。
 
@@ -60,7 +60,7 @@
 | F-03 | 独立素材、30 天提示、迁移/归属/过期/刷新回归已落地 |
 | F-04 | 画布每段独立文档 + 真实 409 断言 + 在途保存序列化；收口轮全量 e2e 40/40 |
 | F-05 | 已落地（`b1c71d0`）：ShellContext 拆 Session/Notices/Jobs/Composer 四 Provider，`useShell()` 为聚合兼容层，复测无 longtask、每击键重渲组件数与基线持平（§5） |
-| F-06 | R1.3 已落地并**生产实测通过**（2026-09-13 部署 d7f34eb：`--frozen-lockfile` 首次通过、`build.sha` 回显核对成功）；git archive 构建与发布目录（R1.4）未做 |
+| F-06 | R1.3 已落地并**两次生产部署验证**（`d7f34eb` 与 `c44f8a1`：`--frozen-lockfile` 通过、`build.sha` 回显核对成功）；git archive 构建与发布目录（R1.4）未做 |
 | F-07 | 同机 cron 已核实；异地副本与恢复核对代码已落地（`34a8ac1`：`--stop-service` 一致性快照、openssl 加密 + ossutil 上传、`restore-check.mjs`），生产 `BACKUP_OSS_*`/`OSS_*` 配置、ossutil 安装与恢复演练待执行 |
 | F-08 | 交接区分代码/部署/实测，纠正目录数与备份状态；整合门禁按实际结果收口 |
 | F-09 | run/流水线性 IO 仍在；R4.1 的 `admission_ms` 埋点已落地（health 登录态 `admission.wait/hold` 分位数），其余治理待 R4 |
@@ -86,7 +86,7 @@
 - 会话/画布/run 的整体归档与留存未做；画布素材的 30 天期限已单独实现，不等于删除画布或资金记录。
 - 游离空 material 节点仍使整图报价失败；准入仍 strict 读用户 run 文件；这些行为尚未改变。
 - 移动软键盘需真机验证，mock e2e 不能证明它；质量与成本不能由 mock 成片证明。
-- 异地副本与恢复演练的代码已就绪（backup.sh `--stop-service` / OSS 加密上传 / `restore-check.mjs`），但生产 OSS 变量未配置、演练未执行、ECS 自动快照设置仍未核实；构建 SHA 回显（BUILD_INFO/health `build.sha`）已随 d7f34eb 部署生效，非 root 迁移（R1.5）已执行。
+- 异地副本代码已就绪（backup.sh `--stop-service` / OSS 加密上传 / `restore-check.mjs`），生产 OSS 变量未配置、ECS 自动快照设置仍未核实；恢复核对已做过一次（部署前包 `--compare` 一致），完整切换恢复演练未做。构建 SHA 回显（BUILD_INFO/health `build.sha`）两次部署均验证生效，非 root 迁移（R1.5）已执行。
 
 ## 5. 前端重渲测量（2026-09-13 实测）
 
@@ -111,9 +111,9 @@ R5.2 已落地（`b1c71d0`）：`ShellContext` 拆为 `shell/{Session,Notices,Jo
 
 待用户/生产窗口动作：
 
-1. **部署最新 main `d9675ab`**（生产在 `d7f34eb`）；借部署窗口做 R1.4：`releases/<sha>` 发布目录 + `current` 软链 + 回滚演练一次。
-2. **服务器 `.env` 配置**：`LUMEN_ADMIN_TOKEN`（管理 CLI 已走 `/api/admin/*`）；`ALERT_WEBHOOK_URL` + `ALERT_WEBHOOK_FORMAT`（feishu/dingtalk/wecom/generic）+ `ALERT_WEBHOOK_SECRET`（飞书/钉钉签名密钥），配后跑 `sudo -u genius node scripts/alert-test.mjs` 做一次真实触发验证（钉钉自定义机器人关键词填 `Lumen`）。
-3. **备份异地副本**：`.env` 配 `BACKUP_OSS_BUCKET`/`BACKUP_OSS_PREFIX`/`BACKUP_ENC_PASSPHRASE`/`OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET`/`OSS_REGION`（或 `OSS_ENDPOINT`），安装 ossutil 2.x（见 runbook 备份节）；然后跑一次恢复演练：`restore-check.mjs --archive <tgz.enc> --compare data/` 记录进 runbook。
+1. **R1.4 发布目录**：`releases/<sha>` + `current` 软链 + 回滚演练一次——2026-09-13 部署窗口有意不同时做（避免与部署同时改 systemd 单元），等独立窗口。
+2. **告警渠道**：`LUMEN_ADMIN_TOKEN` 已配置并实测生效（loopback→200 `{sent:false}`、公网→401，见 runbook「管理 CLI」节）；`.env` 仍待填 `ALERT_WEBHOOK_URL` + `ALERT_WEBHOOK_FORMAT`（feishu/dingtalk/wecom/generic）+ `ALERT_WEBHOOK_SECRET`（飞书/钉钉签名密钥），配后跑 `sudo -u genius node scripts/alert-test.mjs` 做真实触发验证（钉钉自定义机器人关键词填 `Lumen`）。
+3. **备份异地副本**：`.env` 配 `BACKUP_OSS_BUCKET`/`BACKUP_OSS_PREFIX`/`BACKUP_ENC_PASSPHRASE`/`OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET`/`OSS_REGION`（或 `OSS_ENDPOINT`），安装 ossutil 2.x（见 runbook 备份节）；首次 `--compare` 核对已做，完整恢复演练（解包→切换→验证）待执行。
 4. **R3 预算拍板**：scene-only ≈¥117–145 / 全 8 条 ≈¥350–425（报价见 plan R3 节）；全量评测还需**两张授权人物照**（`evals/README.md` 登记要求）。
 5. **R2.4**：提供 YMan 账单实付积分以核对 `minimax-h3` 真实成本（`costUsdActual` 现为兜底估价）。
 6. R4 后续（非生产窗口）：索引增量写、run 归档、会话/画布留存策略；SQLite 仅在 §3.2 触发条件（多写者 / `admission_ms` p95 超阈 / 备份约束）成立时选型——health 已有 `admission.wait/hold` 分位数可观测。

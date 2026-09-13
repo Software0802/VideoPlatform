@@ -1,6 +1,6 @@
 # 设计计划书 · 全仓优化与路线重排（2026-09 起）
 
-状态：2026-09-13 **收口，本文已作为当前执行路线**。代码基线 `main` @ `d9675ab`（已推送，CI 绿）；生产在 `d7f34eb`，最新 main 待部署。已决（§8 标注）：D-1 a 移除 Tailwind（`a1e5a1e` 已落地）；D-2 a e2e 定时+手动（`74248a5` 已绿，验收口径连续 3 次绿）；D-3 a 删除 skip-check；D-4 b 本机管理令牌（`8f2dfba` 已落地）；D-6 b 素材 30 天并明示；D-8 a 非 root（已执行）；D-9 是。另已决：R3 先出报价不开跑；R6 无商户主体→继续礼品码，R6 不开工；R7 告警接飞书/钉钉/企微机器人（`34a8ac1` 代码已落地，生产 webhook 配置待执行）；R4.0 异地副本落阿里云 OSS（`34a8ac1` 代码已落地，生产 OSS 变量与恢复演练待执行）；R5.2 已做（`b1c71d0`）。D-5 待 SQLite 触发条件成立再定（生产 Node 22.22.2，22.x 的 node:sqlite 仍为 1.1 Active development）；D-7 预算未定。N3.1–N3.4 已合入 `37123bd`，N3.5 管理页与 N4 面板分组随 `d9675ab` 落地；R0/R1.1–R1.3/R1.5/R1.6/R2/R5 全部代码落地，`main` 首条绿 CI 为 `6b5449d`，`d7f34eb` 已部署实测（`--frozen-lockfile` 首过、`build.sha` 回显生效）；R1.4 发布目录/回滚演练待生产窗口。当前证据/剩余工作见 `docs/handoff.md`。用户允许门禁通过后提交推送 main，不等于允许部署或付费评测。本文取代 `docs/plan-next-2026-09-13.md` 的排期表；该文与 `docs/plan-unimplemented-2026-09-08.md` 的契约仍为引用源。以下正文保留起草时方案，实际进度以上述状态与 as-built 为准。
+状态：2026-09-13 **收口，本文已作为当前执行路线**。代码基线 `main` @ `1de057b`（已推送，CI 绿）；生产 = `c44f8a1` 构建（2026-09-13 第二次部署全流程通过，`build.sha` 回显二次验证）+ `1de057b` 脚本（scp 同步，无需重启）。已决（§8 标注）：D-1 a 移除 Tailwind（`a1e5a1e` 已落地）；D-2 a e2e 定时+手动（`74248a5` 已绿，验收口径连续 3 次绿）；D-3 a 删除 skip-check；D-4 b 本机管理令牌（`8f2dfba` 已落地）；D-6 b 素材 30 天并明示；D-8 a 非 root（已执行）；D-9 是。另已决：R3 先出报价不开跑；R6 无商户主体→继续礼品码，R6 不开工；R7 告警接飞书/钉钉/企微机器人（`34a8ac1` 代码已落地，生产 webhook 配置待执行）；R4.0 异地副本落阿里云 OSS（`34a8ac1` 代码已落地，生产 OSS 变量与恢复演练待执行）；R5.2 已做（`b1c71d0`）。D-5 待 SQLite 触发条件成立再定（生产 Node 22.22.2，22.x 的 node:sqlite 仍为 1.1 Active development）；D-7 预算未定。N3.1–N3.4 已合入 `37123bd`，N3.5 管理页与 N4 面板分组随 `d9675ab` 落地；R0/R1.1–R1.3/R1.5/R1.6/R2/R5 全部代码落地，`main` 首条绿 CI 为 `6b5449d`，`d7f34eb` 已部署实测（`--frozen-lockfile` 首过、`build.sha` 回显生效）；R1.4 发布目录/回滚演练待生产窗口。当前证据/剩余工作见 `docs/handoff.md`。用户允许门禁通过后提交推送 main，不等于允许部署或付费评测。本文取代 `docs/plan-next-2026-09-13.md` 的排期表；该文与 `docs/plan-unimplemented-2026-09-08.md` 的契约仍为引用源。以下正文保留起草时方案，实际进度以上述状态与 as-built 为准。
 
 沿用的既定决策（不再讨论）：产品三卖点（`plan-next` §0.1）；D1 长片定价 ¥20/30/40；D2 `edit_video`/`extend_video` 移出路线图；D3 通用中转 provider（N3.1–N3.3 已提交，N3.4 进行中）；D4 微信 + 支付宝都接。
 
@@ -141,7 +141,7 @@ R2 / R3 / R4 / R5 在 R1 之后可**并行**（不同文件域，见每片「触
 | R1.1（已落地，`74248a5` 定时+手动各绿一次；验收口径连续 3 次绿） | e2e workflow：`workflow_dispatch` + 每日定时（`E2E_REQUIRE_MOCK=1`，装浏览器，上传 report 工件）；是否挂 PR 见 §8 D-2 | 定时运行连续 3 次绿 |
 | R1.2（已落地） | eslint 范围加 `e2e scripts`；`scripts/*.mjs` 加 `// @ts-check` 并纳入 `tsc`（`allowJs` 已开） | 三条门禁覆盖全部可执行代码 |
 | R1.3（已落地，2026-09-13 部署 d7f34eb 实测通过） | `deploy.sh`：`git archive HEAD` 到临时目录构建；拒绝脏工作树（或显式 `--allow-dirty` 并打印 diffstat）；写 `BUILD_INFO.json {sha, builtAt, node}`（`node` 是构建机版本）；`/api/health` 登录态回显 `build.sha`；服务器 `pnpm install --prod --frozen-lockfile`；三条门禁齐跑，`--skip-check` 已删（§8 D-3） | 部署后 `curl /api/health`（登录态）的 sha = 本地 `git rev-parse HEAD`；handoff「生产基线」行已改为从 health 读 |
-| R1.4（待生产窗口） | 发布目录 `releases/<sha>` + `current` 软链（`plan-unimplemented` §10）；回滚 = 切软链 | 一次演练：部署 → 切回上一 sha → health 绿 |
+| R1.4（待生产窗口；2026-09-13 部署窗口有意不同时做，避免同改 systemd 单元） | 发布目录 `releases/<sha>` + `current` 软链（`plan-unimplemented` §10）；回滚 = 切软链 | 一次演练：部署 → 切回上一 sha → health 绿 |
 | R1.5（已执行，2026-09-13） | 服务以专用账号 `genius`（uid 989）运行，drop-in 含 NoNewPrivileges/ProtectSystem=strict/ReadWritePaths/PrivateTmp；`/opt/genius` 整树 genius:genius、`.env` 640；runbook 已改写 | `systemctl show genius -p User` = genius 已验证；管理 CLI 以 `sudo -u genius` 执行成功 |
 | R1.6（已核对，保留现状） | 安全收紧评估（审查 F-19 / F-20）：核对 Caddyfile 对 XFF 是覆盖而非追加；评估 `proxy.ts` 对「带会话 Cookie 且 Origin/Referer 双缺」的非 GET 请求改为 403 | runbook 记录 Caddy 核对结果；若收紧，`proxy.test.ts` 补该用例且 e2e / smoke 不受影响 |
 
@@ -215,7 +215,7 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 
 ### R7 · 运维扩容（N6；M）
 
-告警接实际渠道（已决：飞书/钉钉/企微机器人 webhook；代码已落地 `ALERT_WEBHOOK_FORMAT`/`ALERT_WEBHOOK_SECRET` + `POST /api/admin/alerts/test` + `scripts/alert-test.mjs`；`ALERT_WEBHOOK_URL` 生产配置 + 一次真实触发验证待执行）；指标（`submission_unknown`、`settlement_pending`、备份年龄、队列等待、`admission_ms`）进 health 与日志；`MemoryMax` 下长片 + 生图 + 拼接峰值实测并定 `HARNESS_SHOT_CONCURRENCY`；会话 / 画布留存策略（沿媒体 30 天，明示；D-6）；`data/` 增长与 run 归档巡检进 runbook；服务器 Node 版本、Caddy 版本与 XFF 行为写进 runbook「环境事实」一节。
+告警接实际渠道（已决：飞书/钉钉/企微机器人 webhook；代码已落地 `ALERT_WEBHOOK_FORMAT`/`ALERT_WEBHOOK_SECRET` + `POST /api/admin/alerts/test` + `scripts/alert-test.mjs`；`LUMEN_ADMIN_TOKEN` 已配置生效，alerts/test 实测 loopback 200 `{sent:false}`；`ALERT_WEBHOOK_URL` 等生产配置 + 一次真实触发验证待执行）；指标（`submission_unknown`、`settlement_pending`、备份年龄、队列等待、`admission_ms`）进 health 与日志；`MemoryMax` 下长片 + 生图 + 拼接峰值实测并定 `HARNESS_SHOT_CONCURRENCY`；会话 / 画布留存策略（沿媒体 30 天，明示；D-6）；`data/` 增长与 run 归档巡检进 runbook；服务器 Node 版本、Caddy 版本与 XFF 行为写进 runbook「环境事实」一节。
 
 ### J · 暂缓
 
@@ -228,9 +228,9 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 | C-1 | CI `main` | 最近一次运行 conclusion = success | GitHub Actions | ✅ `main` @ `d9675ab` run success（`gh run list` 34758361483） |
 | C-2 | 干净 clone | `pnpm i --frozen-lockfile && next typegen && tsc && eslint src e2e scripts && vitest run` 全过 | Ubuntu（CI）+ Windows（本机） | ✅ CI 绿 + 本机收口轮门禁全绿（数字见 handoff §0） |
 | C-3 | e2e | 35/35，`--repeat-each 3` 下 canvas.spec 稳定 | mock，3177 隔离端口 | ✅ 收口轮 40/40（spec 集重构后口径）；canvas 用例断言真实 409，此前 `--repeat-each 3` 三轮已验 |
-| C-4 | 备份 | `tar tzf` 含 `relays.json`、`assets/`；异地副本可下载解密；restore-check 通过 | 服务器 | ⏳ 白名单已上线（`d7f34eb`）；异地副本/restore-check 代码就绪（`34a8ac1`），**缺**：生产 `BACKUP_OSS_*`/`OSS_*` 配置、ossutil 安装、恢复演练 |
+| C-4 | 备份 | `tar tzf` 含 `relays.json`、`assets/`；异地副本可下载解密；restore-check 通过 | 服务器 | ⏳ 白名单已上线；`restore-check --compare` 已对生产备份跑过一次且一致（2026-09-13）；**缺**：生产 `BACKUP_OSS_*`/`OSS_*` 配置、ossutil 安装、异地副本下载解密核对 |
 | C-5 | 画布素材 | 建节点 → 人为把 sidecar mtime 改到 25h 前 → sweep → 节点仍可用 | 本地 | ✅ R0.3 落地（`4a6c605` + `src/lib/assets/`），保留期/迁移/过期回归在测 |
-| C-6 | 部署 | health 回显 sha = 部署 commit；回滚演练一次 | 服务器 | ⏳ sha 回显已生效（`d7f34eb` 部署实测）；**缺**：`releases/<sha>` 目录与回滚演练（R1.4 待生产窗口） |
+| C-6 | 部署 | health 回显 sha = 部署 commit；回滚演练一次 | 服务器 | ⏳ sha 回显两次部署均验证（`d7f34eb`、`c44f8a1`）；**缺**：`releases/<sha>` 目录与回滚演练（R1.4 待独立生产窗口） |
 | C-7 | 资金基线 | R4 每次迁移前后：全部账号两池余额 + `ref` 集合逐字节一致 | 服务器（离线窗口） | ◻ 未触发：R4.2 迁移未开始，无对照对象 |
 | C-8 | 前端 | Profiler 基线 vs 拆分后；五视图 375/390/768/1440 视觉核对 | 本机 Chrome | ✅ Profiler 基线 vs 拆分后已测（handoff §5，拆分前后持平、无 longtask）；375/1440 截图已核对，390/768 未单独截图 |
 | C-9 | 质量 | `evals/runs/` 至少一份校准 + 一份报告；`HARNESS_QC_VISUAL_THRESHOLD` 写进生产 `.env` 并记录依据 | 真实上游，预算显式 | ⏳ **缺**：预算未批 + 两张授权人物照；报价已冻结（R3 节） |

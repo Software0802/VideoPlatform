@@ -12,8 +12,8 @@
 | 反代链路 | 站点块 `genius.homeaistack.online { reverse_proxy 10.255.1.1:3000 }`：Caddy 容器经 docker 网关 `10.255.1.1` 连入宿主机，**服务必须绑 `0.0.0.0`，不能改成 loopback** |
 | 目录归属 | `/opt/genius` 与 `data/` 均为 genius:genius；`.env` 为 `genius:genius` 640 |
 | 磁盘 | /dev/vda3：40G，总已用 24G，可用 14G（65%） |
-| 发布标识 | `/opt/genius/BUILD_INFO.json` = `{sha d7f34ebe…, shortSha d7f34eb, builtAt 2026-09-13T09:48:55Z, node v24.16.0（构建机）, dirty false}`；线上版本以它 / 登录态 `GET /api/health` 的 `build.sha` 为准 |
-| 备份 | root crontab 每日 03:17（`17 3 * * *`）跑 backup.sh（新版白名单已随 d7f34eb 上线）；部署前手动包 `backups/genius-data-20260913-174421.tgz` 为旧版脚本产物、**不含 relays.json** |
+| 发布标识 | `/opt/genius/BUILD_INFO.json` `shortSha c44f8a1`（2026-09-13 第二次部署，deploy.sh 全流程通过）；`81b0a34`/`1de057b` 的两个脚本（`alert-test.mjs`、`restore-check.mjs`）经 scp 单独同步到 `/opt/genius/scripts`（脚本不需重启），即生产 = c44f8a1 构建 + 1de057b 脚本。线上版本以 BUILD_INFO / 登录态 `GET /api/health` 的 `build.sha` 为准 |
+| 备份 | root crontab 每日 03:17（`17 3 * * *`）跑 backup.sh（新版白名单含 relays.json）；部署前手动包 `backups/genius-data-20260913-211416.tgz`（新脚本产物）已跑过 `restore-check --compare data`：**一致**（users 4、ledger 幂等键 54 重复 0、jobs 54、canvases 2、canvas-runs 1、assets 0、relays.json 有）——首次真实恢复核对，未做实际切换恢复。更早的 `genius-data-20260913-174421.tgz` 为旧版脚本产物、**不含 relays.json** |
 
 站点块与全局配置都没有 `trusted_proxies`/`client_ip_headers`。按 Caddy v2.11.4 源码 `reverseproxy.go` 的 `addForwardedHeaders`：客户端不受信时 `X-Forwarded-For` **被覆盖为对端 IP**（不是追加），`X-Forwarded-Host` 覆盖为请求 Host——所以 `rate-limit.ts` 的 `clientIp()` 取首跳、`proxy.ts` 的 `expectedHost()` 认 x-forwarded-host 在当前拓扑下都成立（F-19 confirmed-safe，无需改配置）。以后接 CDN / 改 trusted_proxies 必须重新核对。
 
@@ -27,8 +27,9 @@ Node 22.x 的 node:sqlite 官方标注仍为 Stability 1.1（Active development�
 cd /opt/genius && sudo -u genius node scripts/mint-invites.mjs 1
 ```
 
-- 令牌：`LUMEN_ADMIN_TOKEN`（`openssl rand -hex 32` 生成）写进 `/opt/genius/.env` 后 `systemctl restart genius` 生效；也可以每次调用临时给 `sudo -u genius LUMEN_ADMIN_TOKEN=… node scripts/xxx.mjs`。脚本按 env → `--env-file` → `/opt/genius/.env` → `./.env.local` 的顺序找令牌，所以服务器上不带 env 也能读到 `.env`。
+- 令牌：`LUMEN_ADMIN_TOKEN`（`openssl rand -hex 32` 生成）已写进 `/opt/genius/.env`（2026-09-13，写前备份 `.env.bak.20260913-211416`，部署重启后生效）；也可以每次调用临时给 `sudo -u genius LUMEN_ADMIN_TOKEN=… node scripts/xxx.mjs`。脚本按 env → `--env-file` → `/opt/genius/.env` → `./.env.local` 的顺序找令牌，所以服务器上不带 env 也能读到 `.env`。
 - 令牌只在**本机 loopback 链路**生效（`x-forwarded-for` 缺失或每一跳都是 loopback，且 host 是 `127.0.0.1:*`/`localhost:*`；判据见 `src/lib/admin-token.ts`）——Caddy 对不受信客户端必把 XFF 覆盖为真实对端 IP，公网请求拿不到这个通道；`next dev` 内部代理注入的 `::ffff:127.x` 属合法 loopback 跳。`LUMEN_ADMIN_BASE_URL` 默认 `http://127.0.0.1:3000`。
+- 令牌生效范围：五条 R4.1 管理路由（invites/gift-codes/users balance、disabled、password）+ `POST /api/admin/alerts/test`；`/api/admin/relays*` 四条**只认管理员会话**，令牌无效（按设计）。2026-09-13 实测：loopback+token `POST /api/admin/alerts/test` → 200 `{sent:false,format:"generic"}`（`ALERT_WEBHOOK_URL` 未配故 sent=false）；公网+token → 401；无 token → 401。
 - `--offline` 仍在但语义收紧：先探测 `GET /api/health` 连不上（ECONNREFUSED）才允许直写文件；服务在跑就拒绝——这就是 D-4 的互斥，服务进程与 CLI 不再可能同时写 `data/`。
 - 直写 `data/` 的脚本（`--offline` 路径与 `usage.mjs`、migrate 脚本）必须以服务身份跑：`sudo -u genius`；root 跑出来的新文件服务写不动。
 
@@ -203,6 +204,8 @@ curl https://gosspublic.alicdn.com/ossutil/install.sh | sudo bash
 bucket 建议开 30 天生命周期规则自动清旧副本（远端只作最近窗口的异地副本，长期留存靠本地 KEEP 份数）；AK 用只授权该 bucket `PutObject` 的 RAM 子账号。脚本只从 `/opt/genius/.env` 挑 `BACKUP_*`/`OSS_*` 变量，不整文件 source。
 
 ### 恢复演练与恢复流程
+
+首次真实核对记录（2026-09-13）：对部署前手动包 `backups/genius-data-20260913-211416.tgz` 跑 `restore-check --archive … --compare /opt/genius/data` → 一致（users 4、ledger 幂等键 54 重复 0、jobs 54、canvases 2、canvas-runs 1、assets 0、relays.json 有）。注意幂等键口径为「按用户 + `protocol.mjs` keys()（job/gift/ref+kind）」（`1de057b` 修正）；尚未做解包切换的实际恢复。
 
 ```bash
 # 0. 看包里是什么 / 先拿摘要（不解包到 DATA_DIR，只读）
