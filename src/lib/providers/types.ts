@@ -166,7 +166,7 @@ export class ProviderHttpError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
-    opts?: { upstreamRejected?: boolean },
+    opts?: { upstreamRejected?: boolean; retryAfterMs?: number; phase?: "connect" | "read" },
   ) {
     super(message);
     this.name = "ProviderHttpError";
@@ -176,6 +176,16 @@ export class ProviderHttpError extends Error {
      * 目前只有 OpenAI 兼容生图通道会打这个标记。
      */
     this.upstreamRejected = opts?.upstreamRejected === true;
+    /** 上游 `Retry-After` 解析出的毫秒数（429 限流时用，健康冷却优先听它）。 */
+    this.retryAfterMs = opts?.retryAfterMs;
+    /**
+     * 失败发生在请求的哪一段。`connect` 只在连接根本没建起来（ECONNREFUSED /
+     * ENOTFOUND）时打——请求不可能被受理，换家是安全的；读超时（`read`）与中途
+     * 断连不算确定拒绝，保持「可能已受理」的模糊语义。
+     */
+    this.phase = opts?.phase;
   }
   public readonly upstreamRejected: boolean;
+  public readonly retryAfterMs?: number;
+  public readonly phase?: "connect" | "read";
 }

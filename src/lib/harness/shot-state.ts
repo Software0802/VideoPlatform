@@ -44,6 +44,15 @@ export const harnessShotRecordSchema = z
     costUnknown: z.boolean().optional(),
     error: shotErrorSchema.nullable().optional(),
     qc: shotQcSchema.optional(),
+    /** 本镜实际被提交给的 provider（确定拒单换家后与 job.provider 可能不同）。 */
+    provider: z.string().trim().min(1).max(64).optional(),
+    /** 本镜换家用的模型名（按 shot.route 取的新家模型；估价重算读它）。 */
+    model: z.string().trim().min(1).max(160).optional(),
+    /**
+     * 本镜已经试过并确定被拒的 provider（N3.4）：换家与重试都不得再把这条镜
+     * 提交给它们——被拒的请求没计费，但把同一条请求摊到每家上游不是重试，是扩散。
+     */
+    excludedProviders: z.array(z.string().trim().min(1).max(64)).max(16).optional(),
   })
   .strict();
 
@@ -56,6 +65,9 @@ export type ShotPatch = {
   costUnknown?: boolean;
   error?: HarnessShotRecord["error"];
   qc?: ShotQc;
+  provider?: string;
+  model?: string;
+  excludedProviders?: string[];
 };
 
 const allowed: Record<HarnessShotStatus, HarnessShotStatus[]> = {

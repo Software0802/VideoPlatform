@@ -7,6 +7,7 @@ import {
   type RelayConfig,
 } from "@/lib/providers/relay/config";
 import { reconcileRelays, currentRelayViews } from "@/lib/providers/relay/assemble";
+import { healthList } from "@/lib/providers/health";
 import { relayCatalogSnapshotFetchedAt } from "@/lib/providers/relay/discover";
 import { isRegisteredProviderId } from "@/lib/providers/registry";
 import { ProviderHttpError } from "@/lib/providers/types";
@@ -32,6 +33,8 @@ export type RelaySummary = {
   channels: { video: boolean; image: boolean; chat: boolean };
   catalogSource: "static" | "models-endpoint" | null;
   catalogSnapshotAt: string | undefined;
+  /** 视频 / 图片通道的健康态（`providers/health.ts`），没有的通道为 undefined。 */
+  health: { video?: "ok" | "cooldown" | "half-open"; image?: "ok" | "cooldown" | "half-open" };
   /** 是否由文件管理（false = env 预设，PATCH/DELETE 不适用）。 */
   managed: boolean;
 };
@@ -57,8 +60,16 @@ export function listRelays(): RelaySummary[] {
     },
     catalogSource: view.catalog ? (view.catalogSource ?? "static") : null,
     catalogSnapshotAt: relayCatalogSnapshotFetchedAt(view.id),
+    health: {
+      video: view.catalog ? healthStateFor(view.id, "video") : undefined,
+      image: view.image ? healthStateFor(view.id, "image") : undefined,
+    },
     managed: fileIds.has(view.id),
   }));
+}
+
+function healthStateFor(id: string, kind: "video" | "image"): "ok" | "cooldown" | "half-open" {
+  return healthList().find((h) => h.providerId === id && h.kind === kind)?.state ?? "ok";
 }
 
 function fileRelays(): RelayConfig[] {

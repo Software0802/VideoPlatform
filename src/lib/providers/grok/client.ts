@@ -72,11 +72,16 @@ export async function fetchUpstream(
       }
     } catch (error) {
       lastError = controller.signal.aborted
-        ? new ProviderHttpError(504, "upstream_timeout", "上游请求超时")
+        ? new ProviderHttpError(504, "upstream_timeout", "上游请求超时", { phase: "read" })
         : error;
       if (attempt === maxAttempts - 1) {
         if (controller.signal.aborted) throw lastError;
-        throw new ProviderHttpError(503, "upstream_unavailable", "上游暂时不可用");
+        // 只有「连接根本没建起来」才打 connect 标——请求确定没送达，可以安全换家；
+        // 其它网络错（对端 reset、TLS 握手失败中途断）可能发生在请求已发出之后，
+        // 保持无 phase 的模糊语义，走 uncertain_submit。
+        throw new ProviderHttpError(503, "upstream_unavailable", "上游暂时不可用", {
+          phase: connectPhaseOf(error),
+        });
       }
     } finally {
       clearTimeout(timer);
@@ -84,6 +89,13 @@ export async function fetchUpstream(
     await sleep(upstreamRetryBaseMs() * 2 ** attempt);
   }
   throw lastError instanceof Error ? lastError : new ProviderHttpError(503, "upstream_unavailable", "上游暂时不可用");
+}
+
+/** 连接阶段的错误码（undici 把系统 errno 放在 `cause.code`）。其它情形返回 undefined。 */
+function connectPhaseOf(error: unknown): "connect" | undefined {
+  const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
+  const code = typeof cause?.code === "string" ? cause.code : undefined;
+  return code === "ECONNREFUSED" || code === "ENOTFOUND" ? "connect" : undefined;
 }
 
 function sleep(ms: number) {

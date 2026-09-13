@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type {
-  ProviderHandle,
-  VideoProvider,
+import {
+  ProviderHttpError,
+  type ProviderHandle,
+  type VideoProvider,
 } from "@/lib/providers/types";
+import { downgradeR2vShot } from "./shot-router";
 import { createShotRecords, type HarnessShotRecord } from "./shot-state";
 import { executeShotWithRetries } from "./shot-executor";
 import type { IdentityBible, Shot } from "./types";
@@ -36,9 +38,10 @@ const shot: Shot = {
 function providerFor(
   submit: VideoProvider["submit"],
   poll: VideoProvider["poll"],
+  id = "mock",
 ): VideoProvider {
   return {
-    id: "mock",
+    id,
     capabilities: () => ({
       modes: ["text_to_video"],
       maxDurationSec: 10,
@@ -284,5 +287,189 @@ describe("shot executor", () => {
     expect(result.status).toBe("canceled");
     expect(submit).not.toHaveBeenCalled();
     expect(states.map((state) => state.status)).toEqual(["canceled"]);
+  });
+});
+
+describe("shot executor — certain-rejection provider switch (N3.4)", () => {
+  const models = {
+    text_to_video: "mock-video",
+    image_to_video: "mock-video",
+    reference_to_video: "mock-video",
+  };
+
+  function donePoll(): VideoProvider["poll"] {
+    return vi.fn<VideoProvider["poll"]>().mockResolvedValue({
+      status: "done",
+      progress: 100,
+      remoteUrl: "http://fixture/video.mp4",
+    });
+  }
+
+  it("moves a rejected shot to the next provider and records it on the record", async () => {
+    const rejectedSubmit = vi.fn(async () => {
+      throw new ProviderHttpError(429, "quota_exhausted", "out of credit");
+    });
+    const acceptedSubmit = vi.fn(async (): Promise<ProviderHandle> => ({
+      providerId: "fixture-b",
+      remoteId: "remote-b",
+    }));
+    const providerB = providerFor(acceptedSubmit, donePoll(), "fixture-b");
+    const states: HarnessShotRecord[] = [];
+
+    const result = await executeShotWithRetries({
+      jobId: "job_harness",
+      shot,
+      bible,
+      models,
+      record: createShotRecords([shot])[0]!,
+      provider: providerFor(rejectedSubmit, vi.fn(), "fixture-a"),
+      resolveAsset,
+      persistOutput: async () => "shots/0/video.mp4",
+      pollIntervalMs: 0,
+      onState: async (state) => {
+        states.push(state);
+      },
+      onCertainRejection: async (_error, _record, ctx) => ({
+        provider: providerB,
+        models: { ...models, text_to_video: "fixture-b-t2v" },
+        shot: ctx.shot,
+        excluded: [...ctx.excluded, ctx.provider.id],
+      }),
+    });
+
+    expect(rejectedSubmit).toHaveBeenCalledTimes(1);
+    expect(acceptedSubmit).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      status: "succeeded",
+      provider: "fixture-b",
+      model: "fixture-b-t2v",
+      excludedProviders: ["fixture-a"],
+    });
+    // Poll used the *new* provider — the rejected one never sees this remote id.
+    expect(providerB.poll).toHaveBeenCalled();
+  });
+
+  it("never switches on a read timeout — the submit may have been accepted", async () => {
+    const submit = vi.fn(async () => {
+      throw new ProviderHttpError(504, "upstream_timeout", "read timed out", {
+        phase: "read",
+      });
+    });
+    const onCertainRejection = vi.fn();
+    const result = await executeShotWithRetries({
+      jobId: "job_harness",
+      shot,
+      bible,
+      models,
+      record: createShotRecords([shot])[0]!,
+      provider: providerFor(submit, vi.fn(), "fixture-a"),
+      resolveAsset,
+      persistOutput: vi.fn(),
+      pollIntervalMs: 0,
+      onCertainRejection,
+    });
+
+    expect(onCertainRejection).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      status: "needs_review",
+      error: { code: "uncertain_submit" },
+    });
+  });
+
+  it("accumulates exclusions across rejections instead of retrying the same door", async () => {
+    const reject = (id: string) =>
+      vi.fn(async () => {
+        throw new ProviderHttpError(401, "unauthorized", `${id} rejected the key`);
+      });
+    const submitA = reject("fixture-a");
+    const submitB = reject("fixture-b");
+    const submitC = vi.fn(async (): Promise<ProviderHandle> => ({
+      providerId: "fixture-c",
+      remoteId: "remote-c",
+    }));
+    const providers: Record<string, VideoProvider> = {
+      "fixture-a": providerFor(submitA, vi.fn(), "fixture-a"),
+      "fixture-b": providerFor(submitB, vi.fn(), "fixture-b"),
+      "fixture-c": providerFor(submitC, donePoll(), "fixture-c"),
+    };
+    const hops: string[] = [];
+
+    const result = await executeShotWithRetries({
+      jobId: "job_harness",
+      shot,
+      bible,
+      models,
+      record: createShotRecords([shot])[0]!,
+      provider: providers["fixture-a"]!,
+      resolveAsset,
+      persistOutput: async () => "shots/0/video.mp4",
+      pollIntervalMs: 0,
+      onCertainRejection: async (_error, _record, ctx) => {
+        const excluded = [...new Set([...ctx.excluded, ctx.provider.id])];
+        const nextId = ["fixture-a", "fixture-b", "fixture-c"].find(
+          (id) => !excluded.includes(id),
+        );
+        if (!nextId) return null;
+        hops.push(`${ctx.provider.id}->${nextId}`);
+        return { provider: providers[nextId]!, models, shot: ctx.shot, excluded };
+      },
+    });
+
+    expect(submitA).toHaveBeenCalledTimes(1);
+    expect(submitB).toHaveBeenCalledTimes(1);
+    expect(submitC).toHaveBeenCalledTimes(1);
+    expect(hops).toEqual(["fixture-a->fixture-b", "fixture-b->fixture-c"]);
+    expect(result).toMatchObject({
+      status: "succeeded",
+      provider: "fixture-c",
+      excludedProviders: ["fixture-a", "fixture-b"],
+    });
+  });
+
+  it("treats an exhausted switch budget as a terminal rejection, not a retry", async () => {
+    const submit = vi.fn(async () => {
+      throw new ProviderHttpError(503, "upstream_rejected", "refused", {
+        upstreamRejected: true,
+      });
+    });
+    const result = await executeShotWithRetries({
+      jobId: "job_harness",
+      shot,
+      bible,
+      models,
+      record: createShotRecords([shot])[0]!,
+      provider: providerFor(submit, vi.fn(), "fixture-a"),
+      resolveAsset,
+      persistOutput: vi.fn(),
+      pollIntervalMs: 0,
+      // 换家名额已尽（RELAY_MAX_SWITCHES 由调用方计）：返回 null 走原失败路径。
+      onCertainRejection: async () => null,
+    });
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      status: "needs_review",
+      retries: 0,
+      error: { code: "upstream_rejected" },
+    });
+  });
+
+  it("downgrades an r2v shot to i2v/t2v through the shared lockPlan rule", () => {
+    const r2v: Shot = { ...shot, route: "r2v", characterIds: ["char_1"] };
+    expect(downgradeR2vShot(r2v).route).toBe("t2v");
+    expect(
+      downgradeR2vShot({
+        ...r2v,
+        startFrame: { source: "generated", assetId: "shots/0/first.jpg" },
+      }).route,
+    ).toBe("i2v");
+    expect(
+      downgradeR2vShot({ ...r2v, continuity: "tail_chain" }).route,
+    ).toBe("i2v");
+    expect(downgradeR2vShot({ ...shot, route: "i2v" })).toEqual({
+      ...shot,
+      route: "i2v",
+    });
   });
 });

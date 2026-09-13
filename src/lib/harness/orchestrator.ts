@@ -40,6 +40,7 @@ import type { LlmUsage } from "./llm-usage";
 import { QC_DURATION_TOLERANCE_SEC, runShotQc, ShotQcFailure } from "./qc";
 import { runPersistedPlan } from "./run-persisted-plan";
 import { ShotFailure } from "./shot-executor";
+import { downgradeR2vShot } from "./shot-router";
 import type { HarnessShotRecord } from "./shot-state";
 import { saveHarnessPlan, updateHarnessBible } from "./state";
 import { DEFAULT_SETTLE_SEC, stitchClips, StitchCanceled } from "./stitch";
@@ -469,7 +470,9 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
       shotOverride: (shot, record) =>
         record.retries > 0 ? { ...shot, prompt: tightenShotPrompt(shot, plan.bible, record.retries) } : shot,
       beforeAttempt: async (shot, record) => {
-        await reserveShotBudget(job.id, shot, record, reserved, pricing);
+        // 换过家的镜按它的实际落点估价（record.provider/model 由 executor 在确定拒单
+        // 换家时写回），没换过的仍按 job 级口径。
+        await reserveShotBudget(job.id, shot, record, reserved, shotPricingFor(job, record));
       },
       beforeShot: async (shot) => {
         if (shot.startFrame?.source === "extracted") {
@@ -544,7 +547,7 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
           dest: staged,
           remoteUrl: handle.remoteUrl,
           fileId: handle.fileOutputId,
-          providerId: provider.id,
+          providerId: handle.providerId ?? provider.id,
         });
       }
 
@@ -845,7 +848,7 @@ export function lockPlan(
     if (next.endFrame) delete next.endFrame;
     if (next.index === 0 && next.continuity === "tail_chain") next.continuity = "hard_cut";
     if (!supportsR2v && next.route === "r2v") {
-      next.route = next.startFrame || next.continuity === "tail_chain" ? "i2v" : "t2v";
+      Object.assign(next, downgradeR2vShot(next));
     }
     // tail_chain 的续接语义就是拿前一镜尾帧做首帧，恒为 i2v（r2v 留着也接不了尾帧）。
     if (next.continuity === "tail_chain" && next.route !== "i2v") next.route = "i2v";
@@ -936,12 +939,20 @@ export function budgetCap(
 export type ShotPricing = { model: string; video?: VideoPricingHint };
 
 function shotPricing(job: JobRecord): ShotPricing {
+  return shotPricingFor(job);
+}
+
+/**
+ * 单镜估价（N3.4 换家后）：这面镜子被换到过别家时（record.provider/model 由 executor
+ * 写回），按新家口径估——否则用 job 级（创建时选定）的口径。
+ */
+export function shotPricingFor(job: JobRecord, record?: HarnessShotRecord): ShotPricing {
   return {
-    model: job.model,
+    model: record?.model ?? job.model,
     video: {
       resolution: job.resolution ?? "720p",
       audio: job.generateAudio ? "native" : "off",
-      provider: job.provider,
+      provider: record?.provider ?? job.provider,
     },
   };
 }

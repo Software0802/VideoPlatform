@@ -14,7 +14,7 @@ import {
 } from "@/lib/env";
 import { assertFfmpeg, ffmpegBinary } from "@/lib/ffmpeg";
 import { queueStats, runnerStarted } from "@/lib/jobs/active";
-import { exhaustedList } from "@/lib/providers/exhaustion";
+import { exhaustedList, healthList } from "@/lib/providers/health";
 import { mockHasFont } from "@/lib/providers/mock";
 import {
   audioAvailableFor,
@@ -159,6 +159,9 @@ async function handler(request: Request) {
       // 被判定「积分耗尽」而暂时绕开的上游（视频 / 图片分开记，到 until 自动恢复）。
       // 排查「为什么任务突然走了另一家」看这条。
       exhausted: exhaustedList(),
+      // provider × 通道的健康态（ok / cooldown / half-open + 窗口成功率），
+      // 耗尽是其中 `state:"cooldown"` 且 reason=quota_exhausted 的一档。
+      providerHealth: healthList(),
       // 全站在途任务数，口径与 `MAX_QUEUED_JOBS` 的准入判据一致（= queued + running）。
       queued: queue.queued + queue.running,
     },

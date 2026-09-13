@@ -373,6 +373,18 @@ export type JobRecord = Omit<
    * was never bounced off the upstream.
    */
   nextAttemptAt?: string;
+  /**
+   * 确定拒单引发的换家留痕（N3.4，方案 §4c）：`{from, to, code, at}`。条数就是这条任务
+   * 已发生的换家次数（`RELAY_MAX_SWITCHES` 上限按它计）；换家的排除集 = 所有
+   * from/to 的并集 + 当前 provider。
+   */
+  providerSwitches?: { from: string; to: string; code: string; at: string }[];
+  /**
+   * 用户**点名**的产品（请求体 `model` 是产品 id），区别于路由自动打的标签。
+   * 点名产品的任务确定拒单时不换家——换家等于交付他没选的产品——直接按
+   * `product_unavailable` 失败。
+   */
+  productPicked?: boolean;
   remoteId?: string;
   remoteUrl?: string;
   fileOutputId?: string;

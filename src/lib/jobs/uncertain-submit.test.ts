@@ -85,7 +85,8 @@ afterEach(async () => {
   delete process.env.KLING_API_KEY;
   delete process.env.XAI_API_KEY;
   process.env.LUMEN_FORCE_MOCK = "1";
-  await rm(path.join(dataRoot, "provider-state.json"), { force: true });
+  (await import("@/lib/providers/health")).__resetHealthForTests();
+  await rm(path.join(dataRoot, "provider-health.json"), { force: true });
 });
 
 afterAll(async () => {

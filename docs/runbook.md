@@ -65,12 +65,23 @@ curl -sS http://127.0.0.1:3000/api/health
 
 ## provider 耗尽处理
 
-某个上游（可灵 / YMan / OpenAI 图片）返回 `quota_exhausted` 后，路由层会自动把它标记耗尽 `PROVIDER_EXHAUSTED_TTL_MS`（默认 6 小时）并改走 `VIDEO_PROVIDER_ORDER`/`IMAGE_PROVIDER_ORDER` 里的下一家，期间用户报价只降不升；如果所有配了 key 的 provider 都耗尽，提交会返回 503 `no_provider_available`（不会静默落回 mock）。运维侧：
+某个上游返回 `quota_exhausted` 后，健康子系统（`src/lib/providers/health.ts`）把它冷却 `PROVIDER_EXHAUSTED_TTL_MS`（默认 6 小时，落盘 `data/provider-health.json`，重启延续）；被**确定拒绝**的任务自动改走 `VIDEO_PROVIDER_ORDER`/`IMAGE_PROVIDER_ORDER` 里的下一家（换家留痕在 `job.providerSwitches`），用户报价只降不升；所有配了 key 的 provider 都不可用时提交返回 503 `no_provider_available`（不会静默落回 mock）。运维侧：
 
-1. `GET /api/health` 的 `exhausted` 列表能看到当前被绕开的是谁、到什么时候、上游原话。
+1. `GET /api/health` 的 `providerHealth`（保留 `exhausted` 读数）能看到谁在冷却、到什么时间、原因；`GET /api/admin/relays` 每条也有 `health`。
 2. 去对应上游控制台充值（可灵、YMan、OpenAI/ccgoai 各自后台）。
-3. 充值到账后不需要手动清除标记——到 `PROVIDER_EXHAUSTED_TTL_MS` 会自动放回去重试；如果急需立即恢复，重启服务会清空内存态的耗尽标记（`data/provider-state.json` 落盘状态会在下次读取时按 TTL 重新判定）。
+3. 充值到账后不需要手动清除标记——冷却到期自动进半开，第一个探路任务成功即恢复；`data/provider-health.json` 的冷却按 `cooldownUntil` 判定，重启不会提前放行。
 4. 配置了 `ALERT_WEBHOOK_URL` 时会收到 `provider_exhausted` 告警，同一件事 10 分钟内只发一次。
+
+## 某家中转不稳（`relay_unhealthy` / 限流 / 点名的产品不可用）
+
+现象：`ALERT_WEBHOOK_URL` 收到 `relay_unhealthy`（某家 × 通道连续 3 次 5xx / 连接失败 / 读超时，自动冷却 5 分钟，冷却内路由与 `/api/models` 都绕开它）；或任务失败码是 `product_unavailable`（用户点名的产品所在上游确定拒单）；或大面积 `uncertain_submit`（读超时 / 断连——可能已受理的单子绝不重发，进人工复核）。
+
+处理：
+
+1. `GET /api/health` 看 `providerHealth`：`cooldown` + `reason`（`rate_limited` 吃上游 `Retry-After` 封顶 15 分钟，无提示时 60s 起连击翻倍；`quota_exhausted` 6h；transient 连击 5 分钟）与 `half-open`（探路中）。
+2. 上游侧在抖：什么都不用做——冷却到期进半开，第一个探路任务成功就恢复，失败翻倍再冷却（上限 15 分钟）。任务是**确定拒绝才换家**（4xx / 结构化拒单 / 连接没建立），上限 `RELAY_MAX_SWITCHES`（默认 2）按任务计、分镜按镜计；模糊失败一律 `uncertain_submit` 人工复核，不会自动重发。
+3. 持续性故障就 `PATCH /api/admin/relays/<id> {"enabled":false}` 把它先摘出路由（见上节），或在 `*_PROVIDER_ORDER` 里调次序；修好再启用。
+4. `uncertain_submit` 复核：先查上游后台这条任务到底建没建（外部单号 = jobId 或 `job.remoteId`），建了就把产物找回归档，没建才让用户重试——一键重试在该状态下被锁死是刻意的。
 
 ## 上游下架 / 改名模型（`upstream_model_missing`）
 

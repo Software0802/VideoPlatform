@@ -95,6 +95,16 @@ export function buildShotRequest(input: BuildShotRequestInput): ProviderGenerate
   throw invalid(`未知 shot 路由: ${shot.route}`);
 }
 
+/**
+ * r2v 镜落到不声明 `reference_to_video` 的 provider 时的降级规则——与 `lockPlan`
+ * 里同源：有首帧或是续接镜降 i2v（身份由首帧继承），否则降 t2v。
+ * shot-executor 换家（N3.4）与计划期 lockPlan 共用这一条，两处不得分叉。
+ */
+export function downgradeR2vShot(shot: Shot): Shot {
+  if (shot.route !== "r2v") return shot;
+  return { ...shot, route: shot.startFrame || shot.continuity === "tail_chain" ? "i2v" : "t2v" };
+}
+
 function referenceAssetIds(shot: Shot, bible: IdentityBible): string[] {
   const ids: string[] = [];
   for (const characterId of shot.characterIds) {

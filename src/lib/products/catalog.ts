@@ -1,7 +1,7 @@
 import { priceCny } from "@/lib/billing/prices";
 import { isMockMode, klingVideoAudio, lumenProductsRaw } from "@/lib/env";
 import { log } from "@/lib/log";
-import { isExhausted } from "@/lib/providers/exhaustion";
+import { isAvailable } from "@/lib/providers/health";
 import { envModelFor } from "@/lib/providers/model-name";
 import { liveRelayViews, relayViewFor } from "@/lib/providers/relay/live";
 import { servesResolution } from "@/lib/providers/resolution";
@@ -328,7 +328,7 @@ export function isProductAvailable(product: Product): boolean {
   // 路由永远不会选中可灵，目录也就不能把可灵的产品摆出来——那是一个点了必被拒的选项。
   if (!inProviderOrder(product)) return false;
   if (!hasProviderKey(product.provider)) return false;
-  if (isExhausted(product.provider, product.kind)) return false;
+  if (!isAvailable(product.provider, product.kind)) return false;
   if (product.provider === "kling" && product.audio === "native" && klingVideoAudio() !== "native") {
     return false;
   }

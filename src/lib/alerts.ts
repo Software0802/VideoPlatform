@@ -19,7 +19,9 @@ export type AlertEvent =
   | "provider_exhausted"
   | "disk_low"
   /** 上游返回 404 查不到配置的模型——本地默认 / 配置还指着它，需要人工换名或下架。 */
-  | "upstream_model_missing";
+  | "upstream_model_missing"
+  /** relay × 通道连续失败触发的 5 分钟冷却（方案 §4c 健康分级）。 */
+  | "relay_unhealthy";
 
 export type AlertPayload = Record<string, string | number | boolean | null | undefined>;
 

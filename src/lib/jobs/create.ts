@@ -293,6 +293,9 @@ async function createJobUnlocked(
     provider,
     product: product?.id,
     productName: product?.name,
+    // 只有用户点名的产品才置这个标记——路由自动打的标签不代表他选择了这家，
+    // 确定拒单时照常换家；点名的任务不换（见 runner 的 product_unavailable 路径）。
+    ...(choice.product ? { productPicked: true } : {}),
     prompt: body.prompt,
     durationSec: dur,
     aspectRatio:
@@ -468,6 +471,7 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     provider,
     product: product?.id,
     productName: product?.name,
+    ...(choice.product ? { productPicked: true } : {}),
     prompt: source.prompt,
     durationSec,
     aspectRatio: settings?.ratio ?? hSettings?.ratio ?? source.aspectRatio,

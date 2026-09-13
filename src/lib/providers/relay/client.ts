@@ -86,8 +86,16 @@ async function readRelayBody(rt: RelayEndpoint, res: Response): Promise<Record<s
     parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {};
-  if (!res.ok) throw relayError(rt, res.status, data);
+  if (!res.ok) throw relayError(rt, res.status, data, retryAfterMsOf(res));
   return data;
+}
+
+/** `Retry-After` 响应头 → 毫秒（只认秒数形态；认不出返回 undefined）。 */
+function retryAfterMsOf(res: Response): number | undefined {
+  const raw = res.headers.get("retry-after");
+  if (!raw) return undefined;
+  const sec = Number(raw.trim());
+  return Number.isFinite(sec) && sec >= 0 ? Math.round(sec * 1000) : undefined;
 }
 
 /**
@@ -102,6 +110,7 @@ export function relayError(
   rt: RelayEndpoint,
   status: number,
   body: Record<string, unknown>,
+  retryAfterMs?: number,
 ): ProviderHttpError {
   const raw = body.error;
   const error = raw && typeof raw === "object" && !Array.isArray(raw)
@@ -119,13 +128,14 @@ export function relayError(
   const mapped = MAPPED_STATUS[status];
   if (mapped) {
     const message = upstreamMessage ?? mapped.message.replace("{}", rt.name);
-    return new ProviderHttpError(status, mapped.code, message);
+    return new ProviderHttpError(status, mapped.code, message, { retryAfterMs });
   }
   // 5xx 原样透传（runner 的可重试集合按 status >= 500 也能认出来）。
   return new ProviderHttpError(
     status,
     upstreamCode ?? `upstream_http_${status}`,
     upstreamMessage ?? `${rt.name} 上游 HTTP ${status}`,
+    { retryAfterMs },
   );
 }
 

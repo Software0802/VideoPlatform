@@ -8,7 +8,7 @@ import {
   videoProviderOrderRaw,
 } from "@/lib/env";
 import { log } from "@/lib/log";
-import { isExhausted, type ExhaustionKind } from "@/lib/providers/exhaustion";
+import { claimProbe, isAvailable, type ExhaustionKind } from "@/lib/providers/health";
 import { RESOLUTION_TIERS, resolutionRank, servesResolution } from "@/lib/providers/resolution";
 import { grokNativeProvider } from "@/lib/providers/grok/native";
 import { ASPECT_RATIOS } from "@/lib/providers/grok/mode-matrix";
@@ -134,12 +134,14 @@ export type VideoRouteConstraints = {
    * 选中的那家必须两条都接得住，缺一条就按 ORDER 继续找下一家。
    */
   requireModes?: NativeMode[];
+  /** 确定拒单换家的排除集：本任务已经试过的家不再进候选（runner / harness 换家用）。 */
+  exclude?: ProviderId[];
 };
 
 const NO_PROVIDER_FOR_RATIO = "当前画幅暂无可用的生成服务";
 const NO_PROVIDER_FOR_RESOLUTION = "当前分辨率暂无可用的生成服务";
 const NO_PROVIDER_FOR_LAST_FRAME = "当前模型不支持首尾帧";
-const NO_PROVIDER_AVAILABLE = "所有生成服务暂时不可用，请稍后再试";
+const NO_PROVIDER_AVAILABLE = "所有供应商暂时繁忙，请稍后再试";
 
 /** 这台实例有没有配任何一把真实上游 key。只要有一把，mock 就不再是合法的落点。 */
 /**
@@ -174,7 +176,10 @@ function hasAnyRealKey(kind: ExhaustionKind): boolean {
  * 是「mock 就是它的正常形态」，照旧返回 mock。
  */
 function fallbackProvider(kind: ExhaustionKind): VideoProvider {
-  if (hasXaiKey() && !isExhausted("grok", kind)) return grokNativeProvider;
+  if (hasXaiKey() && isAvailable("grok", kind)) {
+    claimProbe("grok", kind);
+    return grokNativeProvider;
+  }
   if (!forceMock() && hasAnyRealKey(kind)) {
     throw new ProviderHttpError(503, "no_provider_available", NO_PROVIDER_AVAILABLE);
   }
@@ -210,7 +215,8 @@ type VideoRoute = { provider: VideoProvider } | { blocked: string };
 function pickVideoProvider(mode: NativeMode, constraints?: VideoRouteConstraints): VideoRoute {
   let blocked: string | null = null;
   for (const id of effectiveVideoProviderOrder()) {
-    if (!hasProviderKey(id) || isExhausted(id, "video")) continue;
+    if (constraints?.exclude?.includes(id)) continue;
+    if (!hasProviderKey(id) || !isAvailable(id, "video")) continue;
     const provider = providerForId(id);
     const caps = provider.capabilities();
     if (!caps.modes.includes(mode)) continue;
@@ -228,6 +234,8 @@ function pickVideoProvider(mode: NativeMode, constraints?: VideoRouteConstraints
       blocked ??= NO_PROVIDER_FOR_LAST_FRAME;
       continue;
     }
+    // 半开态的 provider 一次只放一个探路任务：决定用它才认领名额。
+    claimProbe(id, "video");
     return { provider };
   }
   if (blocked) return { blocked };
@@ -252,11 +260,15 @@ function pickVideoProvider(mode: NativeMode, constraints?: VideoRouteConstraints
  * 一个都没选中时走与视频同一个 `fallbackProvider`：配了真 key 的实例宁可 503 也不落
  * mock，只有完全没 key 的实例才拿 mock 当正常形态。
  */
-function pickImageProvider(): VideoProvider {
+function pickImageProvider(exclude?: ProviderId[]): VideoProvider {
   for (const id of effectiveImageProviderOrder()) {
-    if (!hasProviderKey(id) || isExhausted(id, "image")) continue;
+    if (exclude?.includes(id)) continue;
+    if (!hasProviderKey(id) || !isAvailable(id, "image")) continue;
     const provider = providerForId(id);
-    if (provider.capabilities().modes.includes("text_to_image")) return provider;
+    if (provider.capabilities().modes.includes("text_to_image")) {
+      claimProbe(id, "image");
+      return provider;
+    }
   }
   return fallbackProvider("image");
 }
@@ -302,12 +314,13 @@ export function currentProviderId(
   opts?: VideoRouteConstraints & { harness?: boolean; durationSec?: number },
 ): ProviderId {
   if (forceMock()) return "mock";
-  if (mode === "text_to_image") return pickImageProvider().id;
+  if (mode === "text_to_image") return pickImageProvider(opts?.exclude).id;
   if (opts?.harness || isHarnessDuration(opts?.durationSec)) {
     const route = pickVideoProvider("image_to_video", {
       aspectRatio: opts?.aspectRatio,
       resolution: opts?.resolution,
       requireModes: ["text_to_video"],
+      exclude: opts?.exclude,
     });
     if ("blocked" in route) throw new ProviderHttpError(400, "invalid_argument", route.blocked);
     return route.provider.id;
@@ -358,7 +371,7 @@ export function videoAspectRatios(): AspectRatio[] {
   const allowed = new Set<AspectRatio>();
   let sawKeyedProvider = false;
   for (const id of effectiveVideoProviderOrder()) {
-    if (!hasProviderKey(id) || isExhausted(id, "video")) continue;
+    if (!hasProviderKey(id) || !isAvailable(id, "video")) continue;
     const caps = providerForId(id).capabilities();
     if (!caps.modes.includes("text_to_video")) continue;
     sawKeyedProvider = true;
@@ -383,7 +396,7 @@ export function videoResolutions(): Resolution[] {
   const allowed = new Set<Resolution>();
   let sawKeyedProvider = false;
   for (const id of effectiveVideoProviderOrder()) {
-    if (!hasProviderKey(id) || isExhausted(id, "video")) continue;
+    if (!hasProviderKey(id) || !isAvailable(id, "video")) continue;
     const caps = providerForId(id).capabilities();
     if (!caps.modes.includes("text_to_video")) continue;
     sawKeyedProvider = true;

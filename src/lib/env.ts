@@ -385,6 +385,15 @@ export function providerExhaustedTtlMs(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_PROVIDER_EXHAUSTED_TTL_MS;
 }
 
+/**
+ * 一条任务（长片按分镜）最多允许换几家 provider（方案 §4c）。默认 2 次换家 =
+ * 同一条单子最多试三家；再往后多半是请求本身的问题，继续换只会把错误摊到每家账上。
+ */
+export function relayMaxSwitches(): number {
+  const n = Number(process.env.RELAY_MAX_SWITCHES ?? 2);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 2;
+}
+
 /** 可灵视频模型，同时是 URL 路径段（`/text-to-video/kling-2.6`）。 */
 export function klingVideoModel(): string {
   return process.env.KLING_VIDEO_MODEL?.trim() || DEFAULT_KLING_VIDEO_MODEL;

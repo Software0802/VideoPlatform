@@ -2,7 +2,7 @@ import { access, copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { priceCny } from "@/lib/billing/prices";
 import { estimateCostUsd } from "@/lib/cost";
-import { jobConcurrency, upstreamPollMaxMs, upstreamRetryBaseMs } from "@/lib/env";
+import { jobConcurrency, relayMaxSwitches, upstreamPollMaxMs, upstreamRetryBaseMs } from "@/lib/env";
 import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { emitJob } from "@/lib/jobs/events";
@@ -24,7 +24,8 @@ import { extractPoster } from "@/lib/media/poster";
 import { probeDurationSec } from "@/lib/ffmpeg";
 import { persistRemote } from "@/lib/media/persist";
 import { deleteXaiFile, uploadXaiFile } from "@/lib/providers/grok/client";
-import { markExhausted } from "@/lib/providers/exhaustion";
+import { recordOutcome } from "@/lib/providers/health";
+import { isAmbiguousSubmitError, isCertainRejection } from "@/lib/providers/rejection";
 import { isImageMode } from "@/lib/providers/grok/mode-matrix";
 import { isHarnessDuration } from "@/lib/harness/durations";
 import { currentProviderId, needsSourceFileUpload, providerForId } from "@/lib/providers/router";
@@ -266,25 +267,10 @@ async function lookupInterruptedSubmit(job: JobRecord): Promise<string | null> {
 }
 
 /**
- * 「提交结果不确定」的失败（R06）：上游可能已经把这条请求接走了。
- *
- * 上游给过确定答复的失败——参数不对、鉴权拒绝、限流、余额——都是 4xx，那时 POST 没有
- * 被接受、没有被计费，照原路重发或换家即可。拿不准的只有两类：我们自己合成的超时 /
- * 断连（`upstream_timeout` / `upstream_unavailable`，请求可能已送达）和上游的 5xx
- * （服务端内部错，单子可能已经建出来）。把它们当「确定失败」重发 = 同一条片子付两次钱。
- *
- * 例外：`missing_api_key` 抛在请求发出之前；`mock_failure` 是测试替身模拟的「上游明确
- * 拒收」。非 ProviderHttpError 是普通内部错误（rest-map 校验、读盘失败），同样确定。
+ * 「提交结果不确定」的判定在 `@/lib/providers/rejection.ts`——那里同时给出
+ * 「确定拒绝（可换家）」的反面判据，两边必须共享同一条边界，否则一个错误会
+ * 同时被判成两类。
  */
-const CERTAIN_SUBMIT_FAILURE_CODES = new Set(["missing_api_key", "mock_failure"]);
-
-function isAmbiguousSubmitError(error: unknown): boolean {
-  if (!(error instanceof ProviderHttpError)) return false;
-  if (error.status < 500) return false;
-  // 结构化错误体 = 上游明确拒单，确定没受理没计费（openai-image 通道打这个标记）。
-  if (error.upstreamRejected) return false;
-  return !CERTAIN_SUBMIT_FAILURE_CODES.has(error.code);
-}
 
 /**
  * 一次「不确定」的提交该怎么结（R06）。
@@ -373,28 +359,54 @@ async function backoffRequeue(id: string, error: unknown): Promise<boolean> {
 }
 
 /**
- * 一家上游说「积分不足」时，把这次任务改交给下一家接得下的 provider。
+ * 提交被上游**确定拒绝**时（`isCertainRejection`：4xx 业务拒绝、`upstreamRejected`
+ * 结构化 5xx、连接根本没建起来的 `phase:"connect"`），把这次任务改交给下一家接得下的
+ * provider。
  *
  * 被拒的 submit 从来没有被计费，所以换家不是「再买一次」，而是同一次任务换个门；
  * 相比 `backoffRequeue` 的等 15/30/60 秒再撞同一堵墙，充值之前那堵墙不会自己消失。
+ * 读超时 / 中途断连 / 裸 5xx 这类「可能已受理」的失败永远到不了这里——它们在
+ * `resolveAmbiguousSubmit` 的 `uncertain_submit` 路径上结束。
  *
  * 换家会重算 model 与上游档位（新家的时长 / 分辨率枚举不一样），`priceCny` 则**只降不升**：
  * 换家是我们内部的事，用户什么都没做，不能让他多付；新家的档位反而更便宜时照低的收，
  * 因为交付的确实是更低的那一档。`upstreamRetries` 不加——退避重试的预算是留给「同一家
  * 暂时忙」的。
  *
+ * 排除集是本任务**已经试过的全部家**（`providerSwitches` 的 from/to 并集 + 当前家），
+ * 换家上限 `RELAY_MAX_SWITCHES`（默认 2）；两条都防的是同一个错被摊到每家账上。
+ * 用户点名产品的任务（`productPicked`）不换家——换成别家是交付了他没选的产品，
+ * 确定拒绝时直接按 `product_unavailable` 失败。
+ *
  * 新家的时长档位比原来**大**（可灵 5 秒 → 只有 10/15 档的模型）且售价会因此上涨时，
  * 干脆不换：那等于替用户买了一个他没选的时长。这种任务交回退避路径，按原规则重试或失败。
  *
- * 返回 true 表示这次失败已经被处理掉（换家或任务已取消），`runOne` 直接返回。
+ * 返回 true 表示这次失败已经被处理掉（换家 / 点名产品已失败 / 任务已取消），
+ * `runOne` 直接返回。
  */
-async function switchAwayFromExhausted(id: string, error: unknown): Promise<boolean> {
-  if (!(error instanceof ProviderHttpError) || error.code !== "quota_exhausted") return false;
+async function switchProvider(id: string, error: unknown, submitMs: number): Promise<boolean> {
+  if (!isCertainRejection(error)) return false;
   const rec = await readJob(id);
   if (!rec) return false;
   if (rec.canceled || rec.status === "canceled") return false;
+  const err = error as ProviderHttpError;
   const kind = isImageMode(rec.mode) ? "image" : "video";
-  await markExhausted(rec.provider, kind, error.message);
+  // 健康记账先行：quota_exhausted 落 6h 冷却、rate_limited 吃 Retry-After / 指数档、
+  // 其余确定拒绝也计入窗口样本——路由与 `/api/models` 立刻绕开这家。
+  recordOutcome(rec.provider, kind, false, submitMs, err.code, { retryAfterMs: err.retryAfterMs });
+
+  // 用户点名了产品：换成别家等于交付他没选的产品，确定拒绝直接失败。
+  if (rec.productPicked) {
+    await fail(id, "product_unavailable", "所选模型暂时不可用，请换一个模型或稍后再试", err.message);
+    return true;
+  }
+
+  // 已试过的全部家：当前家 + 历次换家的落点。换家次数上限按任务计。
+  const tried = new Set<ProviderId>([
+    rec.provider,
+    ...(rec.providerSwitches ?? []).flatMap((s) => [s.from, s.to]),
+  ]);
+  if ((rec.providerSwitches ?? []).length >= relayMaxSwitches()) return false;
 
   let next: ProviderId;
   try {
@@ -407,14 +419,15 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
       // 成片」。降档后 `priceCny` 只降不升（下面那段），所以降档是对用户有利的一侧；
       // 而创建任务时没有这个两难，1080p 接不下就该 400，不该悄悄给 720p。
       durationSec: rec.durationSec,
+      exclude: [...tried],
     });
   } catch {
-    // 没有一家接得下这个画幅了（`currentProviderId` 的 400）：交回退避路径，
+    // 没有一家接得下这个画幅了（`currentProviderId` 的 400/503）：交回退避路径，
     // 让它按既有规则重试或失败，而不是在这里编一个新的错误码。
     return false;
   }
   // 换到 mock 就是拿一段水印片冒充成片。宁可让任务照常失败，也不交付一个假成片。
-  if (next === rec.provider || next === "mock") return false;
+  if (tried.has(next) || next === "mock") return false;
 
   const model = modelForProvider(next, rec.mode);
   // 长片的 30/45/60 是管线内部拆 shot 的目标总长，不按上游档位归一；换家只换执行方，
@@ -467,6 +480,12 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
   const updated = await updateJob(id, (r) => {
     if (r.canceled || r.status === "canceled") return r;
     r.provider = next;
+    // 换家留痕：从哪来、到哪去、被哪个错误码赶走。审计「这条单子为什么走了这家」
+    // 全靠它——健康读数只能说明此刻谁被冷却，说明不了这条任务的历史。
+    r.providerSwitches = [
+      ...(r.providerSwitches ?? []),
+      { from, to: next, code: err.code, at: new Date().toISOString() },
+    ];
     r.model = model;
     r.product = product?.id;
     r.productName = product?.name;
@@ -501,12 +520,12 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
   });
   if (updated.provider !== next) return false;
   emitRec(updated);
-  log("info", `provider ${from} 积分耗尽，任务改走 ${next}`, {
+  log("info", `provider ${from} 确定拒单（${err.code}），任务改走 ${next}`, {
     id,
     from,
     to: next,
     model,
-    detail: error.message,
+    detail: err.message,
   });
   return true;
 }
@@ -607,9 +626,9 @@ async function runOne(id: string) {
       try {
         await harnessOrchestrator.execute(id);
       } catch (error) {
-        // 长片同样先试换家：quota_exhausted 被 shot 层包成 ShotFailure 时到不了这里，
-        // 但 orchestrator 自己抛出的 ProviderHttpError（如预算/上游拒绝）仍走换家。
-        if (await switchAwayFromExhausted(id, error)) return;
+        // 长片同样先试换家：分镜级的确定拒绝在 shot 层消化（`onCertainRejection`），
+        // orchestrator 自己抛出的 ProviderHttpError（如预算/上游拒绝）仍走任务级换家。
+        if (await switchProvider(id, error, 0)) return;
         throw error;
       }
       job = await readJob(id);
@@ -619,11 +638,12 @@ async function runOne(id: string) {
     }
     if (job.status === "queued") {
       job = await transition(id, "submitting");
+      const submitStarted = Date.now();
       try {
         await submit(job);
       } catch (error) {
-        // 积分耗尽先试换家：等下去只会撞同一堵墙，而被拒的 submit 没有被计费。
-        if (await switchAwayFromExhausted(id, error)) return;
+        // 确定拒绝先试换家：被拒的 submit 没有计费，等下去只会撞同一堵墙。
+        if (await switchProvider(id, error, Date.now() - submitStarted)) return;
         // A refused submit was never billed, so it may be re-sent. Handled here rather
         // than in the catch below so "已重试 3 次" can only be said once that is true.
         if (await backoffRequeue(id, error)) return;
@@ -712,7 +732,10 @@ async function submit(job: JobRecord) {
   }
   job = beforeProvider;
   const req = toProviderReq(job);
+  const submitStarted = Date.now();
   const handle = await provider.submit(req);
+  // 提交被受理 = 这家这通道此刻是活的：清掉冷却 / 连击计数（健康窗口只记样本）。
+  recordOutcome(provider.id, isImageMode(job.mode) ? "image" : "video", true, Date.now() - submitStarted);
   const afterProvider = await readJob(job.id);
   if (!afterProvider || afterProvider.status === "canceled" || afterProvider.canceled) {
     await removeLocalOutput(job.id, handle.localVideoPath);
@@ -811,7 +834,9 @@ async function pollUntilDone(id: string) {
     const job = await readJob(id);
     if (!job || job.status === "canceled") return;
     const provider = providerForId(job.provider);
+    const kind = isImageMode(job.mode) ? "image" : "video";
     let poll: Awaited<ReturnType<typeof provider.poll>>;
+    const pollStarted = Date.now();
     try {
       poll = await provider.poll({
         providerId: provider.id,
@@ -819,6 +844,15 @@ async function pollUntilDone(id: string) {
         localVideoPath: "outputs/video.mp4",
       });
     } catch (error) {
+      // 轮询的 5xx / 超时同样计入健康窗口（连续 3 次触发 5 分钟冷却）；
+      // 但单子已经在上游手里——无论计不计健康都绝不重发，任务照旧走失败退款。
+      recordOutcome(
+        provider.id,
+        kind,
+        false,
+        Date.now() - pollStarted,
+        error instanceof ProviderHttpError ? error.code : undefined,
+      );
       if (!isRetryablePollError(error) || transientRetries >= 2) throw error;
       transientRetries += 1;
       await sleep(upstreamRetryBaseMs() * 2 ** (transientRetries - 1));
@@ -872,6 +906,9 @@ async function pollUntilDone(id: string) {
       return;
     }
     if (poll.status === "failed" || poll.respectModeration === false) {
+      // 上游给出明确的任务级失败：单子已被受理并跑完（或被判失败），没有「再提交一次」
+      // 的选项——计入健康窗口（失败率统计），任务按现有失败路径退款。
+      recordOutcome(provider.id, kind, false, Date.now() - pollStarted, poll.errorCode);
       await fail(
         id,
         poll.errorCode ?? "failed",
@@ -879,6 +916,7 @@ async function pollUntilDone(id: string) {
       );
       return;
     }
+    recordOutcome(provider.id, kind, true, Date.now() - pollStarted);
     await updateJob(id, (r) => {
       if (r.status === "canceled" || r.canceled) return r;
       r.status = "persisting";
