@@ -1,7 +1,7 @@
 "use client";
 
 import SubscriptionView from "@/components/genius/subscription/SubscriptionView";
-import { useShell } from "@/components/genius/ShellContext";
+import { useSession } from "@/components/genius/ShellContext";
 
 /**
  * `/subscription` 订阅。方案里唯一要读真实数据的无后端视图：「我的方案」卡上的 ⚡ 是
@@ -9,6 +9,6 @@ import { useShell } from "@/components/genius/ShellContext";
  * 积分在壳的 ShellContext 里，不再单独请求一次。
  */
 export default function SubscriptionPage() {
-  const { credits } = useShell();
+  const { credits } = useSession();
   return <SubscriptionView credits={credits ?? 0} />;
 }

@@ -4,7 +4,13 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/genius/Sidebar";
 import { TopBar } from "@/components/genius/TopBar";
-import { ShellProvider, useShell, type ShellCaps } from "@/components/genius/ShellContext";
+import {
+  ShellProvider,
+  useComposer,
+  useJobs,
+  useNotices,
+  type ShellCaps,
+} from "@/components/genius/ShellContext";
 import { Dock } from "@/components/genius/composer/Dock";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { viewOfPath } from "@/components/genius/views";
@@ -26,7 +32,9 @@ export function GeniusShell({ caps, children }: { caps: ShellCaps; children: Rea
 function Frame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const view = viewOfPath(pathname ?? "/");
-  const { toast, noticeToast, openNotice, dismissNoticeToast, open } = useShell();
+  const { toast, noticeToast, dismissNoticeToast } = useNotices();
+  const { openNotice } = useJobs();
+  const { open } = useComposer();
   const t = useT();
   const [ready, setReady] = useState(false);
 

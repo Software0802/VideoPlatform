@@ -1,0 +1,279 @@
+"use client";
+
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { JobPublic } from "@/lib/jobs/schema";
+import {
+  fetchNotifications,
+  markNotificationsRead,
+  type NotificationItem,
+  type NotificationsState,
+} from "@/lib/client/notifications";
+import { ApiError } from "@/lib/client/jobs";
+import { useT } from "@/components/genius/i18n/I18nProvider";
+import { errorText } from "@/lib/i18n/errorText";
+import { hasMessage } from "@/lib/i18n/messages";
+import { kindOfJob, type Notice } from "./shared";
+import { useSessionBridge } from "./SessionProvider";
+
+/*
+  通知域：铃铛列表 / 未读数 / 右上角 noticeToast，外加通用 `toast`（「即将上线」
+  那类一次性提示——同属瞬态通知，且 `markNoticesRead` 的失败提示也要走它，所以
+  归在本域供三个下层域调用）。
+
+  真相是 `data/notifications/<userId>.json`（刷新 / 换设备后仍在）；SSE 只是提醒。
+  `syncNotifications` 在四个时机把服务端的全量拉下来整体覆盖本地：挂载、SSE 每次
+  open（含重连——断线期间漏掉的终态靠它补齐）、页面回到前台、本地观察到
+  「非终态 → 终态」那一跳之后。
+*/
+
+export type NoticesShell = {
+  notices: Notice[];
+  unread: number;
+  markNoticesRead: () => void;
+  /** 右上角那一条（自动消失）；同时也在通知列表里 */
+  noticeToast: Notice | null;
+  dismissNoticeToast: () => void;
+  /* 置灰项的提示 */
+  toast: string | null;
+  showToast: (message: string) => void;
+};
+
+/**
+ * 给下层域（Jobs / Composer）的内部接口：SSE 事件与「本会话新建任务」都要经这里
+ * 记入状态迁移表 / 即时插入通知。useNotices() 的公开面不含这些。
+ */
+export type NoticesBridge = NoticesShell & {
+  /** 刚建出来的任务先记一笔「非终态」（原 `remember`）。 */
+  noteJob: (job: JobPublic) => void;
+  /** 记录并返回该任务此前的状态（SSE 每一跳都走它）。 */
+  observeJobStatus: (job: JobPublic) => JobPublic["status"] | undefined;
+  /** 「非终态 → 终态」的即时通知 + 落盘对齐。`quiet` 由 Jobs 域算（/create 正看着该任务）。 */
+  emitJobTerminal: (job: JobPublic, quiet: boolean) => void;
+  /** 立即拉一轮落盘通知（SSE open / 重连时用）。 */
+  syncNotices: () => void;
+};
+
+const Ctx = createContext<NoticesBridge | null>(null);
+
+export function useNotices(): NoticesShell {
+  const value = useContext(Ctx);
+  if (!value) throw new Error("useNotices 必须在 NoticesProvider 内使用");
+  return value;
+}
+
+/** 仅供下层壳域调用（JobsProvider / ComposerProvider），视图组件请用 `useNotices()`。 */
+export function useNoticesBridge(): NoticesBridge {
+  const value = useContext(Ctx);
+  if (!value) throw new Error("useNoticesBridge 必须在 NoticesProvider 内使用");
+  return value;
+}
+
+export function NoticesProvider({ children }: { children: ReactNode }) {
+  const { caps } = useSessionBridge();
+  const t = useT();
+
+  const [toast, setToast] = useState<string | null>(null);
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [noticeToast, setNoticeToast] = useState<Notice | null>(null);
+
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
+  }, []);
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
+
+  const seenStatus = useRef<Map<string, JobPublic["status"]>>(
+    new Map(caps.initialJobs.map((j) => [j.id, j.status])),
+  );
+  /**
+   * 刚建出来的任务先记一笔「非终态」。不记的话，一条快到「第一条事件就是终态」的任务
+   * 会被当成「本来就完成了的历史任务」而不弹通知——本会话亲手提交的那条，恰恰是最该
+   * 通知的一条。
+   */
+  const noteJob = useCallback((job: JobPublic) => {
+    if (!seenStatus.current.has(job.id)) seenStatus.current.set(job.id, job.status);
+  }, []);
+  const observeJobStatus = useCallback((job: JobPublic) => {
+    const prev = seenStatus.current.get(job.id);
+    seenStatus.current.set(job.id, job.status);
+    return prev;
+  }, []);
+
+  /* H1：落盘通知的代际与游标。空 epoch = 还没同步成功过。 */
+  const notifEpoch = useRef("");
+  const notifMaxSeq = useRef(0);
+  /** 在飞中的 sync（含退避等待）；来了新触发就置 `notifPending` 让它结束后再跑一轮。 */
+  const notifSyncing = useRef(false);
+  const notifPending = useRef(false);
+
+  /** 一条落盘通知 → 面板条目。标题 / 失败原因按 status 与 errorCode 现渲染，不落盘。 */
+  const noticeOfItem = useCallback(
+    (item: NotificationItem): Notice => {
+      const ok = item.status === "succeeded";
+      const title = ok
+        ? t("shell.notice.done")
+        : item.status === "canceled"
+          ? t("shell.notice.canceled")
+          : t("shell.notice.failed");
+      let detail: string;
+      if (ok) {
+        detail =
+          item.prompt ||
+          (item.mode === "text_to_image" ? t("create.mode.text_to_image") : t("create.firstFrame"));
+      } else {
+        const errKey = item.errorCode ? `common.err.${item.errorCode}` : "";
+        detail =
+          errKey && hasMessage(errKey)
+            ? t(errKey)
+            : (item.errorMessage ?? t("shell.notice.unknownReason"));
+      }
+      return { id: item.id, jobId: item.jobId, ok, title, detail, at: item.at };
+    },
+    [t],
+  );
+
+  /** 服务端同步结果整体覆盖本地（items 已按 seq 倒序）；同时记下代际与最大 seq。 */
+  const applyNotificationState = useCallback(
+    (state: NotificationsState) => {
+      notifEpoch.current = state.epoch;
+      notifMaxSeq.current = state.items.reduce((m, i) => Math.max(m, i.seq), state.lastReadSeq);
+      setNotices(state.items.map(noticeOfItem));
+      setUnread(state.unread);
+    },
+    [noticeOfItem],
+  );
+
+  /**
+   * 拉一次全量通知。失败按 2s → 5s → 10s 退避重试三次后放弃（下一个触发点再来）；
+   * 在飞期间又来的触发只置 `notifPending`，当前这轮结束后补跑一轮——既不在
+   * 两个 GET 之间乱序覆盖，也不丢掉「断线期间又完成了一条」的那次提醒。
+   */
+  const syncNotifications = useCallback(async () => {
+    if (notifSyncing.current) {
+      notifPending.current = true;
+      return;
+    }
+    notifSyncing.current = true;
+    const backoffMs = [2000, 5000, 10_000];
+    try {
+      do {
+        notifPending.current = false;
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            applyNotificationState(await fetchNotifications());
+            break;
+          } catch {
+            // 401 已被 client 层送去登录页；其余失败退避重试，三次后放弃。
+            if (attempt >= backoffMs.length) return;
+            await new Promise((resolve) => setTimeout(resolve, backoffMs[attempt]));
+          }
+        }
+      } while (notifPending.current);
+    } finally {
+      notifSyncing.current = false;
+    }
+  }, [applyNotificationState]);
+  const syncNotices = useCallback(() => void syncNotifications(), [syncNotifications]);
+
+  /* 触发点：挂载 + 页面回到前台（SSE open / 重连在 useEvents 的 onOpen 里）。 */
+  useEffect(() => {
+    void syncNotifications();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void syncNotifications();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [syncNotifications]);
+
+  const emitJobTerminal = useCallback(
+    (job: JobPublic, quiet: boolean) => {
+      const ok = job.status === "succeeded";
+      const notice: Notice = {
+        id: `${job.id}:${job.status}`,
+        jobId: job.id,
+        ok,
+        title: ok
+          ? t("shell.notice.done")
+          : job.status === "canceled"
+            ? t("shell.notice.canceled")
+            : t("shell.notice.failed"),
+        detail: ok
+          ? job.prompt ||
+            (kindOfJob(job) === "image" ? t("create.mode.text_to_image") : t("create.firstFrame"))
+          : (job.error?.message ?? t("shell.notice.unknownReason")),
+        at: job.updatedAt || new Date().toISOString(),
+      };
+      setNotices((list) => (list.some((n) => n.id === notice.id) ? list : [notice, ...list]));
+      setUnread((n) => n + 1);
+      if (!quiet) setNoticeToast(notice);
+      // toast 等不了同步，所以上面先即时插入；紧接着拉一次落盘真相把它对齐
+      // （以及补回这条 SSE 之前断线时漏掉的其它终态）。
+      void syncNotifications();
+    },
+    [t, syncNotifications],
+  );
+
+  /* toast 自动消失（6s）：比「即将上线」那条长，它带的是要读的信息 */
+  useEffect(() => {
+    if (!noticeToast) return;
+    const t = setTimeout(() => setNoticeToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [noticeToast]);
+
+  /**
+   * 打开铃铛 = 全部已读：本地持有全量，`upToSeq` 就是手里最大的 seq。
+   * 409 `notifications_stale`（epoch 换了，多半是坏文件重建）→ 重拉一轮对齐，不重试 POST。
+   */
+  const markNoticesRead = useCallback(() => {
+    setUnread(0);
+    const epoch = notifEpoch.current;
+    if (!epoch) return;
+    void markNotificationsRead(epoch, notifMaxSeq.current).then(
+      applyNotificationState,
+      (e: unknown) => {
+        if (e instanceof ApiError && e.code === "notifications_stale") {
+          void syncNotifications();
+          return;
+        }
+        showToast(errorText(t, e));
+      },
+    );
+  }, [applyNotificationState, showToast, syncNotifications, t]);
+  const dismissNoticeToast = useCallback(() => setNoticeToast(null), []);
+
+  const value = useMemo<NoticesBridge>(
+    () => ({
+      notices,
+      unread,
+      markNoticesRead,
+      noticeToast,
+      dismissNoticeToast,
+      toast,
+      showToast,
+      noteJob,
+      observeJobStatus,
+      emitJobTerminal,
+      syncNotices,
+    }),
+    [
+      notices,
+      unread,
+      markNoticesRead,
+      noticeToast,
+      dismissNoticeToast,
+      toast,
+      showToast,
+      noteJob,
+      observeJobStatus,
+      emitJobTerminal,
+      syncNotices,
+    ],
+  );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}

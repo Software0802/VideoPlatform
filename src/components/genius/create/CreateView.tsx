@@ -7,7 +7,7 @@ import { formatCny } from "@/lib/billing/prices";
 import { MODE_LABEL, formatElapsed, isActive, isFailed, isTerminal } from "@/lib/client/labels";
 import { productNameOf } from "@/lib/client/models";
 import { IconBolt } from "@/components/genius/icons";
-import { creditsOf, useShell } from "@/components/genius/ShellContext";
+import { creditsOf, useJobs } from "@/components/genius/ShellContext";
 import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
 import type { MessageKey } from "@/lib/i18n/messages";
 
@@ -65,7 +65,7 @@ function clockTime(iso: string): string {
 }
 
 export function CreateView() {
-  const { jobs, currentJob, setCurrentJob, busy, cancel, retry, reconcile } = useShell();
+  const { jobs, currentJob, setCurrentJob, busy, cancel, retry, reconcile } = useJobs();
   const t = useT();
   const [now, setNow] = useState<number | null>(null);
 

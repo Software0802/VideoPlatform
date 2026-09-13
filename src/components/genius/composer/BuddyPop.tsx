@@ -1,7 +1,7 @@
 "use client";
 
 import { IconArrowUp, IconBroom, IconClose, IconImage } from "@/components/genius/icons";
-import { useShell } from "@/components/genius/ShellContext";
+import { useComposer, useNotices } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import type { MessageKey } from "@/lib/i18n/messages";
 
@@ -18,7 +18,8 @@ const LINES: MessageKey[] = [
 ];
 
 export function BuddyPop() {
-  const { setPop, showToast } = useShell();
+  const { setPop } = useComposer();
+  const { showToast } = useNotices();
   const t = useT();
   const soon = t("common.comingSoon");
   return (

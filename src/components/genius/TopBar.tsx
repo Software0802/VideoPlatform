@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { IconBell, IconBolt, IconKey, IconLogout, IconTag, IconUser } from "@/components/genius/icons";
 import { LanguageSwitch } from "@/components/genius/LanguageSwitch";
 import { PasswordDialog } from "@/components/genius/PasswordDialog";
-import { MAX_NOTICES, useShell } from "@/components/genius/ShellContext";
+import { MAX_NOTICES, useJobs, useNotices, useSession } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { VIEW_TITLE, type ShellView } from "@/components/genius/views";
 
@@ -55,7 +55,9 @@ function useDismiss(open: boolean, close: () => void) {
 }
 
 export function TopBar({ view }: { view: ShellView }) {
-  const { email, credits, signOut, signingOut, showToast, notices, unread, markNoticesRead, openNotice } = useShell();
+  const { email, credits, signOut, signingOut } = useSession();
+  const { showToast, notices, unread, markNoticesRead } = useNotices();
+  const { openNotice } = useJobs();
   const t = useT();
   const router = useRouter();
   const [menu, setMenu] = useState(false);

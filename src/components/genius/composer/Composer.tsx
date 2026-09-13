@@ -21,7 +21,10 @@ import {
   RES_LABEL,
   VIDEO_MODES,
   VIDEO_MODE_KEY,
-  useShell,
+  useComposer,
+  useJobs,
+  useNotices,
+  useSession,
   type ComposerTab,
   type Frame,
   type SlotTarget,
@@ -84,7 +87,8 @@ function Slot({
   disabled: boolean;
   inputRef: React.RefObject<HTMLInputElement | null>;
 }) {
-  const s = useShell();
+  const s = useComposer();
+  const { showToast } = useNotices();
   const t = useT();
   const last = target === "last";
   const clear = last ? s.clearLastImage : s.clearImage;
@@ -112,7 +116,7 @@ function Slot({
             ? soon
             : (frame?.message ?? (last ? t("composer.slot.titleLast") : t("composer.slot.titleStart")))
         }
-        onClick={() => (disabled ? s.showToast(soon) : s.openPicker(target))}
+        onClick={() => (disabled ? showToast(soon) : s.openPicker(target))}
       >
         {frame ? (
           // 本地 ObjectURL 或「已创建」作品的地址，尺寸由 CSS 固定，不引 next/image
@@ -156,7 +160,7 @@ function Slot({
 
 /** 参考图列表：已选的若干张 + 一个「加一张」槽（到上限就不再渲染）。 */
 function RefStrip({ inputRef }: { inputRef: React.RefObject<HTMLInputElement | null> }) {
-  const s = useShell();
+  const s = useComposer();
   const t = useT();
   return (
     <div className="composer__refs" data-count={s.refs.length}>
@@ -211,7 +215,10 @@ function modelNameOf(name: string, mock: boolean, t: Translate): string {
 }
 
 export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: FileRefs }) {
-  const s = useShell();
+  const s = useComposer();
+  const { caps } = useSession();
+  const { working } = useJobs();
+  const { showToast } = useNotices();
   const t = useT();
   const isVideo = s.tab === "video";
   const isImage = s.tab === "image";
@@ -234,8 +241,8 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
     看起来像是真上游出的。
   */
   const modelName = modelNameOf(
-    s.product?.name ?? (isImage ? s.caps.imageModel : s.caps.videoModel),
-    s.caps.mock,
+    s.product?.name ?? (isImage ? caps.imageModel : caps.videoModel),
+    caps.mock,
     t,
   );
   const modelPickable = s.productChoices.length > 0;
@@ -248,7 +255,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
 
   function send() {
     if (soon) {
-      s.showToast(soonText);
+      showToast(soonText);
       return;
     }
     s.submit();
@@ -339,7 +346,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
                   aria-disabled="true"
                   data-soon="true"
                   title={soonText}
-                  onClick={() => s.showToast(soonText)}
+                  onClick={() => showToast(soonText)}
                 >
                   {t(key)}
                 </button>
@@ -491,7 +498,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
           ) : null}
 
           {isImage ? null : (
-            <button type="button" className="composer__panelbtn" onClick={() => s.showToast(soonText)}>
+            <button type="button" className="composer__panelbtn" onClick={() => showToast(soonText)}>
               <IconSliders size={13} />
               {t("composer.panelBtn")}
               <span className="composer__pink" aria-hidden="true" />
@@ -500,10 +507,10 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
 
           {isAudio ? (
             <>
-              <button type="button" className="composer__panelbtn" onClick={() => s.showToast(soonText)}>
+              <button type="button" className="composer__panelbtn" onClick={() => showToast(soonText)}>
                 Expressive Narrator
               </button>
-              <button type="button" className="composer__panelbtn" onClick={() => s.showToast(soonText)}>
+              <button type="button" className="composer__panelbtn" onClick={() => showToast(soonText)}>
                 {t("composer.audioLang")}
               </button>
             </>
@@ -567,10 +574,10 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
               type="button"
               className="composer__send"
               aria-label={t("composer.send")}
-              data-busy={s.working}
-              disabled={s.working || s.quotaExhausted || s.balanceShort}
+              data-busy={working}
+              disabled={working || s.quotaExhausted || s.balanceShort}
               title={
-                s.working
+                working
                   ? t("composer.send.busy")
                   : s.quotaExhausted
                     ? t("composer.send.quota")
@@ -601,7 +608,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
 
 /** 收起态输入条（交接包 §3）：点任意位置展开为创作面板。 */
 export function ComposerBar() {
-  const { openComposer } = useShell();
+  const { openComposer } = useComposer();
   const t = useT();
   return (
     <button type="button" className="bar" onClick={openComposer}>

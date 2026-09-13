@@ -8,7 +8,7 @@ import { isActive } from "@/lib/client/labels";
 import { productNameOf } from "@/lib/client/models";
 import { fetchTemplates, type Template } from "@/lib/client/templates";
 import { IconCheck, IconClose, IconShare, IconStar, IconTrash } from "@/components/genius/icons";
-import { creditsOf, useShell } from "@/components/genius/ShellContext";
+import { creditsOf, useComposer, useJobs, useNotices } from "@/components/genius/ShellContext";
 import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
 import { errorText } from "@/lib/i18n/errorText";
 import type { MessageKey } from "@/lib/i18n/messages";
@@ -146,18 +146,9 @@ function validFor(expiresAt: string, t: Translate): string {
 }
 
 export function HomeView() {
-  const {
-    jobs,
-    reuse,
-    showToast,
-    applyTemplate,
-    hasMoreJobs,
-    loadMoreJobs,
-    jobsLoading,
-    jobsError,
-    saveTags,
-    removeJob,
-  } = useShell();
+  const { jobs, hasMoreJobs, loadMoreJobs, jobsLoading, jobsError, saveTags, removeJob } = useJobs();
+  const { reuse, applyTemplate } = useComposer();
+  const { showToast } = useNotices();
   const t = useT();
   const [tab, setTab] = useState<TabId>("video");
   const [cat, setCat] = useState<string>(ALL);

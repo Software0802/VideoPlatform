@@ -12,7 +12,7 @@ import {
   type SubscriptionPlan,
   type SubscriptionState,
 } from "@/lib/client/subscription";
-import { creditsOf, useShell } from "@/components/genius/ShellContext";
+import { creditsOf, useSession } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { errorText } from "@/lib/i18n/errorText";
 import type { MessageKey } from "@/lib/i18n/messages";
@@ -121,7 +121,7 @@ function day(iso: string): string {
 type Drawer = null | { titleKey: MessageKey; kind?: string };
 
 export default function SubscriptionView({ credits }: { credits: number }) {
-  const { me, refreshMe } = useShell();
+  const { me, refreshMe } = useSession();
   const t = useT();
   const [yearly, setYearly] = useState(false);
   const [toast, setToast] = useState<string | null>(null);

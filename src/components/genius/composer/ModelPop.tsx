@@ -1,7 +1,7 @@
 "use client";
 
 import { IconBolt } from "@/components/genius/icons";
-import { creditsOf, useShell } from "@/components/genius/ShellContext";
+import { creditsOf, useComposer, useSession } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 
 /*
@@ -17,7 +17,8 @@ import { useT } from "@/components/genius/i18n/I18nProvider";
 */
 
 export function ModelPop() {
-  const { productChoices, product, pickProduct, caps } = useShell();
+  const { productChoices, product, pickProduct } = useComposer();
+  const { caps } = useSession();
   const t = useT();
 
   return (

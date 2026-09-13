@@ -3,7 +3,7 @@
 import { useRef } from "react";
 import { AssetPicker } from "@/components/genius/composer/AssetPicker";
 import { Composer, ComposerBar, type FileRefs } from "@/components/genius/composer/Composer";
-import { useShell } from "@/components/genius/ShellContext";
+import { useComposer } from "@/components/genius/ShellContext";
 import type { ShellView } from "@/components/genius/views";
 
 /*
@@ -18,7 +18,7 @@ import type { ShellView } from "@/components/genius/views";
 */
 
 export function Dock({ view }: { view: ShellView }) {
-  const { open, pop, slotTarget } = useShell();
+  const { open, pop, slotTarget } = useComposer();
   const start = useRef<HTMLInputElement>(null);
   const last = useRef<HTMLInputElement>(null);
   const reference = useRef<HTMLInputElement>(null);

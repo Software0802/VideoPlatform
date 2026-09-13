@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useT } from "@/components/genius/i18n/I18nProvider";
-import { useShell } from "@/components/genius/ShellContext";
+import { useNotices, useSession } from "@/components/genius/ShellContext";
 import {
   cancelCanvasRunApi,
   createCanvasApi,
@@ -81,7 +81,8 @@ function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, clo
  */
 export default function CanvasView() {
   const t = useT();
-  const { showToast, refreshMe } = useShell();
+  const { showToast } = useNotices();
+  const { refreshMe } = useSession();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);

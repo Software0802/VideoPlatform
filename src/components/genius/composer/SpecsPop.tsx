@@ -1,6 +1,6 @@
 "use client";
 
-import { IMAGE_RES_LABEL, RES_LABEL, useShell } from "@/components/genius/ShellContext";
+import { IMAGE_RES_LABEL, RES_LABEL, useComposer } from "@/components/genius/ShellContext";
 import { IconClose } from "@/components/genius/icons";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 
@@ -41,7 +41,7 @@ export function SpecsPop() {
     setDur,
     durs,
     setPop,
-  } = useShell();
+  } = useComposer();
   const t = useT();
   const isImage = tab === "image";
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { IconClose, IconUpload } from "@/components/genius/icons";
-import { useShell, type SlotTarget } from "@/components/genius/ShellContext";
+import { useComposer, useJobs, type SlotTarget } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import type { MessageKey } from "@/lib/i18n/messages";
 
@@ -23,7 +23,8 @@ const TITLE: Record<SlotTarget, MessageKey> = {
 };
 
 export function AssetPicker({ onUpload }: { onUpload: () => void }) {
-  const { jobs, setPop, slotTarget, pickCreated } = useShell();
+  const { jobs } = useJobs();
+  const { setPop, slotTarget, pickCreated } = useComposer();
   const t = useT();
   const [tab, setTab] = useState<"made" | "uploaded">("uploaded");
 
