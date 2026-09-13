@@ -31,13 +31,16 @@ const bible: IdentityBible = {
 const shot: Shot = {
   id: "shot_0",
   index: 0,
-  durationSec: 8,
+  durationSec: 5,
   prompt: "fixture shot",
   characterIds: [],
-  route: "grok_t2v",
+  route: "t2v",
   continuity: "hard_cut",
   generateAudio: false,
 };
+
+/** grok-imagine-video-1.5 按 $0.08/s：5s → $0.40、10s → $0.80。 */
+const pricing = { model: "grok-imagine-video-1.5" };
 
 function provider(submit: VideoProvider["submit"], poll: VideoProvider["poll"]): VideoProvider {
   return {
@@ -74,6 +77,7 @@ describe("R05 shot cost ledger", () => {
       bible,
       record: createShotRecords([shot])[0]!,
       provider: provider(submit, poll),
+      model: "grok-imagine-video-1.5",
       resolveAsset: () => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,x" }),
       persistOutput: async () => {
         persistCalls += 1;
@@ -95,6 +99,7 @@ describe("R05 shot cost ledger", () => {
       bible,
       record: createShotRecords([shot])[0]!,
       provider: provider(submit, poll),
+      model: "grok-imagine-video-1.5",
       resolveAsset: () => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,x" }),
       persistOutput: async () => "shots/0/video.mp4",
       pollIntervalMs: 0,
@@ -130,8 +135,9 @@ describe("R05 shot cost ledger", () => {
     // a pricier plan must not raise its own ceiling (R-P1-1).
     expect(budgetCap({ costUsdEstimate: 2.1, costUsdPlanned: null }, 2)).toBe(4.2);
     expect(budgetCap({ costUsdEstimate: 2.1, costUsdPlanned: 2.4 }, 2)).toBe(4.2);
-    expect(shotListPrice({ route: "grok_t2v", durationSec: 15 })).toBe(1.2);
-    expect(shotListPrice({ route: "grok_extend", durationSec: 10 })).toBe(0.5);
+    expect(shotListPrice({ route: "t2v", durationSec: 10 }, pricing)).toBe(0.8);
+    // 计价跟着 provider/模型走，不再是 grok 费率一家之言。
+    expect(shotListPrice({ route: "i2v", durationSec: 10 }, { model: "kling-2.6", video: { resolution: "720p", audio: "off", provider: "kling" } })).toBeGreaterThan(0);
   });
 });
 
@@ -149,9 +155,10 @@ describe("in-flight reservations survive a restart", () => {
       ],
       shots,
       reserved,
+      pricing,
     );
     expect([...reserved.keys()].sort()).toEqual(["shot:shot_0", "shot:shot_1"]);
-    expect(reserved.get("shot:shot_0")).toBe(shotListPrice(shot));
+    expect(reserved.get("shot:shot_0")).toBe(shotListPrice(shot, pricing));
   });
 });
 
@@ -172,6 +179,7 @@ describe("R06 budget gate runs before every attempt", () => {
       bible,
       record: createShotRecords([shot])[0]!,
       provider: provider(submit, poll),
+      model: "grok-imagine-video-1.5",
       resolveAsset: () => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,x" }),
       beforeAttempt: async (_shot, record) => {
         attempts.push(record.retries);
@@ -212,6 +220,7 @@ describe("R06 budget gate runs before every attempt", () => {
       bible,
       record: createShotRecords([shot])[0]!,
       provider: provider(submit, poll),
+      model: "grok-imagine-video-1.5",
       resolveAsset: () => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,x" }),
       beforeAttempt: async (_shot, record) => {
         attempts.push(record.retries);

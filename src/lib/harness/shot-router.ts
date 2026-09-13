@@ -1,30 +1,32 @@
-import {
-  MODEL_1_0,
-  MODEL_1_5,
-} from "@/lib/providers/grok/mode-matrix";
-import { ProviderHttpError, type MediaRef, type ProviderGenerateRequest } from "@/lib/providers/types";
+import { ProviderHttpError, type MediaRef, type ProviderGenerateRequest, type VideoProvider } from "@/lib/providers/types";
 import type { IdentityBible, Shot } from "./types";
 
 export type ShotAssetResolver = (assetId: string) => MediaRef;
+
+export type ProviderCaps = ReturnType<VideoProvider["capabilities"]>;
 
 export type BuildShotRequestInput = {
   jobId: string;
   shot: Shot;
   bible: IdentityBible;
   resolveAsset: ShotAssetResolver;
-  sourceVideo?: MediaRef;
+  /** 任务落定时选定的上游模型名（job.model），shot 不再自己挑模型。 */
+  model: string;
+  /** 执行这条 shot 的 provider 能力；时长档与参考图上限按它校验。 */
+  caps: ProviderCaps;
   aspectRatio?: ProviderGenerateRequest["aspectRatio"];
   resolution?: ProviderGenerateRequest["resolution"];
 };
 
+/**
+ * shot 路由（t2v / i2v / r2v）到原生 mode 的映射，供应商无关：
+ * 选哪家 provider、用什么模型在任务创建时已经定了，这里只按那家声明的能力校验参数。
+ */
 export function buildShotRequest(input: BuildShotRequestInput): ProviderGenerateRequest {
-  const { jobId, shot, bible, resolveAsset } = input;
+  const { jobId, shot, bible, resolveAsset, model, caps } = input;
   if (!jobId.trim()) throw invalid("shot jobId 无效");
+  if (!model.trim()) throw invalid("shot model 无效");
   assertContinuity(shot);
-
-  if (shot.route === "jimeng_first_last") {
-    throw invalid("Jimeng 尚未启用");
-  }
 
   const base = {
     jobId: `${jobId}-shot-${shot.index}`,
@@ -32,26 +34,26 @@ export function buildShotRequest(input: BuildShotRequestInput): ProviderGenerate
     generateAudio: shot.generateAudio,
   } as const;
 
-  if (shot.route === "grok_t2v") {
+  if (shot.route === "t2v") {
     if (shot.startFrame) throw invalid("有首帧的 shot 必须走 I2V");
-    assertGeneratedDuration(shot.durationSec);
+    assertShotDuration(shot.durationSec, caps);
     return {
       ...base,
       mode: "text_to_video",
-      model: MODEL_1_5,
+      model,
       durationSec: shot.durationSec,
       aspectRatio: input.aspectRatio,
       resolution: input.resolution,
     };
   }
 
-  if (shot.route === "grok_i2v") {
+  if (shot.route === "i2v") {
     if (!shot.startFrame) throw invalid("I2V 需要 startFrame");
-    assertGeneratedDuration(shot.durationSec);
+    assertShotDuration(shot.durationSec, caps);
     return {
       ...base,
       mode: "image_to_video",
-      model: MODEL_1_5,
+      model,
       durationSec: shot.durationSec,
       aspectRatio: input.aspectRatio,
       resolution: input.resolution,
@@ -59,34 +61,22 @@ export function buildShotRequest(input: BuildShotRequestInput): ProviderGenerate
     };
   }
 
-  if (shot.route === "grok_r2v") {
-    assertGeneratedDuration(shot.durationSec);
-    const assetIds = referenceAssetIds(shot, bible);
+  if (shot.route === "r2v") {
+    assertShotDuration(shot.durationSec, caps);
+    let assetIds = referenceAssetIds(shot, bible);
+    const max = caps.maxReferenceImages;
+    if (max === 0) throw invalid("当前 provider 不收参考图");
+    // 参考图超上限时按声明顺序截断——角色表在前、场景参考在后（角色表是身份锁定项）。
+    if (max != null && assetIds.length > max) assetIds = assetIds.slice(0, max);
     if (!assetIds.length) throw invalid("R2V 缺少参考资产");
-    if (assetIds.length > 7) throw invalid("R2V 参考资产最多 7 个");
     return {
       ...base,
       mode: "reference_to_video",
-      model: MODEL_1_5,
+      model,
       durationSec: shot.durationSec,
       aspectRatio: input.aspectRatio,
       resolution: input.resolution,
       referenceImages: assetIds.map(resolveAsset),
-    };
-  }
-
-  if (shot.route === "grok_extend") {
-    if (shot.continuity !== "extend") throw invalid("Extend 必须使用 extend 连续性");
-    assertExtendDuration(shot.durationSec);
-    if (!input.sourceVideo || input.sourceVideo.kind !== "file_id" || !input.sourceVideo.fileId) {
-      throw invalid("Extend 必须使用 file_id");
-    }
-    return {
-      ...base,
-      mode: "extend_video",
-      model: MODEL_1_0,
-      durationSec: shot.durationSec,
-      sourceVideo: input.sourceVideo,
     };
   }
 
@@ -109,26 +99,21 @@ function referenceAssetIds(shot: Shot, bible: IdentityBible): string[] {
 }
 
 function assertContinuity(shot: Shot) {
-  if (shot.continuity === "extend" && shot.route !== "grok_extend") {
-    throw invalid("extend 连续性必须使用 grok_extend");
-  }
-  if (shot.route === "grok_extend" && shot.continuity !== "extend") {
-    throw invalid("grok_extend 必须使用 extend 连续性");
-  }
-  if (shot.continuity === "tail_chain" && shot.route !== "grok_i2v") {
+  if (shot.continuity === "tail_chain" && shot.route !== "i2v") {
     throw invalid("tail-chain 必须使用 I2V");
   }
 }
 
-function assertGeneratedDuration(durationSec: number) {
-  if (!Number.isInteger(durationSec) || durationSec < 1 || durationSec > 15) {
-    throw invalid("生成 shot 时长须为 1–15 秒整数");
+/** shot/clip 时长恒为 5 / 10 秒档；provider 声明了档表时还必须真收这一档。 */
+function assertShotDuration(durationSec: number, caps: ProviderCaps) {
+  if (durationSec !== 5 && durationSec !== 10) {
+    throw invalid("shot 时长须为 5 或 10 秒");
   }
-}
-
-function assertExtendDuration(durationSec: number) {
-  if (!Number.isInteger(durationSec) || durationSec < 2 || durationSec > 10) {
-    throw invalid("Extend shot 时长须为 2–10 秒整数");
+  if (caps.durations?.length && !caps.durations.includes(durationSec)) {
+    throw invalid("当前 provider 不支持该时长档");
+  }
+  if (!caps.durations?.length && durationSec > caps.maxDurationSec) {
+    throw invalid("当前 provider 不支持该时长档");
   }
 }
 

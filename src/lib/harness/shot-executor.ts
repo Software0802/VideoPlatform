@@ -9,7 +9,6 @@ import {
 } from "./shot-state";
 import type { IdentityBible, Shot } from "./types";
 import type {
-  MediaRef,
   ProviderHandle,
   ProviderPoll,
   VideoProvider,
@@ -26,8 +25,9 @@ export type ShotExecutorOptions = {
   bible: IdentityBible;
   record: HarnessShotRecord;
   provider: VideoProvider;
+  /** 任务落定时选定的上游模型名（job.model），写进每个 shot 请求。 */
+  model: string;
   resolveAsset: BuildShotRequestInput["resolveAsset"];
-  sourceVideo?: MediaRef;
   aspectRatio?: BuildShotRequestInput["aspectRatio"];
   resolution?: BuildShotRequestInput["resolution"];
   persistOutput: ShotOutputPersister;
@@ -110,7 +110,8 @@ async function executeShotOnce(options: ShotExecutorOptions): Promise<HarnessSho
         shot: options.shot,
         bible: options.bible,
         resolveAsset: options.resolveAsset,
-        sourceVideo: options.sourceVideo,
+        model: options.model,
+        caps: options.provider.capabilities(),
         aspectRatio: options.aspectRatio,
         resolution: options.resolution,
       });

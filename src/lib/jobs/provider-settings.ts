@@ -114,8 +114,29 @@ function ymanResolution(product: Product | null): YmanResolution | undefined {
   return preferred === "1080p" || preferred === "720p" ? preferred : undefined;
 }
 
+/**
+ * 长片（harness）任务的归一参数：30/45/60 是管线内部拆 shot 的目标总长，不能拿它去问
+ * provider 的时长档（可灵会把 30 归一成 10，记录就被写坏了）。这里用一段合法的 clip
+ * 时长拿到 resolution / audio / ratio 的归一结果，durationSec 由调用方保留目标总长。
+ */
+export type HarnessSettings = Omit<ProviderSettings, "durationSec">;
+
+export function harnessSettingsFor(
+  provider: ProviderId,
+  mode: NativeMode,
+  body: Pick<CreateJobBody, "prompt" | "aspectRatio" | "resolution" | "generateAudio">,
+  model: string,
+  opts?: Parameters<typeof providerSettingsFor>[5],
+): HarnessSettings | null {
+  const settings = providerSettingsFor(provider, mode, 10, body, model, opts);
+  if (!settings) return null;
+  const { durationSec, ...rest } = settings;
+  void durationSec;
+  return rest;
+}
+
 export function videoPricingOf(
-  settings: ProviderSettings | null,
+  settings: Pick<ProviderSettings, "resolution" | "audio"> | null,
   provider: ProviderId,
 ): VideoPricingHint | undefined {
   return settings

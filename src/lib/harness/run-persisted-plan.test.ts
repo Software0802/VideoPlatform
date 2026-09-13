@@ -13,6 +13,7 @@ let saveHarnessPlan: (jobId: string, plan: HarnessPlan) => Promise<JobRecord>;
 let runPersistedPlan: (jobId: string, options: {
   maxParallel: number;
   provider?: VideoProvider;
+  model: string;
   resolveAsset: (assetId: string) => { kind: "data_uri"; dataUri: string };
   persistOutput: (shot: Shot, handle: ProviderHandle) => Promise<string>;
   pollIntervalMs?: number;
@@ -21,8 +22,9 @@ let runPersistedPlan: (jobId: string, options: {
 const plan: HarnessPlan = {
   targetDurationSec: 30,
   packing: { clips: [
-    { kind: "generate", durationSec: 15 },
-    { kind: "generate", durationSec: 15 },
+    { kind: "generate", durationSec: 10 },
+    { kind: "generate", durationSec: 10 },
+    { kind: "generate", durationSec: 10 },
   ] },
   bible: {
     version: 1,
@@ -36,20 +38,30 @@ const plan: HarnessPlan = {
     {
       id: "shot_0",
       index: 0,
-      durationSec: 15,
+      durationSec: 10,
       prompt: "第一镜",
       characterIds: [],
-      route: "grok_t2v",
+      route: "t2v",
       continuity: "hard_cut",
       generateAudio: false,
     },
     {
       id: "shot_1",
       index: 1,
-      durationSec: 15,
+      durationSec: 10,
       prompt: "第二镜",
       characterIds: [],
-      route: "grok_t2v",
+      route: "t2v",
+      continuity: "hard_cut",
+      generateAudio: false,
+    },
+    {
+      id: "shot_2",
+      index: 2,
+      durationSec: 10,
+      prompt: "第三镜",
+      characterIds: [],
+      route: "t2v",
       continuity: "hard_cut",
       generateAudio: false,
     },
@@ -116,7 +128,7 @@ describe("persisted shot plan", () => {
       id: "mock",
       capabilities: () => ({
         modes: ["text_to_video"],
-        maxDurationSec: 15,
+        maxDurationSec: 10,
         supportsLastFrameLock: false,
         maxResolution: "1080p",
       }),
@@ -133,6 +145,7 @@ describe("persisted shot plan", () => {
     const options = {
       maxParallel: 2,
       provider,
+      model: "mock-video",
       resolveAsset: (assetId: string) => ({ kind: "data_uri" as const, dataUri: assetId }),
       persistOutput,
       pollIntervalMs: 0,
@@ -140,12 +153,12 @@ describe("persisted shot plan", () => {
 
     await runPersistedPlan(id, options);
     const first = await readJob(id);
-    expect(first?.harnessShots?.map((shot) => shot.status)).toEqual(["succeeded", "succeeded"]);
-    expect(submit).toHaveBeenCalledTimes(2);
+    expect(first?.harnessShots?.map((shot) => shot.status)).toEqual(["succeeded", "succeeded", "succeeded"]);
+    expect(submit).toHaveBeenCalledTimes(3);
 
     await runPersistedPlan(id, options);
-    expect(submit).toHaveBeenCalledTimes(2);
-    expect(persistOutput).toHaveBeenCalledTimes(2);
+    expect(submit).toHaveBeenCalledTimes(3);
+    expect(persistOutput).toHaveBeenCalledTimes(3);
     await expect(readFile(path.join(dataRoot, "jobs", id, "shots", "0", "video.mp4"))).resolves.toEqual(
       Buffer.from("clip-0"),
     );
@@ -176,13 +189,14 @@ describe("persisted shot plan", () => {
         id: "mock",
         capabilities: () => ({
           modes: ["text_to_video"],
-          maxDurationSec: 15,
+          maxDurationSec: 10,
           supportsLastFrameLock: false,
           maxResolution: "1080p",
         }),
         submit,
         poll,
       },
+      model: "mock-video",
       resolveAsset: (assetId: string) => ({ kind: "data_uri" as const, dataUri: assetId }),
       persistOutput,
       pollIntervalMs: 0,
@@ -191,9 +205,10 @@ describe("persisted shot plan", () => {
     const final = await readJob(id);
     // shot_0 died inside the submit window (no remote id): a re-submit could pay twice, so
     // it goes to a human. shot_1 has a remote id and simply resumes polling (R-P1-3).
-    expect(final?.harnessShots?.map((shot) => shot.status)).toEqual(["needs_review", "succeeded"]);
+    expect(final?.harnessShots?.map((shot) => shot.status)).toEqual(["needs_review", "succeeded", "succeeded"]);
     expect(final?.harnessShots?.[0]?.error).toMatchObject({ code: "uncertain_submit" });
-    expect(submit).not.toHaveBeenCalled();
+    // shot_2 是独立的硬切镜头，照常提交；出事的 shot_0 没有重发。
+    expect(submit).toHaveBeenCalledTimes(1);
     expect(poll).toHaveBeenCalled();
   });
 });

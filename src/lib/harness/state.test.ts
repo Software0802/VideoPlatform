@@ -24,8 +24,9 @@ const plan: HarnessPlan = {
   targetDurationSec: 30,
   packing: {
     clips: [
-      { kind: "generate", durationSec: 15 },
-      { kind: "generate", durationSec: 15 },
+      { kind: "generate", durationSec: 10 },
+      { kind: "generate", durationSec: 10 },
+      { kind: "generate", durationSec: 10 },
     ],
   },
   bible: {
@@ -46,20 +47,30 @@ const plan: HarnessPlan = {
     {
       id: "shot_0",
       index: 0,
-      durationSec: 15,
+      durationSec: 10,
       prompt: "走进电影院",
       characterIds: [],
-      route: "grok_t2v",
+      route: "t2v",
       continuity: "hard_cut",
       generateAudio: false,
     },
     {
       id: "shot_1",
       index: 1,
-      durationSec: 15,
+      durationSec: 10,
       prompt: "停在银幕前",
       characterIds: [],
-      route: "grok_i2v",
+      route: "i2v",
+      continuity: "tail_chain",
+      generateAudio: false,
+    },
+    {
+      id: "shot_2",
+      index: 2,
+      durationSec: 10,
+      prompt: "落幕",
+      characterIds: [],
+      route: "i2v",
       continuity: "tail_chain",
       generateAudio: false,
     },
@@ -123,12 +134,14 @@ describe("harness state persistence", () => {
     expect(disk?.harnessShots).toEqual([
       expect.objectContaining({ id: "shot_0", status: "queued", retries: 0, costUsd: 0 }),
       expect.objectContaining({ id: "shot_1", status: "queued", retries: 0, costUsd: 0 }),
+      expect.objectContaining({ id: "shot_2", status: "queued", retries: 0, costUsd: 0 }),
     ]);
     const pub = toPublic(disk!);
     expect(pub.bible).toBeNull();
     expect(pub.shots).toEqual([
-      { id: "shot_0", index: 0, durationSec: 15, status: "queued", retries: 0, error: null },
-      { id: "shot_1", index: 1, durationSec: 15, status: "queued", retries: 0, error: null },
+      { id: "shot_0", index: 0, durationSec: 10, status: "queued", retries: 0, error: null },
+      { id: "shot_1", index: 1, durationSec: 10, status: "queued", retries: 0, error: null },
+      { id: "shot_2", index: 2, durationSec: 10, status: "queued", retries: 0, error: null },
     ]);
     const raw = await readFile(path.join(dataRoot, "jobs", id, "job.json"), "utf8");
     expect(JSON.parse(raw).harnessPlan.targetDurationSec).toBe(30);

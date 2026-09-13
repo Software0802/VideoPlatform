@@ -96,7 +96,15 @@ describe("retryJob on a harness job (review R09)", () => {
     expect(retried?.harnessShots?.[1]?.error).toBeUndefined();
     // Only the kept shot's money carries over; the reviewed shot's spend stays on the old job.
     expect(retried?.costUsdActual).toBe(1.2);
-    expect(retried?.costUsdEstimate).toBe(2.1);
+    // The estimate is re-priced for the provider the retry routed to (mock here), not copied.
+    const { estimateHarnessCostUsd } = await import("@/lib/cost");
+    const { packHarnessDuration } = await import("@/lib/harness/pack-duration");
+    expect(retried?.costUsdEstimate).toBe(
+      estimateHarnessCostUsd(packHarnessDuration(30), {
+        model: retried!.model,
+        video: { resolution: "720p", audio: "off", provider: "mock" },
+      }),
+    );
     expect(retried?.costUsdPlanned).toBe(2.4);
     await access(path.join(dataRoot, "jobs", next.id, "shots", "0", "video.mp4"));
     await access(path.join(dataRoot, "jobs", next.id, "shots", "0", "tail.jpg"));
@@ -152,5 +160,69 @@ describe("retryJob on a harness job (review R09)", () => {
 
     // Nothing new was enqueued and the half-built job dir was removed again.
     expect((await readdir(path.join(dataRoot, "jobs"))).sort()).toEqual(before);
+  });
+
+  it("keeps a 30s harness job at 30s (and re-prices it) when the retry lands on Kling", async () => {
+    // Regression: retry used to pass the 30s target into providerSettingsFor, where Kling's
+    // duration ladder normalized it to 10s — the record then read as a plain 10s clip while
+    // still carrying the harness flag. Resolution/audio/ratio still normalize (480p → 720p).
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "kling";
+    process.env.KLING_API_KEY = "kling-test-key";
+    try {
+      const plan = mockDirectorPlan({ prompt: "山谷薄雾", targetDurationSec: 30 });
+      const shots = createShotRecords(plan.shots);
+      const source: JobRecord = {
+        schemaVersion: 1,
+        id: "job_src_kling_retry",
+        status: "failed",
+        progress: 40,
+        mode: "text_to_video",
+        model: "mock-video",
+        provider: "mock",
+        prompt: "山谷薄雾",
+        durationSec: 30,
+        aspectRatio: "16:9",
+        resolution: "480p",
+        generateAudio: false,
+        lastFrameStored: false,
+        lastFrameLocksOutput: false,
+        harness: { enabled: true },
+        priceCny: 0,
+        costUsdEstimate: 2.1,
+        costUsdPlanned: 2.4,
+        costUsdActual: 1.2,
+        imageResolution: null,
+        error: { code: "failed", message: "upstream failed" },
+        output: null,
+        createdAt: "2026-09-05T00:00:00.000Z",
+        updatedAt: "2026-09-05T00:00:00.000Z",
+        bible: null,
+        shots: null,
+        assets: {},
+        harnessPlan: plan,
+        harnessShots: [
+          { ...shots[0]!, status: "succeeded", outputPath: "shots/0/video.mp4", costUsd: 1.2 },
+          { ...shots[1]!, status: "failed", retries: 0, costUsd: 0.7, error: { code: "failed", message: "x" } },
+        ],
+      };
+      await writeJob(source);
+      await mkdir(path.join(dataRoot, "jobs", "job_src_kling_retry", "shots", "0"), { recursive: true });
+      await writeFile(path.join(dataRoot, "jobs", "job_src_kling_retry", "shots", "0", "video.mp4"), "clip");
+      await writeFile(path.join(dataRoot, "jobs", "job_src_kling_retry", "shots", "0", "tail.jpg"), "tail");
+
+      const next = await retryJob(source, TEST_OWNER);
+      const retried = await readJob(next.id);
+      expect(retried?.provider).toBe("kling");
+      expect(retried?.harness?.enabled).toBe(true);
+      expect(retried?.durationSec).toBe(30);
+      expect(retried?.resolution).toBe("720p"); // normalized up to a tier Kling can serve
+      expect(retried?.costUsdEstimate).not.toBe(2.1); // re-priced for Kling, not copied
+      expect(retried?.costUsdEstimate).toBeGreaterThan(0);
+    } finally {
+      delete process.env.VIDEO_PROVIDER_ORDER;
+      delete process.env.KLING_API_KEY;
+      process.env.LUMEN_FORCE_MOCK = "1";
+    }
   });
 });

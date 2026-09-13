@@ -1,6 +1,6 @@
 import { ProviderHttpError } from "@/lib/providers/types";
 import type { CreateJobBody } from "@/lib/jobs/schema";
-import { isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
+import { isHarnessDuration } from "@/lib/harness/durations";
 
 const GENERATED_VIDEO_MODES: ReadonlySet<CreateJobBody["mode"]> = new Set([
   "text_to_video",

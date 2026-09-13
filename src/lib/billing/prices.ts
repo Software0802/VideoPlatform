@@ -1,6 +1,6 @@
 import { priceTableRaw } from "@/lib/env";
 import { log } from "@/lib/log";
-import { isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
+import { isHarnessDuration } from "@/lib/harness/durations";
 import type { ImageResolution, NativeMode, Resolution } from "@/lib/providers/types";
 
 /**

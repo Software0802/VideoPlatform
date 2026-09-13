@@ -36,30 +36,32 @@ describe("cost", () => {
   it("maps ticks", () => {
     expect(ticksToUsd(6_400_000_000)).toBe(0.64);
   });
-  it("estimates the documented 30s hybrid packing", () => {
+  it("estimates the 30s three-clip packing at the selected model's rate", () => {
     const clips = [
-      { kind: "generate" as const, durationSec: 15 },
-      { kind: "extend" as const, durationSec: 10 },
-      { kind: "generate" as const, durationSec: 5 },
-    ];
-    expect(estimateHarnessCostUsd(clips)).toBe(2.1);
-    expect(estimateHarnessRetryBudgetUsd(clips)).toBe(3.15);
-  });
-
-  it("estimates 60s from explicit clips and rejects an overlong extend", () => {
-    const clips = [
-      { kind: "generate" as const, durationSec: 15 },
-      { kind: "extend" as const, durationSec: 10 },
-      { kind: "generate" as const, durationSec: 15 },
-      { kind: "extend" as const, durationSec: 10 },
+      { kind: "generate" as const, durationSec: 10 },
+      { kind: "generate" as const, durationSec: 10 },
       { kind: "generate" as const, durationSec: 10 },
     ];
-    expect(estimateHarnessCostUsd(clips)).toBe(4.2);
+    const grokPricing = { model: "grok-imagine-video-1.5" };
+    expect(estimateHarnessCostUsd(clips, grokPricing)).toBe(2.4);
+    expect(estimateHarnessRetryBudgetUsd(clips, grokPricing)).toBe(3.6);
+    // 可灵按积分档计价（720p 无声 1 积分/秒 × $0.10），同一份打包估价随 provider 变。
+    const klingPricing = {
+      model: "kling-2.6",
+      video: { resolution: "720p", audio: "off" as const, provider: "kling" as const },
+    };
+    expect(estimateHarnessCostUsd(clips, klingPricing)).toBe(0.9);
+  });
+
+  it("estimates 60s from explicit clips and rejects non-5/10 durations", () => {
+    const clips = Array.from({ length: 6 }, () => ({ kind: "generate" as const, durationSec: 10 }));
+    const pricing = { model: "grok-imagine-video-1.5" };
+    expect(estimateHarnessCostUsd(clips, pricing)).toBe(4.8);
     expect(() =>
-      estimateHarnessCostUsd([{ kind: "extend", durationSec: 11 }]),
+      estimateHarnessCostUsd([{ kind: "generate", durationSec: 11 }], pricing),
     ).toThrow("非法 Harness clip");
     expect(() =>
-      estimateHarnessCostUsd([{ kind: "unknown" as "generate", durationSec: 5 }]),
+      estimateHarnessCostUsd([{ kind: "unknown" as "generate", durationSec: 5 }], pricing),
     ).toThrow("非法 Harness clip");
   });
 

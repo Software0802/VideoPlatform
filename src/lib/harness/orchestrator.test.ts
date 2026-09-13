@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { probeDurationSec, runFfmpeg } from "@/lib/ffmpeg";
 import type { JobRecord } from "@/lib/jobs/schema";
-import type { ProviderGenerateRequest, ProviderHandle, VideoProvider } from "@/lib/providers/types";
+import type { NativeMode, ProviderGenerateRequest, ProviderHandle, VideoProvider } from "@/lib/providers/types";
 import { mockDirectorPlan } from "./mock-director";
 import type { HarnessPlan } from "./types";
 
@@ -129,8 +129,8 @@ describe("harness orchestrator", () => {
     const job = await readJob(id);
     expect(job?.status).toBe("persisting");
     expect(job?.localOutputPath).toBe("outputs/video.mp4");
-    expect(job?.harnessPlan?.shots).toHaveLength(2);
-    expect(job?.harnessShots?.map((s) => s.status)).toEqual(["succeeded", "succeeded"]);
+    expect(job?.harnessPlan?.shots).toHaveLength(3);
+    expect(job?.harnessShots?.map((s) => s.status)).toEqual(["succeeded", "succeeded", "succeeded"]);
     expect(job?.harnessShots?.[0]?.qc).toMatchObject({ durationOk: true, blackFrameFree: true, freezeFree: true });
     // Submit-time estimate is untouched; the plan-derived figure lands beside it (R05).
     expect(job?.costUsdEstimate).toBe(2.4);
@@ -138,7 +138,7 @@ describe("harness orchestrator", () => {
     expect(job?.costIncomplete).toBe(false);
     // Shot 1 is tail-chained: I2V from the sharpest frame of shot 0's tail.
     expect(job?.harnessPlan?.shots[1]).toMatchObject({
-      route: "grok_i2v",
+      route: "i2v",
       startFrame: { source: "extracted", assetId: "shots/0/tail.jpg" },
     });
     await access(path.join(dataRoot, "jobs", id, "shots", "0", "tail.jpg"));
@@ -173,6 +173,7 @@ describe("harness orchestrator", () => {
     expect(first?.error?.message).toContain("qc_duration");
     // shot 1 depends on shot 0 and is blocked, never submitted.
     expect(job?.harnessShots?.[1]?.status).toBe("needs_review");
+    expect(job?.harnessShots?.[2]?.status).toBe("needs_review");
     expect(provider.submit).toHaveBeenCalledTimes(3);
     // Retries tighten the prompt with the Bible's locked traits.
     const retried = provider.submit.mock.calls[1]![0] as ProviderGenerateRequest;
@@ -196,7 +197,7 @@ describe("harness orchestrator", () => {
     expect(provider.submit).not.toHaveBeenCalled();
     // The plan-derived figure is still recorded for the UI; no shot ever left the queue.
     expect(job?.costUsdPlanned).toBe(2.4);
-    expect(job?.harnessShots?.map((s) => s.status)).toEqual(["queued", "queued"]);
+    expect(job?.harnessShots?.map((s) => s.status)).toEqual(["queued", "queued", "queued"]);
     expect(job?.error ?? null).toBeNull();
   }, 60_000);
 
@@ -224,7 +225,7 @@ describe("harness orchestrator", () => {
     });
     await orchestrator.execute(id);
     expect(director).toHaveBeenCalledTimes(1);
-    expect(provider.submit).toHaveBeenCalledTimes(2);
+    expect(provider.submit).toHaveBeenCalledTimes(3);
     expect((await readJob(id))?.status).toBe("persisting");
   }, 120_000);
 });
@@ -232,40 +233,49 @@ describe("harness orchestrator", () => {
 describe("plan locking and stitch order", () => {
   const base: HarnessPlan = mockDirectorPlan({ prompt: "x", targetDurationSec: 30 });
 
+  const caps = { modes: ["text_to_video", "image_to_video", "reference_to_video"] as NativeMode[] };
+
   it("drops Director frame refs it cannot materialize and routes user frames to I2V", () => {
     const raw: HarnessPlan = {
       ...base,
       shots: base.shots.map((s, i) => ({
         ...s,
-        route: "grok_t2v" as const,
+        route: "t2v" as const,
         continuity: i === 0 ? ("tail_chain" as const) : s.continuity,
         startFrame: { source: "generated" as const, assetId: "made-up" },
       })),
     };
     const locked = lockPlan(raw, {
       assets: { start: { path: "inputs/start.jpg", width: 1, height: 1 }, last: { path: "inputs/last.jpg", width: 1, height: 1 } },
-    });
+    }, caps);
     expect(locked.shots[0]).toMatchObject({
-      route: "grok_i2v",
+      route: "i2v",
       continuity: "hard_cut",
       startFrame: { source: "user", assetId: "inputs/start.jpg" },
     });
     expect(locked.shots[1]).toMatchObject({
-      route: "grok_i2v",
+      route: "i2v",
       startFrame: { source: "extracted", assetId: "shots/0/tail.jpg" },
+    });
+    // 用户尾帧锁在最后一镜（现在 30s = 3 镜）。
+    expect(locked.shots[2]).toMatchObject({
       endFrame: { source: "user", assetId: "inputs/last.jpg" },
     });
   });
 
-  it("collapses extend outputs onto the clip they extended", () => {
-    const plan: HarnessPlan = {
+  it("demotes r2v when the provider does not declare reference_to_video", () => {
+    const raw: HarnessPlan = {
       ...base,
-      shots: [
-        { ...base.shots[0]!, id: "a", index: 0 },
-        { ...base.shots[1]!, id: "b", index: 1, route: "grok_extend", continuity: "extend", durationSec: 10 },
-        { ...base.shots[1]!, id: "c", index: 2, durationSec: 5 },
-      ],
+      shots: base.shots.map((s) => ({ ...s, route: "r2v" as const, characterIds: ["c_main"] })),
     };
+    const locked = lockPlan(raw, { assets: {} }, { modes: ["text_to_video", "image_to_video"] as NativeMode[] });
+    // 可灵不声明 r2v：tail_chain 镜头落 i2v，首镜硬切落 t2v。
+    expect(locked.shots[0]!.route).toBe("t2v");
+    expect(locked.shots.slice(1).every((s) => s.route === "i2v")).toBe(true);
+  });
+
+  it("stitches every shot clip in index order", () => {
+    const plan: HarnessPlan = base;
     const shots = plan.shots.map((s) => ({
       id: s.id,
       index: s.index,
@@ -274,7 +284,11 @@ describe("plan locking and stitch order", () => {
       costUsd: 0,
       outputPath: `shots/${s.index}/video.mp4`,
     }));
-    expect(stitchOrder(plan, shots)).toEqual(["shots/1/video.mp4", "shots/2/video.mp4"]);
+    expect(stitchOrder(plan, shots)).toEqual([
+      "shots/0/video.mp4",
+      "shots/1/video.mp4",
+      "shots/2/video.mp4",
+    ]);
   });
 
   it("derives stitch dimensions from aspect ratio and resolution", () => {

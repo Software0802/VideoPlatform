@@ -108,9 +108,7 @@ export async function executeShotPlan(
 function defaultDependencies(shot: Shot, shots: readonly Shot[]): readonly string[] {
   if (
     shot.index <= 0 ||
-    (shot.continuity !== "tail_chain" &&
-      shot.continuity !== "extend" &&
-      shot.startFrame?.source !== "extracted")
+    (shot.continuity !== "tail_chain" && shot.startFrame?.source !== "extracted")
   ) {
     return [];
   }

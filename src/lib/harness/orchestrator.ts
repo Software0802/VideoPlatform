@@ -2,12 +2,12 @@ import { access, copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { notifyAlert } from "@/lib/alerts";
 import {
+  estimateCostUsd,
   estimateHarnessCostUsd,
   estimateLlmCostUsd,
   HARNESS_QC_RETRY_MULTIPLIER,
   LLM_RESERVE_USD,
-  RATE_USD_PER_IMAGE,
-  RATE_USD_PER_SEC,
+  type VideoPricingHint,
 } from "@/lib/cost";
 import {
   harnessEnabled,
@@ -17,17 +17,20 @@ import {
 import { runFfmpeg } from "@/lib/ffmpeg";
 import { emitJob } from "@/lib/jobs/events";
 import { commitLocalOutput, resolveLocalOutput } from "@/lib/jobs/local-output";
+import { modelForProvider } from "@/lib/jobs/provider-settings";
 import { normalizeLlmUsage, type JobRecord, type JobStatus } from "@/lib/jobs/schema";
 import { canTransition } from "@/lib/jobs/state-machine";
 import { readJob, tmpDir, toPublic, updateJob } from "@/lib/jobs/store";
 import { log } from "@/lib/log";
 import { persistRemote } from "@/lib/media/persist";
-import { deleteXaiFile, uploadXaiFile } from "@/lib/providers/grok/client";
-import { isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
-import { providerForId } from "@/lib/providers/router";
-import type { MediaRef, ProviderHandle, VideoProvider } from "@/lib/providers/types";
+import { imageConfigFor } from "@/lib/providers/openai-image/config";
+import { mapAspectToSize } from "@/lib/providers/openai-image/rest-map";
+import { providerForId, selectProvider } from "@/lib/providers/router";
+import type { ProviderHandle, VideoProvider } from "@/lib/providers/types";
 import { mediaStore } from "@/lib/storage/local-fs";
-import { createDirectorPlan, DIRECTOR_MODEL, type DirectorInput } from "./director";
+import { createDirectorPlan, directorModel, type DirectorInput } from "./director";
+import { isHarnessDuration } from "./durations";
+import { HarnessFailure } from "./harness-failure";
 import { requestIdentitySheet } from "./identity-sheet";
 import { persistIdentitySheet } from "./identity-sheet-store";
 import { extractSharpestTailFrame } from "./keyframe";
@@ -44,9 +47,11 @@ import type { HarnessPlan, Shot } from "./types";
 import {
   scoreVisualConsistency,
   tightenShotPrompt,
+  visualQcModel,
   visualQcPasses,
-  VISUAL_QC_MODEL,
 } from "./visual-qc";
+
+export { HarnessFailure } from "./harness-failure";
 
 /**
  * M2.4 — the consistency pipeline wired to the JobRunner.
@@ -64,16 +69,6 @@ import {
 
 export interface HarnessOrchestrator {
   execute(jobId: string): Promise<void>;
-}
-
-export class HarnessFailure extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "HarnessFailure";
-  }
 }
 
 /** Every paid call reports its usage back through this hook; `null` = billed, usage unknown. */
@@ -193,9 +188,12 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
   /* ── L1 Director ── */
 
   async function direct(job: JobRecord, reserved: Reservations) {
+    const videoProvider = deps.provider ?? providerForId(job.provider);
+    const caps = videoProvider.capabilities();
+    const pricing = shotPricing(job);
     if (job.harnessPlan && job.harnessShots) {
       // A resumed run re-checks the saved plan: the cap must hold before any shot is (re)sent.
-      guardPlannedBudget(job, estimateHarnessCostUsd(job.harnessPlan.packing.clips));
+      guardPlannedBudget(job, estimateHarnessCostUsd(job.harnessPlan.packing.clips, pricing));
       return;
     }
     const input: DirectorInput = {
@@ -206,7 +204,7 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
       hasLastFrame: Boolean(job.assets.last),
       referenceAssetIds: job.assets.references?.map((a) => a.path) ?? [],
     };
-    const hooks: LlmUsageHooks = { onUsage: (usage) => bookLlmUsage(job.id, usage, DIRECTOR_MODEL) };
+    const hooks: LlmUsageHooks = { onUsage: (usage) => bookLlmUsage(job.id, usage, directorModel()) };
     const raw = deps.director
       ? await deps.director(input, job, hooks)
       : job.provider === "mock"
@@ -223,10 +221,10 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
             },
             () => createDirectorPlan(input, hooks),
           );
-    const plan = lockPlan(raw, job);
+    const plan = lockPlan(raw, job, caps);
     await saveHarnessPlan(job.id, plan);
     // The submit-time estimate the user saw stays put; the plan-derived figure is stored beside it (R05).
-    const planned = estimateHarnessCostUsd(plan.packing.clips);
+    const planned = estimateHarnessCostUsd(plan.packing.clips, pricing);
     await updateJob(job.id, (r) => {
       r.costUsdPlanned = planned;
       r.harness = { enabled: true };
@@ -262,9 +260,19 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
     const plan = job.harnessPlan;
     if (!plan) throw new Error("Harness 状态不存在");
     const needsSheet = new Set(
-      plan.shots.filter((s) => s.route === "grok_r2v").flatMap((s) => s.characterIds),
+      plan.shots.filter((s) => s.route === "r2v").flatMap((s) => s.characterIds),
     );
-    const provider = deps.provider ?? providerForId(job.provider);
+    // 角色表是生图调用，走图片通道的 ORDER/能力路由，不复用视频 provider。
+    const imageProvider = selectProvider({ jobId: `${job.id}-sheet`, mode: "text_to_image", prompt: "", model: "", generateAudio: false });
+    const imageModel = modelForProvider(imageProvider.id, "text_to_image");
+    // 预留按这次真正会发的 size/quality 估（与 create.ts 的生图估价同一个口径）。
+    const imageShape = imageConfigFor(imageProvider.id)?.shape();
+    const sheetPrice = estimateCostUsd(imageModel, 0, {
+      // requestIdentitySheet 固定发 aspectRatio "1:1" + imageResolution "1k"，size 走同一映射。
+      size: mapAspectToSize("1:1", "1k", imageShape).size,
+      quality: imageShape?.quality ?? "high",
+      provider: imageProvider.id,
+    });
     const jobDir = mediaStore.jobDir(job.id);
     for (const character of plan.bible.characters) {
       if (!needsSheet.has(character.id) || character.sheetAssetIds.length) continue;
@@ -274,7 +282,7 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
         {
           jobId: job.id,
           key: `sheet:${character.id}`,
-          amount: RATE_USD_PER_IMAGE["grok-imagine-image-2.0"],
+          amount: sheetPrice,
           reserved,
           label: `角色表 ${character.name}`,
           fail: (detail) => new HarnessFailure("budget_exceeded", detail),
@@ -282,7 +290,8 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
         async () => {
           const result = await requestIdentitySheet(
             { jobId: job.id, bible: plan.bible, characterId: character.id },
-            provider,
+            imageProvider,
+            imageModel,
           );
           const handle = await materializeLocalHandle(result.requestJobId, result.handle);
           const persisted = await persistIdentitySheet(
@@ -291,7 +300,7 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
               jobDir,
               tempDir: tmpDir(),
               isCanceled: () => isCanceled(job.id),
-              providerId: provider.id,
+              providerId: imageProvider.id,
             },
           );
           await rm(mediaStore.jobDir(result.requestJobId), { recursive: true, force: true }).catch(
@@ -317,8 +326,8 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
     const plan = job.harnessPlan;
     if (!plan || !job.harnessShots) throw new Error("Harness 状态不存在");
     const provider = deps.provider ?? providerForId(job.provider);
+    const pricing = shotPricing(job);
     const jobDir = mediaStore.jobDir(job.id);
-    const uploadedFiles = new Map<string, string>();
     const total = plan.shots.length;
     // Sheet cost was booked before any shot ran, and the Director's tokens before that;
     // shots and LLM calls re-sum from their own records, so isolate the sheet remainder.
@@ -328,11 +337,12 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
     );
     // Crash-recovered shots that are already upstream never pass beforeAttempt again, so their
     // promised charge has to be put back on the reservation table before anything else submits.
-    seedInFlightReservations(job.harnessShots, plan.shots, reserved);
+    seedInFlightReservations(job.harnessShots, plan.shots, reserved, pricing);
 
     const final = await runPersistedPlan(job.id, {
       maxParallel: deps.shotConcurrency(),
       provider,
+      model: job.model,
       pollIntervalMs: deps.pollIntervalMs,
       aspectRatio: job.aspectRatio ?? undefined,
       resolution: job.resolution ?? undefined,
@@ -341,7 +351,7 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
       shotOverride: (shot, record) =>
         record.retries > 0 ? { ...shot, prompt: tightenShotPrompt(shot, plan.bible, record.retries) } : shot,
       beforeAttempt: async (shot, record) => {
-        await reserveShotBudget(job.id, shot, record, reserved);
+        await reserveShotBudget(job.id, shot, record, reserved, pricing);
       },
       beforeShot: async (shot) => {
         if (shot.startFrame?.source === "extracted") {
@@ -350,27 +360,9 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
           await extractSharpestTailFrame(await previous, tail);
         }
       },
-      sourceVideoFor: async (shot) => {
-        if (shot.route !== "grok_extend") return undefined;
-        const previous = await previousShotOutput(plan, job.id, shot);
-        if (provider.id !== "grok") {
-          throw new ShotFailure("invalid_argument", "当前 provider 不支持 extend shot");
-        }
-        const fileId = await uploadXaiFile(previous, `${job.id}-shot-${shot.index}-source.mp4`);
-        uploadedFiles.set(shot.id, fileId);
-        return { kind: "file_id", fileId } satisfies MediaRef;
-      },
       cleanupHandle: async () => undefined,
       persistOutput: async (shot, handle) => {
-        try {
-          return await persistShot(job.id, plan, shot, handle, provider, reserved);
-        } finally {
-          const fileId = uploadedFiles.get(shot.id);
-          if (fileId) {
-            uploadedFiles.delete(shot.id);
-            void deleteXaiFile(fileId);
-          }
-        }
+        return persistShot(job.id, plan, shot, handle, provider, reserved);
       },
       cleanupOutput: async (rel) => {
         await rm(resolveLocalOutput(jobDir, rel), { force: true }).catch(() => undefined);
@@ -396,7 +388,6 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
       },
     });
 
-    for (const fileId of uploadedFiles.values()) void deleteXaiFile(fileId);
     if (isCanceledRecord(final)) return "canceled";
     const shots = final.harnessShots ?? [];
     if (shots.some((s) => s.status === "canceled")) return "canceled";
@@ -439,13 +430,9 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
         });
       }
 
-      const expected =
-        shot.continuity === "extend"
-          ? (await previousShotDuration(plan, jobId, shot)) + shot.durationSec
-          : shot.durationSec;
       let report;
       try {
-        report = await runShotQc(staged, { expectedDurationSec: expected });
+        report = await runShotQc(staged, { expectedDurationSec: shot.durationSec });
       } catch (error) {
         if (error instanceof ShotQcFailure) throw new ShotFailure(error.code, error.message);
         throw error;
@@ -537,7 +524,7 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
         () =>
           deps.visualScorer(
             { bible: plan.bible, shot, references, frames },
-            { onUsage: (usage) => bookLlmUsage(jobId, usage, VISUAL_QC_MODEL) },
+            { onUsage: (usage) => bookLlmUsage(jobId, usage, visualQcModel()) },
           ),
       );
     } finally {
@@ -588,11 +575,12 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
     shot: Shot,
     record: HarnessShotRecord,
     reserved: Reservations,
+    pricing: ShotPricing,
   ) {
     await reserveBudget({
       jobId,
       key: shotKey(shot.id),
-      amount: shotListPrice(shot),
+      amount: shotListPrice(shot, pricing),
       reserved,
       label: `镜头 ${shot.index + 1}`,
       fail: (detail) => new ShotFailure("budget_exceeded", detail, { terminal: true }),
@@ -699,16 +687,29 @@ export const harnessOrchestrator: HarnessOrchestrator = createHarnessOrchestrato
 /* ── plan normalization ── */
 
 /**
- * Apply user frames, tail-chain extraction targets, and route sanity to a
- * Director plan so every shot can be built by shot-router at submit time.
+ * Apply user frames, provider capability adaptation, and tail-chain extraction
+ * targets to a Director plan so every shot can be built by shot-router at submit time.
+ *
+ * 落档规则（供应商无关化的 B/C 档；档 A 生成首帧是 E2，本刀不做）：
+ *  1. `r2v` 只在 provider 声明 `reference_to_video` 时保留，否则按有无可用首帧
+ *     落到 `i2v` / `t2v`；
+ *  2. `tail_chain` 的镜头（index>0）拿上一镜尾帧做首帧，一律 `i2v`；
+ *  4. 落不了地的帧引用（generated / 不存在的 user）直接删，t2v 带着首帧则升 `i2v`；
+ *  5. 用户首帧锁 shot 0、尾帧锁最后一镜（`applyKeyframeLocks`）。
  */
-export function lockPlan(raw: HarnessPlan, job: Pick<JobRecord, "assets">): HarnessPlan {
+export function lockPlan(
+  raw: HarnessPlan,
+  job: Pick<JobRecord, "assets">,
+  caps: Pick<ReturnType<VideoProvider["capabilities"]>, "modes">,
+): HarnessPlan {
   const startId = job.assets.start?.path;
   const lastId = job.assets.last?.path;
+  const supportsR2v = caps.modes.includes("reference_to_video");
   const shots: Shot[] = raw.shots.map((shot) => {
     const next: Shot = { ...shot };
     // Only frames this pipeline can materialize survive: the user start frame
     // on shot 0, and extracted tail frames that keyframe locks assign below.
+    // `source: "generated"` 首帧是 E2 的档 A，本刀没有生成它们的通道，先删。
     if (next.startFrame && !(next.startFrame.source === "user" && next.index === 0 && startId)) {
       delete next.startFrame;
     } else if (next.startFrame && startId) {
@@ -716,7 +717,11 @@ export function lockPlan(raw: HarnessPlan, job: Pick<JobRecord, "assets">): Harn
     }
     if (next.endFrame) delete next.endFrame;
     if (next.index === 0 && next.continuity === "tail_chain") next.continuity = "hard_cut";
-    if (next.continuity === "tail_chain" && next.route === "grok_t2v") next.route = "grok_i2v";
+    if (!supportsR2v && next.route === "r2v") {
+      next.route = next.startFrame || next.continuity === "tail_chain" ? "i2v" : "t2v";
+    }
+    // tail_chain 的续接语义就是拿前一镜尾帧做首帧，恒为 i2v（r2v 留着也接不了尾帧）。
+    if (next.continuity === "tail_chain" && next.route !== "i2v") next.route = "i2v";
     return next;
   });
   const extractedTailFrames: Record<string, string> = {};
@@ -732,19 +737,18 @@ export function lockPlan(raw: HarnessPlan, job: Pick<JobRecord, "assets">): Harn
   return {
     ...locked,
     shots: locked.shots.map((shot) =>
-      shot.startFrame && shot.route === "grok_t2v" ? { ...shot, route: "grok_i2v" } : shot,
+      shot.startFrame && shot.route === "t2v" ? { ...shot, route: "i2v" } : shot,
     ),
   };
 }
 
-/** Extend outputs already contain their source, so each extend replaces the clip it grew from. */
+/** 每镜一条成片，按 index 序拼接；续接语义已在生成期用尾帧→i2v 表达。 */
 export function stitchOrder(plan: HarnessPlan, shots: readonly HarnessShotRecord[]): string[] {
   const byId = new Map(shots.map((s) => [s.id, s]));
   const order: string[] = [];
   for (const shot of [...plan.shots].sort((a, b) => a.index - b.index)) {
     const record = byId.get(shot.id);
     if (!record?.outputPath) throw new HarnessFailure("qc_failed", `镜头 ${shot.index + 1} 成片缺失`);
-    if (shot.continuity === "extend" && order.length) order.pop();
     order.push(record.outputPath);
   }
   return order;
@@ -786,10 +790,26 @@ export function budgetCap(
   return job.costUsdEstimate * multiplier;
 }
 
+/**
+ * shot 预留用的计价形状：任务落定时选定的上游模型 + 记录里的分辨率/音轨/provider。
+ * 可灵按积分档、YMan 按时长价、其余按模型每秒单价——与 `create.ts` 的估价同一个口径。
+ */
+export type ShotPricing = { model: string; video?: VideoPricingHint };
+
+function shotPricing(job: JobRecord): ShotPricing {
+  return {
+    model: job.model,
+    video: {
+      resolution: job.resolution ?? "720p",
+      audio: job.generateAudio ? "native" : "off",
+      provider: job.provider,
+    },
+  };
+}
+
 /** List-price estimate of one paid generation for a shot (used to reserve budget before submit). */
-export function shotListPrice(shot: Pick<Shot, "route" | "durationSec">): number {
-  const rate = shot.route === "grok_extend" ? RATE_USD_PER_SEC["grok-imagine-video"] : RATE_USD_PER_SEC["grok-imagine-video-1.5"];
-  return roundUsd(rate * shot.durationSec);
+export function shotListPrice(shot: Pick<Shot, "route" | "durationSec">, pricing: ShotPricing): number {
+  return estimateCostUsd(pricing.model, shot.durationSec, undefined, pricing.video);
 }
 
 /**
@@ -804,13 +824,14 @@ export function seedInFlightReservations(
   records: readonly Pick<HarnessShotRecord, "id" | "status" | "remoteId">[],
   shots: readonly Pick<Shot, "id" | "route" | "durationSec">[],
   reserved: Map<string, number>,
+  pricing: ShotPricing,
 ): void {
   const byId = new Map(shots.map((s) => [s.id, s]));
   for (const record of records) {
     if (!record.remoteId) continue;
     if (record.status !== "pending" && record.status !== "submitting") continue;
     const shot = byId.get(record.id);
-    if (shot) reserved.set(shotKey(record.id), shotListPrice(shot));
+    if (shot) reserved.set(shotKey(record.id), shotListPrice(shot, pricing));
   }
 }
 
@@ -933,13 +954,6 @@ async function previousShotOutput(plan: HarnessPlan, jobId: string, shot: Shot):
     throw new ShotFailure("dependency_failed", `镜头 ${shot.index} 缺少前一镜成片`);
   }
   return resolveLocalOutput(mediaStore.jobDir(jobId), record.outputPath);
-}
-
-async function previousShotDuration(plan: HarnessPlan, jobId: string, shot: Shot): Promise<number> {
-  const current = await readJob(jobId);
-  const previous = plan.shots.find((s) => s.index === shot.index - 1);
-  const record = current?.harnessShots?.find((s) => s.id === previous?.id);
-  return record?.qc?.durationSec ?? previous?.durationSec ?? 0;
 }
 
 /** Mock providers hand back a staged local file; turn it into something persistRemote accepts. */

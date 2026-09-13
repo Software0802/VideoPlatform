@@ -1,38 +1,17 @@
 /** Pure helper for Phase 2. JobRunner must not import this to stitch. */
 import type { HarnessClip } from "@/lib/cost";
 
-export function packDuration(totalSec: number): number[] {
-  const clamped = Math.max(4, Math.min(120, Math.round(totalSec)));
-  const target = 8;
-  let count = Math.max(1, Math.round(clamped / target));
-  while (clamped / count > 12) count += 1;
-  while (count > 1 && clamped / count < 4) count -= 1;
-  const base = Math.floor(clamped / count);
-  const rem = clamped - base * count;
-  return Array.from({ length: count }, (_, i) => base + (i < rem ? 1 : 0));
-}
-
+/**
+ * 供应商无关的打包：上游一次生成本身交付 5 / 10 秒档（可灵只收这两档，YMan
+ * 另有 15 秒档但通用 harness 类型只取 5/10），更长的一致性靠 tail_chain → i2v
+ * 续接，不再有 extend 片段。
+ */
 export function packHarnessDuration(targetSec: 30 | 45 | 60): HarnessClip[] {
-  if (targetSec === 30) {
-    return [
-      { kind: "generate", durationSec: 15 },
-      { kind: "extend", durationSec: 10 },
-      { kind: "generate", durationSec: 5 },
-    ];
-  }
-  if (targetSec === 45) {
-    return [
-      { kind: "generate", durationSec: 15 },
-      { kind: "extend", durationSec: 10 },
-      { kind: "generate", durationSec: 15 },
-      { kind: "extend", durationSec: 5 },
-    ];
-  }
-  return [
-    { kind: "generate", durationSec: 15 },
-    { kind: "extend", durationSec: 10 },
-    { kind: "generate", durationSec: 15 },
-    { kind: "extend", durationSec: 10 },
-    { kind: "generate", durationSec: 10 },
-  ];
+  const lengths =
+    targetSec === 30
+      ? [10, 10, 10]
+      : targetSec === 45
+        ? [10, 10, 10, 10, 5]
+        : [10, 10, 10, 10, 10, 10];
+  return lengths.map((durationSec) => ({ kind: "generate" as const, durationSec: durationSec as 5 | 10 }));
 }

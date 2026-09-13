@@ -6,8 +6,8 @@ import {
   productServesResolution,
   type Product,
 } from "@/lib/products/catalog";
-import { isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
-import { currentProviderId } from "@/lib/providers/router";
+import { isHarnessDuration } from "@/lib/harness/durations";
+import { currentProviderId, providerForId } from "@/lib/providers/router";
 import { ProviderHttpError } from "@/lib/providers/types";
 import type {
   AspectRatio,
@@ -71,13 +71,17 @@ export function chooseProduct(input: ChooseProductInput): ProductChoice {
 
 /** 用户点名的产品接不接得下这次请求。每一条都是他自己点过的东西，不能靠改写来满足。 */
 function assertProductFits(product: Product, input: ChooseProductInput): void {
-  if ((input.harness || isHarnessDuration(input.durationSec)) && product.provider !== "grok") {
-    // 30 / 45 / 60 秒是一致性管线的长片，只有 xAI 那条通道接得下（extend 依赖 Files API）。
-    throw new ProviderHttpError(
-      400,
-      "invalid_argument",
-      "所选模型不支持 30 / 45 / 60 秒长片",
-    );
+  if (input.harness || isHarnessDuration(input.durationSec)) {
+    // 30 / 45 / 60 秒是一致性管线的长片：管线会把任务拆成 t2v + i2v 两类 shot，
+    // 产品背后那家必须两条 mode 都声明（例如可灵、YMan；jimeng 只占位不算）。
+    const modes = providerForId(product.provider).capabilities().modes;
+    if (!modes.includes("text_to_video") || !modes.includes("image_to_video")) {
+      throw new ProviderHttpError(
+        400,
+        "invalid_argument",
+        "所选模型不支持 30 / 45 / 60 秒长片",
+      );
+    }
   }
   if (!product.modes.includes(input.mode)) {
     throw new ProviderHttpError(400, "invalid_argument", "所选模型不支持这种生成方式");

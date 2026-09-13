@@ -13,10 +13,10 @@ const shots: Shot[] = [
   {
     id: "shot_0",
     index: 0,
-    durationSec: 15,
+    durationSec: 10,
     prompt: "第一镜",
     characterIds: [],
-    route: "grok_t2v",
+    route: "t2v",
     continuity: "hard_cut",
     generateAudio: false,
   },
@@ -26,8 +26,8 @@ const shots: Shot[] = [
     durationSec: 10,
     prompt: "第二镜",
     characterIds: [],
-    route: "grok_extend",
-    continuity: "extend",
+    route: "i2v",
+    continuity: "tail_chain",
     generateAudio: false,
   },
 ];

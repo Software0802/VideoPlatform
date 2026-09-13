@@ -1,10 +1,22 @@
 import OpenAI from "openai";
 import { z } from "zod";
-import { grokApiKey, upstreamTimeoutMs, xaiBase } from "@/lib/env";
+import { agentLlmConfig } from "@/lib/agent/llm";
+import { upstreamTimeoutMs } from "@/lib/env";
+import { HarnessFailure } from "./harness-failure";
 import { normalizeCompletion, usageFromResponse, type LlmCompletion, type LlmUsage } from "./llm-usage";
 import type { HarnessPlan } from "./types";
 
-export const DIRECTOR_MODEL = "grok-4.6";
+/**
+ * Director 用智能体的对话配置（AGENT_API_KEY → xAI 回落），不再绑定某一个模型名。
+ * 没有可用配置就是整条长片链路不可用，由调用方按 HarnessFailure 上报。
+ */
+export function directorModel(): string {
+  const config = agentLlmConfig();
+  if (!config) {
+    throw new HarnessFailure("llm_unavailable", "缺少可用的对话模型（AGENT_API_KEY 或 XAI_API_KEY）");
+  }
+  return config.model;
+}
 const MAX_ATTEMPTS = 3;
 
 const targetDurationSchema = z.union([z.literal(30), z.literal(45), z.literal(60)]);
@@ -70,28 +82,22 @@ const shotShapeSchema = z
   .object({
     id: z.string().trim().min(1).max(80),
     index: z.number().int().min(0).max(999),
-    durationSec: z.number().int().min(1).max(15),
+    durationSec: z.union([z.literal(5), z.literal(10)]),
     prompt: z.string().trim().min(1).max(2000),
     characterIds: z.array(z.string().trim().min(1).max(80)).max(24),
     locationId: z.string().trim().min(1).max(80).optional(),
     startFrame: frameRefSchema.optional(),
     endFrame: frameRefSchema.optional(),
-    route: z.enum([
-      "grok_t2v",
-      "grok_i2v",
-      "grok_r2v",
-      "grok_extend",
-      "jimeng_first_last",
-    ]),
-    continuity: z.enum(["hard_cut", "tail_chain", "extend"]),
+    route: z.enum(["t2v", "i2v", "r2v"]),
+    continuity: z.enum(["hard_cut", "tail_chain"]),
     generateAudio: z.boolean(),
   })
   .strict();
 
 const clipShapeSchema = z
   .object({
-    kind: z.enum(["generate", "extend"]),
-    durationSec: z.number().int().min(1).max(15),
+    kind: z.literal("generate"),
+    durationSec: z.union([z.literal(5), z.literal(10)]),
   })
   .strict();
 
@@ -121,16 +127,6 @@ export const directorPlanSchema = directorPlanShapeSchema.superRefine((plan, ctx
       message: "packing 时长必须等于目标时长",
     });
   }
-  for (const [index, clip] of plan.packing.clips.entries()) {
-    if (clip.kind === "extend" && clip.durationSec > 10) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["packing", "clips", index, "durationSec"],
-        message: "extend 单段最长 10 秒",
-      });
-    }
-  }
-
   const orderedIndexes = plan.shots.map((shot) => shot.index);
   const indexesAreContiguous = orderedIndexes.every((value, index) => value === index);
   if (!indexesAreContiguous) {
@@ -145,18 +141,18 @@ export const directorPlanSchema = directorPlanShapeSchema.superRefine((plan, ctx
     });
   }
   for (const [index, shot] of plan.shots.entries()) {
-    if (shot.route === "grok_extend" && shot.continuity !== "extend") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["shots", index, "continuity"],
-        message: "grok_extend 必须使用 extend 连续性",
-      });
-    }
-    if (shot.continuity === "extend" && shot.route !== "grok_extend") {
+    if (shot.continuity === "tail_chain" && shot.route === "t2v") {
       ctx.addIssue({
         code: "custom",
         path: ["shots", index, "route"],
-        message: "extend 连续性必须使用 grok_extend 路由",
+        message: "tail_chain 连续性必须走 i2v / r2v",
+      });
+    }
+    if (shot.route === "i2v" && shot.index > 0 && shot.continuity === "hard_cut" && !shot.startFrame) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["shots", index, "route"],
+        message: "硬切后的 i2v 必须自带 startFrame",
       });
     }
   }
@@ -180,33 +176,31 @@ export type DirectorInput = z.input<typeof directorInputSchema>;
 export type DirectorCompletionRequest = {
   model: string;
   messages: Array<{ role: "system" | "user"; content: string }>;
-  responseFormat: {
-    type: "json_schema";
-    json_schema: {
-      name: string;
-      strict: true;
-      schema: Record<string, unknown>;
-    };
-  };
+  // `json_object` 而不是 `json_schema`：中转站对后者的支持参差不齐，形状由本地
+  // zod 严格校验兜底，与 agent/llm.ts 同一个口径。
+  responseFormat: { type: "json_object" };
 };
 
 export type DirectorCompleter = (request: DirectorCompletionRequest) => Promise<string | LlmCompletion>;
 
 const directorJsonSchema = z.toJSONSchema(directorPlanShapeSchema) as Record<string, unknown>;
 export const DIRECTOR_RESPONSE_FORMAT: DirectorCompletionRequest["responseFormat"] = {
-  type: "json_schema",
-  json_schema: {
-    name: "lumen_harness_plan",
-    strict: true,
-    schema: directorJsonSchema,
-  },
+  type: "json_object",
 };
 
 const DIRECTOR_SYSTEM_PROMPT = `你是 Lumen 的 Director。把用户创意拆成身份一致的连续视频计划。
-只输出符合 lumen_harness_plan JSON Schema 的 JSON，不要 Markdown，不要解释。
-目标视频只能是 30、45 或 60 秒；每个 generate 片段最多 15 秒，每个 extend 片段最多 10 秒。
-优先使用 grok_i2v、grok_r2v 和 grok_extend；连续动作使用 extend，镜头切换使用 hard_cut 或 tail_chain；stitch.transition 只能是 hard_cut。
-Identity Bible 必须把人物、服装、光线、色板和镜头语言写成可复用的锁定约束。`;
+只输出符合下面 JSON Schema 的 JSON，不要 Markdown，不要解释。
+目标视频只能是 30、45 或 60 秒；每个 shot 与每个 packing 片段只能是 5 或 10 秒。
+路由与连续性（供应商无关，具体 provider 由下游按能力适配）：
+- 第一镜默认 t2v；用户给了首帧时第一镜用 i2v 并引用它。
+- 后续镜头默认 tail_chain + i2v（拿上一镜尾帧续接，跨镜一致性最好）。
+- 场景切换用 hard_cut + t2v；换了场景的接续镜不要接上一镜尾帧。
+- 需要角色参考图驱动的镜头用 r2v，并在 characterIds 里点名对应角色。
+- stitch.transition 只能是 hard_cut。
+Identity Bible 必须把人物、服装、光线、色板和镜头语言写成可复用的锁定约束。
+
+JSON Schema:
+${JSON.stringify(directorJsonSchema)}`;
 
 export async function createDirectorPlan(
   input: DirectorInput,
@@ -215,10 +209,13 @@ export async function createDirectorPlan(
   const parsedInput = directorInputSchema.safeParse(input);
   if (!parsedInput.success) throw new Error("Director 输入无效");
 
-  const complete = options.complete ?? completeWithGrok;
+  // 模型在循环外定一次：重试不半路换家，usage 账目也按同一个名字记。
+  // 注入了 completer 就不要求真凭据（测试与替身路径），与 completeAgentTurn 同口径。
+  const complete = options.complete ?? completerFor();
+  const model = options.complete ? (agentLlmConfig()?.model ?? "director-mock") : directorModel();
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-    const request = buildRequest(parsedInput.data, attempt > 0);
+    const request = buildRequest(parsedInput.data, attempt > 0, model);
     let raw: string;
     try {
       const completion = normalizeCompletion(await complete(request));
@@ -242,12 +239,16 @@ export async function createDirectorPlan(
   });
 }
 
-function buildRequest(input: z.output<typeof directorInputSchema>, retry: boolean): DirectorCompletionRequest {
+function buildRequest(
+  input: z.output<typeof directorInputSchema>,
+  retry: boolean,
+  model: string,
+): DirectorCompletionRequest {
   const brief = [
     `目标时长: ${input.targetDurationSec} 秒`,
     `语言: ${input.language}`,
     `用户首帧: ${input.hasStartFrame ? "有，第一镜应引用 user_start" : "无"}`,
-    `用户尾帧: ${input.hasLastFrame ? "有，最后一镜记录 endFrame；Grok-only 不承诺硬锁" : "无"}`,
+    `用户尾帧: ${input.hasLastFrame ? "有，最后一镜记录 endFrame；上游不承诺硬锁" : "无"}`,
     `参考资产: ${input.referenceAssetIds.length ? input.referenceAssetIds.join(", ") : "无"}`,
     `创意: ${input.prompt}`,
     retry ? "上一次计划未通过严格校验，请重新生成完整 JSON。" : "",
@@ -255,7 +256,7 @@ function buildRequest(input: z.output<typeof directorInputSchema>, retry: boolea
     .filter(Boolean)
     .join("\n");
   return {
-    model: DIRECTOR_MODEL,
+    model,
     messages: [
       { role: "system", content: DIRECTOR_SYSTEM_PROMPT },
       { role: "user", content: brief },
@@ -264,15 +265,29 @@ function buildRequest(input: z.output<typeof directorInputSchema>, retry: boolea
   };
 }
 
-async function completeWithGrok(request: DirectorCompletionRequest): Promise<LlmCompletion> {
-  const apiKey = grokApiKey();
-  if (!apiKey) throw new Error("缺少 XAI_API_KEY 或 SUB2API_API_KEY");
+function completerFor(): DirectorCompleter {
+  const config = agentLlmConfig();
+  if (!config) {
+    throw new HarnessFailure("llm_unavailable", "缺少可用的对话模型（AGENT_API_KEY 或 XAI_API_KEY）");
+  }
+  if (config.provider === "mock") {
+    // mock 实例不走 chat completions——orchestrator 在 mock provider 上用
+    // mockDirectorPlan，本分支只兜住「director 被直接调到」的测试路径。
+    return async () => { throw new HarnessFailure("llm_unavailable", "mock 实例没有真实对话上游"); };
+  }
   const client = new OpenAI({
-    apiKey,
-    baseURL: xaiBase(),
+    apiKey: config.apiKey,
+    baseURL: config.baseURL,
     maxRetries: 0,
     timeout: upstreamTimeoutMs(),
   });
+  return (request) => completeWithAgent(client, request);
+}
+
+async function completeWithAgent(
+  client: OpenAI,
+  request: DirectorCompletionRequest,
+): Promise<LlmCompletion> {
   const response = await client.chat.completions.create({
     model: request.model,
     messages: request.messages,

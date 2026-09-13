@@ -860,3 +860,56 @@ describe("createJob — per-user in-flight cap (MAX_QUEUED_JOBS_PER_USER, 契约
     }
   });
 });
+
+/**
+ * 长片（harness）只归一非时长字段：30/45/60 是管线目标总长，provider 的时长档归一
+ * 会把它压成一段 clip 的长度；但分辨率 / 音轨 / 画幅仍按 provider 能力归一
+ * （harnessSettingsFor，provider-settings.ts）。这里钉住「可灵 + 480p 请求 + 30s」：
+ * 记录留住 30 与 harness 标记，resolution 被抬到可灵出得了的 720p。
+ */
+describe("createJob — harness keeps target duration, still normalizes resolution", () => {
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    delete process.env.VIDEO_PROVIDER_ORDER;
+    delete process.env.KLING_API_KEY;
+    delete process.env.HARNESS_ENABLED;
+    process.env.LUMEN_FORCE_MOCK = "1";
+  });
+
+  function harnessOwner(tag: string): string {
+    return `usr_${tag.padStart(16, "0")}`;
+  }
+
+  it("records durationSec 30 / resolution 720p for a 480p request routed to Kling", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "kling";
+    process.env.KLING_API_KEY = "kling-test-key";
+    process.env.HARNESS_ENABLED = "true";
+    stubKlingFetch();
+    const id = harnessOwner("b1");
+    await seedProductBalance(id, 1000);
+
+    const { job } = await createJob(
+      {
+        mode: "text_to_video",
+        prompt: "雨夜长镜头",
+        durationSec: 30,
+        resolution: "480p",
+        generateAudio: false,
+      } as Parameters<typeof createJob>[0],
+      id,
+    );
+
+    expect(job.provider).toBe("kling");
+    expect(job.durationSec).toBe(30); // target length survives — no clip-tier renormalization
+    expect(job.resolution).toBe("720p"); // 480p normalizes up to a tier Kling can serve
+    expect(job.generateAudio).toBe(false);
+    expect(job.aspectRatio).toBe("16:9");
+    expect(job.priceCny).toBeGreaterThan(0);
+
+    await drainToTerminal(job.id);
+    const rec = await readJob(job.id);
+    expect(rec?.harness?.enabled).toBe(true);
+    expect(rec?.durationSec).toBe(30);
+  });
+});

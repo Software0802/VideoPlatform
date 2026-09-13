@@ -9,17 +9,13 @@ import {
 } from "./run-persisted-shot";
 import { recoverPersistedShots, writeHarnessShot } from "./state";
 import type { HarnessShotRecord } from "./shot-state";
-import type { MediaRef, VideoProvider } from "@/lib/providers/types";
+import type { VideoProvider } from "@/lib/providers/types";
 import type { JobRecord } from "@/lib/jobs/schema";
 import type { Shot } from "./types";
 
-export type PersistedPlanOptions = Omit<PersistedShotOptions, "sourceVideo" | "onState"> & {
+export type PersistedPlanOptions = Omit<PersistedShotOptions, "onState"> & {
   maxParallel: number;
   provider?: VideoProvider;
-  sourceVideoFor?: (
-    shot: Shot,
-    record: HarnessShotRecord,
-  ) => MediaRef | undefined | Promise<MediaRef | undefined>;
   dependencies?: ShotDependencyResolver;
   onState?: (record: HarnessShotRecord) => Promise<void> | void;
   /** Runs once a shot's dependencies succeeded, before it is (re)submitted, e.g. tail-frame extraction. */
@@ -39,7 +35,6 @@ export async function runPersistedPlan(
 
   const {
     maxParallel,
-    sourceVideoFor,
     dependencies,
     onState,
     beforeShot,
@@ -56,10 +51,8 @@ export async function runPersistedPlan(
     },
     execute: async (shot, record) => {
       await beforeShot?.(shot, record);
-      const sourceVideo = await sourceVideoFor?.(shot, record);
       await runPersistedShot(jobId, shot.id, {
         ...shotOptions,
-        sourceVideo,
         recover: false,
         onState,
       });

@@ -1,5 +1,3 @@
-import { MODEL_IMAGE } from "@/lib/providers/grok/mode-matrix";
-import { grokNativeProvider } from "@/lib/providers/grok/native";
 import type {
   ProviderGenerateRequest,
   ProviderHandle,
@@ -58,7 +56,8 @@ export function buildIdentitySheetPrompt(input: IdentitySheetInput): string {
 
 export async function requestIdentitySheet(
   input: IdentitySheetInput,
-  provider: VideoProvider = grokNativeProvider,
+  provider: VideoProvider,
+  model: string,
 ): Promise<IdentitySheetResult> {
   const { character, index } = locateCharacter(input);
   if (input.language !== undefined && input.language !== "zh" && input.language !== "en") {
@@ -73,7 +72,7 @@ export async function requestIdentitySheet(
     jobId: requestJobId,
     mode: "text_to_image",
     prompt,
-    model: MODEL_IMAGE,
+    model,
     aspectRatio: "1:1",
     imageResolution: "1k",
     generateAudio: false,

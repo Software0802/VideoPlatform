@@ -35,7 +35,7 @@ let budgetCap: typeof import("./orchestrator").budgetCap;
 let estimateHarnessCostUsd: typeof import("@/lib/cost").estimateHarnessCostUsd;
 let estimateLlmCostUsd: typeof import("@/lib/cost").estimateLlmCostUsd;
 let LLM_RESERVE_USD: typeof import("@/lib/cost").LLM_RESERVE_USD;
-let DIRECTOR_MODEL: typeof import("./director").DIRECTOR_MODEL;
+let directorModel: typeof import("./director").directorModel;
 
 type DirectorHooks = { onUsage: (usage: LlmUsage | null) => Promise<void> };
 
@@ -144,7 +144,7 @@ beforeAll(async () => {
   ({ writeJob, readJob } = await import("@/lib/jobs/store"));
   ({ createHarnessOrchestrator, HarnessFailure, budgetCap } = await import("./orchestrator"));
   ({ estimateHarnessCostUsd, estimateLlmCostUsd, LLM_RESERVE_USD } = await import("@/lib/cost"));
-  ({ DIRECTOR_MODEL } = await import("./director"));
+  ({ directorModel } = await import("./director"));
 });
 
 afterAll(async () => {
@@ -220,7 +220,7 @@ describe("the budget gate runs before the Director is ever called", () => {
   it("stops right after Directing when the whole plan cannot fit, before the first shot submit", async () => {
     const id = "job_budget_plan_cost";
     const plan = mockDirectorPlan({ prompt: "预算门禁：全片成本", targetDurationSec: 30 });
-    const planCost = estimateHarnessCostUsd(plan.packing.clips);
+    const planCost = estimateHarnessCostUsd(plan.packing.clips, { model: "grok-imagine-video-1.5" });
     // Sanity on the fixture: a single LLM text call must be far cheaper than a 30s film,
     // otherwise the estimate picked below would not isolate the check this test targets.
     expect(LLM_RESERVE_USD.director).toBeLessThan(planCost);
@@ -249,7 +249,8 @@ describe("the budget gate runs before the Director is ever called", () => {
 describe("LLM usage feeds the same ledger as shot spend", () => {
   it("prices a reported Director usage into the ledger and lets a QC retry still submit", async () => {
     const id = "job_budget_llm_priced";
-    await writeJob(record(id, { provider: "grok", costUsdEstimate: 2.4 }));
+    // 三条 shot 各记 $1.20 + 一条 LLM 账：预算上限必须容得下全部在账花费。
+    await writeJob(record(id, { provider: "grok", costUsdEstimate: 2.6 }));
     let submitCalls = 0;
     const provider = paidClipProvider({
       // The very first submit (shot 0's first attempt) comes back 5s short and fails
@@ -283,13 +284,13 @@ describe("LLM usage feeds the same ledger as shot spend", () => {
     expect(job?.status).toBe("persisting");
     expect(job?.llmUsage?.calls).toBe(1);
     expect(job?.llmUsage?.unpricedCalls ?? 0).toBe(0);
-    const expectedLlmCost = estimateLlmCostUsd(DIRECTOR_MODEL, usage);
+    const expectedLlmCost = estimateLlmCostUsd(directorModel(), usage);
     expect(job?.llmUsage?.costUsd).toBeCloseTo(expectedLlmCost, 2);
     expect(job?.costIncomplete).toBe(false);
-    // Shot ledger: shot 0 books two $1.20 attempts (fail then succeed), shot 1 books one.
-    expect(job?.costUsdActual).toBeCloseTo(3.6 + expectedLlmCost, 2);
-    // 2 shots + 1 retry: the retry was not blocked by budget_unknown.
-    expect(provider.submit).toHaveBeenCalledTimes(3);
+    // Shot ledger: shot 0 books two $1.20 attempts (fail then succeed), shots 1–2 book one each.
+    expect(job?.costUsdActual).toBeCloseTo(4.8 + expectedLlmCost, 2);
+    // 3 shots + 1 retry: the retry was not blocked by budget_unknown.
+    expect(provider.submit).toHaveBeenCalledTimes(4);
   }, 120_000);
 
   it("marks an unpriced Director call incomplete and lets it terminate the very next retry", async () => {
@@ -328,7 +329,7 @@ describe("LLM usage feeds the same ledger as shot spend", () => {
 describe("budget reserve before a visual-QC call", () => {
   /**
    * Construction: costUsdEstimate is set to exactly the mock plan's own packing cost
-   * (30s -> two $1.20 shots = $2.40), so the whole-plan check above passes with no
+   * (30s -> three $0.80 shots = $2.40), so the whole-plan check above passes with no
    * slack, and costUsdActual is pre-loaded to $1.20 to stand in for a character-sheet
    * cost already booked before shot generation (the same bookkeeping the orchestrator
    * already does for keyframe sheets). That leaves exactly enough headroom for shot 0's
@@ -375,7 +376,7 @@ describe("budget reserve before a visual-QC call", () => {
     });
   }, 60_000);
 
-  // The character-sheet half of this same reserve (grok_r2v shots, identity sheets before
+  // The character-sheet half of this same reserve (r2v shots, identity sheets before
   // R2V generation) needs a full identity-sheet fixture (fake requestIdentitySheet /
   // persistIdentitySheet plumbing plus a bible with a character) to exercise meaningfully.
   // Per the task's own allowance, this is left to a follow-up rather than bolted on here

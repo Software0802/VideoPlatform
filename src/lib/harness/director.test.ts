@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 import {
-  DIRECTOR_MODEL,
   createDirectorPlan,
+  directorModel,
   directorPlanSchema,
   type DirectorCompletionRequest,
 } from "./director";
@@ -11,9 +11,9 @@ const validPlan = {
   targetDurationSec: 30,
   packing: {
     clips: [
-      { kind: "generate", durationSec: 15 },
-      { kind: "extend", durationSec: 10 },
-      { kind: "generate", durationSec: 5 },
+      { kind: "generate", durationSec: 10 },
+      { kind: "generate", durationSec: 10 },
+      { kind: "generate", durationSec: 10 },
     ],
   },
   bible: {
@@ -41,11 +41,11 @@ const validPlan = {
     {
       id: "shot_0",
       index: 0,
-      durationSec: 15,
+      durationSec: 10,
       prompt: "林在雨夜走向旧电影院，镜头平稳跟拍。",
       characterIds: ["char_main"],
       locationId: "loc_cinema",
-      route: "grok_i2v",
+      route: "t2v",
       continuity: "hard_cut",
       generateAudio: false,
     },
@@ -56,18 +56,18 @@ const validPlan = {
       prompt: "镜头跟随林穿过电影院门厅，保持动作和服装连续。",
       characterIds: ["char_main"],
       locationId: "loc_cinema",
-      route: "grok_extend",
-      continuity: "extend",
+      route: "i2v",
+      continuity: "tail_chain",
       generateAudio: false,
     },
     {
       id: "shot_2",
       index: 2,
-      durationSec: 5,
+      durationSec: 10,
       prompt: "林停在银幕前回望，暖色灯光落在脸上。",
       characterIds: ["char_main"],
       locationId: "loc_cinema",
-      route: "grok_i2v",
+      route: "i2v",
       continuity: "tail_chain",
       generateAudio: false,
     },
@@ -80,19 +80,16 @@ function json(value: unknown) {
 }
 
 describe("director", () => {
-  it("requests a strict Grok JSON schema and parses a valid plan", async () => {
+  it("requests a JSON object with the schema in the system prompt and parses a valid plan", async () => {
     const requests: DirectorCompletionRequest[] = [];
     const plan = await createDirectorPlan(
       { prompt: "雨夜电影院的连续短片", targetDurationSec: 30, language: "zh" },
       {
         complete: async (request) => {
           requests.push(request);
-          expect(request.model).toBe(DIRECTOR_MODEL);
-          expect(request.responseFormat).toMatchObject({
-            type: "json_schema",
-            json_schema: { name: "lumen_harness_plan", strict: true },
-          });
+          expect(request.responseFormat).toEqual({ type: "json_object" });
           expect(request.messages[0]?.role).toBe("system");
+          expect(request.messages[0]?.content).toContain('"targetDurationSec"');
           expect(request.messages[1]?.content).toContain("雨夜电影院");
           return json(validPlan);
         },
@@ -155,9 +152,12 @@ describe("director", () => {
     expect(calls).toBe(0);
   });
 
-  it("uses the configured local-compatible chat completion endpoint by default", async () => {
-    const previousKey = process.env.SUB2API_API_KEY;
-    const previousBase = process.env.XAI_BASE_URL;
+  it("uses the configured agent chat completion endpoint by default", async () => {
+    const previousKey = process.env.AGENT_API_KEY;
+    const previousBase = process.env.AGENT_BASE_URL;
+    const previousModel = process.env.AGENT_CHAT_MODEL;
+    const previousMock = process.env.LUMEN_FORCE_MOCK;
+    const previousXai = process.env.XAI_API_KEY;
     let requestPath = "";
     let requestBody: Record<string, unknown> | undefined;
     const server = createServer((request, response) => {
@@ -177,26 +177,33 @@ describe("director", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("fixture server did not bind");
-    process.env.SUB2API_API_KEY = "fixture-key";
-    process.env.XAI_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
+    process.env.AGENT_API_KEY = "fixture-key";
+    process.env.AGENT_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
+    delete process.env.AGENT_CHAT_MODEL;
+    delete process.env.LUMEN_FORCE_MOCK;
+    // 没有任何 key 时 isMockMode() 为真、agent 配置落 mock；塞一把让实例脱离 mock。
+    process.env.XAI_API_KEY = "fixture-xai";
     try {
       const plan = await createDirectorPlan({ prompt: "本地协议测试", targetDurationSec: 30 });
       expect(plan.targetDurationSec).toBe(30);
       expect(requestPath).toBe("/v1/chat/completions");
-      expect(requestBody?.model).toBe(DIRECTOR_MODEL);
-      expect(requestBody?.response_format).toMatchObject({
-        type: "json_schema",
-        json_schema: { name: "lumen_harness_plan", strict: true },
-      });
-      expect(requestBody?.response_format).toMatchObject({
-        json_schema: { schema: { type: "object", additionalProperties: false } },
-      });
+      expect(requestBody?.model).toBe(directorModel());
+      expect(requestBody?.response_format).toEqual({ type: "json_object" });
+      // Schema 文本走 system prompt（json_object 通道不携带结构化字段）。
+      const system = (requestBody as { messages: { role: string; content: string }[] }).messages[0].content;
+      expect(system).toContain('"targetDurationSec"');
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-      if (previousKey === undefined) delete process.env.SUB2API_API_KEY;
-      else process.env.SUB2API_API_KEY = previousKey;
-      if (previousBase === undefined) delete process.env.XAI_BASE_URL;
-      else process.env.XAI_BASE_URL = previousBase;
+      if (previousKey === undefined) delete process.env.AGENT_API_KEY;
+      else process.env.AGENT_API_KEY = previousKey;
+      if (previousBase === undefined) delete process.env.AGENT_BASE_URL;
+      else process.env.AGENT_BASE_URL = previousBase;
+      if (previousModel === undefined) delete process.env.AGENT_CHAT_MODEL;
+      else process.env.AGENT_CHAT_MODEL = previousModel;
+      if (previousMock === undefined) delete process.env.LUMEN_FORCE_MOCK;
+      else process.env.LUMEN_FORCE_MOCK = previousMock;
+      if (previousXai === undefined) delete process.env.XAI_API_KEY;
+      else process.env.XAI_API_KEY = previousXai;
     }
   });
 });

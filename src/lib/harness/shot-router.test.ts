@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mapToGrokRest } from "@/lib/providers/grok/rest-map";
 import type { IdentityBible, Shot } from "./types";
-import { buildShotRequest } from "./shot-router";
+import { buildShotRequest, type ProviderCaps } from "./shot-router";
 
 const bible: IdentityBible = {
   version: 1,
@@ -32,14 +32,23 @@ const resolveAsset = (assetId: string) => ({
   dataUri: `data:image/jpeg;base64,${assetId}`,
 });
 
+const caps: ProviderCaps = {
+  modes: ["text_to_video", "image_to_video", "reference_to_video"],
+  durations: [5, 10],
+  maxDurationSec: 10,
+  maxReferenceImages: 7,
+  supportsLastFrameLock: false,
+  maxResolution: "1080p",
+};
+
 function shot(overrides: Partial<Shot>): Shot {
   return {
     id: "shot_0",
     index: 0,
-    durationSec: 8,
+    durationSec: 10,
     prompt: "保持连续性",
     characterIds: [],
-    route: "grok_t2v",
+    route: "t2v",
     continuity: "hard_cut",
     generateAudio: false,
     ...overrides,
@@ -47,12 +56,14 @@ function shot(overrides: Partial<Shot>): Shot {
 }
 
 describe("shot router", () => {
-  it("maps T2V to the 1.5 generation endpoint", () => {
+  it("maps T2V to text_to_video with the job's model", () => {
     const request = buildShotRequest({
       jobId: "job_harness",
-      shot: shot({ durationSec: 12, characterIds: ["char_main"], locationId: "loc_cinema" }),
+      shot: shot({ characterIds: ["char_main"], locationId: "loc_cinema" }),
       bible,
       resolveAsset,
+      model: "kling-2.6",
+      caps,
       aspectRatio: "16:9",
       resolution: "720p",
     });
@@ -60,23 +71,25 @@ describe("shot router", () => {
     expect(request).toMatchObject({
       jobId: "job_harness-shot-0",
       mode: "text_to_video",
-      model: "grok-imagine-video-1.5",
-      durationSec: 12,
+      model: "kling-2.6",
+      durationSec: 10,
     });
     expect(call.path).toBe("/videos/generations");
-    expect(call.body).toMatchObject({ duration: 12, aspect_ratio: "16:9", resolution: "720p" });
+    expect(call.body).toMatchObject({ duration: 10, aspect_ratio: "16:9", resolution: "720p" });
   });
 
   it("maps I2V and resolves the extracted start frame", () => {
     const request = buildShotRequest({
       jobId: "job_harness",
       shot: shot({
-        route: "grok_i2v",
+        route: "i2v",
         continuity: "tail_chain",
         startFrame: { source: "extracted", assetId: "shots/0/link.jpg" },
       }),
       bible,
       resolveAsset,
+      model: "kling-2.6",
+      caps,
     });
     const call = mapToGrokRest(request);
     expect(request.mode).toBe("image_to_video");
@@ -91,9 +104,11 @@ describe("shot router", () => {
   it("maps R2V from character sheets and location references", () => {
     const request = buildShotRequest({
       jobId: "job_harness",
-      shot: shot({ route: "grok_r2v", characterIds: ["char_main"], locationId: "loc_cinema" }),
+      shot: shot({ route: "r2v", characterIds: ["char_main"], locationId: "loc_cinema" }),
       bible,
       resolveAsset,
+      model: "minimax-H3 参考",
+      caps,
     });
     const call = mapToGrokRest(request);
     expect(request.mode).toBe("reference_to_video");
@@ -105,55 +120,73 @@ describe("shot router", () => {
     ]);
   });
 
-  it("maps Extend to model 1.0 and requires a Files file_id", () => {
+  it("truncates reference images to the provider cap, character sheets first", () => {
     const request = buildShotRequest({
       jobId: "job_harness",
-      shot: shot({ route: "grok_extend", continuity: "extend", durationSec: 10 }),
+      shot: shot({ route: "r2v", characterIds: ["char_main"], locationId: "loc_cinema" }),
       bible,
       resolveAsset,
-      sourceVideo: { kind: "file_id", fileId: "file-previous-shot" },
+      model: "kling-2.6",
+      caps: { ...caps, maxReferenceImages: 1 },
     });
-    const call = mapToGrokRest(request);
-    expect(request).toMatchObject({ mode: "extend_video", model: "grok-imagine-video", durationSec: 10 });
-    expect(request.aspectRatio).toBeUndefined();
-    expect(request.resolution).toBeUndefined();
-    expect(call.path).toBe("/videos/extensions");
-    expect(call.body.video).toEqual({ file_id: "file-previous-shot" });
+    expect(request.referenceImages).toEqual([
+      { kind: "data_uri", dataUri: "data:image/jpeg;base64,inputs/sheets/character-0.jpg" },
+    ]);
   });
 
-  it("rejects missing continuity assets and disabled Jimeng routing", () => {
+  it("rejects a duration the provider does not carry", () => {
     expect(() =>
       buildShotRequest({
         jobId: "job_harness",
-        shot: shot({ route: "grok_i2v" }),
+        shot: shot({ durationSec: 10 }),
         bible,
         resolveAsset,
+        model: "kling-2.6",
+        caps: { ...caps, durations: [5] },
+      }),
+    ).toThrow("当前 provider 不支持该时长档");
+  });
+
+  it("rejects missing continuity assets", () => {
+    expect(() =>
+      buildShotRequest({
+        jobId: "job_harness",
+        shot: shot({ route: "i2v" }),
+        bible,
+        resolveAsset,
+        model: "kling-2.6",
+        caps,
       }),
     ).toThrow("I2V 需要 startFrame");
     expect(() =>
       buildShotRequest({
         jobId: "job_harness",
-        shot: shot({ route: "grok_r2v", characterIds: [] }),
+        shot: shot({ route: "r2v", characterIds: [] }),
         bible: { ...bible, locations: [] },
         resolveAsset,
+        model: "minimax-H3 参考",
+        caps,
       }),
     ).toThrow("R2V 缺少参考资产");
     expect(() =>
       buildShotRequest({
         jobId: "job_harness",
-        shot: shot({ route: "grok_extend", continuity: "extend", durationSec: 8 }),
+        shot: shot({ route: "t2v", continuity: "tail_chain" }),
         bible,
         resolveAsset,
-        sourceVideo: { kind: "path", path: "previous.mp4" },
+        model: "kling-2.6",
+        caps,
       }),
-    ).toThrow("Extend 必须使用 file_id");
+    ).toThrow("tail-chain 必须使用 I2V");
     expect(() =>
       buildShotRequest({
         jobId: "job_harness",
-        shot: shot({ route: "jimeng_first_last" }),
+        shot: shot({ route: "r2v", characterIds: ["char_main"] }),
         bible,
         resolveAsset,
+        model: "kling-2.6",
+        caps: { ...caps, maxReferenceImages: 0 },
       }),
-    ).toThrow("Jimeng 尚未启用");
+    ).toThrow("当前 provider 不收参考图");
   });
 });

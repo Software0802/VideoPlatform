@@ -135,15 +135,15 @@ describe("selectProvider / currentProviderId — Kling routing", () => {
     }
   });
 
-  it("keeps a 30/45/60s harness request on Grok even with Kling fully configured", () => {
+  it("routes a 30/45/60s harness request to Kling when it leads the order — Kling declares both t2v and i2v", () => {
     delete process.env.LUMEN_FORCE_MOCK;
     process.env.VIDEO_PROVIDER = "kling";
     process.env.KLING_API_KEY = "kling-test-key";
     process.env.XAI_API_KEY = "xai-live";
     for (const durationSec of [30, 45, 60]) {
-      expect(selectProvider(reqDuration("text_to_video", durationSec)).id).toBe("grok");
+      expect(selectProvider(reqDuration("text_to_video", durationSec)).id).toBe("kling");
     }
-    expect(currentProviderId("text_to_video", { harness: true })).toBe("grok");
+    expect(currentProviderId("text_to_video", { harness: true })).toBe("kling");
   });
 
   it("falls back to Grok when Kling is switched on but no key is configured", () => {
@@ -245,14 +245,42 @@ describe("selectProvider / currentProviderId — YMan routing (VIDEO_PROVIDER_OR
     }
   });
 
-  it("keeps a 30s harness request on Grok even with YMan leading the order and fully configured", () => {
+  it("routes a 30s harness request to YMan when it leads the order — YMan declares both t2v and i2v", () => {
     delete process.env.LUMEN_FORCE_MOCK;
     process.env.VIDEO_PROVIDER_ORDER = "yman,kling";
     process.env.YMAN_API_KEY = "yman-test-key";
     process.env.KLING_API_KEY = "kling-test-key";
     process.env.XAI_API_KEY = "xai-live";
-    expect(selectProvider(reqDuration("text_to_video", 30)).id).toBe("grok");
-    expect(currentProviderId("text_to_video", { harness: true })).toBe("grok");
+    expect(selectProvider(reqDuration("text_to_video", 30)).id).toBe("yman");
+    expect(currentProviderId("text_to_video", { harness: true })).toBe("yman");
+  });
+
+  it("walks ORDER past providers that do not declare the harness pair (i2v + t2v)", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    // openai 是图片 provider（只声明 text_to_image）：长片必须从它身边走过去。
+    process.env.VIDEO_PROVIDER_ORDER = "openai,kling";
+    process.env.OPENAI_API_KEY = "sk-openai";
+    process.env.KLING_API_KEY = "kling-test-key";
+    process.env.XAI_API_KEY = "xai-live";
+    expect(selectProvider(reqDuration("text_to_video", 30)).id).toBe("kling");
+    expect(currentProviderId("text_to_video", { harness: true })).toBe("kling");
+  });
+
+  it("400s a harness request when no ORDER provider can serve the requested ratio", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    delete process.env.XAI_API_KEY;
+    const request = reqDuration("text_to_video", 30);
+    request.aspectRatio = "4:3";
+    expect(() => selectProvider(request)).toThrow(ProviderHttpError);
+    try {
+      currentProviderId("text_to_video", { harness: true, aspectRatio: "4:3" });
+      throw new Error("expected currentProviderId to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProviderHttpError);
+      expect(error).toMatchObject({ status: 400, code: "invalid_argument" });
+    }
   });
 
   it("keeps Kling when it leads the order for a mode both providers declare", () => {

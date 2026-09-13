@@ -47,6 +47,7 @@ export async function runPersistedShot(
     bible: initial.harnessPlan.bible,
     record,
     provider,
+    model: initial.model,
     isCanceled,
     onState: async (next) => {
       await writeHarnessShot(jobId, next);

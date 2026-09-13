@@ -11,7 +11,8 @@ import {
 import { isExhausted, type ExhaustionKind } from "@/lib/providers/exhaustion";
 import { RESOLUTION_TIERS, resolutionRank, servesResolution } from "@/lib/providers/resolution";
 import { grokNativeProvider } from "@/lib/providers/grok/native";
-import { ASPECT_RATIOS, isHarnessDuration } from "@/lib/providers/grok/mode-matrix";
+import { ASPECT_RATIOS } from "@/lib/providers/grok/mode-matrix";
+import { isHarnessDuration } from "@/lib/harness/durations";
 import { klingProvider } from "@/lib/providers/kling/native";
 import { mockProvider } from "@/lib/providers/mock";
 import { jimengProvider } from "@/lib/providers/jimeng";
@@ -79,6 +80,11 @@ export type VideoRouteConstraints = {
   aspectRatio?: AspectRatio;
   resolution?: Resolution;
   needsLastFrame?: boolean;
+  /**
+   * 除主模式外还必须声明的原生 mode。长片管线把一条任务拆成 t2v + i2v 两类 shot，
+   * 选中的那家必须两条都接得住，缺一条就按 ORDER 继续找下一家。
+   */
+  requireModes?: NativeMode[];
 };
 
 const NO_PROVIDER_FOR_RATIO = "当前画幅暂无可用的生成服务";
@@ -99,7 +105,7 @@ function hasAnyRealKey(kind: ExhaustionKind): boolean {
 /**
  * ORDER 里一个都没选中时的兜底。
  *
- * 先试 grok（能力最全，是 `edit_video` / `extend_video` / 长片的落点），但它同样要过
+ * 先试 grok（`edit_video` / `extend_video` 目前只有它声明支持），但它同样要过
  * 「没被判定耗尽」这一关——`isExhausted` 记的是「这家没钱了」，绕开它正是耗尽切换的
  * 全部意义，兜底路径上漏掉这个判断等于让钱花光的那家继续接任务。
  *
@@ -130,7 +136,8 @@ function fallbackProvider(kind: ExhaustionKind): VideoProvider {
  * 480p 交给 720p 的一家是向上归一，允许；反过来是降档，不允许。
  *
  * 一个都没选中时分两种：
- *  - 这个**模式**没人接（r2v / edit / extend）：照旧回落 grok（能力最全），没 key 才 mock。
+ *  - 这个**模式**没人接（edit / extend 当前只有 grok 声明）：走 `fallbackProvider`——
+ *    配了 XAI key 且 grok 未耗尽才试它，否则有真 key 就 503、完全没 key 才 mock。
  *  - 模式接得了、**画幅 / 分辨率 / 尾帧**接不了：返回 `{ blocked }`，由调用方 400。回落
  *    等于替用户把他点的东西换成另一家的默认值，而这正是这次要杜绝的静默改写。
  */
@@ -146,7 +153,9 @@ function pickVideoProvider(mode: NativeMode, constraints?: VideoRouteConstraints
   for (const id of videoProviderOrder()) {
     if (!hasProviderKey(id) || isExhausted(id, "video")) continue;
     const provider = providerForId(id);
-    if (!provider.capabilities().modes.includes(mode)) continue;
+    const caps = provider.capabilities();
+    if (!caps.modes.includes(mode)) continue;
+    if (constraints?.requireModes?.some((required) => !caps.modes.includes(required))) continue;
     // 记下**第一个**被挡住的理由：错误信息要指向用户真正该改的那一项。
     if (!servesRatio(provider, constraints?.aspectRatio)) {
       blocked ??= NO_PROVIDER_FOR_RATIO;
@@ -164,7 +173,7 @@ function pickVideoProvider(mode: NativeMode, constraints?: VideoRouteConstraints
   }
   if (blocked) return { blocked };
   const fallback = fallbackProvider("video");
-  // 兜底那一家同样要过这三关：xAI 能力最全，但它同样发不出尾帧，
+  // 兜底那一家同样要过这三关：它同样发不出尾帧，
   // 「没人接得下」必须以 400 结束，而不是交给一个做不到的 provider。
   if (!servesRatio(fallback, constraints?.aspectRatio)) return { blocked: NO_PROVIDER_FOR_RATIO };
   if (!servesResolutionCap(fallback, constraints?.resolution)) {
@@ -196,8 +205,9 @@ function pickImageProvider(): VideoProvider {
 /**
  * 这次请求该交给谁。
  *
- * 视频模式走 `pickVideoProvider` 的「能力 + 优先级」；30 / 45 / 60 秒长片例外——它由一致性
- * 管线拆成多个 shot 交给 xAI（extend 依赖 Files API），别家接不了，所以恒定留在 grok。
+ * 视频模式走 `pickVideoProvider` 的「能力 + 优先级」；30 / 45 / 60 秒长片由一致性
+ * 管线拆成 t2v + i2v shot，选中的 provider 必须两条 mode 都声明（`requireModes`），
+ * 画幅 / 分辨率照常参与筛选——可灵、YMan、grok 都接得下时按 ORDER 排先后。
  * 没有任何一家接得下请求画幅时抛 400，而不是悄悄换一个画幅出片；配了真 key 却一家可用
  * 的都不剩（全被判定耗尽）时抛 503，而不是悄悄落 mock 交一段水印片。
  */
@@ -205,9 +215,13 @@ export function selectProvider(req?: ProviderGenerateRequest): VideoProvider {
   if (forceMock()) return mockProvider;
   if (req?.mode === "text_to_image") return pickImageProvider();
   if (isHarnessDuration(req?.durationSec)) {
-    // 长片只有 grok 接得下，所以这里就是「grok 或者没人」——同一条兜底规则：
-    // grok 没钱了也不能把长片交给 mock。
-    return fallbackProvider("video");
+    const route = pickVideoProvider("image_to_video", {
+      aspectRatio: req?.aspectRatio,
+      resolution: req?.resolution,
+      requireModes: ["text_to_video"],
+    });
+    if ("blocked" in route) throw new ProviderHttpError(400, "invalid_argument", route.blocked);
+    return route.provider;
   }
   const route = pickVideoProvider(req?.mode ?? "text_to_video", {
     aspectRatio: req?.aspectRatio,
@@ -220,8 +234,9 @@ export function selectProvider(req?: ProviderGenerateRequest): VideoProvider {
 
 /**
  * `opts.harness` 是调用方（`create.ts`）判定的长片标记，与 `selectProvider` 里的
- * `isHarnessDuration` 同义：长片一律留在 grok。`aspectRatio` 让「先算 provider、再按它
- * 归一参数」的调用方（`create.ts` / runner 的换家）拿到与 `selectProvider` 一致的答案。
+ * `isHarnessDuration` 同义：长片按「声明 i2v + t2v」挑 ORDER 内第一家。`aspectRatio`
+ * 让「先算 provider、再按它归一参数」的调用方（`create.ts` / runner 的换家）拿到与
+ * `selectProvider` 一致的答案。
  */
 export function currentProviderId(
   mode?: NativeMode,
@@ -230,7 +245,13 @@ export function currentProviderId(
   if (forceMock()) return "mock";
   if (mode === "text_to_image") return pickImageProvider().id;
   if (opts?.harness || isHarnessDuration(opts?.durationSec)) {
-    return fallbackProvider("video").id;
+    const route = pickVideoProvider("image_to_video", {
+      aspectRatio: opts?.aspectRatio,
+      resolution: opts?.resolution,
+      requireModes: ["text_to_video"],
+    });
+    if ("blocked" in route) throw new ProviderHttpError(400, "invalid_argument", route.blocked);
+    return route.provider.id;
   }
   const route = pickVideoProvider(mode ?? "text_to_video", opts);
   if ("blocked" in route) throw new ProviderHttpError(400, "invalid_argument", route.blocked);

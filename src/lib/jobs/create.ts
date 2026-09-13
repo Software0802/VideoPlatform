@@ -7,6 +7,7 @@ import { priceCny } from "@/lib/billing/prices";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { harnessEnabled, maxQueuedJobs, maxQueuedJobsPerUser } from "@/lib/env";
 import {
+  harnessSettingsFor,
   modelForProvider,
   providerSettingsFor,
   videoPricingOf,
@@ -34,7 +35,8 @@ import { resolveLocalOutput } from "@/lib/jobs/local-output";
 import { purgedBlock, retryBlock } from "@/lib/jobs/retry-guard";
 import { readJob, tmpDir, toPublic, writeJob } from "@/lib/jobs/store";
 import { readUploadSidecar } from "@/lib/jobs/upload";
-import { isHarnessDuration, isImageMode } from "@/lib/providers/grok/mode-matrix";
+import { isImageMode } from "@/lib/providers/grok/mode-matrix";
+import { isHarnessDuration } from "@/lib/harness/durations";
 import { imageConfigFor } from "@/lib/providers/openai-image/config";
 import {
   mapAspectToSize as mapOpenaiImageSize,
@@ -209,7 +211,17 @@ async function createJobUnlocked(
   // 每家上游各有各的枚举（可灵只收 5 / 10 秒；YMan 按模型有 5/10/15 或 10/15 的档）。
   // 归一后的值要写回记录：4 秒的请求上游按 5 秒计费，账目与详情卡都得是「会被计费的
   // 那个值」（方案 §4）。带尾帧时可灵会把分辨率抬到 1080p，售价也按抬完的档算。
-  const settings = providerSettingsFor(provider, mode, durationSec, body, model, {
+  // 长片的 30/45/60 是管线内部拆 shot 的目标总长，不能按上游档位归一——job.durationSec
+  // 必须留住原值，runner 才认得出它走 harness（单段 5/10 在 shot-router 里按 caps 校验）。
+  // 但分辨率 / 音轨 / 画幅的归一对长片同样生效：`harnessSettingsFor` 用一段合法 clip
+  // 时长向 provider 问档位，只取其非时长字段（可灵 480p→720p、YMan 画幅等）。
+  const hSettings = harness
+    ? harnessSettingsFor(provider, mode, body, model, {
+        product: choice.product,
+        hasLastFrame: Boolean(last),
+      })
+    : null;
+  const settings = harness ? null : providerSettingsFor(provider, mode, durationSec, body, model, {
     // 只有用户**点名**的产品才参与归一（`choice.product`）。没点名时 `product` 只是按
     // provider 打上的标签，让它去决定默认分辨率 / 音轨，等于让一张产品表悄悄推翻
     // `KLING_VIDEO_AUDIO` 这类实例配置——那不是用户的选择，也不该改变他被收的钱。
@@ -225,7 +237,7 @@ async function createJobUnlocked(
     model,
     // Harness jobs never send 30/45/60 upstream; validate the other fields with a legal clip length.
     durationSec:
-      mode === "edit_video" || image ? body.durationSec : harness ? 15 : (body.durationSec ?? durationSec),
+      mode === "edit_video" || image ? body.durationSec : harness ? 10 : (body.durationSec ?? durationSec),
     aspectRatio: body.aspectRatio,
     resolution: body.resolution,
     imageResolution: image ? (body.imageResolution ?? "1k") : undefined,
@@ -262,11 +274,11 @@ async function createJobUnlocked(
   const resolution =
     mode === "edit_video" || mode === "extend_video" || image
       ? null
-      : (settings?.resolution ?? body.resolution ?? "720p");
+      : (settings?.resolution ?? hSettings?.resolution ?? body.resolution ?? "720p");
   const generateAudio = image
     ? false
-    : settings
-      ? settings.audio === "native"
+    : (settings ?? hSettings)
+      ? (settings ?? hSettings)!.audio === "native"
       : (body.generateAudio ?? true);
   const imageResolution = image ? (body.imageResolution ?? "1k") : null;
   const rec: JobRecord = {
@@ -285,7 +297,7 @@ async function createJobUnlocked(
     aspectRatio:
       mode === "edit_video" || mode === "extend_video"
         ? null
-        : (settings?.ratio ?? body.aspectRatio ?? "16:9"),
+        : (settings?.ratio ?? hSettings?.ratio ?? body.aspectRatio ?? "16:9"),
     resolution,
     imageResolution,
     generateAudio,
@@ -299,7 +311,14 @@ async function createJobUnlocked(
     harness: { enabled: harness },
     priceCny: priceCny({ mode, durationSec: dur, resolution, generateAudio, imageResolution }),
     costUsdEstimate: harness
-      ? estimateHarnessCostUsd(packHarnessDuration(dur as 30 | 45 | 60))
+      ? estimateHarnessCostUsd(packHarnessDuration(dur as 30 | 45 | 60), {
+          model,
+          video: videoPricingOf(hSettings, provider) ?? {
+            resolution: resolution ?? "720p",
+            audio: generateAudio ? "native" : "off",
+            provider,
+          },
+        })
       : estimateCostUsd(model, dur, imagePricing, videoPricingOf(settings, provider)),
     costUsdActual: null,
     error: null,
@@ -393,8 +412,8 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
   // 产品沿用源任务：用户当初点的是「标准」，重试出来的也该是「标准」。那个产品现在
   // 不可用（下架、耗尽、换了配置）时 `chooseProduct` 会 400，所以先自己判一次可用性，
   // 不可用就退回默认路由——重试本来就是一次全新的下单，回落比整个拒绝有用。
-  // 长片不带产品重新下单：它恒定留在 xAI 的一致性管线，源任务上的标签（可能是 mock
-  // 实例随手打的）不该让重试卡在「所选模型不支持长片」上。
+  // 长片不带产品重新下单：它走一致性管线、provider 由能力路由重挑，源任务上的标签
+  //（可能是 mock 实例随手打的）不该让重试卡在「所选模型不支持长片」上。
   const sourceProduct = harness ? undefined : productById(source.product);
   const keepProduct = sourceProduct && isProductAvailable(sourceProduct) ? sourceProduct : undefined;
   const choice = chooseProduct({
@@ -413,25 +432,29 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
   const product = labelProduct(choice, source.mode, model);
   // 源任务可能是 grok 时代的 6 秒片：换了 provider 后同样要归一，否则重试会照着一个上游
   // 根本不收的时长下单，账目也还是旧 provider 的估价。
-  const settings = providerSettingsFor(
-    provider,
-    source.mode,
-    source.durationSec,
-    {
-      prompt: source.prompt,
-      aspectRatio: source.aspectRatio ?? undefined,
-      resolution: source.resolution ?? undefined,
-      generateAudio: source.generateAudio,
-    },
-    model,
-    // 同 `createJob`：只有当初被点名、这次仍沿用的那个产品参与归一。
-    { product: choice.product, hasLastFrame: Boolean(source.assets.last) },
-  );
+  // 长片例外于时长归一：30/45/60 是管线目标总长，`harnessSettingsFor` 只取分辨率 /
+  // 音轨 / 画幅的归一结果，`durationSec` 留住原值（同 `createJob`）。
+  const normBody = {
+    prompt: source.prompt,
+    aspectRatio: source.aspectRatio ?? undefined,
+    resolution: source.resolution ?? undefined,
+    generateAudio: source.generateAudio,
+  };
+  // 同 `createJob`：只有当初被点名、这次仍沿用的那个产品参与归一。
+  const normOpts = { product: choice.product, hasLastFrame: Boolean(source.assets.last) };
+  const hSettings = harness
+    ? harnessSettingsFor(provider, source.mode, normBody, model, normOpts)
+    : null;
+  const settings = harness
+    ? null
+    : providerSettingsFor(provider, source.mode, source.durationSec, normBody, model, normOpts);
   // 重试是一次全新的、要计费的上游请求，所以按**当下**的参数重新定价，而不是抄源任务的
   // `priceCny`：源任务可能是换 provider 之前的 6 秒片，归一后时长档都变了。
   const durationSec = settings?.durationSec ?? source.durationSec;
-  const resolution = settings?.resolution ?? source.resolution;
-  const generateAudio = settings ? settings.audio === "native" : source.generateAudio;
+  const resolution = settings?.resolution ?? hSettings?.resolution ?? source.resolution;
+  const generateAudio = (settings ?? hSettings)
+    ? (settings ?? hSettings)!.audio === "native"
+    : source.generateAudio;
   const imageResolution = source.imageResolution ?? null;
   const rec: JobRecord = {
     schemaVersion: 1,
@@ -446,7 +469,7 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     productName: product?.name,
     prompt: source.prompt,
     durationSec,
-    aspectRatio: settings?.ratio ?? source.aspectRatio,
+    aspectRatio: settings?.ratio ?? hSettings?.ratio ?? source.aspectRatio,
     resolution,
     imageResolution,
     generateAudio,
@@ -457,9 +480,18 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     lastFrameLocksOutput: provider === "kling" && Boolean(source.assets.last),
     harness: { enabled: harness },
     priceCny: priceCny({ mode: source.mode, durationSec, resolution, generateAudio, imageResolution }),
-    costUsdEstimate: settings
-      ? estimateCostUsd(model, settings.durationSec, undefined, videoPricingOf(settings, provider))
-      : source.costUsdEstimate,
+    costUsdEstimate: harness
+      ? estimateHarnessCostUsd(packHarnessDuration(durationSec as 30 | 45 | 60), {
+          model,
+          video: videoPricingOf(hSettings, provider) ?? {
+            resolution: resolution ?? "720p",
+            audio: generateAudio ? "native" : "off",
+            provider,
+          },
+        })
+      : settings
+        ? estimateCostUsd(model, settings.durationSec, undefined, videoPricingOf(settings, provider))
+        : source.costUsdEstimate,
     costUsdPlanned: source.costUsdPlanned ?? null,
     costUsdActual: null,
     error: null,

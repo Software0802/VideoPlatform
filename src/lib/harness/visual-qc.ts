@@ -1,17 +1,27 @@
 import OpenAI from "openai";
 import { z } from "zod";
-import { grokApiKey, upstreamTimeoutMs, xaiBase } from "@/lib/env";
+import { agentLlmConfig } from "@/lib/agent/llm";
+import { harnessQcVisualModel, upstreamTimeoutMs } from "@/lib/env";
+import { HarnessFailure } from "./harness-failure";
 import { normalizeCompletion, usageFromResponse, type LlmCompletion, type LlmUsage } from "./llm-usage";
 import type { IdentityBible, Shot } from "./types";
 
 /**
  * Visual consistency rubric (design.md §7.2 QC ③ / evals/rubric.md):
- * face, hair, wardrobe, lighting, palette, each 0–1, scored by grok-4.6 vision.
+ * face, hair, wardrobe, lighting, palette, each 0–1, scored by the agent LLM's
+ * vision model (`HARNESS_QC_VISUAL_MODEL` overrides the agent model when the
+ * scorer needs a different upstream name).
  * The pass threshold is NOT fixed here — it must be calibrated against
  * evals/runs and supplied via HARNESS_QC_VISUAL_THRESHOLD (H2).
  */
 
-export const VISUAL_QC_MODEL = "grok-4.6";
+export function visualQcModel(): string {
+  const model = harnessQcVisualModel() ?? agentLlmConfig()?.model;
+  if (!model) {
+    throw new HarnessFailure("llm_unavailable", "缺少可用的对话模型（AGENT_API_KEY 或 XAI_API_KEY）");
+  }
+  return model;
+}
 
 export const visualQcScoreSchema = z
   .object({
@@ -42,10 +52,7 @@ export type VisualQcRequest = {
     { role: "system"; content: string },
     { role: "user"; content: VisualQcContentPart[] },
   ];
-  responseFormat: {
-    type: "json_schema";
-    json_schema: { name: string; strict: true; schema: Record<string, unknown> };
-  };
+  responseFormat: { type: "json_object" };
 };
 
 export type VisualQcCompleter = (request: VisualQcRequest) => Promise<string | LlmCompletion>;
@@ -53,13 +60,18 @@ export type VisualQcCompleter = (request: VisualQcRequest) => Promise<string | L
 const SYSTEM_PROMPT = `你是 Lumen 的一致性质检员。对照 Identity Bible 与参考帧（用户首帧、角色表、上一镜尾帧），给当前镜头抽出的首、中、尾三帧打分；任一帧漂移都按最差那帧计。
 五个维度各 0–1（步长 0.1）：face 面部身份、hair 发型、wardrobe 服装、lighting 光线、palette 色调与风格。
 1 表示与参考完全一致，0.5 表示大体相同但有明显漂移，0 表示换人 / 换装 / 风格断裂。
-没有人物的镜头，face/hair/wardrobe 按场景主体的一致性评分。只输出 JSON。`;
+没有人物的镜头，face/hair/wardrobe 按场景主体的一致性评分。只输出符合下面 JSON Schema 的 JSON。
+
+JSON Schema:
+${JSON.stringify(z.toJSONSchema(visualQcScoreSchema))}`;
 
 export function buildVisualQcRequest(input: {
   bible: IdentityBible;
   shot: Shot;
   references: VisualQcFrame[];
   frames: VisualQcFrame[];
+  /** 默认取配置模型；注入 completer 的测试路径可显式给一个占位名。 */
+  model?: string;
 }): VisualQcRequest {
   const characters = input.shot.characterIds
     .map((id) => input.bible.characters.find((c) => c.id === id))
@@ -84,19 +96,12 @@ export function buildVisualQcRequest(input: {
     content.push({ type: "image_url", image_url: { url: frame.dataUri } });
   }
   return {
-    model: VISUAL_QC_MODEL,
+    model: input.model ?? visualQcModel(),
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content },
     ],
-    responseFormat: {
-      type: "json_schema",
-      json_schema: {
-        name: "lumen_visual_qc",
-        strict: true,
-        schema: z.toJSONSchema(visualQcScoreSchema) as Record<string, unknown>,
-      },
-    },
+    responseFormat: { type: "json_object" },
   };
 }
 
@@ -118,8 +123,12 @@ export async function scoreVisualConsistency(
   input: Parameters<typeof buildVisualQcRequest>[0],
   options: { complete?: VisualQcCompleter; onUsage?: (usage: LlmUsage | null) => void | Promise<void> } = {},
 ): Promise<VisualQcScore> {
-  const complete = options.complete ?? completeWithGrok;
-  const completion = normalizeCompletion(await complete(buildVisualQcRequest(input)));
+  const complete = options.complete ?? completerFor();
+  // 注入 completer 的路径不要求真凭据，与 createDirectorPlan 同口径。
+  const model = options.complete
+    ? (harnessQcVisualModel() ?? agentLlmConfig()?.model ?? "qc-mock")
+    : visualQcModel();
+  const completion = normalizeCompletion(await complete(buildVisualQcRequest({ ...input, model })));
   // Same contract as the Director: null means "billed, but usage unknown".
   await options.onUsage?.(completion.usage ?? null);
   return parseVisualQcResponse(completion.content);
@@ -141,15 +150,24 @@ export function tightenShotPrompt(shot: Shot, bible: IdentityBible, attempt: num
   return `${shot.prompt}\n${suffix}`.slice(0, 2000);
 }
 
-async function completeWithGrok(request: VisualQcRequest): Promise<LlmCompletion> {
-  const apiKey = grokApiKey();
-  if (!apiKey) throw new Error("缺少 XAI_API_KEY 或 SUB2API_API_KEY");
+function completerFor(): VisualQcCompleter {
+  const config = agentLlmConfig();
+  if (!config) {
+    throw new HarnessFailure("llm_unavailable", "缺少可用的对话模型（AGENT_API_KEY 或 XAI_API_KEY）");
+  }
+  if (config.provider === "mock") {
+    return async () => { throw new HarnessFailure("llm_unavailable", "mock 实例没有真实对话上游"); };
+  }
   const client = new OpenAI({
-    apiKey,
-    baseURL: xaiBase(),
+    apiKey: config.apiKey,
+    baseURL: config.baseURL,
     maxRetries: 0,
     timeout: upstreamTimeoutMs(),
   });
+  return (request) => completeWithAgent(client, request);
+}
+
+async function completeWithAgent(client: OpenAI, request: VisualQcRequest): Promise<LlmCompletion> {
   const response = await client.chat.completions.create({
     model: request.model,
     messages: request.messages,

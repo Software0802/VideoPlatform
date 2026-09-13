@@ -8,8 +8,8 @@ describe("mock director", () => {
       const plan = mockDirectorPlan({ prompt: "雨夜外滩", targetDurationSec: target });
       expect(plan.shots.reduce((s, x) => s + x.durationSec, 0)).toBe(target);
       expect(plan.packing.clips.every((c) => c.kind === "generate")).toBe(true);
-      expect(plan.shots[0]!.route).toBe("grok_t2v");
-      expect(plan.shots.slice(1).every((s) => s.route === "grok_i2v" && s.continuity === "tail_chain")).toBe(true);
+      expect(plan.shots[0]!.route).toBe("t2v");
+      expect(plan.shots.slice(1).every((s) => s.route === "i2v" && s.continuity === "tail_chain")).toBe(true);
     }
   });
 
@@ -20,14 +20,14 @@ describe("mock director", () => {
       hasStartFrame: true,
       hasLastFrame: true,
     });
-    expect(plan.shots[0]).toMatchObject({ route: "grok_i2v", startFrame: { source: "user" } });
+    expect(plan.shots[0]).toMatchObject({ route: "i2v", startFrame: { source: "user" } });
     expect(plan.stitch.settleLastFrame).toBe(true);
     const locked = applyKeyframeLocks(plan, {
       userStartAssetId: "inputs/start.jpg",
       userLastAssetId: "inputs/last.jpg",
-      extractedTailFrames: { "0": "shots/0/tail.jpg" },
+      extractedTailFrames: { "0": "shots/0/tail.jpg", "1": "shots/1/tail.jpg" },
     });
     expect(locked.shots[1]!.startFrame).toEqual({ source: "extracted", assetId: "shots/0/tail.jpg" });
-    expect(locked.shots[1]!.endFrame).toEqual({ source: "user", assetId: "inputs/last.jpg" });
+    expect(locked.shots[2]!.endFrame).toEqual({ source: "user", assetId: "inputs/last.jpg" });
   });
 });

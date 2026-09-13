@@ -95,10 +95,10 @@ describe("end-to-end ledger: a recovered requeue still adds onto priorCostUsd", 
   const shot: Shot = {
     id: "shot_0",
     index: 0,
-    durationSec: 8,
+    durationSec: 5,
     prompt: "fixture shot",
     characterIds: [],
-    route: "grok_t2v",
+    route: "t2v",
     continuity: "hard_cut",
     generateAudio: false,
   };
@@ -144,6 +144,7 @@ describe("end-to-end ledger: a recovered requeue still adds onto priorCostUsd", 
       bible,
       record: recovered,
       provider: providerFor(submit, poll),
+      model: "mock-video",
       resolveAsset: () => ({ kind: "data_uri", dataUri: "data:image/jpeg;base64,x" }),
       persistOutput: async () => "shots/0/video.mp4",
       pollIntervalMs: 0,
@@ -226,6 +227,7 @@ describe("runPersistedPlan treats a recovered needs_review shot as terminal", ()
 
     const final = await runPersistedPlan(id, {
       maxParallel: 2,
+      model: "mock-video",
       provider: {
         id: "mock",
         capabilities: () => ({
@@ -244,7 +246,7 @@ describe("runPersistedPlan treats a recovered needs_review shot as terminal", ()
 
     expect(submit).not.toHaveBeenCalled();
     expect(persistOutput).not.toHaveBeenCalled();
-    expect(final.harnessShots?.map((shot) => shot.status)).toEqual(["needs_review", "needs_review"]);
+    expect(final.harnessShots?.map((shot) => shot.status)).toEqual(["needs_review", "needs_review", "needs_review"]);
     expect(final.harnessShots?.[0]).toMatchObject({ error: { code: "uncertain_submit" } });
     expect(final.harnessShots?.[1]).toMatchObject({ error: { code: "dependency_failed" } });
   });

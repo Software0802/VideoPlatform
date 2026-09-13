@@ -344,33 +344,36 @@ function estimateImageSubmitCostUsd(model: string, image?: ImagePricingHint): nu
 }
 
 export type HarnessClip = Readonly<{
-  kind: "generate" | "extend";
+  kind: "generate";
   durationSec: number;
 }>;
 
 export const HARNESS_QC_RETRY_MULTIPLIER = 1.5;
 
-export function estimateHarnessCostUsd(clips: readonly HarnessClip[]): number {
+/**
+ * 长片每段按「会被选中那家 provider 的模型 + 本次调用形状」计价（可灵积分档、YMan
+ * 时长价、其余按模型每秒单价），不再写死 grok 费率。
+ */
+export function estimateHarnessCostUsd(
+  clips: readonly HarnessClip[],
+  pricing: { model: string; video?: VideoPricingHint },
+): number {
   if (!clips.length) throw new Error("非法 Harness clip");
   let total = 0;
   for (const clip of clips) {
-    if (
-      (clip.kind !== "generate" && clip.kind !== "extend") ||
-      !Number.isInteger(clip.durationSec) ||
-      clip.durationSec < 1 ||
-      clip.durationSec > 15 ||
-      (clip.kind === "extend" && (clip.durationSec < 2 || clip.durationSec > 10))
-    ) {
+    if (clip.kind !== "generate" || (clip.durationSec !== 5 && clip.durationSec !== 10)) {
       throw new Error("非法 Harness clip");
     }
-    const rate = clip.kind === "extend" ? RATE_USD_PER_SEC["grok-imagine-video"] : RATE_USD_PER_SEC["grok-imagine-video-1.5"];
-    total += rate * clip.durationSec;
+    total += estimateCostUsd(pricing.model, clip.durationSec, undefined, pricing.video);
   }
   return roundUsd(total);
 }
 
-export function estimateHarnessRetryBudgetUsd(clips: readonly HarnessClip[]): number {
-  return roundUsd(estimateHarnessCostUsd(clips) * HARNESS_QC_RETRY_MULTIPLIER);
+export function estimateHarnessRetryBudgetUsd(
+  clips: readonly HarnessClip[],
+  pricing: { model: string; video?: VideoPricingHint },
+): number {
+  return roundUsd(estimateHarnessCostUsd(clips, pricing) * HARNESS_QC_RETRY_MULTIPLIER);
 }
 
 export function ticksToUsd(ticks: number): number {

@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { JobPublic } from "@/lib/jobs/schema";
 import type { AspectRatio, ImageResolution, NativeMode, Resolution } from "@/lib/providers/types";
 import { priceCny } from "@/lib/billing/prices";
-import { HARNESS_DURATIONS } from "@/lib/providers/grok/mode-matrix";
+import { HARNESS_DURATIONS } from "@/lib/harness/durations";
 import {
   ApiError,
   cancelJob,

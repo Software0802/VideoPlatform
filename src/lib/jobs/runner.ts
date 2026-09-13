@@ -1,11 +1,13 @@
 import { access, copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { priceCny } from "@/lib/billing/prices";
-import { estimateCostUsd } from "@/lib/cost";
+import { estimateCostUsd, estimateHarnessCostUsd } from "@/lib/cost";
 import { jobConcurrency, upstreamPollMaxMs, upstreamRetryBaseMs } from "@/lib/env";
 import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
+import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { emitJob } from "@/lib/jobs/events";
 import {
+  harnessSettingsFor,
   modelForProvider,
   providerSettingsFor,
   videoPricingOf,
@@ -22,7 +24,8 @@ import { probeDurationSec } from "@/lib/ffmpeg";
 import { persistRemote } from "@/lib/media/persist";
 import { deleteXaiFile, uploadXaiFile } from "@/lib/providers/grok/client";
 import { markExhausted } from "@/lib/providers/exhaustion";
-import { isHarnessDuration, isImageMode } from "@/lib/providers/grok/mode-matrix";
+import { isImageMode } from "@/lib/providers/grok/mode-matrix";
+import { isHarnessDuration } from "@/lib/harness/durations";
 import { currentProviderId, needsSourceFileUpload, providerForId } from "@/lib/providers/router";
 import {
   ProviderHttpError,
@@ -411,33 +414,39 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
   if (next === rec.provider || next === "mock") return false;
 
   const model = modelForProvider(next, rec.mode);
-  const settings = providerSettingsFor(
-    next,
-    rec.mode,
-    rec.durationSec,
-    {
-      prompt: rec.prompt,
-      aspectRatio: rec.aspectRatio ?? undefined,
-      resolution: rec.resolution ?? undefined,
-      generateAudio: rec.generateAudio,
-    },
-    model,
-    // 产品只当标签用，不参与归一：换家是我们内部的事，不该顺手把实例配置
-    // （`KLING_VIDEO_AUDIO` 之类）换成产品表里的默认档，那会改动用户被收的钱。
-    { hasLastFrame: Boolean(rec.assets.last) },
-  );
+  // 长片的 30/45/60 是管线内部拆 shot 的目标总长，不按上游档位归一；换家只换执行方，
+  // job.durationSec 必须留住，否则下游认不出它走 harness。分辨率 / 音轨 / 画幅的归一
+  // 照常走——`harnessSettingsFor` 只取非时长字段。
+  const isHarness = Boolean(rec.harness?.enabled);
+  const normBody = {
+    prompt: rec.prompt,
+    aspectRatio: rec.aspectRatio ?? undefined,
+    resolution: rec.resolution ?? undefined,
+    generateAudio: rec.generateAudio,
+  };
+  // 产品只当标签用，不参与归一：换家是我们内部的事，不该顺手把实例配置
+  // （`KLING_VIDEO_AUDIO` 之类）换成产品表里的默认档，那会改动用户被收的钱。
+  const normOpts = { hasLastFrame: Boolean(rec.assets.last) };
+  const hSettings = isHarness
+    ? harnessSettingsFor(next, rec.mode, normBody, model, normOpts)
+    : null;
+  const settings = isHarness
+    ? null
+    : providerSettingsFor(next, rec.mode, rec.durationSec, normBody, model, normOpts);
   // 产品标签跟着 provider 走：换家之后仍挂着「标准」，界面就会拿一个不是这次执行的
   // 产品名去显示。找不到对应产品就摘掉标签，不编一个。音轨也要对上——可灵的「标准」
   // 与「高清有声」共用同一个上游模型，只按模型名找会把出声的那条标成无声的那一档。
   const product = productForProvider(next, rec.mode, model, {
-    audio: settings ? settings.audio : undefined,
+    audio: (settings ?? hSettings)?.audio,
   });
   // 新家归一后这次任务该值多少钱。图片模式 `settings` 恒为 null，算出来与原价同档。
   const switchedPrice = priceCny({
     mode: rec.mode,
     durationSec: settings ? settings.durationSec : rec.durationSec,
-    resolution: settings ? settings.resolution : rec.resolution,
-    generateAudio: settings ? settings.audio === "native" : rec.generateAudio,
+    resolution: (settings ?? hSettings)?.resolution ?? rec.resolution,
+    generateAudio: (settings ?? hSettings)
+      ? (settings ?? hSettings)!.audio === "native"
+      : rec.generateAudio,
     imageResolution: rec.imageResolution,
   });
   // 用户选的是 5 秒，新家最短 10 秒且因此更贵：这不是「同一件事换个门」，是另一件商品。
@@ -463,11 +472,25 @@ async function switchAwayFromExhausted(id: string, error: unknown): Promise<bool
       r.resolution = settings.resolution;
       r.generateAudio = settings.audio === "native";
     }
+    if (hSettings) {
+      // 长片只搬非时长字段：durationSec 是管线目标总长，不归一。
+      r.resolution = hSettings.resolution;
+      r.generateAudio = hSettings.audio === "native";
+    }
     // 只降不升：报价是对用户的承诺，换家不能让它涨；新档更便宜就照新档收。
     r.priceCny = Math.min(r.priceCny, switchedPrice);
     r.costUsdEstimate = isImageMode(r.mode)
       ? r.costUsdEstimate
-      : estimateCostUsd(model, r.durationSec, undefined, videoPricingOf(settings, next));
+      : isHarness
+        ? estimateHarnessCostUsd(packHarnessDuration(r.durationSec as 30 | 45 | 60), {
+            model,
+            video: videoPricingOf(hSettings, next) ?? {
+              resolution: r.resolution ?? "720p",
+              audio: r.generateAudio ? "native" : "off",
+              provider: next,
+            },
+          })
+        : estimateCostUsd(model, r.durationSec, undefined, videoPricingOf(settings, next));
     r.status = "queued";
     // 上一家的退避时间戳不该拖住新家：这是另一个门，不用等。
     delete r.nextAttemptAt;
@@ -578,7 +601,14 @@ async function runOne(id: string) {
     if (isHarnessDuration(job.durationSec) && job.status !== "persisting") {
       // Long clips never touch a provider directly: the orchestrator owns
       // queued → … → stitching and hands the stitched file back as persisting.
-      await harnessOrchestrator.execute(id);
+      try {
+        await harnessOrchestrator.execute(id);
+      } catch (error) {
+        // 长片同样先试换家：quota_exhausted 被 shot 层包成 ShotFailure 时到不了这里，
+        // 但 orchestrator 自己抛出的 ProviderHttpError（如预算/上游拒绝）仍走换家。
+        if (await switchAwayFromExhausted(id, error)) return;
+        throw error;
+      }
       job = await readJob(id);
       if (!job || job.status === "canceled" || job.canceled) return;
       if (job.status === "persisting") await persist(job);

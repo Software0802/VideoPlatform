@@ -27,14 +27,13 @@ export type IdentityBible = {
   props: Array<{ id: string; name: string; refAssetIds: string[] }>;
 };
 
-export type Continuity = "hard_cut" | "tail_chain" | "extend";
+export type Continuity = "hard_cut" | "tail_chain";
 
-export type ProviderRouteHint =
-  | "grok_t2v"
-  | "grok_i2v"
-  | "grok_r2v"
-  | "grok_extend"
-  | "jimeng_first_last";
+/** 供应商无关的 shot 路由；具体映射到哪条原生 mode 由 shot-router 按 provider 能力定。 */
+export type ShotRoute = "t2v" | "i2v" | "r2v";
+
+/** 上游一次生成本身交付的时长档；续接靠尾帧→i2v，不再有 extend。 */
+export type ShotDuration = 5 | 10;
 
 export type FrameRef = {
   source: "user" | "generated" | "extracted";
@@ -44,20 +43,20 @@ export type FrameRef = {
 export type Shot = {
   id: string;
   index: number;
-  durationSec: number;
+  durationSec: ShotDuration;
   prompt: string;
   characterIds: string[];
   locationId?: string;
   startFrame?: FrameRef;
   endFrame?: FrameRef;
-  route: ProviderRouteHint;
+  route: ShotRoute;
   continuity: Continuity;
   generateAudio: boolean;
 };
 
 export type HarnessPlan = {
   targetDurationSec: 30 | 45 | 60;
-  packing: { clips: Array<{ kind: "generate" | "extend"; durationSec: number }> };
+  packing: { clips: Array<{ kind: "generate"; durationSec: ShotDuration }> };
   bible: IdentityBible;
   shots: Shot[];
   stitch: { transition: "hard_cut"; settleLastFrame: boolean };

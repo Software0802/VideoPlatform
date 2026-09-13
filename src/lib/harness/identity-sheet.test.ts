@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { grokNativeProvider } from "@/lib/providers/grok/native";
+import { MODEL_IMAGE } from "@/lib/providers/grok/mode-matrix";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderHandle, VideoProvider } from "@/lib/providers/types";
 import type { IdentityBible } from "./types";
@@ -70,7 +72,7 @@ describe("identity sheet", () => {
 
   it("submits a 1:1 1k image request and returns the provider handle", async () => {
     const provider = fakeProvider();
-    const result = await requestIdentitySheet(input, provider);
+    const result = await requestIdentitySheet(input, provider, "grok-imagine-image-2.0");
     expect(provider.submit).toHaveBeenCalledWith(
       expect.objectContaining({
         jobId: "job_director_fixture-sheet-0",
@@ -94,7 +96,7 @@ describe("identity sheet", () => {
       supportsLastFrameLock: false,
       maxResolution: "1080p" as const,
     });
-    await expect(requestIdentitySheet(input, provider)).rejects.toThrow("不支持角色表生成");
+    await expect(requestIdentitySheet(input, provider, "grok-imagine-image-2.0")).rejects.toThrow("不支持角色表生成");
   });
 
   it("does not expose a moderation-rejected identity sheet", async () => {
@@ -103,10 +105,10 @@ describe("identity sheet", () => {
       providerId: "grok",
       respectModeration: false,
     });
-    await expect(requestIdentitySheet(input, provider)).rejects.toThrow("角色表未通过安全审核");
+    await expect(requestIdentitySheet(input, provider, "grok-imagine-image-2.0")).rejects.toThrow("角色表未通过安全审核");
   });
 
-  it("uses the default Grok provider against a local Sub2API-compatible endpoint", async () => {
+  it("works end-to-end against a local Sub2API-compatible endpoint", async () => {
     const previous = {
       apiKey: process.env.XAI_API_KEY,
       proxyKey: process.env.SUB2API_API_KEY,
@@ -135,7 +137,7 @@ describe("identity sheet", () => {
     process.env.SUB2API_API_KEY = "fixture-key";
     process.env.XAI_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
     try {
-      const result = await requestIdentitySheet(input);
+      const result = await requestIdentitySheet(input, grokNativeProvider, MODEL_IMAGE);
       expect(result.handle.remoteUrl).toBe("data:image/jpeg;base64,AQ==");
       expect(requestPath).toBe("/v1/images/generations");
       expect(requestBody?.model).toBe("grok-imagine-image-2.0");

@@ -516,7 +516,7 @@ export function harnessShotConcurrency(): number {
 }
 
 /**
- * grok-4.6 视觉一致性 QC 阈值（0–1）。未设置即跳过视觉打分——阈值需由
+ * 视觉一致性 QC 阈值（0–1）。未设置即跳过视觉打分——阈值需由
  * evals/runs 对照集校准后固定（design.md §7.2 H2），仓库不预设。
  */
 export function harnessQcVisualThreshold(): number | null {
@@ -524,6 +524,15 @@ export function harnessQcVisualThreshold(): number | null {
   if (!raw) return null;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
+}
+
+/**
+ * 视觉 QC 用的视觉模型名；未设时用智能体对话模型（`agentLlmConfig().model`）。
+ * 评分模型与对话模型分开配置的场景（如对话走便宜小模型、视觉走带图的大模型）用它覆盖。
+ */
+export function harnessQcVisualModel(): string | undefined {
+  const raw = process.env.HARNESS_QC_VISUAL_MODEL?.trim();
+  return raw || undefined;
 }
 
 /**

@@ -27,25 +27,34 @@ const bible: IdentityBible = {
 const shot: Shot = {
   id: "shot_1",
   index: 1,
-  durationSec: 15,
+  durationSec: 10,
   prompt: "她沿江边走远",
   characterIds: ["c1"],
-  route: "grok_i2v",
+  route: "i2v",
   continuity: "tail_chain",
   startFrame: { source: "extracted", assetId: "shots/0/tail.jpg" },
   generateAudio: true,
 };
 
 describe("visual qc", () => {
-  it("builds a vision request with references before frames and a strict schema", () => {
-    const request = buildVisualQcRequest({
-      bible,
-      shot,
-      references: [{ label: "上一镜尾帧", dataUri: "data:image/jpeg;base64,ref" }],
-      frames: [{ label: "首帧", dataUri: "data:image/jpeg;base64,first" }],
-    });
-    expect(request.model).toBe("grok-4.6");
-    expect(request.responseFormat.json_schema.strict).toBe(true);
+  it("builds a vision request with references before frames and a schema in the prompt", () => {
+    const previousModel = process.env.HARNESS_QC_VISUAL_MODEL;
+    process.env.HARNESS_QC_VISUAL_MODEL = "qc-fixture-model";
+    let request: ReturnType<typeof buildVisualQcRequest>;
+    try {
+      request = buildVisualQcRequest({
+        bible,
+        shot,
+        references: [{ label: "上一镜尾帧", dataUri: "data:image/jpeg;base64,ref" }],
+        frames: [{ label: "首帧", dataUri: "data:image/jpeg;base64,first" }],
+      });
+    } finally {
+      if (previousModel === undefined) delete process.env.HARNESS_QC_VISUAL_MODEL;
+      else process.env.HARNESS_QC_VISUAL_MODEL = previousModel;
+    }
+    expect(request.model).toBe("qc-fixture-model");
+    expect(request.responseFormat).toEqual({ type: "json_object" });
+    expect(request.messages[0]!.content).toContain('"face"');
     const content = request.messages[1]!.content;
     expect(Array.isArray(content)).toBe(true);
     const parts = content as Array<{ type: string; text?: string; image_url?: { url: string } }>;

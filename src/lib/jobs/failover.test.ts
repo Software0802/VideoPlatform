@@ -3,7 +3,23 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { ProviderHttpError } from "@/lib/providers/types";
 import type { JobRecord } from "./schema";
+
+// Harness jobs never call provider.submit directly — the orchestrator owns the upstream
+// calls — so the failover test below drives `switchAwayFromExhausted` by making the
+// orchestrator itself throw the same ProviderHttpError a quota_exhausted submit would.
+vi.mock("@/lib/harness/orchestrator", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/lib/harness/orchestrator")>();
+  return {
+    ...mod,
+    harnessOrchestrator: {
+      execute: async () => {
+        throw new ProviderHttpError(429, "quota_exhausted", "stub: upstream out of credit");
+      },
+    },
+  };
+});
 
 /**
  * End-to-end for `switchAwayFromExhausted` (`jobs/runner.ts`, not exported): a live runner is
@@ -104,6 +120,7 @@ afterEach(async () => {
   delete process.env.KLING_VIDEO_AUDIO;
   delete process.env.KLING_VIDEO_RESOLUTION;
   delete process.env.YMAN_T2V_MODEL;
+  delete process.env.HARNESS_ENABLED;
   process.env.LUMEN_FORCE_MOCK = "1";
   // Exhaustion state is a top-level file next to `jobs/`, independent of any one job — reset
   // it between tests so one test's markExhausted cannot change which provider the *next*
@@ -361,5 +378,41 @@ describe("image failover — switches provider on 402, priceCny stays put", () =
 
     expect(isExhausted("openai", "image")).toBe(true);
     expect(isExhausted("yman", "image")).toBe(false);
+  });
+});
+
+describe("video failover — harness keeps its 30s target when switching provider", () => {
+  it("moves a 30s harness job from Kling to YMan: duration stays 30, resolution renormalizes", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "kling,yman";
+    process.env.KLING_API_KEY = "kling-test-key";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    process.env.HARNESS_ENABLED = "true";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })),
+    );
+    const id = owner("f9");
+    await seedBalance(id, 1000);
+
+    const { job } = await createJob(
+      { mode: "text_to_video", prompt: "长镜头连拍", durationSec: 30, generateAudio: false } as Parameters<
+        typeof createJob
+      >[0],
+      id,
+    );
+    expect(job.provider).toBe("kling");
+    expect(job.durationSec).toBe(30);
+
+    // The mocked orchestrator throws quota_exhausted; the job must switch to YMan while
+    // keeping the harness target duration — never normalized to a 10s clip.
+    const switched = await waitUntil(job.id, (rec) => rec.provider === "yman");
+    expect(switched.durationSec).toBe(30);
+    expect(switched.harness?.enabled).toBe(true);
+    expect(switched.resolution).toBe("720p"); // YMan only serves 720p
+
+    const settled = await waitForSettled(job.id);
+    expect(settled.status).toBe("failed"); // every ORDER member exhausts in turn
+    expect(isExhausted("kling", "video")).toBe(true);
   });
 });

@@ -12,6 +12,7 @@ let readJob: (id: string) => Promise<JobRecord | null>;
 let saveHarnessPlan: (jobId: string, plan: HarnessPlan) => Promise<JobRecord>;
 let runPersistedShot: (jobId: string, shotId: string, options: {
   provider?: VideoProvider;
+  model: string;
   resolveAsset: (assetId: string) => { kind: "data_uri"; dataUri: string };
   persistOutput: (shot: unknown, handle: unknown) => Promise<string>;
   pollIntervalMs?: number;
@@ -20,8 +21,9 @@ let runPersistedShot: (jobId: string, shotId: string, options: {
 const plan: HarnessPlan = {
   targetDurationSec: 30,
   packing: { clips: [
-    { kind: "generate", durationSec: 15 },
-    { kind: "generate", durationSec: 15 },
+    { kind: "generate", durationSec: 10 },
+    { kind: "generate", durationSec: 10 },
+    { kind: "generate", durationSec: 10 },
   ] },
   bible: {
     version: 1,
@@ -35,20 +37,30 @@ const plan: HarnessPlan = {
     {
       id: "shot_0",
       index: 0,
-      durationSec: 15,
+      durationSec: 10,
       prompt: "第一镜",
       characterIds: [],
-      route: "grok_t2v",
+      route: "t2v",
       continuity: "hard_cut",
       generateAudio: false,
     },
     {
       id: "shot_1",
       index: 1,
-      durationSec: 15,
+      durationSec: 10,
       prompt: "第二镜",
       characterIds: [],
-      route: "grok_t2v",
+      route: "t2v",
+      continuity: "hard_cut",
+      generateAudio: false,
+    },
+    {
+      id: "shot_2",
+      index: 2,
+      durationSec: 10,
+      prompt: "第三镜",
+      characterIds: [],
+      route: "t2v",
       continuity: "hard_cut",
       generateAudio: false,
     },
@@ -130,6 +142,7 @@ describe("persisted shot runner", () => {
     });
     const options = {
       provider,
+      model: "mock-video",
       resolveAsset: (assetId: string) => ({ kind: "data_uri" as const, dataUri: assetId }),
       persistOutput,
       pollIntervalMs: 0,
