@@ -160,8 +160,16 @@ async function summarize(root) {
         if (!trimmed) continue;
         try {
           const entry = JSON.parse(trimmed);
-          if (typeof entry.ref === "string" && entry.ref) {
-            ledgerRefs.set(entry.ref, (ledgerRefs.get(entry.ref) ?? 0) + 1);
+          // 幂等键的口径与 src/lib/billing/protocol.mjs `keys()` 一致，且只在同一用户
+          // 的流水内唯一（`signup` 这类 ref 每个账号都有一条，跨用户不算重复）。
+          const owner = rel.slice("ledger/".length, -".jsonl".length);
+          const keys = [];
+          if (entry.kind === "charge" && entry.jobId) keys.push(`job|${entry.jobId}`);
+          if (entry.kind === "grant" && entry.giftCode) keys.push(`gift|${entry.giftCode}`);
+          if (typeof entry.ref === "string" && entry.ref) keys.push(`ref|${entry.kind}|${entry.ref}`);
+          for (const key of keys) {
+            const scoped = `${owner}|${key}`;
+            ledgerRefs.set(scoped, (ledgerRefs.get(scoped) ?? 0) + 1);
           }
         } catch {
           // 非 JSON 行跳过（半截行属数据问题，比对时字节差异仍会报）。
