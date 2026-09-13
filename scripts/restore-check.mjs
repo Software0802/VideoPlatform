@@ -205,9 +205,14 @@ try {
   const dataRoot = path.join(tmp, "data");
   await mkdir(dataRoot, { recursive: true });
   // 包内条目是白名单相对路径（users/... jobs/<id>/job.json），直接解到临时子目录。
-  await run("tar", ["-xzf", /** @type {string} */ (tgz), "-C", dataRoot]).catch((e) =>
-    usage(`解包失败：${e instanceof Error ? e.message : String(e)}`),
-  );
+  // -f 只传文件名：GNU tar 会把「C:\...」里的盘符冒号当远程主机语法（host:file），
+  // 在 PATH 里 GNU tar 先于 bsdtar 的 Windows 环境（如部署用 Git Bash）会失败。
+  const tgzAbs = path.resolve(/** @type {string} */ (tgz));
+  await run(
+    "tar",
+    ["-xzf", path.basename(tgzAbs), "-C", dataRoot],
+    { cwd: path.dirname(tgzAbs) },
+  ).catch((e) => usage(`解包失败：${e instanceof Error ? e.message : String(e)}`));
 
   const archive = await summarize(dataRoot);
   printSummary(archive, "archive");
