@@ -1,6 +1,6 @@
 # Genius（原 流光 / Lumen）— 视频创作平台
 
-侧栏 + 五视图的深色 App（`design_handoff/design_handoff_genius_app`）：主页瀑布流看真实作品，创作页跟进当前任务，悬浮创作面板接后端出片；智能体（提案审批制 LLM 编排）、画布（节点 DAG 运行）、订阅（余额 / 会员积分池 / 礼品码）都接真实后端。上游由**多家供应商按能力路由**：`VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER` 的次序决定优先级，命中条件是有 key、声明支持该模式、未被判耗尽、接得下画幅 / 分辨率 / 尾帧（`src/lib/providers/router.ts`）。`edit_video` / `extend_video` 目前只有 grok（xAI）一家 provider 声明支持，ORDER 内没有可用 provider 承接时提交返回 503 `no_provider_available`。无上游密钥时走模拟模式。30 / 45 / 60 秒一致性管线（Harness）已接入，由 `HARNESS_ENABLED` 开关——现有实现绑定 xAI（shot 路由枚举 grok_*、角色表走 xAI Files API），生产关闭中；mock 端到端已验证，真实 key 的质量与成本验收仍待完成（见 `docs/handoff.md`）。
+侧栏 + 五视图的深色 App（`design_handoff/design_handoff_genius_app`）：主页瀑布流看真实作品，创作页跟进当前任务，悬浮创作面板接后端出片；智能体（提案审批制 LLM 编排）、画布（节点 DAG 运行）、订阅（余额 / 会员积分池 / 礼品码）都接真实后端。上游由**多家供应商按能力路由**：`VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER` 的次序决定优先级，命中条件是有 key、声明支持该模式、未被判耗尽、接得下画幅 / 分辨率 / 尾帧（`src/lib/providers/router.ts`）。`edit_video` / `extend_video` 目前只有 grok（xAI）一家 provider 声明支持，ORDER 内没有可用 provider 承接时提交返回 503 `no_provider_available`。无上游密钥时走模拟模式。30 / 45 / 60 秒一致性管线（Harness）已接入，由 `HARNESS_ENABLED` 开关——shot 路由是通用 `t2v/i2v/r2v`、续接走「尾帧→i2v」，按 i2v+t2v 能力走 `VIDEO_PROVIDER_ORDER`（可灵 / YMan 都能承接），生产仍关闭；mock 端到端已验证（含三视图角色表与档A 每镜首帧），真实 key 的质量与成本验收仍待完成（见 `docs/handoff.md`）。
 
 新会话先读 [`docs/handoff.md`](docs/handoff.md)。
 
@@ -49,7 +49,7 @@ node scripts/usage.mjs --days 7                   # 按天/用户/provider 统�
 
 可选：配置 `KLING_API_KEY`（可灵直连视频）、`YMAN_API_KEY`（YMan 中转，视频 + 生图）或 `OPENAI_API_KEY`（文生图走 OpenAI 兼容 provider），并用 `VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER` 声明各自的优先级次序——配了 key 却没写进 ORDER 的 provider 不会被选中；一把 key 都没有才走模拟模式。`DATA_DIR` 默认 `./data`。
 
-`docs/handoff.md` §0 新增的环境变量：`SHARE_TTL_HOURS`（分享链接有效期，默认 24 小时）、`ALERT_WEBHOOK_URL`/`ALERT_WEBHOOK_TIMEOUT_MS`（运维告警出站地址，不设则不外发）、`UPSTREAM_POLL_MAX_MS`（轮询阶梯上限，默认 10000）、`MAX_QUEUED_JOBS_PER_USER`（单账号同时在途任务数上限，默认 5）、`YMAN_TASK_TIMEOUT_MS`（YMan 任务本地等待上限，默认 900000）。说明见 `.env.example`。
+`docs/handoff.md` §0 新增的环境变量：`SHARE_TTL_HOURS`（分享链接有效期，默认 24 小时）、`ALERT_WEBHOOK_URL`/`ALERT_WEBHOOK_TIMEOUT_MS`（运维告警出站地址，不设则不外发）、`UPSTREAM_POLL_MAX_MS`（轮询阶梯上限，默认 10000）、`MAX_QUEUED_JOBS_PER_USER`（单账号同时在途任务数上限，默认 5）、`YMAN_TASK_TIMEOUT_MS`（YMan 任务本地等待上限，默认 900000）、`OPENAI_IMAGE_EDITS_ENABLED` / `YMAN_IMAGE_EDITS_ENABLED`（生图通道开 `/images/edits` 图生图，默认关、中转透传未验证）、`HARNESS_QC_VISUAL_MODEL`（Harness 视觉 QC 模型，未设用 agent 模型）。说明见 `.env.example`。
 
 ### 真出片：配置供应商
 

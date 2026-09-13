@@ -8,7 +8,7 @@
 
 | 字段 | 值 |
 | --- | --- |
-| 基线 | `main` @ `98759a5`（**已部署生产 2026-09-13**，本机 health 200 ok=true，公网 `/login` 200、`/` 307 跳登录；已推送 origin）——本轮两个修复：`4690767` 智能体上游失败错误码拆分、`f6b8c88` 画布 DAG 运行审查修复。此前 `da0348c` 为 H 包（`docs/plan-h-account-notifications-2026-09-12.md`，Codex 评审后实施）：通知落盘 `data/notifications/`、错误码前端本地化（`errorText` + `common.err.*` 72 码）、`/account` 账户页 + `logout-all`、移动端回归 `e2e/mobile.spec.ts`；再往前 `04efdce` 为 R01–R09 + A–D 包 + 资金迁移 |
+| 基线 | `main` @ `bb22d75`（**未部署**：E1+E2 Harness 供应商无关化已落地——`02163a0` 去 xAI 路由层/长片走 ORDER/Director·QC 走 agent LLM，`bb22d75` 三视图角色表 + `supportsImageReference` + 档A 每镜首帧 + `/images/edits` 开关；mock 端到端 30s 成片已验证）。此前部署基线 `98759a5`（**已部署生产 2026-09-13**，本机 health 200 ok=true，公网 `/login` 200、`/` 307 跳登录；已推送 origin）——本轮两个修复：`4690767` 智能体上游失败错误码拆分、`f6b8c88` 画布 DAG 运行审查修复。此前 `da0348c` 为 H 包（`docs/plan-h-account-notifications-2026-09-12.md`，Codex 评审后实施）：通知落盘 `data/notifications/`、错误码前端本地化（`errorText` + `common.err.*` 72 码）、`/account` 账户页 + `logout-all`、移动端回归 `e2e/mobile.spec.ts`；再往前 `04efdce` 为 R01–R09 + A–D 包 + 资金迁移 |
 | 环境 | Windows 11 / PowerShell，`D:\dev\repos\VideoPlatFrom`，Next.js 16.3.3，React 19.2.8，pnpm 10.33 |
 | 生产部署 | 已上线 `https://genius.homeaistack.online`（阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service` 以 root 运行，反代借用同机 taiyu 的 Caddy 容器终结 TLS） |
 | 生产 provider 配置 | `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`、`AGENT_BASE_URL=https://ccgoai.club/v1`、`AGENT_CHAT_MODEL=gpt-5.4-mini`（智能体线上可用）；`OPENAI_BASE_URL=https://ccgoai.club/v1`、`OPENAI_IMAGE_MODEL=gpt-image-2`、`KLING_BASE_URL=https://api-singapore.klingai.com`、`KLING_VIDEO_MODEL=kling-2.6`、`KLING_USD_PER_UNIT=0.10`、`USD_CNY_RATE=7.2`、`YMAN_BASE_URL=https://vip.yman.cc/v1`、`HARNESS_ENABLED=false`；**未配 `XAI_API_KEY`**——grok 排在 ORDER 尾部但无 key，不会被选中 |
@@ -72,8 +72,8 @@
 - **资金与执行恢复缺陷索引**（证据与历史复现见 `docs/review-2026-09-08.md`）：R01–R09 均已在工作区修复——R01 余额+流水同一原子写（`e564ab6`）；R02 Agent 退款经 `refundOf` 按原扣款的 `memberCny` 拆回原池；R03 订阅购买外层 admission 锁；R04 扣款行带订单快照（planId/cycle/priceCny/orderedAt），「已扣款、订阅记录缺失」按快照补建且不再判余额，同 key 异参 409；R05 `assertBalance` 先惰性结算再判可用额，跨期旧积分不再进 `availableCny`；R06 submit 的 5xx/超时/断连算「结果不确定」，先 `lookupByExternalId` 查回接管，查不到则 `failed`+`uncertain_submit` 锁死重试；R07 幂等键与请求哈希落 `job.json`（事实源），`data/idempotency/*.json` 降级为可重建缓存（原子写、命中回读校验、miss 从任务索引重建），同 key 异参 409 `idempotency_conflict`；R08 请求体加 `turnId`，同 turnId 重放原样交回、换文本 409、已退款轮次同键重发 409；R09 产物字节已 checkpoint（persisting / localOutputPath / remoteUrl）时取消不再成立，终态由 persist 落盘结算。绿门禁不代替专项验收，生产行为未实测。
 - **新资金模型已完成迁移**（2026-09-12 随本次部署）：4 个存量账号逐账号基线迁移完成（全部入账行归 purchased 池——迁移前无会员积分池与订阅；迁移前后双 sha256 校验 + 流水重放余额一致才落盘；快照备份在服务器 `/opt/genius/data.bak.20260912-150535`、基线文件在 `/opt/genius/migrate-baselines/`）。新注册账号首次写盘即自带快照。注意：`data.bak.*` 与 `migrate-baselines/` 是迁移留痕，备份白名单不含它们，可择机清理。
 - **未实装计划（A–C `1f3077f`、D 两切片 `b91df6c`+`d38dc05`、H 包均已提交）**：`docs/plan-unimplemented-2026-09-08.md` 于 2026-09-09 经 Codex 评审为 `VERDICT: BLOCK`，用户随后逐项拍板实施：A 显式 Reservation（`job.reservation` earmark + 恢复中心 `recovery/reconcile/resume` + 创作页「核验上游」入口）；B 智能体 Turn 状态机 + 默认批准制提案 + 会话预算 + `imageRef` + 技能 `kinds` + locale 回复；C 画布持久化 + revision 409 + 四类节点接 `createJob`；D 画布 DAG 运行两切片（`docs/plan-dag-canvas-run-2026-09-12.md` + `docs/plan-dag-run-slice2-2026-09-12.md`）；H 账号与通知（`docs/plan-h-account-notifications-2026-09-12.md`，Codex 评审 6 条 finding 修订后实施：通知落盘、错误码本地化、账户页、移动端回归）。其余 E/F/G/I（Harness 长片放行、视频模式 UI、支付网关、运维扩容）仍未实施。
-- 生产未配 `XAI_API_KEY`：`edit_video`/`extend_video` 目前只有 grok 声明支持，ORDER 内没有可用 provider 承接这两条，提交返 503 `no_provider_available`；harness 长片现有实现绑定 xAI（shot 路由枚举 grok_*、角色表走 xAI Files API），生产 `HARNESS_ENABLED=false` 关闭中。
-- Harness（30/45/60 秒一致性管线）代码完整但 `HARNESS_ENABLED` 生产关闭；视觉 QC 阈值未经 `evals/runs` 校准，默认跳过。
+- 生产未配 `XAI_API_KEY`：`edit_video`/`extend_video` 目前只有 grok 声明支持，ORDER 内没有可用 provider 承接这两条，提交返 503 `no_provider_available`。
+- Harness（30/45/60 秒一致性管线）已供应商无关（`02163a0`+`bb22d75`，见 `docs/design.md` §7）但 `HARNESS_ENABLED` 生产关闭、未部署；视觉 QC 阈值未经 `evals/runs` 校准，默认跳过。档A（三视图 + 每镜生成首帧）依赖生图通道开 `*_IMAGE_EDITS_ENABLED`，ccgoai / YMan 是否透传 `/images/edits` 未验证。
 - 服务端 API 错误 `message` 仍是中文（日志/CLI 依赖）；用户可见文案已按码本地化（H 包），仅上游透传原文与「参数细节在 message 里」的三个码（`invalid_argument`/`invalid_state`/`conflict`）会在英文界面露出中文后半段，属明示的服务端细节。
 - 无支付网关，已购余额只能靠礼品码或管理员 CLI 充值，订阅收入是内部记账而非真实收款（`docs/runbook.md`「订阅对账」）。
 - 智能体依赖单独配置的 `AGENT_API_KEY`/`AGENT_BASE_URL`（生产已配 ccgoai `gpt-5.4-mini`；只出图/视频的中转 key 没有对话模型，不能复用）；会话与画布无留存清理（会话每人上限 200）。
@@ -93,5 +93,5 @@
 2. H 包已落地（通知落盘/错误码本地化/账户页/移动端回归）；E（Harness 放行）、F（视频模式 UI）、G（支付网关）、I（运维扩容）按文档建议不同时开工，未批准不实施；G 的支付/退款 unknown 态与 PaymentOrder/webhook 仍未动。
 3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
 4. 智能体上游失败错误码拆分与画布 DAG 运行审查修复（`4690767`+`f6b8c88`）已上线；画布审查未采纳的 4 条见 §3，需产品决策后再排。本轮未做真实上游验收（生产 provider 的实际生成链路没跑过任务）。这一轮交给独立审查者复核的清单（已验证 / 未验证的边界、建议重点查的位置、未采纳项的行号）在 `docs/review-2026-09-13.md`。
-5. Harness 供应商无关化（E 重做）：现有实现绑定 xAI（shot 路由枚举 `grok_*`、角色表走 xAI Files API、费率表用 grok 价目），计划改为 shot 走 `selectProvider`、续接用「尾帧 → i2v」替代 extend；排在真实上游验收之后。
+5. **真实上游验收（约 ¥5）**：文生图、Kling t2v、画布 i2v、YMan t2v、智能体一图；外加 ccgoai `/images/edits` 探针一张（验 `OPENAI_IMAGE_EDITS_ENABLED` 能否开）+ 一条 30s 长片在可灵上成片——通过后决定生产是否开 `HARNESS_ENABLED` 并部署 `bb22d75`。
 6. `edit_video`/`extend_video` 待有中转站承接（当前只有 grok 声明，生产无 XAI key，提交 503）。
