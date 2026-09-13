@@ -93,5 +93,5 @@
 2. `bash scripts/deploy.sh` 在本机 Git Bash（`/usr/bin/bash`，GNU bash 5.3）已连续跑通到 `545580f`：本地 tsc → `pnpm build` → ~18M 包 → 上传 → 服务器切换，两个 Turbopack 别名（sharp / ffmpeg-static）自动补软链，`systemctl is-active genius` = active，本机 health 200 ok=true，未触发回滚。脚本末尾的公网检查请求 `/login`（匿名可访问、预期 200；`/` 未登录会 307 跳登录页，不作判定对象）。此前踩过的打包坑（`src/lib/billing/*.mjs` 不在包内、Windows junction 被解引用、`*.sh` CRLF）均已在脚本与 `.gitattributes` 里修掉，未复现。
 3. R07 的兼容窗口：升级前创建的任务没有 `job.json.idempotency` 字段，映射文件丢失时无法从索引找回——窗口是映射的 24h TTL，期内文件命中路径仍按旧语义放行。
 4. 画布审查未采纳的 2 条（游离空素材节点致整图 400、run 文件线性增长）见 §3，需产品决策后再排。独立审查清单在 `docs/review-2026-09-13.md`（其中「真实上游验收未做」已由 `docs/acceptance-2026-09-13.md` 取代）。
-5. **验收遗留**：YMan 30s 长片已成片（`job_e080688fb3b9`），但档 B（r2v）路径因档 A 优先未被走到；画布 DAG 未经 UI 走真实上游；`minimax-h3` 积分价目沿用旧档、未经账单核实（catalog.ts 注释已标）。
+5. **验收遗留**：YMan 30s 长片已成片（`job_e080688fb3b9`），但档 B（r2v）路径因档 A 优先未被走到；画布 DAG 已经 UI 在生产走通（`crun_85ef040816c3`，报价 / 冻结 / 审批 / 结算对平）；`minimax-h3` 积分价目沿用旧档、未经账单核实（catalog.ts 注释已标）。
 6. `edit_video`/`extend_video` 已从路线图移出：API 与 provider 层保留、UI 置灰，等有中转承接（当前只有 grok 声明，生产无 XAI key，提交 503）。
