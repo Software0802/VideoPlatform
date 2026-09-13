@@ -68,6 +68,12 @@ export const composer = {
   "composer.model.current": "当前模型 {name}",
   "composer.model.currentLocked": "当前模型 {name}（暂无可切换的模型）",
   "composer.model.mock": "模拟",
+  /* R2.3：供应商分组的兜底组名与成本档徽标 */
+  "composer.model.defaultGroup": "默认路由",
+  "composer.model.cost.low": "低成本",
+  "composer.model.cost.mid": "中成本",
+  "composer.model.cost.high": "高成本",
+  "composer.model.refs": "参考图 ×{n}",
   "composer.count.aria": "数量 {n}",
   "composer.count.title": "一次生成几条",
   "composer.count.listAria": "数量",

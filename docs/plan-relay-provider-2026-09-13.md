@@ -1,6 +1,6 @@
 # 方案：通用中转 provider 与动态模型目录（N3）
 
-状态：N3.1（`7c6cdb4`）、N3.2（`a9553db`）、N3.3（`dbead84`）、N3.4（`37123bd`）已落地并部署；N3.5（管理页 + 创作面板分组）待做。生产 `.env` 未改，relay 走 legacy 折算。每片落地后更新 `docs/design.md` §2 与 `docs/handoff.md`。
+状态：N3.1（`7c6cdb4`）、N3.2（`a9553db`）、N3.3（`dbead84`）、N3.4（`37123bd`）已落地并部署；N3.5（管理页 `/admin/relays` + 创作面板按供应商分组）已落地于本批改动（未提交、未部署；排序用按钮而非拖动，见 DESIGN「有意偏离」）。生产 `.env` 未改，relay 走 legacy 折算。每片落地后更新 `docs/design.md` §2 与 `docs/handoff.md`。
 
 ## 0. 为什么
 

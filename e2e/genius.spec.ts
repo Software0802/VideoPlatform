@@ -163,6 +163,10 @@ type ApiProduct = {
   supportsLongForm?: boolean;
   maxReferenceImages: number;
   imageResolutions?: string[];
+  providerId?: string;
+  providerName?: string;
+  upstreamModel?: string;
+  costHint?: "low" | "mid" | "high";
   samplePriceCny: number;
 };
 
@@ -734,16 +738,23 @@ test("模型下拉：列出产品、只露产品名、切换后规格芯片跟�
   await expect(pop.locator("button[data-product-id]")).toHaveCount(videos.length);
   for (const p of videos) await expect(pop.locator(`button[data-product-id="${p.id}"]`)).toContainText(p.name);
 
-  // 用户 2026-09-06 的决定：只显示产品名，不露供应商。第一道防线在接口——白名单挑
-  // 字段，`provider` 与上游 `model` 压根不下发，浏览器里没有可泄露的东西。
+  // R2.3（N4）起按供应商分组：组头 = DTO 的 providerName，组内补成本档徽标与次要信息。
+  // 这是有意改变——DTO 本就下发 providerId/providerName/upstreamModel（白名单挑字段，
+  // `provider` 内部 id 与上游 `model` 原始键仍不下发），弹层不再是泄露面。
   for (const p of list) {
     expect(p, "GET /api/models 不该下发 provider").not.toHaveProperty("provider");
     expect(p, "GET /api/models 不该下发上游 model").not.toHaveProperty("model");
   }
-  // 第二道：下拉里也不该出现上游模型名。
-  const popText = (await pop.textContent()) ?? "";
-  for (const leak of ["kling-", "minimax", "gpt-image", "grok-imagine"]) {
-    expect(popText.toLowerCase(), `模型下拉泄露了上游模型名 ${leak}`).not.toContain(leak);
+  const groupNames = [...new Set(videos.map((p) => p.providerName ?? p.providerId ?? ""))].filter(Boolean);
+  expect(groupNames.length, "应至少有一个供应商组").toBeGreaterThan(0);
+  await expect(pop.locator(".model-pop__group-title")).toHaveCount(groupNames.length);
+  for (const name of groupNames) {
+    await expect(pop.locator(".model-pop__group-title", { hasText: name }).first()).toBeVisible();
+  }
+  // 每个 option 带 costHint 徽标（data-cost 三档）。
+  const options = pop.locator("button[data-product-id]");
+  for (let i = 0; i < (await options.count()); i++) {
+    await expect(options.nth(i).locator(".model-pop__cost")).toHaveAttribute("data-cost", /low|mid|high/);
   }
   await page.locator(".composer__model").click();
   await expect(pop).toBeHidden();

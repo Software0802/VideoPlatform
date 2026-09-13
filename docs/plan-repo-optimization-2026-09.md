@@ -152,8 +152,8 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
 | R2.1 | N3.4 收口：合入后跑 R0.5 的全量 e2e；`provider-health.json` 进 `/api/health` 与管理接口；文档（design §2l、runbook「provider 耗尽」）改写 | 单测覆盖 `plan-relay-provider` §4c 表每一行；mock 注入「第一家结构化 5xx → 第二家成片」端到端 |
-| R2.2 | N3.5 管理页（列表 + 健康灯 + discover / probe + 排序）| e2e：管理员登录可见，非管理员 404 |
-| R2.3 | N4 创作面板：产品按供应商分组、显示售价 / costHint / 时长档 / 分辨率 / 参考图数；与动态目录联动 | e2e：下架默认模型后下拉不再出现该产品 |
+| R2.2 | N3.5 管理页（列表 + 健康灯 + discover / probe + 排序）| e2e：管理员登录可见，非管理员 404。**已落地（本批）**：`/admin/relays` 页 + `client/relays.ts` + `caps.isAdmin` 入口；排序用按钮而非拖动（有意偏离，见 DESIGN） |
+| R2.3 | N4 创作面板：产品按供应商分组、显示售价 / costHint / 时长档 / 分辨率 / 参考图数；与动态目录联动 | **已落地（本批）**：`ModelPop` 分组 + meta 行；e2e 断言组头=DTO providerName、每 option 有 `data-cost` 徽标、弹层项数与 `/api/models` 一致（下架即消失由服务端可用性过滤承担） |
 | R2.4 | N1.4 `minimax-h3` 真实积分核对进 `yman/catalog.ts` | `costUsdActual` 不再用兜底估价。待用户提供 YMan 账单实付积分，无法从代码侧核实 |
 | R2.5 | `relays.json` 写锁（F-11）；`smoke:live` 改为按当前 ORDER 的 t2v/i2v/t2i 三条（不再依赖 XAI） | 并发 PATCH 单测；生产 smoke 一次成功记录 |
 | R2.6 | `jobs/runner.ts`（1125 行）按既有函数边界拆 `runner/{submit,poll,persist,failover}.ts`，行为不变；**排在 N3.4 合入之后**（N3.4 正在改换家逻辑） | 既有 `runner.test / failover.test / uncertain-submit.test` 不改断言全过 |

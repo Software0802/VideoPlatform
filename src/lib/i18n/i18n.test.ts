@@ -78,6 +78,7 @@ describe("字典完整性", () => {
       "canvas",
       "subscription",
       "account",
+      "admin",
       "login",
       "share",
     ];

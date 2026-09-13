@@ -308,6 +308,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 - **ORDER**：显式 `*_PROVIDER_ORDER` 时 relay 只按表内位次参与；没显式配时，启用的 relay 按 `priority` 降序排在内置默认之后（env 预设不进隐式次序，今天 grok / `openai,grok` 的默认不变）。
 - **安全**：`keyEnv` 存的是环境变量**名**不是值，`hasKey()` 调用时读 `process.env[keyEnv]`；下载鉴权按「provider × 配置的 base origin」动态配对（`media/download-headers.ts`），认不出的 origin 一律空头。
 - **管理接口** `src/app/api/admin/relays/`（登录 + `LUMEN_ADMIN_USER_ID`，非管理员一律 404）：`GET /`（列表 + hasKey + 注册状态 + 快照时间 + 各通道 `health`，不回显 key）、`POST /`、`PATCH /:id`（enabled/priority/模型等，id 不可改）、`DELETE /:id`、`POST /:id/discover`（拉 `/models` 写快照 + 返回 diff）、`POST /:id/probe`（有生图通道发一张 1K 1:1，否则 chat `max_tokens:16`，平台不记账 `billed:false`，但探针可能在上游计费，执行前须确认预算；付费 POST 固定 `maxAttempts:1`，不自动重发）。写操作落 `relays.json`（`writeJsonAtomic`）后立刻 `reconcileRelays()`。env 预设不由 PATCH/DELETE 管理（404）；要改它们就 POST 一条同 id 的文件配置覆盖。
+- **管理页 `/admin/relays`（N3.5，2026-09-13）**：`(shell)` 路由，服务端 `isAdminUser` 判定、非管理员 `notFound()`（与 API 404 同口径）；入口在头像菜单，只随 `caps.isAdmin`（layout 下发）露出。列表经 `src/lib/client/relays.ts`（白名单镜像 `RelaySummary`），按 priority 升序显示来源芯片、keyEnv+hasKey、通道、各通道健康灯、目录来源/快照；启停/排序/删除只作用于文件条目，排序用上移/下移按钮换相邻 priority（有意偏离，见 DESIGN）；probe 前 confirm「上游可能计费」。新建表单与 `relayConfigSchema` 一一对应。DOM/状态映射见 DESIGN「管理页」节。
 
 ## 3. Job 生命周期
 

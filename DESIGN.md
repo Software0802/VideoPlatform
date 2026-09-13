@@ -64,6 +64,10 @@ easing:
 4. **画布 `/canvas`**（2026-09-11/12 起接真数据，见 `docs/design.md` §2j）：空态 → 900×620 作者坐标场景层（`fit×zoom` 缩放）→ 右键建四类节点（文本/素材/文生图/生成视频）、拖拽定位、文本与提示词防抖 600ms 落盘（`PATCH` 带 `expectedRevision`，409 保留本地并弹二选一，不静默覆盖）；素材节点保存独立 `assetId`，明示 30 天期限、刷新可预览，过期/缺失显示重新上传；富文本条/提示词面板/模型列表/工具箱抽屉沿用原型本地交互。顶栏「运行整图」→ `.canvas-quote` 报价弹层（逐节点价 + 复用行「重跑」勾选 + 可执行行「执行前需我批准」勾选——生成视频节点默认勾 + 合计）→ 确认建 run；节点徽标 `.canvas-node__exec[data-exec]` 显示执行态（待批准/已复用/已跳过等），`awaiting_approval` 节点带「批准/驳回」按钮，产物以真实 `<img>` / `<video controls>` 展示；3s 轮询 run，运行中可「取消运行」。
 5. **订阅 `/subscription`**（2026-09-07 凌晨起接真数据，见 `docs/design.md` §2i）：我的方案卡显示当前档位/到期日/会员积分/今日已发日积分/已购余额，兑换礼品码与流水抽屉；四档卡片是真实人民币价格（`costRatio` 成本 ÷ (1−15%毛利率) 推得，非占位值），年/月切换，「订阅」按钮真的调用 `POST /api/subscription` 从已购余额扣款，成功后刷新顶栏并 toast，余额不足提示「余额不足，请先兑换礼品码」。
 
+### 管理页 `/admin/relays`（N3.5，2026-09-13 落地）
+
+不进侧栏五视图：入口在头像菜单，只对 `caps.isAdmin`（`LUMEN_ADMIN_USER_ID` 点名）露出；页面服务端 `notFound()` 非管理员（与 `/api/admin/*` 404 同口径）。结构：`section.relay-card[data-card="head"|"create"|"list"]`，列表按 `priority` 升序，每行 `.relay-row[data-relay-id][data-managed][data-enabled]`：名称 + id + 来源芯片（file/env 种子/老 env）+ baseUrl + `keyEnv` 变量名与 hasKey 灯（颜色+文字双编码）+ 通道芯片（视频/图片/对话）+ 健康灯 `.relay-admin__health[data-health="ok|cooldown|half-open"]`（ok=成功色、cooldown=失败色、half-open=警示色，各附文字）+ 目录来源与快照时间。动作：enabled 开关、上移/下移（与相邻行交换 priority，两次 PATCH）、目录发现、探测（先弹「上游可能计费」确认）、删除——启停/排序/删除只对 `managed`（文件条目）可用，env 预设显示「由环境变量定义，改 .env」。新建表单字段与 `relayConfigSchema` 一一对应，zod 报错原文显示（`invalid_argument` 拼服务端 message）。样式 `styles/admin.css`（块名 `relay-admin`/`relay-row`），移动端 375 表单单列、行内操作换行不溢出。
+
 ## 语言切换（2026-09-07 凌晨新增）
 
 顶栏与登录页新增 `LanguageSwitch.tsx`（disclosure），可在 `zh-CN`/`en` 间切换并写 Cookie `lumen_locale`；全站文案（除服务端错误文案）经 `useT()` 取自 `src/lib/i18n/messages/`，`data-*` 状态值不受语言影响。方案与命名空间划分见 `docs/design.md` §13、`AGENTS.md`「前端约定」。
@@ -84,14 +88,14 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 
 客户端唯一状态所有者是 `src/components/genius/ShellContext.tsx`（`ShellProvider`/`useShell`），主页与创作页共用同一个 Provider 实例。关键字段：
 
-- 能力与账号：`caps`（`mock/harness/videoDurations/videoAspectRatios/imageAspectRatios/videoModel/imageModel/audioAvailable/initialEmail/initialJobs`，由 `(shell)/layout.tsx` 服务端下发）、`me`（`GET /api/me`）、`credits`（`Math.round(availableCny*100)`，¥1=100 积分仅显示，余额模型与后端计费不变）。
+- 能力与账号：`caps`（`mock/harness/videoDurations/videoAspectRatios/imageAspectRatios/videoModel/imageModel/audioAvailable/initialEmail/isAdmin/initialJobs`，由 `(shell)/layout.tsx` 服务端下发；`isAdmin` 只决定「中转管理」入口露不露，权限判定仍在服务端）、`me`（`GET /api/me`）、`credits`（`Math.round(availableCny*100)`，¥1=100 积分仅显示，余额模型与后端计费不变）。
 - 任务：`jobs`、`currentJob`（派生值 = 显式选中的那条 ?? 最新一条，`setCurrentJob(null)` 才真正清空，方案 §7.1 #8）、`busy`/`working`、`cancel`/`retry`。
 - 面板：`open/tab(video|image|audio)/mode(VIDEO_MODES 之一，只有"图文"接后端)/collapsed/pop(null|specs|model|buddy|picker)/prompt/res/imageRes/ratio/ratios/dur/durs/audio/multi/image(Frame:首帧上传)/nativeMode(text_to_video|image_to_video|text_to_image)/price/sendCredits/balanceShort/quotaExhausted/error/notice`。
 - 提交：`submit()` 走 `createJobBodySchema`（strict）；2026-09-06 夜阶段 A 起可带可选 `model`（选中产品的 id，见下「模型下拉」），未选则不传字段、沿用能力路由。幂等 key 一次逻辑创作一个（`idempotencyKey.current ??= newIdempotencyKey()`，提交成功清空，任何面板改动作废）；数量 1–4 时循环创建 N 次、各自一个幂等 key（串行提交，非批量并发）。
 
 ## 阶段 A 新增规格（2026-09-06 夜，方案 `docs/plan-frontend-backend-adaptation.md`）
 
-- **模型下拉**（`ModelPop.tsx`）：`.composer__model` 是可点击列表（`role="listbox"`），来自 `GET /api/models`；当前每行显示图标、产品名、样例积分和描述，选中高亮。产品 id 用于 `data-product-id` 与提交体 model。多模型定位已允许供应商与上游展示名作为次级信息；API 已下发 providerId/providerName/upstreamModel/costHint，创作面板的分组与成本档展示尚待 R2。列表获取失败退回只读文案。
+- **模型下拉**（`ModelPop.tsx`）：`.composer__model` 是可点击列表（`role="listbox"`），来自 `GET /api/models`。R2.3 起**按供应商分组**：组头 `.model-pop__group-title` 显示 `providerName`（组顺序 = DTO 首次出现顺序，客户端不排序），组内每项显示图标、产品名、⚡基准积分、`costHint` 三档徽标（`.model-pop__cost[data-cost]`，颜色+文案双编码）、次要信息行（`upstreamModel` 仅在与产品名不同时显示、时长档 `5s · 10s`、分辨率档、`maxReferenceImages>0` 时的参考图数）与描述；时长档沿用面板判据（`caps.harness && supportsLongForm` 才含 30/45/60）。产品 id 用于 `data-product-id` 与提交体 model。列表获取失败退回只读文案。
 - **规格芯片按产品收窄**：`SpecsPop.tsx` 三块卡（分辨率/宽高比/时长）的可选项全部来自当前选中产品的能力（`resolutions`/`aspectRatios`/`durations`），不再是全局服务端枚举；未选具体产品（走默认路由）时回落原来的服务端下发枚举。首尾帧模式下不显示宽高比卡——成片比例跟着两张帧走，选了也没处发。
 - **参考模式多图**：参考图槽位从固定单图改为最多 `产品.maxReferenceImages` 张（YMan 产品 9 张、Grok 产品 7 张——参考生视频 `reference_to_video` 由声明该模式的 provider 承接，当前是 yman / grok），超过产品上限的槽位不渲染。
 - **首尾帧双槽**：i2v 模式下除首帧槽外新增尾帧槽，只有当前产品 `supportsLastFrame` 为真时才显示（目前只有可灵「标准」「高清有声」两档），选中尾帧槽会自动把产品切到支持首尾帧的那个、并把分辨率锁定 1080p（上游硬约束，见 `docs/design.md` §2c）。
@@ -111,6 +115,8 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 - 进入技能广场 / 会话页（智能体视图的子状态）时顶栏标题仍固定显示「智能体」；画布视图顶栏标题固定「画布」——顶栏标题只跟五视图路由走，不感知视图内部 state（未做「视图内子页上报标题」的接口）。
 - 画布的工具箱工具名与节点标签沿用原型英文占位文案（中文态也是英文）。
 - 画布视图沿用原型的本地交互细节：工具箱搜索是本地过滤；右键弹出节点类型菜单。
+- 中转管理页的排序用「上移/下移」按钮交换相邻 `priority`（两次 PATCH），不用计划书 §4b 的拖动排序——移动端与可访问性优先（键盘可达、无 pointer 捕获复杂性）。
+- 模型下拉按供应商分组并显示 `providerName` / `upstreamModel` / `costHint`（R2.3 起），不再沿用「只显示产品名」——DTO 白名单本就下发这三个字段，敏感面在接口不在弹层。
 
 ## 可访问性契约（DOM，e2e 依赖）
 

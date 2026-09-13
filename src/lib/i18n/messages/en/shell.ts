@@ -8,6 +8,7 @@ export const shell: Record<keyof typeof zh, string> = {
   "shell.nav.canvas": "Canvas",
   "shell.nav.sub": "Subscription",
   "shell.nav.account": "Account",
+  "shell.nav.admin": "Relay admin",
   "shell.nav.aria": "Main navigation",
   "shell.foot.legal": "Terms · Privacy",
 

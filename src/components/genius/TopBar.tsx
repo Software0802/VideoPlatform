@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { IconBell, IconBolt, IconKey, IconLogout, IconTag, IconUser } from "@/components/genius/icons";
+import { IconBell, IconBolt, IconKey, IconLogout, IconSliders, IconTag, IconUser } from "@/components/genius/icons";
 import { LanguageSwitch } from "@/components/genius/LanguageSwitch";
 import { PasswordDialog } from "@/components/genius/PasswordDialog";
 import { MAX_NOTICES, useJobs, useNotices, useSession } from "@/components/genius/ShellContext";
@@ -55,7 +55,7 @@ function useDismiss(open: boolean, close: () => void) {
 }
 
 export function TopBar({ view }: { view: ShellView }) {
-  const { email, credits, signOut, signingOut } = useSession();
+  const { caps, email, credits, signOut, signingOut } = useSession();
   const { showToast, notices, unread, markNoticesRead } = useNotices();
   const { openNotice } = useJobs();
   const t = useT();
@@ -172,6 +172,20 @@ export function TopBar({ view }: { view: ShellView }) {
                 <IconUser size={14} />
                 {t("shell.top.account")}
               </button>
+              {/* N3.5：中转管理只对管理员露出（权限本身在服务端，这里只是入口）。 */}
+              {caps.isAdmin ? (
+                <button
+                  type="button"
+                  className="top__menu-item"
+                  onClick={() => {
+                    setMenu(false);
+                    router.push("/admin/relays");
+                  }}
+                >
+                  <IconSliders size={14} />
+                  {t("shell.nav.admin")}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="top__menu-item"

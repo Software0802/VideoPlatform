@@ -933,6 +933,62 @@
   color: var(--fg-2);
   background: rgba(255, 255, 255, 0.09);
 }
+/* R2.3：供应商分组。组头只是标签，不参与 option 计数。 */
+.model-pop__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.model-pop__group + .model-pop__group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.model-pop__group-title {
+  display: block;
+  padding: 4px 10px 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--weak);
+}
+/* 成本档徽标：三档用颜色 + 文案双编码（不只靠颜色）。 */
+.model-pop__cost {
+  height: 15px;
+  padding: 0 5px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+.model-pop__cost[data-cost="low"] {
+  color: #7fd3a8;
+  background: rgba(127, 211, 168, 0.12);
+}
+.model-pop__cost[data-cost="mid"] {
+  color: var(--credit);
+  background: rgba(240, 217, 168, 0.12);
+}
+.model-pop__cost[data-cost="high"] {
+  color: #ff9b9b;
+  background: rgba(255, 155, 155, 0.12);
+}
+/* 上游展示名与规格行：次要信息，弱化一档。 */
+.model-pop__upstream {
+  font-size: 10.5px;
+  color: #6f7075;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-pop__meta {
+  font-size: 10.5px;
+  color: var(--weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .model-pop__desc {
   font-size: 11.5px;
   color: var(--weak);

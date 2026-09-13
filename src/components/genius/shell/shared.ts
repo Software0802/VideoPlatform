@@ -87,6 +87,12 @@ export type ShellCaps = {
   imageModel: string;
   audioAvailable: boolean;
   initialEmail: string;
+  /**
+   * 当前用户是不是 `LUMEN_ADMIN_USER_ID` 点名的管理员（N3.5）。只用于决定要不要
+   * 露出「中转管理」入口——权限判定的唯一事实源仍在服务端（页面 `notFound()` +
+   * `/api/admin/*` 的 `requireAdmin`）。
+   */
+  isAdmin: boolean;
   initialJobs: JobPublic[];
   /**
    * SSR 只下发前 40 条，这个标记说「盘上还有更老的」。没有它前端无从判断首屏之后

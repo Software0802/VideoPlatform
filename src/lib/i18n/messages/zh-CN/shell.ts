@@ -7,6 +7,7 @@ export const shell = {
   "shell.nav.canvas": "画布",
   "shell.nav.sub": "订阅",
   "shell.nav.account": "账户",
+  "shell.nav.admin": "中转管理",
   "shell.nav.aria": "主导航",
   "shell.foot.legal": "条款 · 隐私",
 

@@ -23,3 +23,18 @@ export const DATA_DIR_HINT = path.join(__dirname, ".auth/data-dir.txt");
  * 之外的例外：它只出现在 Playwright 自起的服务进程与测试进程里。
  */
 export const E2E_ADMIN_TOKEN = "e2e-only-admin-token-not-for-production";
+
+/**
+ * 与 webServer env 的 `LUMEN_SESSION_SECRET` 同值（playwright.config.ts）。固定 e2e 专用值，
+ * `admin.spec.ts` 用它给 file-seeded 的管理员账号算会话签名——服务只认这个 HMAC，
+ * 换用 dev server 自己的 secret 时该 spec 会整组 skip（cookie 验签失败 → /api/me 401）。
+ */
+export const E2E_SESSION_SECRET = "e2e-only-session-secret-not-for-production";
+
+/**
+ * `LUMEN_ADMIN_USER_ID` 的 e2e 固定值（`usr_` + 16 hex）。管理员账号是
+ * `admin.spec.ts` 直接写进 `data/users/` 的 user.json——用户索引是 email→id 的
+ * 派生缓存且按进程缓存，中途文件播种不可见；会话只按 id 读 user.json，不走索引，
+ * 所以这条路不需要注册流程。复用的 dev server 需自带同名 env。
+ */
+export const E2E_ADMIN_USER_ID = "usr_e2ead0000000000a";

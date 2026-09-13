@@ -12,6 +12,7 @@ import {
   videoResolutions,
 } from "@/lib/providers/router";
 import { listJobIndex } from "@/lib/jobs/index";
+import { isAdminUser } from "@/lib/jobs/ownership";
 import { readJobsByIds, toPublic } from "@/lib/jobs/store";
 import { SESSION_COOKIE, sessionUserFromValue } from "@/lib/users/session";
 
@@ -65,6 +66,8 @@ export default async function ShellLayout({ children }: { children: React.ReactN
         initialJobs: recs.map(toPublic),
         // 盘上还有更老的：主页据此决定露不露「加载更多」，不必先发一次注定空的请求
         moreJobs: page.length > INITIAL_JOBS,
+        // N3.5：中转管理入口只发给管理员；权限判定仍在服务端，这只是 UI 开关。
+        isAdmin: isAdminUser(user.id),
         initialEmail: user.email,
       }}
     >
