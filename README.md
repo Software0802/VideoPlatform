@@ -1,6 +1,6 @@
 # Genius（原 流光 / Lumen）— 视频创作平台
 
-侧栏 + 五视图的深色 App（`design_handoff/design_handoff_genius_app`）：主页瀑布流看真实作品，创作页跟进当前任务，悬浮创作面板接后端出片；智能体（提案审批制 LLM 编排）、画布（节点 DAG 运行）、订阅（余额 / 会员积分池 / 礼品码）都接真实后端。上游由**多家供应商按能力路由**：`VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER` 的次序决定优先级，命中条件是有 key、声明支持该模式、未被判耗尽、接得下画幅 / 分辨率 / 尾帧（`src/lib/providers/router.ts`）。`edit_video` / `extend_video` 目前只有 grok（xAI）一家 provider 声明支持，ORDER 内没有可用 provider 承接时提交返回 503 `no_provider_available`。无上游密钥时走模拟模式。30 / 45 / 60 秒一致性管线（Harness）已开放（生产 `HARNESS_ENABLED=true`）——shot 路由是通用 `t2v/i2v/r2v`、续接走「尾帧→i2v」，按 i2v+t2v 能力走 `VIDEO_PROVIDER_ORDER`（可灵 / YMan 都能承接）；可灵 30s 长片已真实成片（三视图角色表 + 档A 每镜首帧生效，见 `docs/acceptance-2026-09-13.md`）。
+侧栏 + 五视图的深色 App（`design_handoff/design_handoff_genius_app`）：主页瀑布流看真实作品，创作页跟进当前任务，悬浮创作面板接后端出片；智能体（提案审批制 LLM 编排）、画布（节点 DAG 运行）、订阅（余额 / 会员积分池 / 礼品码）都接真实后端。上游由**多家供应商按能力路由**：`VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER` 的次序决定优先级，命中条件是有 key、声明支持该模式、未被判耗尽、接得下画幅 / 分辨率 / 尾帧（`src/lib/providers/router.ts`）。`edit_video` / `extend_video` 已从路线图移出：API 与 provider 层保留、UI 置灰，等有中转承接（目前只有 grok 声明支持，ORDER 内没有可用 provider 承接时提交返回 503 `no_provider_available`）。无上游密钥时走模拟模式。30 / 45 / 60 秒一致性管线（Harness）已开放（生产 `HARNESS_ENABLED=true`）——shot 路由是通用 `t2v/i2v/r2v`、续接走「尾帧→i2v」，按 i2v+t2v 能力走 `VIDEO_PROVIDER_ORDER`（可灵 / YMan 都能承接）；可灵 30s 长片已真实成片（三视图角色表 + 档A 每镜首帧生效，见 `docs/acceptance-2026-09-13.md`）。
 
 新会话先读 [`docs/handoff.md`](docs/handoff.md)。
 

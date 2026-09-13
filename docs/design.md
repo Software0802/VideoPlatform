@@ -74,7 +74,7 @@ grok provider(`src/lib/providers/grok/`)走 xAI REST(`/videos/generations|edits|
 | `text_to_video` | kling、yman、grok | kling 时长枚举只有 5/10、向上归一写回;yman 按模型档向上取档 |
 | `image_to_video` | kling、yman、grok | 首帧必填;首尾帧锁(`last_frame`)只有 kling 声明 |
 | `reference_to_video` | yman、grok | yman 参考图上限 ≤9、grok ≤7(各自 `validate` 收紧);kling 不声明 |
-| `edit_video` | 仅 grok | 目前唯一声明方;ORDER 内没有可用 provider 时提交返 503 `no_provider_available`,生产当前没有供应商承接 |
+| `edit_video` | 仅 grok | 已从路线图移出(2026-09-13 拍板):API 与 provider 层保留、UI 置灰,等有中转承接;ORDER 内没有可用 provider 时提交返 503 `no_provider_available` |
 | `extend_video` | 仅 grok | 同上(依赖 xAI Files API) |
 
 - 30/45/60:`HARNESS_ENABLED` 未开启时 400「长视频将由一致性管线提供,尚未开放」;开启后仅 t2v / i2v 可提交,任务走 §7 管线——shot 路由是通用 `t2v/i2v/r2v`,按 `image_to_video` + `requireModes:["text_to_video"]` 走 `VIDEO_PROVIDER_ORDER`(可灵 / YMan 都能承接);生产 `HARNESS_ENABLED=true` 已开放,可灵 30s 成片已实证(`docs/acceptance-2026-09-13.md`)。
@@ -214,7 +214,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 { video: { "5": 2, "10": 4, hd: 1.5, audio: 1 }, extend: 3, edit: 4, image: { "1k": 0.5, "2k": 1 } }
 ```
 
-`priceCny(input)` 按 mode 取值:视频 ≤5s/更长两档基价,1080p 乘 `hd`,有声再加 `audio`;30/45/60 秒 harness 长片按 5 秒段数 × `"5"` 计(30s=12 元);`extend_video`/`edit_video` 是定值;`text_to_image` 按 `imageResolution` 取 `1k`/`2k` 档。`LUMEN_PRICE_TABLE`(JSON,可只写要改的几项)覆盖默认表,坏 JSON 记一条 warn 并回落默认,不挡提交。`createJob`/`retryJob` 按**归一后**的参数(可灵把 4 秒请求归一为 5 秒那一档)算 `priceCny` 并写入 `job.priceCny`,提交后永不改写——它同时是在途预留额和成功后扣款额。
+`priceCny(input)` 按 mode 取值:视频 ≤5s/更长两档基价,1080p 乘 `hd`,有声再加 `audio`;30/45/60 秒 harness 长片走 `longForm` 定档(默认 20/30/40 元,`hd` 倍率与 `audio` 加价照常叠加——长片含角色表/首帧生图与 Director 成本,段数×基价兜不住);`extend_video`/`edit_video` 是定值;`text_to_image` 按 `imageResolution` 取 `1k`/`2k` 档。`LUMEN_PRICE_TABLE`(JSON,可只写要改的几项)覆盖默认表,坏 JSON 记一条 warn 并回落默认,不挡提交。`createJob`/`retryJob` 按**归一后**的参数(可灵把 4 秒请求归一为 5 秒那一档)算 `priceCny` 并写入 `job.priceCny`,提交后永不改写——它同时是在途预留额和成功后扣款额。
 
 **准入**(`src/lib/billing/admission.ts`):`loadBalanceUsage(userId)` 现算 `balanceCny`(`user.json`)与 `reservedCny`(该用户所有非终态任务 `priceCny` 之和,从 job.json 现算不落盘),`availableCny = balance − reserved`。`assertBalance(userId, priceCny)` 在 `availableCny < priceCny` 时抛 `ProviderHttpError(402, "insufficient_balance")`。判定必须在 `withAdmissionLock` 临界区内、`writeJob` 之前完成(与配额同一把锁),`createJob`/`retryJob` 共用同一个判官。判定前先跑 `settleSubscription`(R05,经动态 import 避开 subscription→admission 静态环):用户跨过 30 天期而没碰过任何读接口时,上一期的会员积分必须先清零、本期积分与当日赠送先入账,再谈「够不够」——否则过期积分会混进 `availableCny` 放行一条本该拒的购买。锁序不变:settle 内部取 user 锁,外层恒为 admission → user。
 

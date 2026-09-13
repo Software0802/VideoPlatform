@@ -66,7 +66,8 @@ export type Product = {
   supportsLastFrame: boolean;
   /**
    * 能不能走 30 / 45 / 60 秒长片（一致性管线，`HARNESS_ENABLED` 时才露出芯片）。
-   * 管线的续接依赖 xAI Files API，所以只有 grok 产品为真；UI 不再靠「时长连续」推断。
+   * 管线已供应商无关（i2v + t2v 能力即可承接），可灵「标准」与 YMan「快速」为真；
+   * UI 不再靠「时长连续」推断。
    */
   supportsLongForm: boolean;
   maxReferenceImages: number;
@@ -101,7 +102,7 @@ export const DEFAULT_PRODUCTS: readonly Product[] = [
     durations: [5, 10, 15],
     audio: "uncontrolled",
     supportsLastFrame: false,
-    supportsLongForm: false,
+    supportsLongForm: true,
     maxReferenceImages: 9,
     description: "出片最快的一档，720p，最多九张参考图。",
   },
@@ -119,7 +120,7 @@ export const DEFAULT_PRODUCTS: readonly Product[] = [
     audio: "off",
     // 首尾帧只有这条通道能发，且上游只在 1080p 接受（见 kling/rest-map.ts）。
     supportsLastFrame: true,
-    supportsLongForm: false,
+    supportsLongForm: true,
     maxReferenceImages: 0,
     description: "画面稳定的常规档，可选 720p / 1080p，支持首尾帧（首尾帧固定 1080p）。",
   },
@@ -136,7 +137,7 @@ export const DEFAULT_PRODUCTS: readonly Product[] = [
     durations: [5, 10],
     audio: "native",
     supportsLastFrame: true,
-    supportsLongForm: false,
+    supportsLongForm: true,
     maxReferenceImages: 0,
     description: "1080p 且自带音轨，单价最高。",
   },

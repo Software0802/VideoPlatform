@@ -3,7 +3,7 @@ import { DEFAULT_PRICE_TABLE, formatCny, priceCny, priceTable, type PriceTable }
 
 /**
  * 售价表（方案 §3.2）：视频 ≤5s/更长两档、1080p 倍率、出声加价、extend/edit 定值、
- * 图片按分辨率两档、harness 长片按 5 秒基价折算。`priceCny` 的第二参数在多数用例里
+ * 图片按分辨率两档、harness 长片走 `longForm` 定档。`priceCny` 的第二参数在多数用例里
  * 直接传自定义表，绕开 `LUMEN_PRICE_TABLE`，让公式本身的测试与环境变量解析解耦；
  * 环境变量合并 / 坏 JSON 回落单独在 `priceTable` 一节测。
  */
@@ -50,19 +50,45 @@ describe("priceCny for video modes (t2v / i2v / r2v)", () => {
 });
 
 describe("priceCny for harness long-form durations (30 / 45 / 60s)", () => {
-  it("packs 30s as 6 x the 5s base price = 12", () => {
-    expect(priceCny({ mode: "text_to_video", durationSec: 30 }, DEFAULT_PRICE_TABLE)).toBe(12);
+  it("uses the dedicated longForm tier (30s = 20)", () => {
+    expect(priceCny({ mode: "text_to_video", durationSec: 30 }, DEFAULT_PRICE_TABLE)).toBe(20);
   });
 
-  it("scales 45s and 60s the same way", () => {
-    expect(priceCny({ mode: "image_to_video", durationSec: 45 }, DEFAULT_PRICE_TABLE)).toBe(18);
-    expect(priceCny({ mode: "text_to_video", durationSec: 60 }, DEFAULT_PRICE_TABLE)).toBe(24);
+  it("prices 45s and 60s at their own tiers", () => {
+    expect(priceCny({ mode: "image_to_video", durationSec: 45 }, DEFAULT_PRICE_TABLE)).toBe(30);
+    expect(priceCny({ mode: "text_to_video", durationSec: 60 }, DEFAULT_PRICE_TABLE)).toBe(40);
   });
 
-  it("still stacks the hd multiplier on top of the harness packing", () => {
+  it("stacks the 1080p multiplier and the audio surcharge on the longForm tier", () => {
+    // 三档 × 1080p × 有声：(longForm * 1.5) + 1
     expect(
-      priceCny({ mode: "text_to_video", durationSec: 30, resolution: "1080p" }, DEFAULT_PRICE_TABLE),
-    ).toBe(18);
+      priceCny(
+        { mode: "text_to_video", durationSec: 30, resolution: "1080p", generateAudio: true },
+        DEFAULT_PRICE_TABLE,
+      ),
+    ).toBe(31);
+    expect(
+      priceCny(
+        { mode: "text_to_video", durationSec: 45, resolution: "1080p", generateAudio: true },
+        DEFAULT_PRICE_TABLE,
+      ),
+    ).toBe(46);
+    expect(
+      priceCny(
+        { mode: "text_to_video", durationSec: 60, resolution: "1080p", generateAudio: true },
+        DEFAULT_PRICE_TABLE,
+      ),
+    ).toBe(61);
+    // 无声的 720p 长片不吃倍率也不加价。
+    expect(
+      priceCny({ mode: "text_to_video", durationSec: 30, resolution: "720p", generateAudio: false }, DEFAULT_PRICE_TABLE),
+    ).toBe(20);
+  });
+
+  it("falls back to the default longForm tier for a table missing it (hand-built / old shape)", () => {
+    const table = { ...DEFAULT_PRICE_TABLE } as PriceTable;
+    delete (table as { longForm?: unknown }).longForm;
+    expect(priceCny({ mode: "text_to_video", durationSec: 30 }, table)).toBe(20);
   });
 });
 
@@ -104,6 +130,7 @@ describe("priceCny rounding", () => {
   it("rounds to 2 decimals even when the multiplication produces float noise", () => {
     const table: PriceTable = {
       video: { "5": 0.1, "10": 4, hd: 3, audio: 0.15 },
+      longForm: { "30": 20, "45": 30, "60": 40 },
       extend: 3,
       edit: 4,
       image: { "1k": 0.5, "2k": 1 },
@@ -162,6 +189,15 @@ describe("priceTable() and LUMEN_PRICE_TABLE", () => {
       process.env.LUMEN_PRICE_TABLE = raw;
       expect(priceTable()).toEqual(DEFAULT_PRICE_TABLE);
     }
+  });
+
+  it("merges a longForm-only override, keeping the other tiers at their defaults", () => {
+    process.env.LUMEN_PRICE_TABLE = JSON.stringify({ longForm: { "30": 25 } });
+    const table = priceTable();
+    expect(table.longForm).toEqual({ "30": 25, "45": 30, "60": 40 });
+    expect(table.video).toEqual(DEFAULT_PRICE_TABLE.video);
+    expect(priceCny({ mode: "text_to_video", durationSec: 30 })).toBe(25);
+    expect(priceCny({ mode: "text_to_video", durationSec: 45 })).toBe(30);
   });
 
   it("discards negative or non-numeric entries instead of pricing a tier at zero or less", () => {

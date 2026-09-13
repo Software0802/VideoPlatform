@@ -108,6 +108,14 @@ describe("DEFAULT_PRODUCTS", () => {
       expect(p.supportsLongForm, `${p.id} 不该声明 supportsLongForm`).toBe(false);
     }
   });
+
+  /** 管线供应商无关后，provider 声明 t2v+i2v 的常规视频档应能走长片（可灵「标准」、YMan「快速」、grok）。 */
+  it("marks the kling / yman / grok video products as long-form capable", () => {
+    for (const id of ["video-fast", "video-standard", "video-grok"]) {
+      const p = DEFAULT_PRODUCTS.find((x) => x.id === id)!;
+      expect(p.supportsLongForm, `${id} 该声明 supportsLongForm`).toBe(true);
+    }
+  });
 });
 
 describe("productById", () => {

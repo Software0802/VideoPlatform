@@ -32,6 +32,11 @@ export type PriceInput = {
  */
 export type PriceTable = {
   video: { "5": number; "10": number; hd: number; audio: number };
+  /**
+   * 一致性管线长片（30 / 45 / 60 秒）的定档售价（元），hd 倍率与 audio 加价照常叠加。
+   * 单独定档是因为长片含角色表 / 首帧生图与 Director 成本，「段数 × 5 秒基价」兜不住。
+   */
+  longForm: { "30": number; "45": number; "60": number };
   extend: number;
   edit: number;
   image: { "1k": number; "2k": number };
@@ -51,6 +56,7 @@ export const DEFAULT_AGENT_TURN_CNY = 0.05;
 
 export const DEFAULT_PRICE_TABLE: PriceTable = {
   video: { "5": 2, "10": 4, hd: 1.5, audio: 1 },
+  longForm: { "30": 20, "45": 30, "60": 40 },
   extend: 3,
   edit: 4,
   image: { "1k": 0.5, "2k": 1 },
@@ -69,8 +75,8 @@ export function agentTurnPriceCny(table: PriceTable = priceTable()): number {
  * 一次任务的售价，人民币元、两位小数。
  *
  * 视频：≤5 秒一档、更长一档；1080p 乘 `hd`，出声再加 `audio`。30 / 45 / 60 秒是
- * 一致性管线（harness）的长片，上游其实是若干 5 秒片，所以按段数 × 5 秒基价算
- * （30s = 6 段 × 2 = 12），倍率与加价照常叠在总额上。
+ * 一致性管线（harness）的长片，走 `longForm` 定档价，倍率与加价照常叠在总额上
+ * （表里没有 / 非法的那一档回落默认价，与 `LUMEN_PRICE_TABLE` 缺项口径一致）。
  *
  * `durationSec` 缺失时按 0 算（落到最便宜的一档）——真实调用方 `create.ts` 永远
  * 传归一后的时长，这里只是不让一个畸形请求把计价推进 NaN。
@@ -85,11 +91,13 @@ export function priceCny(input: PriceInput, table: PriceTable = priceTable()): n
       return round2(table.edit);
     default: {
       const dur = Number.isFinite(input.durationSec) ? Number(input.durationSec) : 0;
-      let price = isHarnessDuration(dur)
-        ? (dur / 5) * table.video["5"]
-        : dur <= 5
-          ? table.video["5"]
-          : table.video["10"];
+      let price: number;
+      if (isHarnessDuration(dur)) {
+        const key = String(dur) as keyof PriceTable["longForm"];
+        price = number(table.longForm?.[key]) ?? DEFAULT_PRICE_TABLE.longForm[key];
+      } else {
+        price = dur <= 5 ? table.video["5"] : table.video["10"];
+      }
       if (input.resolution === "1080p") price *= table.video.hd;
       if (input.generateAudio) price += table.video.audio;
       return round2(price);
@@ -122,6 +130,7 @@ export function priceTable(): PriceTable {
 
 type PartialTable = {
   video?: Partial<PriceTable["video"]>;
+  longForm?: Partial<PriceTable["longForm"]>;
   extend?: number;
   edit?: number;
   image?: Partial<PriceTable["image"]>;
@@ -143,6 +152,8 @@ function parseTable(raw: string): PartialTable | null {
   const source = parsed as Record<string, unknown>;
   return {
     video: numbers(source.video, ["5", "10", "hd", "audio"]) as Partial<PriceTable["video"]>,
+    // 与 `agent` 同口径：老表没有 `longForm` 时读出空对象，mergeTable 回落默认三档。
+    longForm: numbers(source.longForm, ["30", "45", "60"]) as Partial<PriceTable["longForm"]>,
     extend: number(source.extend),
     edit: number(source.edit),
     image: numbers(source.image, ["1k", "2k"]) as Partial<PriceTable["image"]>,
@@ -172,6 +183,7 @@ function mergeTable(base: PriceTable, over: PartialTable | null): PriceTable {
   if (!over) return base;
   return {
     video: { ...base.video, ...over.video },
+    longForm: { ...base.longForm, ...over.longForm },
     extend: over.extend ?? base.extend,
     edit: over.edit ?? base.edit,
     image: { ...base.image, ...over.image },

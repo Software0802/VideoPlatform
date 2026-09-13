@@ -28,6 +28,9 @@ import { newInviteCode, serverDataDir, writeInvite } from "./invites";
 
 const START_FRAME = path.resolve(__dirname, "../public/lumina/2e9cde0e2fb0803e.webp");
 
+// 与 src/lib/harness/durations.ts 的 HARNESS_DURATIONS 同值（e2e 不 import src）。
+const HARNESS_DURATIONS = [30, 45, 60] as const;
+
 type Health = { ok: boolean; mockMode: boolean; harnessRunnable: boolean };
 
 async function health(page: Page): Promise<Health> {
@@ -156,6 +159,7 @@ type ApiProduct = {
   durations?: number[];
   audio: "off" | "native" | "uncontrolled";
   supportsLastFrame: boolean;
+  supportsLongForm?: boolean;
   maxReferenceImages: number;
   imageResolutions?: string[];
   samplePriceCny: number;
@@ -495,7 +499,7 @@ test("长片：30s 走一致性管线，分镜读数推进到成片", async ({ p
   const jobId = ((await res.json()) as { id: string }).id;
   const task = taskById(page, jobId);
 
-  await expect(task.locator(".task__stage")).toContainText(/生成分镜 \d\/2/, { timeout: 60_000 });
+  await expect(task.locator(".task__stage")).toContainText(/生成分镜 \d\/3/, { timeout: 60_000 });
   await waitTerminal(task);
   await expect(task).toHaveAttribute("data-state", "done");
 
@@ -506,7 +510,8 @@ test("长片：30s 走一致性管线，分镜读数推进到成片", async ({ p
     output: { durationSec: number };
   };
   expect(json.harness.enabled).toBe(true);
-  expect(json.shots.map((s) => s.status)).toEqual(["succeeded", "succeeded"]);
+  // 30s 打三个 10 秒段（pack-duration.ts），tail_chain 续接。
+  expect(json.shots.map((s) => s.status)).toEqual(["succeeded", "succeeded", "succeeded"]);
   expect(json.output.durationSec).toBeGreaterThan(29.5);
   expect(json.output.durationSec).toBeLessThan(30.6);
 });
@@ -716,6 +721,7 @@ test("五视图导航：标题与 aria-current 联动，画布不横向溢出", 
 
 test("模型下拉：列出产品、只露产品名、切换后规格芯片跟着收窄", async ({ page }) => {
   const list = await apiProducts(page);
+  const h = await health(page);
   const videos = list.filter((p) => p.kind === "video");
   test.skip(videos.length < 2, "这台实例只有一个视频产品，无从切换");
 
@@ -753,9 +759,11 @@ test("模型下拉：列出产品、只露产品名、切换后规格芯片跟�
       await expect(specs.locator("button[data-res]")).toHaveCount(product.resolutions.length);
       for (const r of product.resolutions) await expect(specs.locator(`button[data-res="${r}"]`)).toBeVisible();
       await expect(specs.locator("button[data-ratio]")).toHaveCount(product.aspectRatios.length);
-      // 按档计费的产品：时长芯片就是它声明的那几档，没有别的（长片档也不会混进来）
+      // 按档计费的产品：时长芯片 = 它声明的那几档；声明 supportsLongForm 且管线开着时
+      // 还会追加 30 / 45 / 60 三个长片档（ShellContext 同一口径）。
       if (product.durations) {
-        await expect(specs.locator("button[data-dur]")).toHaveCount(product.durations.length);
+        const longFormCount = h.harnessRunnable && product.supportsLongForm ? HARNESS_DURATIONS.length : 0;
+        await expect(specs.locator("button[data-dur]")).toHaveCount(product.durations.length + longFormCount);
         for (const d of product.durations) await expect(specs.locator(`button[data-dur="${d}"]`)).toBeVisible();
       }
     });

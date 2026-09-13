@@ -119,6 +119,7 @@ function readPrices(raw: unknown): PriceTable | undefined {
   const p = raw as Partial<PriceTable>;
   const video = (p.video ?? {}) as Partial<PriceTable["video"]>;
   const image = (p.image ?? {}) as Partial<PriceTable["image"]>;
+  const longForm = (p.longForm ?? {}) as Partial<PriceTable["longForm"]>;
   const agent = (p.agent ?? {}) as Partial<PriceTable["agent"]>;
   const pick = (value: unknown, fallback: number): number =>
     typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -129,6 +130,11 @@ function readPrices(raw: unknown): PriceTable | undefined {
       "10": pick(video["10"], d.video["10"]),
       hd: pick(video.hd, d.video.hd),
       audio: pick(video.audio, d.video.audio),
+    },
+    longForm: {
+      "30": pick(longForm["30"], d.longForm["30"]),
+      "45": pick(longForm["45"], d.longForm["45"]),
+      "60": pick(longForm["60"], d.longForm["60"]),
     },
     extend: pick(p.extend, d.extend),
     edit: pick(p.edit, d.edit),
