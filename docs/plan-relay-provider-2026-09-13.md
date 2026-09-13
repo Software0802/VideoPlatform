@@ -98,16 +98,51 @@ export function hasProviderKey(id: ProviderId): boolean;                 // rela
 - 兼容：只有 `YMAN_*` env 时折算出的预设与今天的 `ymanProvider` 行为一致（create.test / failover.test 不改断言即通过）。
 - e2e：创作面板模型下拉按 provider 分组、显示售价与 `costHint`。
 
+## 4b. 中转管理接口与热生效（用户 2026-09-13 要求：可增减、可主动发现）
+
+- 配置事实源改为 **`data/relays.json`**（原子写，同 `user.json` 口径）；`LUMEN_RELAYS` 只在文件不存在时作首次种子。
+- 管理接口（`LUMEN_ADMIN_USER_ID` 鉴权，`src/app/api/admin/relays/`）：
+  - `GET /api/admin/relays`：全部中转 + 健康态（§4c）+ 最近一次目录快照时间。
+  - `POST /api/admin/relays` / `PATCH /:id` / `DELETE /:id`：增删改（key 仍只写 env 变量名；改动落盘后注册表热重载，正在跑的任务不受影响——它们已绑定 `job.provider`）。
+  - `POST /:id/discover`：立即拉 `GET /v1/models`，回显模型、能力、价目 diff。
+  - `POST /:id/probe`：用最便宜的一次调用（默认模型的 chat 一句 / 1k 生图一张）验通，回显耗时与状态，费用记到管理员账。
+  - `PATCH /:id { enabled, priority }`：停用 / 启用 / 调优先级。
+- `VIDEO_PROVIDER_ORDER` / `IMAGE_PROVIDER_ORDER` 从「启用的中转按 `priority` 降序」自动生成；env 里显式写了 ORDER 时仍以 env 为准（运维覆盖口）。
+- 管理页（N3.4）：列表 + 健康灯 + discover / probe 按钮 + 拖动排序。
+
+## 4c. 服务治理：故障切换与用户可见失败最小化
+
+参考 new-api（渠道优先级分层 + 权重随机、失败按 `RetryTimes` 换渠道、按状态码 / 关键词自动禁用、健康检查自动恢复、模型别名归一）与 sub2api（候选按负载 / 优先级排序、失败账号加入本次请求的 `excludedIDs`、瞬时错误进冷却、429 按窗口封禁、最大切换次数上限）。**我们与 chat 网关的关键差别**：视频任务是异步、提交即计费——「失败就换一家重发」只能用在**确定未受理**的失败上，已受理的任务绝不重发。据此定义：
+
+| 阶段 | 失败类型 | 处理 | 用户看到 |
+| --- | --- | --- | --- |
+| 提交前 | 目录里没有该模型 / 中转停用 / 冷却中 | 路由直接跳过该中转，取下一家（同 mode 能力） | 无感 |
+| 提交时 | 4xx 业务拒绝（参数、鉴权、余额）、结构化 5xx（`upstreamRejected`）、`quota_exhausted`、`rate_limited`、连接被拒 | **确定未受理**：本次请求把该中转加入 `excluded`，立刻换下一家重提（同一任务内最多换 `RELAY_MAX_SWITCHES`=2 次）；`priceCny` 只降不升（已有）；换家记入任务 `providerSwitches[]` | 无感（任务照常进行，详情里可见「已切换供应商」） |
+| 提交时 | 断连 / 读超时 / 裸 5xx（可能已受理） | 沿用 R06：先 `lookupByExternalId`，查不到 → `uncertain_submit`，**不换家重发** | 明确失败 + 退款 + 「可能已受理」说明；这是唯一必须让用户看到的一类 |
+| 轮询中 | 上游返回任务失败（内容审核、内部错误） | 内容审核 → 失败退款不切换；`internal_error`/5xx → 视为该中转不稳，计入健康分，但**本任务不重发**（已计费） | 失败 + 退款 |
+| 轮询中 | 超过 `taskTimeoutMs` | 现有语义（本地放弃、上游可能仍在跑）→ 失败退款 | 失败 + 退款 + 说明 |
+| Harness 分镜 | 单镜提交失败（确定未受理） | 同「提交时」：镜级换家（`runPersistedShot` 用 `excluded` 重选 provider，模型按新家 `models` 取），已成功的镜不动 | 无感 |
+
+健康与冷却（`providers/health.ts`，替代现在只有「耗尽 6h」一档的 `exhaustion.ts`）：
+
+- 每个 `relay × mode` 维护滑动窗口（最近 20 次 / 10 分钟）成功率与 p50 耗时；`quota_exhausted` 冷却 6h（现有），`rate_limited` 冷却按 `Retry-After` 或 60s 指数退避（最长 15 分钟），连续 3 次 5xx / 连接失败 → 冷却 5 分钟并告警 `relay_unhealthy`，冷却期满自动半开（放一条真实任务试探，成功即恢复），不做付费探针。
+- 目录刷新发现默认模型消失 → 该 `relay × mode` 立即置「不可用」（不等用户撞 404）。
+- 健康态进 `GET /api/admin/relays` 与 `/api/health`；`/api/models` 只列此刻可用的产品，用户端不会选到会失败的项。
+- 熔断上限：`RELAY_MAX_SWITCHES` 之内仍没人接 → 503 `no_provider_available`（现有），文案改为「所有供应商暂时繁忙，请稍后再试」，并告警。
+
+不做的：不在轮询失败后自动重发（重复付费）；不做跨中转的「同一提示词双发取快」；不做用户级粘性会话（视频任务无对话上下文）。
+
 ## 5. 切片
 
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
 | N3.1 | 注册表 + `ProviderId` 放宽 + 12 处硬编码分支处理 + schema 放宽 | 全量单测 / e2e 绿；生产不改配置部署，行为不变（冒烟一张图一条视频） |
-| N3.2 | relay 工厂 + YMan 改为预设 + `LUMEN_RELAYS` 解析 + 老 env 折算 | yman golden 全过；本地用 `LUMEN_RELAYS` 声明 yman 跑 mock 端到端 |
-| N3.3 | 动态目录 + 产品生成 + 下架自动隐藏 | 生产开 `catalog.source=models-endpoint` 后 `GET /api/models` 列出 YMan 全部视频模型；人为把默认模型改成不存在的名字 → 产品隐藏 + 告警 |
-| N3.4 | 创作面板分组与 costHint（与 N4 合并） | e2e |
+| N3.2 | relay 工厂 + YMan 改为预设 + `data/relays.json` / `LUMEN_RELAYS` 种子 + 老 env 折算 + 管理接口（§4b） | yman golden 全过；本地用管理接口增一条中转 → 热生效 → mock 端到端 |
+| N3.3 | 动态目录 + 产品生成 + 下架自动隐藏 + discover / probe | 生产开动态目录后 `GET /api/models` 列出 YMan 全部视频模型；改默认模型为不存在的名字 → 产品隐藏 + 告警 |
+| N3.4 | 治理（§4c）：提交时确定失败换家、`health.ts` 冷却 / 半开、分镜级换家、文案 | 单测覆盖表中每一行；mock 注入故障的端到端：第一家 503 结构化 → 第二家成片，用户端无失败 |
+| N3.5 | 管理页 + 创作面板分组与 costHint（与 N4 合并） | e2e |
 
-生产切换顺序：N3.1 部署（无配置变化）→ N3.2 部署后把 `.env` 的 `YMAN_*`/`OPENAI_*` 改写成一条 `LUMEN_RELAYS`（备份、可回退）→ N3.3 打开动态目录。每步公网冒烟。
+生产切换顺序：N3.1 部署（无配置变化）→ N3.2 部署后用管理接口把 YMan / ccgoai 登记成中转（`.env` 老变量保留作回退）→ N3.3 打开动态目录 → N3.4。每步公网冒烟。
 
 ## 6. 不做
 
