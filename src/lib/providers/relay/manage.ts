@@ -7,6 +7,7 @@ import {
   type RelayConfig,
 } from "@/lib/providers/relay/config";
 import { reconcileRelays, currentRelayViews } from "@/lib/providers/relay/assemble";
+import { withRelayLock } from "@/lib/providers/relay/lock";
 import { healthList } from "@/lib/providers/health";
 import { relayCatalogSnapshotFetchedAt } from "@/lib/providers/relay/discover";
 import { isRegisteredProviderId } from "@/lib/providers/registry";
@@ -78,40 +79,47 @@ function fileRelays(): RelayConfig[] {
 
 export async function createRelay(body: unknown): Promise<RelaySummary> {
   const cfg = relayConfigSchema.parse(body);
-  const relays = fileRelays();
-  if (relays.some((r) => r.id === cfg.id)) {
-    throw new ProviderHttpError(409, "relay_exists", `relay ${cfg.id} 已存在`);
-  }
-  await writeRelays([...relays, cfg]);
-  reconcileRelays();
-  return summaryOf(cfg.id);
+  // 读→判重→写整个临界区进锁：两个并发 create 各读各的旧文件再各写各的，后写者会丢掉先写者。
+  return withRelayLock(async () => {
+    const relays = fileRelays();
+    if (relays.some((r) => r.id === cfg.id)) {
+      throw new ProviderHttpError(409, "relay_exists", `relay ${cfg.id} 已存在`);
+    }
+    await writeRelays([...relays, cfg]);
+    reconcileRelays();
+    return summaryOf(cfg.id);
+  });
 }
 
 const patchSchema = relayConfigSchema.partial().omit({ id: true });
 
 export async function updateRelay(id: string, body: unknown): Promise<RelaySummary> {
-  const relays = fileRelays();
-  const index = relays.findIndex((r) => r.id === id);
-  if (index < 0) {
-    throw new ProviderHttpError(404, "not_found", `relay ${id} 不存在（env 预设不由接口管理）`);
-  }
   const patch = patchSchema.parse(body);
-  const merged = relayConfigSchema.parse({ ...relays[index], ...patch, id });
-  const next = [...relays];
-  next[index] = merged;
-  await writeRelays(next);
-  reconcileRelays();
-  return summaryOf(id);
+  return withRelayLock(async () => {
+    const relays = fileRelays();
+    const index = relays.findIndex((r) => r.id === id);
+    if (index < 0) {
+      throw new ProviderHttpError(404, "not_found", `relay ${id} 不存在（env 预设不由接口管理）`);
+    }
+    const merged = relayConfigSchema.parse({ ...relays[index], ...patch, id });
+    const next = [...relays];
+    next[index] = merged;
+    await writeRelays(next);
+    reconcileRelays();
+    return summaryOf(id);
+  });
 }
 
 export async function deleteRelay(id: string): Promise<void> {
-  const relays = fileRelays();
-  const next = relays.filter((r) => r.id !== id);
-  if (next.length === relays.length) {
-    throw new ProviderHttpError(404, "not_found", `relay ${id} 不存在（env 预设不由接口管理）`);
-  }
-  await writeRelays(next);
-  reconcileRelays();
+  return withRelayLock(async () => {
+    const relays = fileRelays();
+    const next = relays.filter((r) => r.id !== id);
+    if (next.length === relays.length) {
+      throw new ProviderHttpError(404, "not_found", `relay ${id} 不存在（env 预设不由接口管理）`);
+    }
+    await writeRelays(next);
+    reconcileRelays();
+  });
 }
 
 function summaryOf(id: string): RelaySummary {

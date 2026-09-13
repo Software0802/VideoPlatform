@@ -307,7 +307,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 - **产品生成（N3.3）**：`allProducts()` = 手写内置产品 ∪ 每个**显式配置**（file / env-seed，env 折算预设不生成——那条路径保持原行为）的启用 relay 目录里每个视频模型各一个产品：`id = "<relayId>:<slug>"`（slug 小写、非 `[a-z0-9]` 转 `-`、28 字符截断、重复加 `-2`），`name` = 上游展示名，三个 mode 的 `models` 都指向该模型但 `modes` 只声明 `maxReferenceImages>0 ? [t2v,i2v,r2v] : [t2v]`，档位 / 画幅 / 时长从目录 spec 来，`audio:"uncontrolled"`，`supportsLongForm` = modes 含 t2v+i2v 且 durations 含 10；`LUMEN_PRODUCTS` 按 id 覆盖对生成产品同样有效。`isProductAvailable` 额外要求该模型此刻仍在目录里——上游下架即自动隐藏。`GET /api/models` DTO 新增 `providerId` / `providerName` / `upstreamModel`（展示名）/ `costHint`（估算成本折人民币相对售价：<0.3 low、<0.6 mid、其余 high、估不出 mid），浏览器侧镜像在 `client/models.ts`。
 - **ORDER**：显式 `*_PROVIDER_ORDER` 时 relay 只按表内位次参与；没显式配时，启用的 relay 按 `priority` 降序排在内置默认之后（env 预设不进隐式次序，今天 grok / `openai,grok` 的默认不变）。
 - **安全**：`keyEnv` 存的是环境变量**名**不是值，`hasKey()` 调用时读 `process.env[keyEnv]`；下载鉴权按「provider × 配置的 base origin」动态配对（`media/download-headers.ts`），认不出的 origin 一律空头。
-- **管理接口** `src/app/api/admin/relays/`（登录 + `LUMEN_ADMIN_USER_ID`，非管理员一律 404）：`GET /`（列表 + hasKey + 注册状态 + 快照时间，不回显 key）、`POST /`、`PATCH /:id`（enabled/priority/模型等，id 不可改）、`DELETE /:id`、`POST /:id/discover`（拉 `/models` 写快照 + 返回 diff）、`POST /:id/probe`（有生图通道发一张 1K 1:1，否则 chat `max_tokens:16`，平台不记账 `billed:false`，但探针可能在上游计费，执行前须确认预算；付费 POST 固定 `maxAttempts:1`，不自动重发）。写操作落 `relays.json`（`writeJsonAtomic`）后立刻 `reconcileRelays()`。env 预设不由 PATCH/DELETE 管理（404）；要改它们就 POST 一条同 id 的文件配置覆盖。
+- **管理接口** `src/app/api/admin/relays/`（登录 + `LUMEN_ADMIN_USER_ID`，非管理员一律 404）：`GET /`（列表 + hasKey + 注册状态 + 快照时间 + 各通道 `health`，不回显 key）、`POST /`、`PATCH /:id`（enabled/priority/模型等，id 不可改）、`DELETE /:id`、`POST /:id/discover`（拉 `/models` 写快照 + 返回 diff）、`POST /:id/probe`（有生图通道发一张 1K 1:1，否则 chat `max_tokens:16`，平台不记账 `billed:false`，但探针可能在上游计费，执行前须确认预算；付费 POST 固定 `maxAttempts:1`，不自动重发）。写操作落 `relays.json`（`writeJsonAtomic`）后立刻 `reconcileRelays()`。env 预设不由 PATCH/DELETE 管理（404）；要改它们就 POST 一条同 id 的文件配置覆盖。
 
 ## 3. Job 生命周期
 
@@ -491,7 +491,7 @@ data/
 | 审核 | `respect_moderation === false` 视为失败,不进画廊 |
 | AGPL | 禁止拷贝 ArcReel / OpenMontage 源码,只学概念 |
 | 提交/上传刷量(2026-09-06 深夜) | `POST /api/jobs` 10 次/分钟、`POST /api/uploads` 5 次/分钟;`MAX_QUEUED_JOBS_PER_USER`(默认 5)挡单账号占满全站队列(§3) |
-| CSRF/跨站提交(2026-09-06 深夜) | `src/proxy.ts` 对全部非 GET 请求校验 `Origin`/`Referer`;**两者都缺失时放行**——设计取舍,记为已知行为而非遗漏,收紧前先确认是否会挡到合法的非浏览器客户端 |
+| CSRF/跨站提交(2026-09-06 深夜) | `src/proxy.ts` 对全部非 GET 请求校验 `Origin`/`Referer`;**两者都缺失时放行**——设计取舍,记为已知行为而非遗漏,收紧前先确认是否会挡到合法的非浏览器客户端。R1.6 复核(2026-09)后**保留现状**:`scripts/smoke-lumen.mjs`/`scripts/lib/smoke-session.mjs` 等现有 Cookie 客户端不带 Origin,收紧会打断它们;脚本补 Origin 或改 Bearer 单列为后续项 |
 | 健康检查信息泄漏(2026-09-06 深夜) | `GET /api/health` 匿名只回 `{ok}`;带会话时才下发 `disk/queue/runner` 等详细信息;磁盘剩余 <5% 判不健康并触发 `ALERT_WEBHOOK_URL` 告警 |
 | 分享令牌信任域(2026-09-06 深夜) | 分享令牌用独立于会话的 HMAC 密钥派生(§2g),即使会话密钥 `LUMEN_SESSION_SECRET` 单独轮换,分享链接不受影响,反之亦然 |
 | 排障与追溯(2026-09-06 深夜) | 每请求生成 `x-request-id`,经 `AsyncLocalStorage` 贯穿日志(`reqId`/`jobId`/`ownerId`),用于跨用户投诉时定位单条请求的完整处理链路 |

@@ -143,7 +143,7 @@ R2 / R3 / R4 / R5 在 R1 之后可**并行**（不同文件域，见每片「触
 | R1.3（已落地，待下一次部署验证） | `deploy.sh`：`git archive HEAD` 到临时目录构建；拒绝脏工作树（或显式 `--allow-dirty` 并打印 diffstat）；写 `BUILD_INFO.json {sha, builtAt, node}`；`/api/health` 登录态回显 `build.sha`；服务器 `pnpm install --prod --frozen-lockfile`；三条门禁齐跑，`--skip-check` 去留见 §8 D-3 | 部署后 `curl /api/health`（登录态）的 sha = 本地 `git rev-parse HEAD`；handoff「生产基线」行改为从 health 读 |
 | R1.4（待生产窗口） | 发布目录 `releases/<sha>` + `current` 软链（`plan-unimplemented` §10）；回滚 = 切软链 | 一次演练：部署 → 切回上一 sha → health 绿 |
 | R1.5（待生产窗口） | 服务专用用户运行（非 root），`data/` 归属迁移；runbook 相应改写 | `systemctl show genius -p User` ≠ root；全部管理 CLI 以该用户执行成功 |
-| R1.6（下一轮） | 安全收紧评估（审查 F-19 / F-20）：核对 Caddyfile 对 XFF 是覆盖而非追加；评估 `proxy.ts` 对「带会话 Cookie 且 Origin/Referer 双缺」的非 GET 请求改为 403 | runbook 记录 Caddy 核对结果；若收紧，`proxy.test.ts` 补该用例且 e2e / smoke 不受影响 |
+| R1.6（已核对，保留现状） | 安全收紧评估（审查 F-19 / F-20）：核对 Caddyfile 对 XFF 是覆盖而非追加；评估 `proxy.ts` 对「带会话 Cookie 且 Origin/Referer 双缺」的非 GET 请求改为 403 | runbook 记录 Caddy 核对结果；若收紧，`proxy.test.ts` 补该用例且 e2e / smoke 不受影响 |
 
 ### R2 · 产品主线 A：多模型与中转（N3.4 → N3.5 → N4；M）
 

@@ -456,3 +456,48 @@ describe("动态目录（catalog.source = models-endpoint）", () => {
     delete process.env.VIDEO_PROVIDER_ORDER;
   });
 });
+
+describe("manage 写锁（withRelayLock）", () => {
+  it("并发创建 5 个 relay：全部落盘，后写者不丢先写者", async () => {
+    const { createRelay } = await import("./manage");
+    const { readRelaysFile } = await import("./config");
+    const { reconcileRelays } = await import("./assemble");
+    writeRelaysFile([]);
+    // 无锁时五个调用都会在任一写完成前读到同一个空文件，最终只剩最后一个。
+    await Promise.all(
+      [1, 2, 3, 4, 5].map((n) => createRelay(fixtureCfg({ id: `fixture-c${n}` }))),
+    );
+    expect(readRelaysFile().map((r) => r.id).sort()).toEqual([
+      "fixture-c1",
+      "fixture-c2",
+      "fixture-c3",
+      "fixture-c4",
+      "fixture-c5",
+    ]);
+    writeRelaysFile([]);
+    reconcileRelays();
+  });
+
+  it("update 与 delete 并发：改动与删除都不被另一方的写覆盖", async () => {
+    const { createRelay, updateRelay, deleteRelay } = await import("./manage");
+    const { readRelaysFile } = await import("./config");
+    const { reconcileRelays } = await import("./assemble");
+    writeRelaysFile([]);
+    await Promise.all([
+      createRelay(fixtureCfg({ id: "fixture-u" })),
+      createRelay(fixtureCfg({ id: "fixture-d" })),
+    ]);
+    const [updated] = await Promise.all([
+      updateRelay("fixture-u", { name: "Renamed U", priority: 8 }),
+      deleteRelay("fixture-d"),
+    ]);
+    expect(updated.name).toBe("Renamed U");
+    const file = readRelaysFile();
+    const kept = file.find((r) => r.id === "fixture-u");
+    expect(kept?.name).toBe("Renamed U");
+    expect(kept?.priority).toBe(8);
+    expect(file.some((r) => r.id === "fixture-d")).toBe(false);
+    writeRelaysFile([]);
+    reconcileRelays();
+  });
+});

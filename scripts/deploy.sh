@@ -202,6 +202,10 @@ for(const alias of names){
   rollback
   exit 1
 fi
+# R1.5 配套：服务已改为以 genius 运行时，本次解包/install 由 root 产生的文件必须
+# 归还给服务账号，否则服务写不动。幂等——已是 genius 的 chown 是无害重放；
+# 用户不存在（R1.5 尚未执行的窗口期）时静默跳过，不挡部署。
+id genius &>/dev/null && chown -R genius:genius /opt/genius || true
 # 模板种子：data/ 不入库，首次部署把示例模板落到 data/templates（已存在则不覆盖）
 if [ ! -d data/templates ] && [ -d data-seed/templates ]; then
   mkdir -p data && cp -r data-seed/templates data/templates && echo "   模板: 已从 data-seed 落种 $(ls data/templates | wc -l) 条"

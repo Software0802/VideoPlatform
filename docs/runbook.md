@@ -8,18 +8,20 @@
 | --- | --- |
 | Node / pnpm | v22.22.2 / 10.33.0 |
 | Caddy | v2.11.4，容器 taiyu-caddy-1 |
-| genius.service | active；User 未设置，systemd 默认 root；MemoryMax=734003200（700 MiB） |
+| genius.service | active；User 未设置，systemd 默认 root；MemoryHigh=550M、MemoryMax=700M（734003200 字节）；ExecStart=`next start -p 3000 -H 0.0.0.0` |
+| 反代链路 | 站点块 `genius.homeaistack.online { reverse_proxy 10.255.1.1:3000 }`：Caddy 容器经 docker 网关 `10.255.1.1` 连入宿主机，**服务必须绑 `0.0.0.0`，不能改成 loopback** |
+| 目录归属 | `/opt/genius` 与 `data/` 均为 root:root |
 | 磁盘 | /dev/vda3：40G，总已用 24G，可用 14G（65%） |
-| 发布标识 | /opt/genius/BUILD_INFO.json 不存在，不能把本地 HEAD 当作可机器核对的线上版本 |
+| 发布标识 | /opt/genius/BUILD_INFO.json 不存在（下次部署起由 `deploy.sh` 生成），不能把本地 HEAD 当作可机器核对的线上版本 |
 | 备份 | root crontab 每日 03:17 跑 backup.sh；最新包 genius-data-20260913-031701.tgz，本机共 4 包 |
 
-`caddy adapt` 的生效文件中未发现 trusted_proxies/client_ip_headers/X-Forwarded-For 覆盖配置。按 [Caddy 官方默认行为](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#defaults)，不信任请求传来的 X-Forwarded-*，由反代生成；本轮核对的是配置与文档，未做公网伪造头实验。以后接 CDN/改 trusted_proxies 必须重新核对。
+站点块与全局配置都没有 `trusted_proxies`/`client_ip_headers`。按 Caddy v2.11.4 源码 `reverseproxy.go` 的 `addForwardedHeaders`：客户端不受信时 `X-Forwarded-For` **被覆盖为对端 IP**（不是追加），`X-Forwarded-Host` 覆盖为请求 Host——所以 `rate-limit.ts` 的 `clientIp()` 取首跳、`proxy.ts` 的 `expectedHost()` 认 x-forwarded-host 在当前拓扑下都成立（F-19 confirmed-safe，无需改配置）。以后接 CDN / 改 trusted_proxies 必须重新核对。
 
 Node 22.x 的 node:sqlite 官方标注仍为 Stability 1.1（Active development），不是已稳定资金数据库选型；SQLite 迁移等待 R4 的实际触发条件，不因内置模块可用就迁账。
 
 ## 管理 CLI 的运行身份
 
-`genius.service` 以 root 运行，`/opt/genius/data` 整棵树归 root。所有 `scripts/*.mjs`（铸邀请码 / 礼品码、充值、重置密码、停用账号、用量统计）都直接写 `data/`，**必须以 root 或 `sudo` 执行**，普通用户（如 `admin`）会报 `EACCES: permission denied`：
+`genius.service` 以 root 运行，`/opt/genius/data` 整棵树归 root。所有 `scripts/*.mjs`（铸邀请码 / 礼品码、充值、重置密码、停用账号、用量统计）都直接写 `data/`，**必须以 root 或 `sudo` 执行**，普通用户（如 `admin`）会报 `EACCES: permission denied`（R1.5 迁移完成后改为 `sudo -u genius`，见下文「待执行」节）：
 
 ```bash
 cd /opt/genius && sudo node scripts/mint-invites.mjs 1
@@ -56,6 +58,52 @@ curl -sS http://127.0.0.1:3000/api/health
 ```
 
 首次部署没有 `.next.prev`，`deploy.sh` 会打印警告并保留当前构建重启，不会回滚到「什么都没有」。
+
+## 待执行：发布目录化（R1.4，设计定稿）
+
+方案 `docs/plan-unimplemented-2026-09-08.md` §10：每次发布解到 `/opt/genius/releases/<sha>/`，`/opt/genius/current` 软链指向当前版本，unit 的 `WorkingDirectory`/`ExecStart` 指向 `current`；`data/` 与 `.env` 留在 `/opt/genius` 顶层（不进 release），各版本共享。回滚 = 把 `current` 切回上一个 sha 的目录再 `systemctl restart genius`，等价于今天的 `.next.prev` 但粒度是整个发布包。
+
+**必须与 `deploy.sh` 的发布改造同一窗口执行**（解到 `releases/<sha>` → 切链 → health → 失败切回旧链）；只改其中一侧会让 unit 路径与包落点脱节。本轮只写设计，脚本未改。
+
+## 待执行：服务改非 root（R1.5）
+
+目标：`genius.service` 以专用账号 `genius` 运行（D-8=a），`/opt/genius` 整树归 `genius:genius`。以下在生产服务器以 root 执行，挑维护窗口：
+
+```bash
+# 1. 建服务账号（已存在则跳过这行）
+useradd --system --home /opt/genius --shell /usr/sbin/nologin genius
+
+# 2. 停服并改归属；.env 归 genius、收紧到 640（组内可读）
+systemctl stop genius
+chown -R genius:genius /opt/genius
+chown genius:genius /opt/genius/.env && chmod 640 /opt/genius/.env
+```
+
+3. 建 drop-in `/etc/systemd/system/genius.service.d/user.conf`：
+
+```ini
+[Service]
+User=genius
+Group=genius
+```
+
+可选加固（同一文件追加）：`NoNewPrivileges=yes`、`ProtectSystem=strict`、`ReadWritePaths=/opt/genius`、`PrivateTmp=yes`。可行性依据：`ffmpeg-static` 在 `node_modules` 内、服务写路径全部位于 `/opt/genius`（data、tmp、日志），`strict` 预期可行；**首次启用必须盯 `journalctl -u genius -f`**，若 ffmpeg 或写盘被拦就去掉对应行。
+
+```bash
+# 4. 生效并验证
+systemctl daemon-reload
+systemctl start genius
+systemctl show genius -p User    # 期望 User=genius
+curl -sS http://127.0.0.1:3000/api/health   # 200 + ok:true；登录态再核对 build.sha
+```
+
+切换后的约束：
+
+- 所有管理 CLI 必须以服务身份跑：`sudo -u genius node scripts/xxx.mjs`。root 跑出来的新文件（迁移产物等）服务写不动。
+- `backup.sh` 的 root cron 可保留：它只读源数据、写 `backups/`。
+- `deploy.sh` 远端段已在 install 之后加幂等 `chown -R genius:genius /opt/genius`（`genius` 不存在则跳过），本迁移完成前后部署都安全。
+
+回退：删除 `/etc/systemd/system/genius.service.d/user.conf` → `systemctl daemon-reload` → `systemctl restart genius`。文件归属可保留 `genius`，不影响 root 运行。
 
 ## key 轮换
 
