@@ -5,13 +5,12 @@ import {
   ymanImagePriceTable,
   type ImagePriceTable,
 } from "@/lib/cost";
-import {
-  imageProviderOrder,
-  openaiImageQuality,
-  usdCnyRate,
-  videoProviderOrder,
-} from "@/lib/env";
+import { openaiImageQuality, usdCnyRate } from "@/lib/env";
 import { log } from "@/lib/log";
+import {
+  effectiveImageProviderOrder,
+  effectiveVideoProviderOrder,
+} from "@/lib/providers/router";
 import {
   allProducts,
   defaultResolutionOf,
@@ -187,7 +186,7 @@ export function costRatio(): number {
 
 /** 这条通道（视频 / 图片各一份）的第一落点产品。 */
 function defaultProductOf(kind: "video" | "image"): Product | undefined {
-  const first = (kind === "image" ? imageProviderOrder() : videoProviderOrder())[0];
+  const first = (kind === "image" ? effectiveImageProviderOrder() : effectiveVideoProviderOrder())[0];
   if (!first) return undefined;
   return allProducts().find((product) => product.kind === kind && product.provider === first);
 }

@@ -56,7 +56,12 @@ export const jobPublicSchema = z.object({
   progress: z.number().finite().min(0).max(100),
   mode: nativeModeSchema,
   model: z.string(),
-  provider: z.enum(["grok", "mock", "jimeng", "openai", "kling", "yman"]),
+  /**
+   * Provider id 是开放字符串（`ProviderId = string`）：relay provider 由配置在运行时
+   * 注册进 `providers/registry.ts`，写死字面量联合会让 relay 任务落盘后读不回来。
+   * 上限 64 只是挡明显畸形；合法性由注册表判。
+   */
+  provider: z.string().min(1).max(64),
   /**
    * 产品 id（`src/lib/products/catalog.ts`）。用户选的那一档，也是界面该显示的东西——
    * `model` 是上游模型名（`kling-2.6`），不该出现在界面上，供应商名更不该。

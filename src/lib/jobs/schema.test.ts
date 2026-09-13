@@ -96,6 +96,12 @@ describe("JobPublic", () => {
     expect(pub.status).toBe("succeeded");
   });
 
+  it("accepts any non-empty provider id (relay ids register at runtime)", () => {
+    expect(toPublic(rec({ provider: "fixture-relay" })).provider).toBe("fixture-relay");
+    expect(() => toPublic(rec({ provider: "" as JobRecord["provider"] }))).toThrow();
+    expect(() => toPublic(rec({ provider: "x".repeat(65) }))).toThrow();
+  });
+
   it("coerces legacy video output without kind", () => {
     const legacy = rec({
       output: {

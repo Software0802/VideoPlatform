@@ -50,7 +50,7 @@ flowchart TB
 
 ### 上游选择(as-built,`src/lib/env.ts` + `src/lib/providers/router.ts`)
 
-路由**按能力 + 优先级列表**,不按 key 存在性:`pickVideoProvider`/`pickImageProvider` 按 `VIDEO_PROVIDER_ORDER`(默认 `grok`,兼容旧 `VIDEO_PROVIDER=kling` → `kling,grok`,其余值视为只有 `grok`)/`IMAGE_PROVIDER_ORDER`(默认 `openai,grok`)的次序,取第一个「配了 key、未被 `exhaustion.ts` 判定耗尽、`capabilities().modes` 声明支持该模式、(视频)接得下请求画幅 / 分辨率 / 尾帧」的 provider。生产已显式覆盖为 `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`。ORDER 全没选中时的 fallback:配了 XAI key 且未耗尽才试 grok;否则只要配了任何真 key 就 503 `no_provider_available`,完全没 key 才 mock。
+路由**按能力 + 优先级列表**,不按 key 存在性:`pickVideoProvider`/`pickImageProvider` 按 `VIDEO_PROVIDER_ORDER`(默认 `grok`,兼容旧 `VIDEO_PROVIDER=kling` → `kling,grok`,其余值视为只有 `grok`)/`IMAGE_PROVIDER_ORDER`(默认 `openai,grok`)的次序,取第一个「配了 key、未被 `exhaustion.ts` 判定耗尽、`capabilities().modes` 声明支持该模式、(视频)接得下请求画幅 / 分辨率 / 尾帧」的 provider。生产已显式覆盖为 `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`。ORDER 全没选中时的 fallback:配了 XAI key 且未耗尽才试 grok;否则只要配了任何真 key 就 503 `no_provider_available`,完全没 key 才 mock。provider 身份由 `src/lib/providers/registry.ts` 的运行时注册表管理(`builtin.ts` 在模块加载时注册内建各家),`ProviderId` 是开放字符串;ORDER 只接受已注册的 id,未注册的项被忽略并 warn 一次。
 
 | 配置 | 行为 |
 | --- | --- |

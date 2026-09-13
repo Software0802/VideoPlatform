@@ -4,21 +4,26 @@ import {
   hasOpenaiKey,
   hasXaiKey,
   hasYmanKey,
-  imageProviderOrder,
+  imageProviderOrderCompat,
+  imageProviderOrderRaw,
   klingVideoAudio,
-  videoProviderOrder,
+  videoProviderOrderCompat,
+  videoProviderOrderRaw,
 } from "@/lib/env";
+import { log } from "@/lib/log";
 import { isExhausted, type ExhaustionKind } from "@/lib/providers/exhaustion";
 import { RESOLUTION_TIERS, resolutionRank, servesResolution } from "@/lib/providers/resolution";
 import { grokNativeProvider } from "@/lib/providers/grok/native";
 import { ASPECT_RATIOS } from "@/lib/providers/grok/mode-matrix";
 import { isHarnessDuration } from "@/lib/harness/durations";
-import { klingProvider } from "@/lib/providers/kling/native";
 import { mockProvider } from "@/lib/providers/mock";
-import { jimengProvider } from "@/lib/providers/jimeng";
-import { openaiImageProvider } from "@/lib/providers/openai-image/native";
-import { ymanProvider } from "@/lib/providers/yman/native";
 import { ProviderHttpError } from "@/lib/providers/types";
+import "@/lib/providers/builtin";
+import {
+  hasProviderKey as registryHasProviderKey,
+  isRegisteredProviderId,
+  providerForId as registryProviderForId,
+} from "@/lib/providers/registry";
 import type {
   AspectRatio,
   NativeMode,
@@ -30,24 +35,50 @@ import type {
 
 /**
  * 一个 provider 有没有可用的 key。路由第一关问的就是它——没有 key 的 provider
- * 无论排在多前面都不参与。
+ * 无论排在多前面都不参与。判据在 `registry.ts`（provider 自己的 `hasKey` 优先，
+ * 内置各家回落既有 env 判据）。
  */
 export function hasProviderKey(id: ProviderId): boolean {
-  switch (id) {
-    case "grok":
-      return hasXaiKey();
-    case "kling":
-      return hasKlingKey();
-    case "yman":
-      return hasYmanKey();
-    case "openai":
-      return hasOpenaiKey();
-    case "mock":
-      return true;
-    // 即梦还是占位实现（submit 直接抛），永远不该被自动路由选中。
-    case "jimeng":
-      return false;
+  return registryHasProviderKey(id);
+}
+
+/**
+ * ORDER 里出现未注册 id 时只 warn 一次（每个 id 每进程一次）：ORDER 是运维写错的
+ * 重灾区，每次调用都刷日志会把真正的告警淹掉。
+ */
+const warnedUnknownProviderIds = new Set<string>();
+
+function knownProviderId(envName: string, id: string): id is ProviderId {
+  if (isRegisteredProviderId(id)) return true;
+  if (!warnedUnknownProviderIds.has(id)) {
+    warnedUnknownProviderIds.add(id);
+    log("warn", `${envName} 含未注册的 provider，已忽略`, { provider: id });
   }
+  return false;
+}
+
+/**
+ * 视频路由实际使用的 ORDER：显式 `VIDEO_PROVIDER_ORDER` 按注册表过滤（未注册 id
+ * 忽略 + warn 一次），过滤后为空或没设时回落 `VIDEO_PROVIDER` 兼容层 / 默认
+ * `grok`——与字面量校验时代逐字同义，只是「合法值」改由注册表回答。
+ */
+export function effectiveVideoProviderOrder(): ProviderId[] {
+  const raw = videoProviderOrderRaw();
+  if (raw) {
+    const known = raw.filter((id) => knownProviderId("VIDEO_PROVIDER_ORDER", id));
+    if (known.length) return known;
+  }
+  return videoProviderOrderCompat();
+}
+
+/** 同上，`IMAGE_PROVIDER_ORDER`；默认 `openai,grok`。 */
+export function effectiveImageProviderOrder(): ProviderId[] {
+  const raw = imageProviderOrderRaw();
+  if (raw) {
+    const known = raw.filter((id) => knownProviderId("IMAGE_PROVIDER_ORDER", id));
+    if (known.length) return known;
+  }
+  return imageProviderOrderCompat();
 }
 
 /** 这个 provider 接不接得下这个画幅。没声明 `aspectRatios` = 不限（xAI / mock）。 */
@@ -150,7 +181,7 @@ type VideoRoute = { provider: VideoProvider } | { blocked: string };
 
 function pickVideoProvider(mode: NativeMode, constraints?: VideoRouteConstraints): VideoRoute {
   let blocked: string | null = null;
-  for (const id of videoProviderOrder()) {
+  for (const id of effectiveVideoProviderOrder()) {
     if (!hasProviderKey(id) || isExhausted(id, "video")) continue;
     const provider = providerForId(id);
     const caps = provider.capabilities();
@@ -194,7 +225,7 @@ function pickVideoProvider(mode: NativeMode, constraints?: VideoRouteConstraints
  * mock，只有完全没 key 的实例才拿 mock 当正常形态。
  */
 function pickImageProvider(): VideoProvider {
-  for (const id of imageProviderOrder()) {
+  for (const id of effectiveImageProviderOrder()) {
     if (!hasProviderKey(id) || isExhausted(id, "image")) continue;
     const provider = providerForId(id);
     if (provider.capabilities().modes.includes("text_to_image")) return provider;
@@ -258,14 +289,9 @@ export function currentProviderId(
   return route.provider.id;
 }
 
+/** 未注册的 id 抛 `unknown provider`，与字面量时代一致；实现在 `registry.ts`。 */
 export function providerForId(id: VideoProvider["id"]): VideoProvider {
-  if (id === "mock") return mockProvider;
-  if (id === "grok") return grokNativeProvider;
-  if (id === "jimeng") return jimengProvider;
-  if (id === "openai") return openaiImageProvider;
-  if (id === "kling") return klingProvider;
-  if (id === "yman") return ymanProvider;
-  throw new Error(`unknown provider: ${String(id)}`);
+  return registryProviderForId(id);
 }
 
 /** 时长连续（grok / mock）时芯片显示的几档。 */
@@ -303,7 +329,7 @@ export function videoAspectRatios(): AspectRatio[] {
   if (forceMock()) return [...UI_VIDEO_RATIOS];
   const allowed = new Set<AspectRatio>();
   let sawKeyedProvider = false;
-  for (const id of videoProviderOrder()) {
+  for (const id of effectiveVideoProviderOrder()) {
     if (!hasProviderKey(id) || isExhausted(id, "video")) continue;
     const caps = providerForId(id).capabilities();
     if (!caps.modes.includes("text_to_video")) continue;
@@ -328,7 +354,7 @@ export function videoResolutions(): Resolution[] {
   if (forceMock()) return [...RESOLUTION_TIERS];
   const allowed = new Set<Resolution>();
   let sawKeyedProvider = false;
-  for (const id of videoProviderOrder()) {
+  for (const id of effectiveVideoProviderOrder()) {
     if (!hasProviderKey(id) || isExhausted(id, "video")) continue;
     const caps = providerForId(id).capabilities();
     if (!caps.modes.includes("text_to_video")) continue;
@@ -368,7 +394,7 @@ export function uiProviderId(mode: NativeMode = "text_to_video"): ProviderId {
   try {
     return currentProviderId(mode);
   } catch {
-    for (const id of videoProviderOrder()) {
+    for (const id of effectiveVideoProviderOrder()) {
       if (hasProviderKey(id) && providerForId(id).capabilities().modes.includes(mode)) return id;
     }
     return hasXaiKey() ? "grok" : "mock";

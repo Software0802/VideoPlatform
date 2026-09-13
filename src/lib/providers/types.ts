@@ -9,7 +9,12 @@ export type NativeMode =
 export type AspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "3:2" | "2:3";
 export type Resolution = "480p" | "720p" | "1080p";
 export type ImageResolution = "1k" | "2k";
-export type ProviderId = "grok" | "mock" | "jimeng" | "openai" | "kling" | "yman";
+/**
+ * Provider 身份。只是字符串：合法值由 `providers/registry.ts` 的运行时注册表约束
+ * （`isRegisteredProviderId` / `providerForId`），不再是编译期字面量联合——中继
+ * （relay）provider 由配置在运行时注册，类型系统拦不住也不需要拦。
+ */
+export type ProviderId = string;
 
 export type MediaRef =
   | { kind: "path"; path: string }
@@ -79,6 +84,12 @@ export type ProviderPoll = {
 
 export interface VideoProvider {
   readonly id: ProviderId;
+  /**
+   * 「这家现在有没有可用的上游 key」。路由第一关（`providers/registry.ts` 的
+   * `hasProviderKey`）优先用它；不声明时回落到内置各家的既有判据（`*_API_KEY`
+   * 环境变量 / mock 恒真 / jimeng 占位恒假）。relay 必须声明它（读自己的 `keyEnv`）。
+   */
+  hasKey?(): boolean;
   capabilities(): {
     modes: NativeMode[];
     maxDurationSec: number;

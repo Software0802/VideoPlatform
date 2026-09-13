@@ -286,11 +286,6 @@ export function klingBase(): string {
   return raw || OFFICIAL_KLING_BASE;
 }
 
-export type VideoProviderChoice = "grok" | "kling" | "yman";
-
-/** 能接视频任务的 provider（按能力路由，不含只出图的 openai 与占位的 jimeng）。 */
-export const VIDEO_PROVIDER_IDS: readonly VideoProviderChoice[] = ["kling", "yman", "grok"];
-
 /**
  * 没有任何显式配置时的优先级：只有 xAI。
  *
@@ -299,60 +294,66 @@ export const VIDEO_PROVIDER_IDS: readonly VideoProviderChoice[] = ["kling", "yma
  * 时长档位与成片质感，而运维那边什么都没改。要走可灵，写 `VIDEO_PROVIDER_ORDER`
  * （或旧的 `VIDEO_PROVIDER=kling`）说出来。
  */
-const DEFAULT_VIDEO_PROVIDER_ORDER: readonly VideoProviderChoice[] = ["grok"];
+const DEFAULT_VIDEO_PROVIDER_ORDER: readonly string[] = ["grok"];
 
 /**
- * 视频路由的优先级列表（方案 §3.4「功能先于供应商」）。router 按「模式 → 声明支持它且
- * 配了 key 的第一个 provider」路由，所以这条只表达**偏好次序**，不表达能力——某个
- * provider 接不了这个模式时会自动跳到下一个，不需要在这里为每种模式各写一份。
- *
- * 兼容旧的单一开关 `VIDEO_PROVIDER`：`=kling` 视为 `kling,grok`，`=grok`（以及任何
- * 非法值）视为只有 `grok`——旧配置的语义就是「除非点名，否则别让可灵抢路由」，
- * 默认次序（`grok`）现在与它同一个语义。列表里认不出的名字直接丢掉，
- * 全丢光了就当没设过（回到兼容分支），免得一个拼错的名字把视频功能整个关掉。
+ * `*_PROVIDER_ORDER` 的原始解析：小写、去空、去重，**不做合法性校验**——合法值由
+ * `providers/registry.ts` 的运行时注册表决定（env 不能 import 注册表，会绕成
+ * 「provider 实现 → env → 注册表 → provider 实现」的循环）。env 只负责把字符串
+ * 解析出来；认不出的 id 由 `providers/router.ts` 的 `effective*ProviderOrder`
+ * 过滤并 warn。没设或解析后为空时返回 null，回落由调用方决定。
  */
-export function videoProviderOrder(): VideoProviderChoice[] {
-  const raw = process.env.VIDEO_PROVIDER_ORDER?.trim();
-  if (raw) {
-    const parsed = raw
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter((s): s is VideoProviderChoice =>
-        (VIDEO_PROVIDER_IDS as readonly string[]).includes(s),
-      );
-    const deduped = [...new Set(parsed)];
-    if (deduped.length) return deduped;
-  }
+function parseProviderOrder(raw: string | undefined): string[] | null {
+  const value = raw?.trim();
+  if (!value) return null;
+  const deduped = [...new Set(value.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean))];
+  return deduped.length ? deduped : null;
+}
+
+export function videoProviderOrderRaw(): string[] | null {
+  return parseProviderOrder(process.env.VIDEO_PROVIDER_ORDER);
+}
+
+export function imageProviderOrderRaw(): string[] | null {
+  return parseProviderOrder(process.env.IMAGE_PROVIDER_ORDER);
+}
+
+/**
+ * 没有显式 `VIDEO_PROVIDER_ORDER` 时的次序：兼容旧的单一开关 `VIDEO_PROVIDER`——
+ * `=kling` 视为 `kling,grok`，`=grok`（以及任何非法值）视为只有 `grok`——旧配置的
+ * 语义就是「除非点名，否则别让可灵抢路由」，默认次序（`grok`）现在与它同一个语义。
+ */
+export function videoProviderOrderCompat(): string[] {
   const legacy = process.env.VIDEO_PROVIDER?.trim().toLowerCase();
   if (!legacy) return [...DEFAULT_VIDEO_PROVIDER_ORDER];
   return legacy === "kling" ? ["kling", "grok"] : ["grok"];
 }
 
-export type ImageProviderChoice = "openai" | "yman" | "grok";
+/**
+ * 视频路由的优先级列表（方案 §3.4「功能先于供应商」）：显式 ORDER 优先，否则走
+ * `videoProviderOrderCompat` 的兼容回落。**返回值可能含未注册的 id**——按注册表
+ * 过滤是 `providers/router.ts` 的职责，别直接消费这个函数。
+ */
+export function videoProviderOrder(): string[] {
+  return videoProviderOrderRaw() ?? videoProviderOrderCompat();
+}
 
-/** 能接文生图的 provider（可灵只做视频，不在其中）。 */
-export const IMAGE_PROVIDER_IDS: readonly ImageProviderChoice[] = ["openai", "yman", "grok"];
+/** 文生图 ORDER 没显式配置时的默认：`openai,grok`，加 YMan 之前那条硬编码阶梯。 */
+const DEFAULT_IMAGE_PROVIDER_ORDER: readonly string[] = ["openai", "grok"];
+
+/** `IMAGE_PROVIDER_ORDER` 未设时的回落（文生图没有旧的单值开关要兼容）。 */
+export function imageProviderOrderCompat(): string[] {
+  return [...DEFAULT_IMAGE_PROVIDER_ORDER];
+}
 
 /**
  * 文生图的优先级列表，默认 `openai,grok`——正是加 YMan 之前那条硬编码的阶梯
  * （有 OPENAI_API_KEY 走 openai，否则 xAI，都没有才 mock），所以旧实例不改配置行为不变。
  *
- * 与 `VIDEO_PROVIDER_ORDER` 同一套规则：只表达偏好次序，能力由各 provider 的
- * `capabilities().modes` 说了算；认不出的名字丢掉，全丢光就回落默认。
+ * 与 `videoProviderOrder` 同一套规则：只解析、不校验，未注册 id 由 router 过滤。
  */
-export function imageProviderOrder(): ImageProviderChoice[] {
-  const raw = process.env.IMAGE_PROVIDER_ORDER?.trim();
-  if (raw) {
-    const parsed = raw
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter((s): s is ImageProviderChoice =>
-        (IMAGE_PROVIDER_IDS as readonly string[]).includes(s),
-      );
-    const deduped = [...new Set(parsed)];
-    if (deduped.length) return deduped;
-  }
-  return ["openai", "grok"];
+export function imageProviderOrder(): string[] {
+  return imageProviderOrderRaw() ?? imageProviderOrderCompat();
 }
 
 /**

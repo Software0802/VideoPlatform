@@ -10,7 +10,6 @@ import {
   hasXaiKey,
   hasYmanKey,
   isMockMode,
-  videoProviderOrder,
   xaiBase,
 } from "@/lib/env";
 import { assertFfmpeg, ffmpegBinary } from "@/lib/ffmpeg";
@@ -19,6 +18,7 @@ import { exhaustedList } from "@/lib/providers/exhaustion";
 import { mockHasFont } from "@/lib/providers/mock";
 import {
   audioAvailableFor,
+  effectiveVideoProviderOrder,
   imageAspectRatios,
   uiProviderId,
   videoAspectRatios,
@@ -130,7 +130,7 @@ async function handler(request: Request) {
       videoProvider,
       // 路由的优先级列表（VIDEO_PROVIDER_ORDER 归一后的结果）。上面的 videoProvider
       // 只是这一刻文生视频的落点，排查「为什么走了这家」要看这条。
-      videoProviderOrder: videoProviderOrder(),
+      videoProviderOrder: effectiveVideoProviderOrder(),
       // 首页时长芯片的档位，由 provider 能力决定（grok/mock 4/6/8/10、可灵 5/10、
       // YMan 看所选 t2v 模型）——与 `src/app/page.tsx` 下发的同名 prop 同一个判据。
       videoDurations: videoDurationsFor(videoProvider),

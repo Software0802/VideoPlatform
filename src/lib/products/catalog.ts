@@ -1,16 +1,15 @@
 import { priceCny } from "@/lib/billing/prices";
-import {
-  imageProviderOrder,
-  isMockMode,
-  klingVideoAudio,
-  lumenProductsRaw,
-  videoProviderOrder,
-} from "@/lib/env";
+import { isMockMode, klingVideoAudio, lumenProductsRaw } from "@/lib/env";
 import { log } from "@/lib/log";
 import { isExhausted } from "@/lib/providers/exhaustion";
 import { envModelFor } from "@/lib/providers/model-name";
 import { servesResolution } from "@/lib/providers/resolution";
-import { currentProviderId, hasProviderKey } from "@/lib/providers/router";
+import {
+  currentProviderId,
+  effectiveImageProviderOrder,
+  effectiveVideoProviderOrder,
+  hasProviderKey,
+} from "@/lib/providers/router";
 import type {
   AspectRatio,
   ImageResolution,
@@ -258,7 +257,7 @@ export function isProductAvailable(product: Product): boolean {
 /** 这个产品的 provider 在对应通道（视频 / 图片各一份）的 ORDER 里。 */
 function inProviderOrder(product: Product): boolean {
   const order: readonly string[] =
-    product.kind === "image" ? imageProviderOrder() : videoProviderOrder();
+    product.kind === "image" ? effectiveImageProviderOrder() : effectiveVideoProviderOrder();
   return order.includes(product.provider);
 }
 

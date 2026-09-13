@@ -1,10 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderHttpError, type ProviderGenerateRequest } from "./types";
 import {
   currentProviderId,
+  effectiveVideoProviderOrder,
   needsSourceFileUpload,
   providerForId,
   selectProvider,
@@ -207,6 +208,22 @@ describe("selectProvider / currentProviderId — Kling routing", () => {
 
   it("resolves a persisted Kling job back to the Kling provider", () => {
     expect(providerForId("kling").id).toBe("kling");
+  });
+
+  it("ignores unregistered ids in VIDEO_PROVIDER_ORDER and warns only once per id", () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "fixture-unregistered,kling";
+    process.env.KLING_API_KEY = "kling-test-key";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(effectiveVideoProviderOrder()).toEqual(["kling"]);
+      // 再调一次（以及路由再走一遍）不得重复 warn。
+      expect(effectiveVideoProviderOrder()).toEqual(["kling"]);
+      expect(currentProviderId("text_to_video")).toBe("kling");
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
