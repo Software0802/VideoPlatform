@@ -205,6 +205,21 @@ export function openaiImageQuality(): OpenaiImageQuality {
 }
 
 /**
+ * 是否启用图生图（`/images/edits`，multipart 带 `image[]` 参考图）。默认关：ccgoai 是否
+ * 透传这条接口**未验证**，验证通过前打开等于让带参考图的请求直接撞上 404。
+ */
+export function openaiImageEditsEnabled(): boolean {
+  const v = process.env.OPENAI_IMAGE_EDITS_ENABLED?.trim();
+  return v === "1" || v === "true";
+}
+
+/** 同上，YMan 生图通道的 `YMAN_IMAGE_EDITS_ENABLED`。 */
+export function ymanImageEditsEnabled(): boolean {
+  const v = process.env.YMAN_IMAGE_EDITS_ENABLED?.trim();
+  return v === "1" || v === "true";
+}
+
+/**
  * 图片档位价目表的 JSON 原文（quality × 尺寸档）。价目是上游特定的，仓库不预设；
  * 解析、校验与损坏时的回落都在 `@/lib/cost`，这里只负责把原文取出来。
  */

@@ -110,6 +110,12 @@ export interface VideoProvider {
      */
     durations?: number[];
     /**
+     * 文生图能不能带参考图。**省略 = false**。为真时 `text_to_image` 且
+     * `referenceImages` 非空的请求改走图生图接口（OpenAI 兼容通道是
+     * `POST /images/edits` multipart）；为假时这类请求在 `validate()` 被 400 拒掉。
+     */
+    supportsImageReference?: boolean;
+    /**
      * 一条任务从提交到出片，本地最多等多久（毫秒）。**省略 = 15 分钟**
      * （`runner.DEFAULT_TASK_TIMEOUT_MS`，grok / mock 走这条）。
      *

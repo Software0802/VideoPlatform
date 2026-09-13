@@ -16,7 +16,8 @@ async function resultWith(bytes: Buffer): Promise<IdentitySheetResult> {
   return {
     characterId: "char_main",
     characterIndex: 0,
-    requestJobId: "job_sheet_fixture-sheet-0",
+    view: "front",
+    requestJobId: "job_sheet_fixture-sheet-0-front",
     prompt: "fixture",
     handle: {
       providerId: "grok",
@@ -35,9 +36,9 @@ describe("identity sheet store", () => {
       const saved = await persistIdentitySheet(await resultWith(await validJpeg()), { jobDir, tempDir });
       expect(saved).toMatchObject({
         characterId: "char_main",
-        assetId: "inputs/sheets/character-0.jpg",
+        assetId: "inputs/sheets/character-0-front.jpg",
       });
-      expect((await stat(path.join(jobDir, "inputs/sheets/character-0.jpg"))).size).toBeGreaterThan(0);
+      expect((await stat(path.join(jobDir, "inputs/sheets/character-0-front.jpg"))).size).toBeGreaterThan(0);
       expect(await readdir(tempDir)).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -55,7 +56,7 @@ describe("identity sheet store", () => {
         isCanceled: async () => true,
       });
       expect(saved).toBeNull();
-      await expect(stat(path.join(jobDir, "inputs/sheets/character-0.jpg"))).rejects.toThrow();
+      await expect(stat(path.join(jobDir, "inputs/sheets/character-0-front.jpg"))).rejects.toThrow();
       expect(await readdir(tempDir)).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });

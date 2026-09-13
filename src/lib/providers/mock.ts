@@ -43,6 +43,9 @@ export const mockProvider: VideoProvider = {
       // 三档全出得了（与 grok 同一份判据），参考图按最宽的那家（YMan 的 9 张）收。
       resolutions: ["480p", "720p", "1080p"],
       maxReferenceImages: 9,
+      // mock 的 t2i 本来就是占位图：带参考图也只是忽略内容、照出一张，所以声明支持
+      // 图生图——harness 的角色表侧面/背面与每镜首帧在 mock 端到端里才会真的被走到。
+      supportsImageReference: true,
     };
   },
   async submit(req: ProviderGenerateRequest): Promise<ProviderHandle> {

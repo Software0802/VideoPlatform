@@ -1,13 +1,16 @@
+import { basename } from "node:path";
 import { estimateOpenaiImageCostUsd } from "@/lib/cost";
 import {
   openaiGetBody,
   openaiGetJson,
   openaiPost,
+  openaiPostForm,
   type OpenaiResponseBody,
 } from "@/lib/providers/openai-image/client";
 import { OPENAI_IMAGE_CONFIG, type OpenaiImageConfig } from "@/lib/providers/openai-image/config";
 import { cropToAspect } from "@/lib/providers/openai-image/crop";
 import {
+  buildImageEditFields,
   buildImageRequest,
   mapAspectToSize,
   mapQuality,
@@ -23,6 +26,7 @@ import {
 import { mediaStore } from "@/lib/storage/local-fs";
 import {
   ProviderHttpError,
+  type MediaRef,
   type ProviderGenerateRequest,
   type ProviderHandle,
   type ProviderPoll,
@@ -30,6 +34,8 @@ import {
 } from "@/lib/providers/types";
 
 const IMAGE_PATH = "/images/generations";
+/** Edits endpoint: same channel, same billing rules, multipart wire format. */
+const EDIT_PATH = "/images/edits";
 /** Staged inside the job dir; the runner renames it to `outputs/image.jpg` after commit. */
 const STAGED_OUTPUT = "tmp/image.jpg";
 
@@ -48,8 +54,17 @@ export function makeOpenaiImageProvider(cfg: OpenaiImageConfig): VideoProvider {
         modes: ["text_to_image"],
         maxDurationSec: 0,
         supportsLastFrameLock: false,
+        supportsImageReference: cfg.imageEditsEnabled(),
         maxResolution: "1080p",
       };
+    },
+    validate(req: ProviderGenerateRequest): void {
+      if (req.mode !== "text_to_image") {
+        throw new ProviderHttpError(400, "unsupported_mode", "OpenAI 生图 provider 只支持文生图");
+      }
+      if (req.referenceImages?.length && !cfg.imageEditsEnabled()) {
+        throw new ProviderHttpError(400, "invalid_argument", "当前生图模型不支持参考图");
+      }
     },
     async submit(req: ProviderGenerateRequest): Promise<ProviderHandle> {
       if (req.mode !== "text_to_image") {
@@ -60,11 +75,17 @@ export function makeOpenaiImageProvider(cfg: OpenaiImageConfig): VideoProvider {
       const { size, crop } = mapAspectToSize(req.aspectRatio, req.imageResolution, shape);
       const quality = mapQuality(req.imageResolution, shape);
       const model = req.model?.trim() || cfg.model();
+      const refs = req.referenceImages ?? [];
+      if (refs.length && !cfg.imageEditsEnabled()) {
+        throw new ProviderHttpError(400, "invalid_argument", "当前生图模型不支持参考图");
+      }
 
       // No business-level retry around this call: gpt-image-1 bills on success, so a second
       // submit for the same job is a second charge. Transport retries stay in fetchUpstream,
       // which only repeats on statuses that never produced an image.
-      const response = await openaiPost(IMAGE_PATH, buildImageRequest({ ...req, model }, shape), cfg);
+      const response = refs.length
+        ? await openaiPostForm(EDIT_PATH, await buildEditForm({ ...req, model }, shape), cfg)
+        : await openaiPost(IMAGE_PATH, buildImageRequest({ ...req, model }, shape), cfg);
       const { png, usage, actualCharge } = await resolveImage(response, cfg, req.shouldAbort);
       const jpeg = await cropToAspect(png, crop);
       // Bytes go to the job dir, never into the handle: a base64 data URI on the handle would be
@@ -143,4 +164,72 @@ function taskDeps(cfg: OpenaiImageConfig, shouldAbort?: () => Promise<boolean>):
     timeoutMs: cfg.taskTimeoutMs(),
     shouldAbort,
   };
+}
+
+/**
+ * `image[]` parts are appended once per reference image; scalar fields come from
+ * `buildImageEditFields` so generations and edits price identically.
+ */
+async function buildEditForm(
+  req: ProviderGenerateRequest,
+  shape: ReturnType<OpenaiImageConfig["shape"]>,
+): Promise<FormData> {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(buildImageEditFields(req, shape))) {
+    form.append(key, value);
+  }
+  for (const [index, ref] of (req.referenceImages ?? []).entries()) {
+    const { blob, name } = await mediaRefToBlob(ref, index);
+    form.append("image[]", blob, name);
+  }
+  return form;
+}
+
+const DATA_URI_RE = /^data:([^;,]+)?;base64,([\s\S]*)$/;
+
+const MIME_EXT: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
+/** Upstream needs a real filename on each part; bare Blobs serialize as "blob". */
+async function mediaRefToBlob(ref: MediaRef, index: number): Promise<{ blob: Blob; name: string }> {
+  if (ref.kind === "data_uri") {
+    const match = DATA_URI_RE.exec(ref.dataUri);
+    if (!match) throw new ProviderHttpError(400, "invalid_argument", "参考图 data URI 无效");
+    const mime = match[1] || "image/jpeg";
+    return {
+      blob: new Blob([Buffer.from(match[2]!, "base64")], { type: mime }),
+      name: `reference-${index + 1}.${MIME_EXT[mime] ?? "jpg"}`,
+    };
+  }
+  if (ref.kind === "path") {
+    const { readFile } = await import("node:fs/promises");
+    const bytes = await readFile(ref.path);
+    return {
+      blob: new Blob([bytes], { type: "image/jpeg" }),
+      name: basename(ref.path) || `reference-${index + 1}.jpg`,
+    };
+  }
+  if (ref.kind === "url") {
+    const res = await fetch(ref.url);
+    if (!res.ok) {
+      throw new ProviderHttpError(502, "upstream_invalid_response", `参考图下载失败 HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    let name = `reference-${index + 1}.jpg`;
+    try {
+      const base = new URL(ref.url).pathname.split("/").pop();
+      if (base && base.includes(".")) name = base;
+    } catch {
+      // keep the default name
+    }
+    return { blob, name };
+  }
+  throw new ProviderHttpError(
+    400,
+    "invalid_argument",
+    `参考图 ${index + 1} 的 file_id 无法作为图片上传`,
+  );
 }

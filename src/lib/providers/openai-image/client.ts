@@ -66,6 +66,28 @@ export async function openaiPost(
 }
 
 /**
+ * `POST /images/edits` — multipart variant of `openaiPost`. The content type (and its
+ * boundary) is set by fetch itself; sending `application/json` here would corrupt the form.
+ * Same billing rule as generations: one attempt, never re-sent.
+ */
+export async function openaiPostForm(
+  pathSuffix: string,
+  form: FormData,
+  cfg: OpenaiImageConfig = OPENAI_IMAGE_CONFIG,
+): Promise<OpenaiResponseBody> {
+  const res = await fetchUpstream(
+    `${cfg.base()}${pathSuffix}`,
+    {
+      method: "POST",
+      headers: openaiHeaders(false, cfg),
+      body: form,
+    },
+    { timeoutMs: cfg.timeoutMs(), maxAttempts: 1 },
+  );
+  return readUpstreamBody(res);
+}
+
+/**
  * Task-status GET. Free and side-effect-free upstream (only fetching the *result* settles the
  * charge), so the generic transient-status retry stays on — unlike the billed POST above.
  */

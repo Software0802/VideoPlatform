@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
@@ -126,6 +126,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   delete process.env.OPENAI_BASE_URL;
   delete process.env.OPENAI_IMAGE_TASK_TIMEOUT_MS;
+  delete process.env.OPENAI_IMAGE_EDITS_ENABLED;
   await rm(path.join(dataRoot, "jobs", jobId), { recursive: true, force: true });
 });
 
@@ -619,5 +620,59 @@ describe("openaiImageProvider.poll", () => {
       progress: 100,
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("openaiImageProvider image references (/images/edits)", () => {
+  it("does not declare the capability and rejects reference images while the flag is off", async () => {
+    expect(openaiImageProvider.capabilities().supportsImageReference).toBeFalsy();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      openaiImageProvider.submit(
+        req({ referenceImages: [{ kind: "data_uri", dataUri: "data:image/png;base64,AA==" }] }),
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_argument" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("posts multipart to /images/edits with one image[] part per reference when the flag is on", async () => {
+    process.env.OPENAI_IMAGE_EDITS_ENABLED = "1";
+    expect(openaiImageProvider.capabilities().supportsImageReference).toBe(true);
+
+    const refDir = path.join(dataRoot, "jobs", jobId, "tmp");
+    await mkdir(refDir, { recursive: true });
+    const refPath = path.join(refDir, "front.jpg");
+    await writeFile(refPath, await pngBuffer(64, 64));
+
+    const fetchMock = vi.fn(async () =>
+      okResponse({ data: [{ b64_json: await pngBody(1024, 576) }] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const handle = await openaiImageProvider.submit(
+      req({
+        aspectRatio: "16:9",
+        imageResolution: "1k",
+        referenceImages: [
+          { kind: "path", path: refPath },
+          { kind: "data_uri", dataUri: `data:image/png;base64,${(await pngBuffer(8, 8)).toString("base64")}` },
+        ],
+      }),
+    );
+    expect(handle.localVideoPath).toBe("tmp/image.jpg");
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.openai.com/v1/images/edits");
+    expect(init.method).toBe("POST");
+    const form = init.body as FormData;
+    expect(form).toBeInstanceOf(FormData);
+    expect(form.get("model")).toBe("gpt-image-1");
+    expect(form.get("prompt")).toBe("一座黄昏里的灯塔");
+    expect(form.get("size")).toBe("1536x1024");
+    expect(form.get("quality")).toBe("low");
+    const parts = form.getAll("image[]") as File[];
+    expect(parts).toHaveLength(2);
+    expect(parts[0]!.name).toBe("front.jpg");
   });
 });

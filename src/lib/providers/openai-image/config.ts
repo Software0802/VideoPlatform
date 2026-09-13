@@ -1,11 +1,13 @@
 import {
   openaiApiKey,
   openaiBase,
+  openaiImageEditsEnabled,
   openaiImageModel,
   openaiImageTaskTimeoutMs,
   openaiImageTimeoutMs,
   ymanApiKey,
   ymanBase,
+  ymanImageEditsEnabled,
   ymanImageModel,
 } from "@/lib/env";
 import { openaiImagePriceTable, ymanImagePriceTable, type ImagePriceTable } from "@/lib/cost";
@@ -32,6 +34,13 @@ export type OpenaiImageConfig = {
   /** `req.model` 为空时的兜底模型名（正常路径由 `modelForProvider` 写进 job.model）。 */
   model(): string;
   shape(): OpenaiImageShape;
+  /**
+   * 这条通道是否允许带参考图的 t2i（`POST /images/edits` multipart）。打开后
+   * `capabilities().supportsImageReference` 为真；关闭时带参考图的请求被
+   * `validate()` 400 拒掉。两条通道各自的开关：`OPENAI_IMAGE_EDITS_ENABLED` /
+   * `YMAN_IMAGE_EDITS_ENABLED`，默认都关——中转是否透传 edits 接口未验证。
+   */
+  imageEditsEnabled(): boolean;
   priceTable(): ImagePriceTable | null;
   /** 单次 HTTP 请求超时。 */
   timeoutMs(): number;
@@ -47,6 +56,7 @@ export const OPENAI_IMAGE_CONFIG: OpenaiImageConfig = {
   base: openaiBase,
   model: openaiImageModel,
   shape: envImageShape,
+  imageEditsEnabled: openaiImageEditsEnabled,
   priceTable: openaiImagePriceTable,
   timeoutMs: openaiImageTimeoutMs,
   taskTimeoutMs: openaiImageTaskTimeoutMs,
@@ -67,6 +77,7 @@ export const YMAN_IMAGE_CONFIG: OpenaiImageConfig = {
   base: ymanBase,
   model: ymanImageModel,
   shape: () => ({ flexibleSizes: true, quality: "high" }),
+  imageEditsEnabled: ymanImageEditsEnabled,
   priceTable: ymanImagePriceTable,
   timeoutMs: openaiImageTimeoutMs,
   taskTimeoutMs: openaiImageTaskTimeoutMs,

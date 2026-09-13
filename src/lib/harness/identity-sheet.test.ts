@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProviderHandle, VideoProvider } from "@/lib/providers/types";
 import type { IdentityBible } from "./types";
 import {
-  buildIdentitySheetPrompt,
+  buildCharacterSheetPrompt,
   requestIdentitySheet,
   type IdentitySheetInput,
 } from "./identity-sheet";
@@ -39,7 +39,7 @@ const input: IdentitySheetInput = {
   language: "zh",
 };
 
-function fakeProvider(): VideoProvider & {
+function fakeProvider(supportsImageReference = false): VideoProvider & {
   submit: ReturnType<typeof vi.fn<(request: never) => Promise<ProviderHandle>>>;
 } {
   return {
@@ -48,6 +48,7 @@ function fakeProvider(): VideoProvider & {
       modes: ["text_to_image"],
       maxDurationSec: 15,
       supportsLastFrameLock: false,
+      supportsImageReference,
       maxResolution: "1080p",
     }),
     submit: vi.fn(async () => ({
@@ -58,37 +59,82 @@ function fakeProvider(): VideoProvider & {
   };
 }
 
-describe("identity sheet", () => {
-  it("builds a prompt containing every identity lock", () => {
-    const prompt = buildIdentitySheetPrompt(input);
+describe("character sheet prompts", () => {
+  it("front view carries every identity lock on a 16:9 white canvas", () => {
+    const prompt = buildCharacterSheetPrompt(input, "front");
     expect(prompt).toContain("林");
+    expect(prompt).toContain("全身正面立绘");
+    expect(prompt).toContain("16:9");
     expect(prompt).toContain("short black hair");
     expect(prompt).toContain("navy coat");
     expect(prompt).toContain("amber");
     expect(prompt).toContain("warm tungsten against cool rain light");
     expect(prompt).toContain("facial identity");
-    expect(prompt).toContain("不要出现文字");
+    expect(prompt).toContain("不要文字、标志、水印或其他角色");
   });
 
-  it("submits a 1:1 1k image request and returns the provider handle", async () => {
+  it("side and back views reference the front image and repeat the locks", () => {
+    const side = buildCharacterSheetPrompt(input, "side");
+    const back = buildCharacterSheetPrompt(input, "back");
+    expect(side).toContain("以提供的正面立绘为准");
+    expect(side).toContain("侧面立绘（面向左）");
+    expect(side).toContain("与正面图完全一致");
+    expect(back).toContain("全身背面立绘");
+    expect(back).toContain("不露出面部");
+  });
+
+  it("has English prompts for all three views", () => {
+    const en = { ...input, language: "en" as const };
+    expect(buildCharacterSheetPrompt(en, "front")).toContain("front-view turnaround");
+    expect(buildCharacterSheetPrompt(en, "side")).toContain("facing left");
+    expect(buildCharacterSheetPrompt(en, "back")).toContain("No facial features visible");
+  });
+});
+
+describe("identity sheet requests", () => {
+  it("submits a 16:9 1k image request and returns the provider handle", async () => {
     const provider = fakeProvider();
     const result = await requestIdentitySheet(input, provider, "grok-imagine-image-2.0");
     expect(provider.submit).toHaveBeenCalledWith(
       expect.objectContaining({
-        jobId: "job_director_fixture-sheet-0",
+        jobId: "job_director_fixture-sheet-0-front",
         mode: "text_to_image",
         model: "grok-imagine-image-2.0",
-        aspectRatio: "1:1",
+        aspectRatio: "16:9",
         imageResolution: "1k",
         generateAudio: false,
       }),
     );
+    expect(result.view).toBe("front");
     expect(result.characterId).toBe("char_main");
     expect(result.handle.remoteUrl).toContain("fixture.invalid");
   });
 
+  it("sends the front view as the reference image for side/back views", async () => {
+    const provider = fakeProvider(true);
+    const frontRef = { kind: "path" as const, path: "D:/fixture/front.jpg" };
+    await requestIdentitySheet(input, provider, "grok-imagine-image-2.0", "side", frontRef);
+    expect(provider.submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: "job_director_fixture-sheet-0-side",
+        referenceImages: [frontRef],
+      }),
+    );
+  });
+
+  it("rejects side/back views when the provider cannot do image-to-image", async () => {
+    const provider = fakeProvider(false);
+    const frontRef = { kind: "path" as const, path: "D:/fixture/front.jpg" };
+    await expect(
+      requestIdentitySheet(input, provider, "grok-imagine-image-2.0", "side", frontRef),
+    ).rejects.toThrow("不支持图生图角色表视图");
+    await expect(
+      requestIdentitySheet(input, provider, "grok-imagine-image-2.0", "back"),
+    ).rejects.toThrow("缺少正面参考图");
+  });
+
   it("rejects unknown characters and providers without image generation", async () => {
-    expect(() => buildIdentitySheetPrompt({ ...input, characterId: "missing" })).toThrow("角色不存在");
+    expect(() => buildCharacterSheetPrompt({ ...input, characterId: "missing" }, "front")).toThrow("角色不存在");
     const provider = fakeProvider();
     provider.capabilities = () => ({
       modes: ["text_to_video"] as const,
@@ -141,7 +187,7 @@ describe("identity sheet", () => {
       expect(result.handle.remoteUrl).toBe("data:image/jpeg;base64,AQ==");
       expect(requestPath).toBe("/v1/images/generations");
       expect(requestBody?.model).toBe("grok-imagine-image-2.0");
-      expect(requestBody?.aspect_ratio).toBe("1:1");
+      expect(requestBody?.aspect_ratio).toBe("16:9");
       expect(requestBody?.resolution).toBe("1k");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

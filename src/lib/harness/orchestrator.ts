@@ -31,8 +31,8 @@ import { mediaStore } from "@/lib/storage/local-fs";
 import { createDirectorPlan, directorModel, type DirectorInput } from "./director";
 import { isHarnessDuration } from "./durations";
 import { HarnessFailure } from "./harness-failure";
-import { requestIdentitySheet } from "./identity-sheet";
-import { persistIdentitySheet } from "./identity-sheet-store";
+import { requestIdentitySheet, SHEET_VIEWS } from "./identity-sheet";
+import { persistGeneratedImage, persistIdentitySheet } from "./identity-sheet-store";
 import { extractSharpestTailFrame } from "./keyframe";
 import { applyKeyframeLocks } from "./keyframe-plan";
 import { mockDirectorPlan } from "./mock-director";
@@ -221,7 +221,15 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
             },
             () => createDirectorPlan(input, hooks),
           );
-    const plan = lockPlan(raw, job, caps);
+    // 档 A 判据在生图 provider 上：支持图生图才能给 hard_cut 镜头生成每镜首帧。
+    const imageCaps = selectProvider({
+      jobId: `${job.id}-sheet`,
+      mode: "text_to_image",
+      prompt: "",
+      model: "",
+      generateAudio: false,
+    }).capabilities();
+    const plan = lockPlan(raw, job, caps, imageCaps);
     await saveHarnessPlan(job.id, plan);
     // The submit-time estimate the user saw stays put; the plan-derived figure is stored beside it (R05).
     const planned = estimateHarnessCostUsd(plan.packing.clips, pricing);
@@ -259,64 +267,175 @@ export function createHarnessOrchestrator(overrides: Partial<HarnessDeps> = {}):
   async function keyframe(job: JobRecord, reserved: Reservations) {
     const plan = job.harnessPlan;
     if (!plan) throw new Error("Harness 状态不存在");
+    // r2v 镜头与「档 A 生成首帧」的镜头都要先有角色表。
     const needsSheet = new Set(
-      plan.shots.filter((s) => s.route === "r2v").flatMap((s) => s.characterIds),
+      plan.shots
+        .filter((s) => s.route === "r2v" || s.startFrame?.source === "generated")
+        .flatMap((s) => s.characterIds),
     );
     // 角色表是生图调用，走图片通道的 ORDER/能力路由，不复用视频 provider。
     const imageProvider = selectProvider({ jobId: `${job.id}-sheet`, mode: "text_to_image", prompt: "", model: "", generateAudio: false });
+    const imageCaps = imageProvider.capabilities();
     const imageModel = modelForProvider(imageProvider.id, "text_to_image");
-    // 预留按这次真正会发的 size/quality 估（与 create.ts 的生图估价同一个口径）。
+    // 预留按这次真正会发的 size/quality 估（与 create.ts 的生图估价同一个口径）：
+    // requestIdentitySheet 固定发 aspectRatio "16:9" + imageResolution "1k"。
     const imageShape = imageConfigFor(imageProvider.id)?.shape();
     const sheetPrice = estimateCostUsd(imageModel, 0, {
-      // requestIdentitySheet 固定发 aspectRatio "1:1" + imageResolution "1k"，size 走同一映射。
-      size: mapAspectToSize("1:1", "1k", imageShape).size,
+      size: mapAspectToSize("16:9", "1k", imageShape).size,
       quality: imageShape?.quality ?? "high",
       provider: imageProvider.id,
     });
     const jobDir = mediaStore.jobDir(job.id);
+    const language = /[一-鿿]/.test(job.prompt) || !job.prompt.trim() ? ("zh" as const) : ("en" as const);
     for (const character of plan.bible.characters) {
       if (!needsSheet.has(character.id) || character.sheetAssetIds.length) continue;
       if (await isCanceled(job.id)) return;
-      // One paid image per character sheet; reserved at list price until the charge lands.
-      const saved = await withReservation(
-        {
-          jobId: job.id,
-          key: `sheet:${character.id}`,
-          amount: sheetPrice,
-          reserved,
-          label: `角色表 ${character.name}`,
-          fail: (detail) => new HarnessFailure("budget_exceeded", detail),
-        },
-        async () => {
-          const result = await requestIdentitySheet(
-            { jobId: job.id, bible: plan.bible, characterId: character.id },
-            imageProvider,
-            imageModel,
-          );
-          const handle = await materializeLocalHandle(result.requestJobId, result.handle);
-          const persisted = await persistIdentitySheet(
-            { ...result, handle },
+      const assetIds: string[] = [];
+      for (const view of SHEET_VIEWS) {
+        // 侧面 / 背面以正面为参考走图生图；provider 不声明 i2i 就停在正面，不阻断。
+        if (view !== "front" && !imageCaps.supportsImageReference) break;
+        if (await isCanceled(job.id)) return;
+        let saved: Awaited<ReturnType<typeof persistIdentitySheet>>;
+        try {
+          saved = await withReservation(
             {
-              jobDir,
-              tempDir: tmpDir(),
-              isCanceled: () => isCanceled(job.id),
-              providerId: imageProvider.id,
+              jobId: job.id,
+              key: `sheet:${character.id}:${view}`,
+              amount: sheetPrice,
+              reserved,
+              label: `角色表 ${character.name}（${view}）`,
+              fail: (detail) => new HarnessFailure("budget_exceeded", detail),
+            },
+            async () => {
+              const result = await requestIdentitySheet(
+                { jobId: job.id, bible: plan.bible, characterId: character.id, language },
+                imageProvider,
+                imageModel,
+                view,
+                view === "front"
+                  ? undefined
+                  : { kind: "path", path: resolveLocalOutput(jobDir, assetIds[0]!) },
+              );
+              const persisted = await persistIdentitySheet(result, {
+                jobDir,
+                tempDir: tmpDir(),
+                isCanceled: () => isCanceled(job.id),
+                providerId: imageProvider.id,
+              });
+              await rm(mediaStore.jobDir(result.requestJobId), {
+                recursive: true,
+                force: true,
+              }).catch(() => undefined);
+              if (persisted?.costUsdActual) await addActualCost(job.id, persisted.costUsdActual);
+              return persisted;
             },
           );
-          await rm(mediaStore.jobDir(result.requestJobId), { recursive: true, force: true }).catch(
-            () => undefined,
-          );
-          if (persisted?.costUsdActual) await addActualCost(job.id, persisted.costUsdActual);
-          return persisted;
-        },
-      );
-      if (!saved) return;
+        } catch (error) {
+          // 侧面 / 背面失败回落只留已出的视图；正面失败仍然让任务失败——
+          // 没有正面就没有身份锚，后面所有参考都是空中楼阁。
+          if (view === "front") throw error;
+          log("warn", "character sheet view skipped", {
+            id: job.id,
+            character: character.id,
+            view,
+            detail: error instanceof Error ? error.message : String(error),
+          });
+          break;
+        }
+        if (!saved) return;
+        assetIds.push(saved.assetId);
+      }
+      if (!assetIds.length) return;
       await updateHarnessBible(job.id, (bible) => ({
         ...bible,
         characters: bible.characters.map((c) =>
-          c.id === character.id ? { ...c, sheetAssetIds: [saved.assetId] } : c,
+          c.id === character.id ? { ...c, sheetAssetIds: assetIds } : c,
         ),
       }));
+    }
+
+    /* 档 A：hard_cut 角色镜的静态首帧（shot.prompt + bible 锁定项 + 角色表参考图）。 */
+
+    const latestBible = (await readJob(job.id))?.harnessPlan?.bible ?? plan.bible;
+    for (const shot of plan.shots) {
+      if (shot.startFrame?.source !== "generated") continue;
+      if (await isCanceled(job.id)) return;
+      const refs = shot.characterIds.flatMap(
+        (id) => latestBible.characters.find((c) => c.id === id)?.sheetAssetIds ?? [],
+      );
+      const firstPrompt = [
+        shot.prompt,
+        bibleLockSummary(latestBible, language),
+        language === "en"
+          ? "Static first frame: the very first instant of this shot, complete composition, no motion blur."
+          : "静态首帧：画面为该镜头开始的第一瞬间，构图完整，无动态模糊。",
+      ].join("\n");
+      try {
+        const persisted = await withReservation(
+          {
+            jobId: job.id,
+            key: `first:${shot.id}`,
+            amount: sheetPrice,
+            reserved,
+            label: `镜头 ${shot.index + 1} 首帧`,
+            fail: (detail) => new HarnessFailure("budget_exceeded", detail),
+          },
+          async () => {
+            const requestJobId = `${job.id}-first-${shot.index}`;
+            const handle = await imageProvider.submit({
+              jobId: requestJobId,
+              mode: "text_to_image",
+              prompt: firstPrompt,
+              model: imageModel,
+              aspectRatio: job.aspectRatio ?? "16:9",
+              imageResolution: "1k",
+              generateAudio: false,
+              referenceImages: refs.map((assetId) => ({
+                kind: "path" as const,
+                path: resolveLocalOutput(jobDir, assetId),
+              })),
+            });
+            if (handle.respectModeration === false) throw new Error("首帧未通过安全审核");
+            const saved = await persistGeneratedImage(
+              handle,
+              requestJobId,
+              shot.startFrame!.assetId,
+              {
+                jobDir,
+                tempDir: tmpDir(),
+                isCanceled: () => isCanceled(job.id),
+                providerId: imageProvider.id,
+              },
+            );
+            await rm(mediaStore.jobDir(requestJobId), { recursive: true, force: true }).catch(
+              () => undefined,
+            );
+            if (handle.costUsdActual) await addActualCost(job.id, handle.costUsdActual);
+            return saved;
+          },
+        );
+        if (!persisted) return;
+      } catch (error) {
+        // 首帧出不来就退回纯 t2v：镜头照常生成，只是少了一帧构图锚，不中断整条管线。
+        log("warn", "shot first frame skipped, falling back to t2v", {
+          id: job.id,
+          shot: shot.id,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+        await updateJob(job.id, (r) => {
+          if (!r.harnessPlan) return r;
+          r.harnessPlan = {
+            ...r.harnessPlan,
+            shots: r.harnessPlan.shots.map((s) => {
+              if (s.id !== shot.id || s.startFrame?.source !== "generated") return s;
+              const rest = { ...s };
+              delete rest.startFrame;
+              return { ...rest, route: "t2v" as const };
+            }),
+          };
+          return r;
+        });
+      }
     }
   }
 
@@ -690,29 +809,38 @@ export const harnessOrchestrator: HarnessOrchestrator = createHarnessOrchestrato
  * Apply user frames, provider capability adaptation, and tail-chain extraction
  * targets to a Director plan so every shot can be built by shot-router at submit time.
  *
- * 落档规则（供应商无关化的 B/C 档；档 A 生成首帧是 E2，本刀不做）：
+ * 落档规则（B/C 档 + 档 A 每镜首帧）：
  *  1. `r2v` 只在 provider 声明 `reference_to_video` 时保留，否则按有无可用首帧
  *     落到 `i2v` / `t2v`；
  *  2. `tail_chain` 的镜头（index>0）拿上一镜尾帧做首帧，一律 `i2v`；
- *  4. 落不了地的帧引用（generated / 不存在的 user）直接删，t2v 带着首帧则升 `i2v`；
+ *  3. 档 A：生图 provider 声明 `supportsImageReference` 时，`hard_cut` 且无首帧、
+ *     带角色的镜头生成 `shots/{i}/first.jpg` 做首帧，转 `i2v`；
+ *  4. 落不了地的帧引用（imageCaps 不支持时的 generated / 不存在的 user）直接删，
+ *     t2v 带着首帧则升 `i2v`；
  *  5. 用户首帧锁 shot 0、尾帧锁最后一镜（`applyKeyframeLocks`）。
  */
 export function lockPlan(
   raw: HarnessPlan,
   job: Pick<JobRecord, "assets">,
   caps: Pick<ReturnType<VideoProvider["capabilities"]>, "modes">,
+  imageCaps?: Pick<ReturnType<VideoProvider["capabilities"]>, "supportsImageReference">,
 ): HarnessPlan {
   const startId = job.assets.start?.path;
   const lastId = job.assets.last?.path;
   const supportsR2v = caps.modes.includes("reference_to_video");
+  const canGenerateFirstFrame = Boolean(imageCaps?.supportsImageReference);
   const shots: Shot[] = raw.shots.map((shot) => {
     const next: Shot = { ...shot };
     // Only frames this pipeline can materialize survive: the user start frame
-    // on shot 0, and extracted tail frames that keyframe locks assign below.
-    // `source: "generated"` 首帧是 E2 的档 A，本刀没有生成它们的通道，先删。
-    if (next.startFrame && !(next.startFrame.source === "user" && next.index === 0 && startId)) {
+    // on shot 0, generated first frames when the image provider can do i2i,
+    // and extracted tail frames that keyframe locks assign below.
+    const keep =
+      next.startFrame &&
+      ((next.startFrame.source === "user" && next.index === 0 && Boolean(startId)) ||
+        (next.startFrame.source === "generated" && canGenerateFirstFrame));
+    if (next.startFrame && !keep) {
       delete next.startFrame;
-    } else if (next.startFrame && startId) {
+    } else if (next.startFrame && next.startFrame.source === "user" && startId) {
       next.startFrame = { source: "user", assetId: startId };
     }
     if (next.endFrame) delete next.endFrame;
@@ -722,6 +850,16 @@ export function lockPlan(
     }
     // tail_chain 的续接语义就是拿前一镜尾帧做首帧，恒为 i2v（r2v 留着也接不了尾帧）。
     if (next.continuity === "tail_chain" && next.route !== "i2v") next.route = "i2v";
+    // 档 A：给 hard_cut 的角色镜生成一帧静态首帧，转 i2v——身份由角色表参考图锁定。
+    if (
+      canGenerateFirstFrame &&
+      next.continuity === "hard_cut" &&
+      !next.startFrame &&
+      next.characterIds.length > 0
+    ) {
+      next.startFrame = { source: "generated", assetId: `shots/${next.index}/first.jpg` };
+      next.route = "i2v";
+    }
     return next;
   });
   const extractedTailFrames: Record<string, string> = {};
@@ -956,11 +1094,17 @@ async function previousShotOutput(plan: HarnessPlan, jobId: string, shot: Shot):
   return resolveLocalOutput(mediaStore.jobDir(jobId), record.outputPath);
 }
 
-/** Mock providers hand back a staged local file; turn it into something persistRemote accepts. */
-async function materializeLocalHandle(requestJobId: string, handle: ProviderHandle): Promise<ProviderHandle> {
-  if (!handle.localVideoPath || handle.remoteUrl || handle.fileOutputId) return handle;
-  const abs = resolveLocalOutput(mediaStore.jobDir(requestJobId), handle.localVideoPath);
-  return { ...handle, remoteUrl: await toDataUri(abs) };
+/**
+ * 档 A 首帧 prompt 里的 bible 锁定项摘要：把全片不变的东西钉进每一张首帧，
+ * 角色级身份由参考图（sheetAssetIds）锁定，文本这里只兜风格。
+ */
+function bibleLockSummary(bible: HarnessPlan["bible"], language: "zh" | "en"): string {
+  const doNotChange = bible.style.doNotChange.join(language === "en" ? "; " : "；");
+  const palette = bible.style.palette.join(language === "en" ? ", " : "、");
+  if (language === "en") {
+    return `Palette: ${palette}\nLighting: ${bible.style.lighting}\nLens language: ${bible.style.lens}\nNever change: ${doNotChange}`;
+  }
+  return `色板：${palette}\n光线：${bible.style.lighting}\n镜头语言：${bible.style.lens}\n绝对不能改变：${doNotChange}`;
 }
 
 async function toDataUri(file: string): Promise<string> {

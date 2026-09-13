@@ -2,11 +2,59 @@ import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import sharp from "sharp";
 import { probeDurationSec, runFfmpeg } from "@/lib/ffmpeg";
 import type { JobRecord } from "@/lib/jobs/schema";
 import type { NativeMode, ProviderGenerateRequest, ProviderHandle, VideoProvider } from "@/lib/providers/types";
 import { mockDirectorPlan } from "./mock-director";
 import type { HarnessPlan } from "./types";
+
+/**
+ * The image side of the pipeline goes through `selectProvider({mode:"text_to_image"})`, which
+ * under LUMEN_FORCE_MOCK always answers the real mock provider. Tests that need a specific
+ * image capability set (or a failure) pin a stub here instead — video routing is untouched.
+ */
+const imageStub = vi.hoisted(() => ({ provider: undefined as VideoProvider | undefined }));
+
+vi.mock("@/lib/providers/router", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/lib/providers/router")>();
+  return {
+    ...mod,
+    selectProvider: (req: ProviderGenerateRequest) =>
+      req.mode === "text_to_image" && imageStub.provider
+        ? imageStub.provider
+        : mod.selectProvider(req),
+  };
+});
+
+/** t2i stub that stages a valid JPEG per call; requestJobIds containing "-first-" can be made to fail. */
+function sheetProvider(opts?: { failFirstFrame?: boolean; supportsImageReference?: boolean }) {
+  const submit = vi.fn(async (req: ProviderGenerateRequest): Promise<ProviderHandle> => {
+    if (opts?.failFirstFrame && req.jobId.includes("-first-")) {
+      throw new Error("stub: first-frame upstream down");
+    }
+    const { mediaStore } = await import("@/lib/storage/local-fs");
+    const jpeg = await sharp({
+      create: { width: 16, height: 16, channels: 3, background: { r: 200, g: 120, b: 90 } },
+    })
+      .jpeg()
+      .toBuffer();
+    await mediaStore.writeJobFile(req.jobId, "tmp/image.jpg", jpeg);
+    return { providerId: "mock", remoteId: req.jobId, localVideoPath: "tmp/image.jpg" };
+  });
+  return {
+    id: "mock" as const,
+    capabilities: () => ({
+      modes: ["text_to_image" as const],
+      maxDurationSec: 0,
+      supportsLastFrameLock: false,
+      supportsImageReference: opts?.supportsImageReference ?? true,
+      maxResolution: "1080p" as const,
+    }),
+    submit,
+    poll: vi.fn(),
+  };
+}
 
 let dataRoot = "";
 let writeJob: (record: JobRecord) => Promise<JobRecord>;
@@ -228,6 +276,112 @@ describe("harness orchestrator", () => {
     expect(provider.submit).toHaveBeenCalledTimes(3);
     expect((await readJob(id))?.status).toBe("persisting");
   }, 120_000);
+
+  it("档A：支持图生图时生成三视图角色表与每镜首帧", async () => {
+    const id = "job_harness_first_frame";
+    await writeJob(record(id));
+    const images = sheetProvider();
+    imageStub.provider = images;
+    try {
+      const orchestrator = createHarnessOrchestrator({
+        enabled: () => true,
+        provider: clipProvider((req) => req.durationSec ?? 8),
+        pollIntervalMs: 0,
+        stitchSize: () => ({ width: 64, height: 36 }),
+      });
+      await orchestrator.execute(id);
+
+      const job = await readJob(id);
+      expect(job?.status).toBe("persisting");
+      // 三视图：front + side + back 各占一份 key。
+      const sheets = job?.harnessPlan?.bible?.characters[0]?.sheetAssetIds ?? [];
+      expect(sheets).toEqual([
+        "inputs/sheets/character-0-front.jpg",
+        "inputs/sheets/character-0-side.jpg",
+        "inputs/sheets/character-0-back.jpg",
+      ]);
+      for (const rel of sheets) await access(path.join(dataRoot, "jobs", id, rel));
+      // 侧面/背面带正面参考图。
+      const sideCall = images.submit.mock.calls.find(([r]) => (r as ProviderGenerateRequest).jobId.endsWith("-sheet-0-side"));
+      expect((sideCall?.[0] as ProviderGenerateRequest).referenceImages).toHaveLength(1);
+      // shot0 hard_cut 带角色 → generated 首帧 + i2v。
+      expect(job?.harnessPlan?.shots[0]).toMatchObject({
+        route: "i2v",
+        startFrame: { source: "generated", assetId: "shots/0/first.jpg" },
+      });
+      await access(path.join(dataRoot, "jobs", id, "shots", "0", "first.jpg"));
+      // 4 次生图：3 视图 + 1 首帧。
+      expect(images.submit).toHaveBeenCalledTimes(4);
+    } finally {
+      imageStub.provider = undefined;
+    }
+  }, 120_000);
+
+  it("档A：首帧生成失败时该镜退回 t2v，不中断整条任务", async () => {
+    const id = "job_harness_first_fail";
+    await writeJob(record(id));
+    const images = sheetProvider({ failFirstFrame: true });
+    imageStub.provider = images;
+    try {
+      const orchestrator = createHarnessOrchestrator({
+        enabled: () => true,
+        provider: clipProvider((req) => req.durationSec ?? 8),
+        pollIntervalMs: 0,
+        stitchSize: () => ({ width: 64, height: 36 }),
+      });
+      await orchestrator.execute(id);
+
+      const job = await readJob(id);
+      expect(job?.status).toBe("persisting");
+      expect(job?.harnessPlan?.shots[0]).toMatchObject({ route: "t2v" });
+      expect(job?.harnessPlan?.shots[0]?.startFrame).toBeUndefined();
+      expect(job?.harnessPlan?.shots[1]).toMatchObject({ route: "i2v" });
+    } finally {
+      imageStub.provider = undefined;
+    }
+  }, 120_000);
+
+  it("角色表在 provider 不支持图生图时只落正面一视图", async () => {
+    const id = "job_harness_front_only";
+    await writeJob(record(id));
+    const images = sheetProvider({ supportsImageReference: false });
+    imageStub.provider = images;
+    try {
+      // r2v 镜头才让角色进 needsSheet；视频 provider 声明 r2v 以保住路由。
+      const video = clipProvider((req) => req.durationSec ?? 8);
+      video.capabilities = () => ({
+        modes: ["text_to_video", "image_to_video", "reference_to_video"],
+        maxDurationSec: 15,
+        supportsLastFrameLock: false,
+        maxResolution: "1080p",
+      });
+      const director = vi.fn(async (input: Parameters<typeof mockDirectorPlan>[0]) => {
+        const plan = mockDirectorPlan(input);
+        plan.shots[0] = { ...plan.shots[0]!, route: "r2v", characterIds: ["c_main"] };
+        return plan;
+      });
+      const orchestrator = createHarnessOrchestrator({
+        enabled: () => true,
+        provider: video,
+        director,
+        pollIntervalMs: 0,
+        stitchSize: () => ({ width: 64, height: 36 }),
+      });
+      await orchestrator.execute(id);
+
+      const job = await readJob(id);
+      expect(job?.status).toBe("persisting");
+      expect(job?.harnessPlan?.bible?.characters[0]?.sheetAssetIds).toEqual([
+        "inputs/sheets/character-0-front.jpg",
+      ]);
+      // 不声明 i2i → 档A 不生效，shot0 保持 r2v、无 generated 首帧。
+      expect(job?.harnessPlan?.shots[0]?.route).toBe("r2v");
+      expect(job?.harnessPlan?.shots[0]?.startFrame).toBeUndefined();
+      expect(images.submit).toHaveBeenCalledTimes(1);
+    } finally {
+      imageStub.provider = undefined;
+    }
+  }, 120_000);
 });
 
 describe("plan locking and stitch order", () => {
@@ -261,6 +415,47 @@ describe("plan locking and stitch order", () => {
     expect(locked.shots[2]).toMatchObject({
       endFrame: { source: "user", assetId: "inputs/last.jpg" },
     });
+  });
+
+  it("档A：生图 provider 声明图生图时给 hard_cut 角色镜生成首帧并改走 i2v", () => {
+    const raw: HarnessPlan = {
+      ...base,
+      shots: base.shots.map((s, i) => ({
+        ...s,
+        route: "t2v" as const,
+        continuity: "hard_cut" as const,
+        characterIds: i === 1 ? [] : ["c_main"],
+      })),
+    };
+    const imageCaps = { modes: ["text_to_image"] as NativeMode[], supportsImageReference: true };
+    const locked = lockPlan(raw, { assets: {} }, caps, imageCaps);
+    expect(locked.shots[0]).toMatchObject({
+      route: "i2v",
+      startFrame: { source: "generated", assetId: "shots/0/first.jpg" },
+    });
+    // 无角色引用的 hard_cut 镜头不生成首帧，保持 t2v。
+    expect(locked.shots[1]).toMatchObject({ route: "t2v" });
+    expect(locked.shots[1]?.startFrame).toBeUndefined();
+    expect(locked.shots[2]?.startFrame).toMatchObject({ source: "generated" });
+  });
+
+  it("档A：不支持图生图时不新增首帧，遗留的 generated 首帧照旧删除", () => {
+    const raw: HarnessPlan = {
+      ...base,
+      shots: base.shots.map((s) => ({
+        ...s,
+        route: "t2v" as const,
+        continuity: "hard_cut" as const,
+        characterIds: ["c_main"],
+        startFrame: { source: "generated" as const, assetId: "made-up" },
+      })),
+    };
+    const imageCaps = { modes: ["text_to_image"] as NativeMode[], supportsImageReference: false };
+    const locked = lockPlan(raw, { assets: {} }, caps, imageCaps);
+    for (const shot of locked.shots) {
+      expect(shot.route).toBe("t2v");
+      expect(shot.startFrame).toBeUndefined();
+    }
   });
 
   it("demotes r2v when the provider does not declare reference_to_video", () => {

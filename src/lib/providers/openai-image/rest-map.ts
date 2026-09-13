@@ -130,6 +130,25 @@ export function buildImageRequest(
   };
 }
 
+/**
+ * Scalar fields for `POST /v1/images/edits` (multipart). Same size/quality mapping as
+ * generations — what is billed is what was asked for. The reference images themselves are
+ * appended by the caller as `image[]` parts (one part per MediaRef); this function stays
+ * pure so the field shape is golden-testable without touching the filesystem.
+ */
+export function buildImageEditFields(
+  req: ProviderGenerateRequest,
+  shape: OpenaiImageShape = envImageShape(),
+): Record<string, string> {
+  const { size } = mapAspectToSize(req.aspectRatio, req.imageResolution, shape);
+  return {
+    model: req.model,
+    prompt: req.prompt,
+    size,
+    quality: mapQuality(req.imageResolution, shape),
+  };
+}
+
 export type OpenAiImageUsage = {
   inputTokens?: number;
   outputTokens?: number;
