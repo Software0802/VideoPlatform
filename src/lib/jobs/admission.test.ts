@@ -1,5 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
+import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { JobRecord } from "./schema";
 
@@ -17,7 +18,7 @@ let createJob: (
 let activeCount: () => Promise<number>;
 
 beforeAll(async () => {
-  dataRoot = await mkdtemp(`${os.tmpdir()}\\lumen-admission-test-`);
+  dataRoot = await mkdtemp(path.join(os.tmpdir(), "lumen-admission-test-"));
   process.env.DATA_DIR = dataRoot;
   process.env.LUMEN_FORCE_MOCK = "1";
   process.env.MAX_QUEUED_JOBS = "1";

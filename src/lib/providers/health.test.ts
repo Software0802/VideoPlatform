@@ -165,7 +165,7 @@ describe("落盘延续", () => {
   it("冷却写进 data/provider-health.json，清内存后仍能挡住（重启语义）", async () => {
     vi.stubEnv("PROVIDER_EXHAUSTED_TTL_MS", "3600000");
     health.recordOutcome(ID, "video", false, 50, "quota_exhausted");
-    await new Promise((r) => setTimeout(r, 10)); // persist 是异步 best-effort
+    await health.__flushHealthForTests(); // persist 是异步串行队列，等它排空而不是靶时间
     // 模拟重启：内存清零，只留盘。
     health.__resetHealthForTests();
     expect(health.isAvailable(ID, "video")).toBe(false);
