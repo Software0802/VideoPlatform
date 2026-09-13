@@ -6,6 +6,7 @@ export type BuildInfo = {
   sha: string;
   shortSha: string;
   builtAt: string;
+  /** **构建机**的 Node 版本（打 `deploy.sh` 那台），不是运行时——生产运行时见 runbook 环境事实表。 */
   node: string;
   dirty: boolean;
 };

@@ -364,6 +364,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 | `GET /api/canvas-runs/:id`(D 包) | run 详情(轮询真相);非本人 404 |
 | `POST /api/canvas-runs/:id/approvals`(D 切片二) | `{nodeId, decision: "approve"\|"reject"}`;节点在 `awaiting_approval` 时生效,同决策重放幂等,异决策/时机已过 409 `invalid_state` |
 | `POST /api/canvas-runs/:id/cancel`(D 包) | 落 `cancelRequestedAt`:停提交新节点、在途子任务走 job cancel,全终态后 run → `canceled`;终态 run 幂等交回 |
+| `POST /api/admin/users/:id/{balance,password,disabled}`、`POST /api/admin/{invites,gift-codes}`（R4.1） | 管理 CLI 的服务端入口（`grant-balance`/`reset-password`/`disable-user`/`mint-invites`/`mint-gift-codes` 五条脚本的 HTTP 形态，参数一一对应）；`requireAdminActor`：本机管理令牌优先、否则管理员会话；`[id]` 接受 `usr_*` 或 URL 编码邮箱；写操作记 `actor` 日志；balance 走 `applyBalanceChange` 同一幂等链 |
 
 `src/proxy.ts` 对全部 `/api/*`(除 register/login/logout/health)校验 HMAC 签名会话 Cookie,零 I/O 验签,校验通过后网关层再读一次 `user.json` 确认 `disabled` 不为真;未登录访问非 `/api/*` 页面由页面本身(`/`)服务端 307 到 `/login`。旧的 `LUMEN_ACCESS_TOKEN` / `POST/DELETE /api/auth/session` 已删除,详见 §12。
 
@@ -495,6 +496,7 @@ data/
 | 健康检查信息泄漏(2026-09-06 深夜) | `GET /api/health` 匿名只回 `{ok}`;带会话时才下发 `disk/queue/runner` 等详细信息;磁盘剩余 <5% 判不健康并触发 `ALERT_WEBHOOK_URL` 告警 |
 | 分享令牌信任域(2026-09-06 深夜) | 分享令牌用独立于会话的 HMAC 密钥派生(§2g),即使会话密钥 `LUMEN_SESSION_SECRET` 单独轮换,分享链接不受影响,反之亦然 |
 | 排障与追溯(2026-09-06 深夜) | 每请求生成 `x-request-id`,经 `AsyncLocalStorage` 贯穿日志(`reqId`/`jobId`/`ownerId`),用于跨用户投诉时定位单条请求的完整处理链路 |
+| 本机管理令牌(2026-09-13 R4.1,D-4=b) | `LUMEN_ADMIN_TOKEN` 是 `/api/admin/*` 除管理员会话外的第二条凭据,判据在 `src/lib/admin-token.ts` 且三条件缺一不可:Bearer 与配置常量时间相等(不等长直接 false);`x-forwarded-for` 缺失或**每一跳都是 loopback**(Caddy 对不受信客户端必把该头覆盖为真实对端 IP,外部请求带的必非公网无法伪造的 loopback;`next dev` 内部代理注入的 `::ffff:127.x` 合法);`host` 是 `127.0.0.1[:port]`/`localhost[:port]`。proxy 提前放行、路由内 `requireAdminActor` 用同一份判据复查;未配置令牌则整条通道关闭 |
 
 ## 10. 部署与运维(Windows 注意项)
 
@@ -511,7 +513,7 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 1. 本地 `pnpm build`,打包 `.next`(排除 `cache`/`dev`/`types`)+ `public` + `package.json` + `pnpm-lock.yaml` + `pnpm-workspace.yaml` + `next.config.ts`(约 11MB)。
 2. 服务器 `pnpm install --prod`——**必须在服务器装**,`sharp`/`ffmpeg-static` 是平台相关原生二进制,Windows 版不能用。
 3. **必做**:Turbopack 把 `serverExternalPackages`(`ffmpeg-static`/`sharp`)编成带 hash 的别名(如 `ffmpeg-static-<16位hex>`),构建机与部署机解析的 hash 不一致,不补齐就 500 起不来;部署脚本需扫 `.next/server/chunks/*.js` 提取这类别名,在 `node_modules` 里按真实包名建软链。
-4. 路径 `/opt/genius`,配置 `/opt/genius/.env`(权限 600,`DATA_DIR=/opt/genius/data`、`JOB_CONCURRENCY=1`、`HARNESS_ENABLED=true`);systemd 单元 `genius.service`(`MemoryHigh=550M`/`MemoryMax=700M`/`OOMPolicy=stop`,实测常驻 86–145MB)。
+4. 路径 `/opt/genius`,配置 `/opt/genius/.env`(640,`genius:genius`,`DATA_DIR=/opt/genius/data`、`JOB_CONCURRENCY=1`、`HARNESS_ENABLED=true`);systemd 单元 `genius.service` 以 `User=genius` 运行(drop-in `/etc/systemd/system/genius.service.d/user.conf`,含 NoNewPrivileges/ProtectSystem=strict/ReadWritePaths=/opt/genius/PrivateTmp;`MemoryHigh=550M`/`MemoryMax=700M`/`OOMPolicy=stop`,实测常驻 86–145MB)。
 5. 反代入口借用同机已有的 taiyu Caddy 容器,新增站点块 `genius.homeaistack.online → reverse_proxy 10.255.1.1:3000`(`taiyu_default` 网络网关,不是 docker0 的 10.255.0.1);Caddyfile 改前备份。
 6. 健康检查:`curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/api/health`。
 
@@ -519,7 +521,7 @@ Windows 构建机 → Linux 部署机跨平台发布,`output: "standalone"` 在�
 
 ### 10.2 部署回滚与 CI(2026-09-06 阶段一,as-built)
 
-- `scripts/deploy.sh`:上传前本地跑 `pnpm exec next typegen && pnpm exec tsc --noEmit`(`--skip-check` 可跳过);服务器侧把旧 `.next` 先 `mv` 成 `.next.prev` 再解压新包,`systemctl start` 后轮询 `/api/health`(`HEALTH_TRIES=10 × HEALTH_GAP=6s`,要求 HTTP 200 且 body `ok:true`);health 不达标就 `systemctl stop` → 用 `.next.prev` 换回 `.next` → 重启 → 再验一次 → 脚本以非零退出告知本地「已回滚」还是「回滚也没救」。首次部署没有 `.next.prev` 时明确打印警告并保留当前构建重启。
+- `scripts/deploy.sh`:上传前本地跑三条门禁(`--skip-check` 已删,D-3;`--no-build` 只跳过构建),打包时写 `BUILD_INFO.json` 随包发布;服务器侧把旧 `.next` 先 `mv` 成 `.next.prev` 再解压新包,`systemctl start` 后轮询 `/api/health`(`HEALTH_TRIES=10 × HEALTH_GAP=6s`,要求 HTTP 200 且 body `ok:true`);health 不达标就 `systemctl stop` → 用 `.next.prev` 换回 `.next` → 重启 → 再验一次 → 脚本以非零退出告知本地「已回滚」还是「回滚也没救」。首次部署没有 `.next.prev` 时明确打印警告并保留当前构建重启。
 - `scripts/backup.sh`:见 §5,cron 每日在服务器本机跑;`--data-dir`/`--backup-dir`/`--keep` 可覆盖,退出码非 0 表示这次没产出可用包。
 - `.github/workflows/ci.yml`:push `main` 与所有 PR 触发,`pnpm exec next typegen && pnpm exec tsc --noEmit` → `pnpm exec eslint src` → `pnpm test`(与 `AGENTS.md` 验证门禁前三条逐字一致),Ubuntu runner 上装依赖顺带验证 `sharp`/`ffmpeg-static` 的 Linux 原生二进制能装上;不跑 `pnpm e2e`(需要浏览器 + `next build`,留到后续单独 workflow)。同分支连续 push 只保留最后一次运行。
 

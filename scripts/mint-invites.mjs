@@ -5,8 +5,12 @@
  *
  *   node scripts/mint-invites.mjs 10 --note "第一批内测"
  *
- * 码只写进 data/invites/<code>.json 并打印到标准输出，**不写日志**——
- * stdout 由管理员直接分发，别重定向进文件、别贴进聊天。
+ * 默认走 `POST /api/admin/invites`（R4.1，`LUMEN_ADMIN_TOKEN`，见
+ * `scripts/lib/admin-client.mjs`）；`--offline` 退回直写文件，但会先探测
+ * 服务确实没在跑。
+ *
+ * 码只打印到标准输出，**不写日志**——stdout 由管理员直接分发，别重定向
+ * 进文件、别贴进聊天。
  *
  * DATA_DIR 与服务端一致（不设时用 ./data）。字母表与 src/lib/users/schema.ts
  * 的 INVITE_ALPHABET 必须保持一致（.mjs 无法 import TypeScript）。
@@ -15,17 +19,21 @@ import { randomBytes } from "node:crypto";
 import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { adminPost, assertServiceStopped, splitAdminArgs } from "./lib/admin-client.mjs";
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LENGTH = 12;
 
 /** @param {string} message */
 function usage(message) {
-  process.stderr.write(`${message}\n用法: node scripts/mint-invites.mjs <数量> [--note "说明"]\n`);
+  process.stderr.write(
+    `${message}\n用法: node scripts/mint-invites.mjs <数量> [--note "说明"] [--offline] [--env-file <路径>]\n`,
+  );
   process.exit(1);
 }
 
-const argv = process.argv.slice(2);
+const { envFile, argv } = splitAdminArgs(process.argv.slice(2));
+const offline = argv.includes("--offline");
 const positional = argv.filter((a) => !a.startsWith("--"));
 const noteIndex = argv.indexOf("--note");
 const note = noteIndex >= 0 ? argv[noteIndex + 1] : undefined;
@@ -33,6 +41,17 @@ if (noteIndex >= 0 && (note === undefined || note.startsWith("--"))) usage("--no
 
 const count = Number(positional[0] ?? 1);
 if (!Number.isInteger(count) || count < 1 || count > 500) usage("数量必须是 1–500 的整数");
+
+if (!offline) {
+  const data = await adminPost(envFile, "/api/admin/invites", {
+    count,
+    ...(note ? { note } : {}),
+  });
+  process.stderr.write(`已生成 ${data.codes.length} 个邀请码${note ? `（备注：${note}）` : ""}\n`);
+  for (const code of data.codes) process.stdout.write(`${code}\n`);
+  process.exit(0);
+}
+await assertServiceStopped();
 
 const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), "data"));
 const invitesDir = path.join(dataDir, "invites");

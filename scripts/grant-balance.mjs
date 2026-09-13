@@ -18,22 +18,17 @@
  * 要补偿就充已购池。整份记录是展开写回去的（`{ ...user, balanceCny }`），所以
  * `memberCreditsCny` / `subscription` 这些本脚本不认识的字段原样保留，不会被抹掉。
  *
- * ⚠️ 已知限制：本 CLI 与线上服务之间**没有跨进程锁**。服务端的 `withUserLock` 只在
- * 那个进程内串行，管不到这个脚本；两边都是「读 user.json → 改 balanceCny → 原子
- * 替换」，所以充值的同一瞬间若恰好发生同一用户的扣款（任务成功结算）或改密，后写的
- * 那次会把先写的整份记录覆盖掉，丢一次写——余额少扣 / 少充，或者新密码被回退，而
- * ledger 里两行都在（流水是只增的，不会丢）。
- * 缓解办法就是错开时间：充值前后各看一眼 `data/ledger/<userId>.jsonl` 的最后几行与
- * `user.json` 的 `balanceCny`，确认 `balanceAfterCny` 与余额对得上；对不上按流水重算
- * 余额、再用本脚本以 `adjust` 语义的金额补正。内测规模下「跑之前看一眼没人在用」
- * 就够了，不值得为它引入文件锁。
+ * 默认走 `POST /api/admin/users/[id]/balance`（R4.1，`LUMEN_ADMIN_TOKEN`，
+ * 见 `scripts/lib/admin-client.mjs`）。`--offline` 退回下面的直写文件路径，
+ * 但会先探测服务确实没在跑——服务端的 `withUserLock` 只在它那个进程内串行，
+ * 管不到本脚本，服务在跑时直写会把它的写盘整份覆盖掉。
  */
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { commitChange, readText, writeJsonAtomic as writeShared } from "../src/lib/billing/file-ledger.mjs";
 import { validateUserRecord, validateTransition } from "../src/lib/billing/protocol.mjs";
-import { requireOffline } from "./lib/users-store.mjs";
+import { adminPost, assertServiceStopped, splitAdminArgs } from "./lib/admin-client.mjs";
 
 const USER_ID_RE = /^usr_[0-9a-f]{16}$/;
 
@@ -43,13 +38,13 @@ const USER_ID_RE = /^usr_[0-9a-f]{16}$/;
  */
 function usage(message) {
   process.stderr.write(
-    `${message}\n用法: node scripts/grant-balance.mjs <邮箱> <金额（元，可为负）> --offline [--ref "同笔操作固定键"] [--note "说明"]\n无 --ref 时每次调用均新增一笔，不能安全重跑未知结果的充值。\n`,
+    `${message}\n用法: node scripts/grant-balance.mjs <邮箱|usr_id> <金额（元，可为负）> [--ref "同笔操作固定键"] [--note "说明"] [--offline] [--env-file <路径>]\n无 --ref 时每次调用均新增一笔，不能安全重跑未知结果的充值。\n`,
   );
   process.exit(1);
 }
 
-const argv = process.argv.slice(2);
-requireOffline(argv, "node scripts/grant-balance.mjs <邮箱> <金额> --offline [--ref 固定键] [--note 说明]");
+const { envFile, argv } = splitAdminArgs(process.argv.slice(2));
+const offline = argv.includes("--offline");
 /** @type {string[]} */
 const positional = [];
 /** @type {Record<string, string>} */
@@ -70,11 +65,24 @@ const ref = options["--ref"];
 if (!ref) process.stderr.write("警告：未提供 --ref，本次调用新增一笔；结果不明时不要直接重跑。\n");
 
 const email = String(positional[0] ?? "").trim().toLowerCase();
-if (!email || !email.includes("@")) usage("第一个参数必须是邮箱");
+if (!email || (!email.includes("@") && !USER_ID_RE.test(email))) {
+  usage("第一个参数必须是邮箱或 usr_ 开头的用户 id");
+}
 
 // 负号开头的金额会被上面的 filter 当成普通参数留下（`--` 才是选项），所以直接取第二个。
 const amount = Number(positional[1]);
 if (!Number.isFinite(amount) || amount === 0) usage("金额必须是非 0 的数字（元）");
+
+if (!offline) {
+  const data = await adminPost(envFile, `/api/admin/users/${encodeURIComponent(email)}/balance`, {
+    amountCny: amount,
+    ...(note ? { note } : {}),
+    ...(ref ? { ref } : {}),
+  });
+  process.stdout.write(`${email} 余额: ¥${data.beforeCny.toFixed(2)} → ¥${data.afterCny.toFixed(2)}\n`);
+  process.exit(0);
+}
+await assertServiceStopped();
 
 const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), "data"));
 const usersDir = path.join(dataDir, "users");
@@ -103,6 +111,9 @@ async function readJson(file) {
  * 充值失败的正确原因只能是「这个人真的没注册」。
  */
 async function findUserId() {
+  if (USER_ID_RE.test(email)) {
+    return (await readJson(path.join(usersDir, email, "user.json"))) ? email : null;
+  }
   const index = await readJson(path.join(usersDir, "index.json"));
   const indexed = index && typeof index === "object" ? index[email] : undefined;
   if (typeof indexed === "string" && USER_ID_RE.test(indexed)) return indexed;
@@ -133,7 +144,9 @@ if (!userId) {
 
 const userFile = path.join(usersDir, userId, "user.json");
 const user = validateUserRecord(JSON.parse(/** @type {string} */ (await readText(userFile))), userId);
-if (user.email !== email) throw new Error("用户索引与邮箱不一致，请离线核对");
+if (!USER_ID_RE.test(email) && user.email !== email) {
+  throw new Error("用户索引与邮箱不一致，请离线核对");
+}
 const before = user.balanceCny;
 
 // 字段与顺序跟 ledger.ts 一模一样；kind 固定 grant（负数的人工纠正也记 grant 的反向额）。

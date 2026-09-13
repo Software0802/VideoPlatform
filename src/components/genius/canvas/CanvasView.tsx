@@ -89,6 +89,10 @@ export default function CanvasView() {
   const conflictRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 保存链（2026-09-13）：后一次 PATCH 必须排在在途 PATCH 之后、用它返回的
+  // revision 作 expectedRevision。doc.revision 要等响应回来才经 setDoc 更新，
+  // 不串行的话，在途期间的第二次保存会带着旧 revision 撞 409。
+  const saveTail = useRef<Promise<CanvasDocument | null>>(Promise.resolve(null));
   const materialFor = useRef<string | null>(null);
   const drag = useRef<{ id: string; dx: number; dy: number } | null>(null);
 
@@ -135,6 +139,8 @@ export default function CanvasView() {
       });
       setDoc(next);
       setConflict(null);
+      // 冲突解决后链尾还是冲突前的旧 revision，重置让下一次保存回到 doc 的 revision。
+      saveTail.current = Promise.resolve(null);
       showToast(t("canvas.conflict.keptLocal"));
     } catch (e) {
       if (e instanceof RevisionConflictError) {
@@ -151,6 +157,7 @@ export default function CanvasView() {
     if (!cur) return;
     setDoc(cur.server);
     setConflict(null);
+    saveTail.current = Promise.resolve(null);
     showToast(t("canvas.conflict.usedServer"));
   };
   /* 严格模态：只能显式选一份，Esc / 点外层不关——误触不得替用户覆盖任何一方。 */
@@ -214,19 +221,29 @@ export default function CanvasView() {
    * 冲突未决期间不再发 PATCH（反复 409 没有意义），本地 mutate 照常进行。
    */
   const persist = useCallback(
-    async (base: CanvasDocument, nodes: CanvasNode[], edges = base.edges) => {
-      if (conflictState.current) return;
-      try {
-        const next = await patchCanvas(base.id, { expectedRevision: base.revision, nodes, edges });
-        setDoc((cur) => (cur && cur.id === next.id ? next : cur));
-      } catch (e) {
-        if (e instanceof RevisionConflictError) {
-          const fresh = await fetchCanvas(base.id);
-          if (fresh) setConflict({ server: fresh });
-        } else {
-          showToast(errorText(t, e));
+    (base: CanvasDocument, nodes: CanvasNode[], edges = base.edges): Promise<void> => {
+      if (conflictState.current) return Promise.resolve();
+      const task = saveTail.current.then(async (prev) => {
+        if (conflictState.current) return prev;
+        // 链上上一个 PATCH 的返回才是服务端当前 revision；拿不到（链空、换了
+        // 画布、上一次失败）才退回 schedule 时捕获的 base.revision。
+        const expectedRevision = prev && prev.id === base.id ? prev.revision : base.revision;
+        try {
+          const next = await patchCanvas(base.id, { expectedRevision, nodes, edges });
+          setDoc((cur) => (cur && cur.id === next.id ? next : cur));
+          return next;
+        } catch (e) {
+          if (e instanceof RevisionConflictError) {
+            const fresh = await fetchCanvas(base.id);
+            if (fresh) setConflict({ server: fresh });
+          } else {
+            showToast(errorText(t, e));
+          }
+          return prev;
         }
-      }
+      });
+      saveTail.current = task;
+      return task.then(() => undefined);
     },
     [showToast, t],
   );

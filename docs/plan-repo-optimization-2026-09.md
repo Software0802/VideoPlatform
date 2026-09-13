@@ -1,6 +1,6 @@
 # 设计计划书 · 全仓优化与路线重排（2026-09 起）
 
-状态：2026-09-13 **实施中，本文已作为当前执行路线**。用户已确认：D-1 移除 Tailwind；D-2 e2e 定时+手动；D-3 删除 skip-check；D-4 CLI 走应用管理入口；D-6 素材 30 天并明示；D-7 先出批次报价，未批准实际花费；D-8 本轮准备非 root 迁移，具体停服/改归属逐项确认；D-9 新路线生效。D-5 待 SQLite 触发条件成立再定（生产 Node 22.22.2，22.x 的 node:sqlite 仍为 1.1 Active development）。N3.1–N3.4 已合入 `37123bd`；R0 代码与文档已通过本地门禁（107 单测文件、1245 通过/1 跳过，e2e 36/36，生产构建通过），`main` 首条绿 CI 为 `6b5449d`（R0.1 验收成立）；R1.1–R1.3 已落地，e2e 定时运行与 deploy.sh 新流程待 CI/下一次部署验证；当前证据/剩余工作见 `docs/handoff.md`。用户允许门禁通过后提交推送 main，不等于允许部署或付费评测。本文取代 `docs/plan-next-2026-09-13.md` 的排期表；该文与 `docs/plan-unimplemented-2026-09-08.md` 的契约仍为引用源。以下正文保留起草时方案，实际进度以上述状态与 as-built 为准。
+状态：2026-09-13 **实施中，本文已作为当前执行路线**。已决（§8 标注）：D-1 a 移除 Tailwind（已落地）；D-2 a e2e 定时+手动（`74248a5` 已绿一次）；D-3 a 删除 skip-check；D-4 b 本机管理令牌（R4.1 已落地）；D-6 b 素材 30 天并明示；D-8 a 非 root（已执行）；D-9 是。另已决：R3 先出报价不开跑；R6 无商户主体→继续礼品码，R6 不开工；R7 告警接飞书/钉钉/企微机器人；R4.0 异地副本落阿里云 OSS；R5.2 本轮做。D-5 待 SQLite 触发条件成立再定（生产 Node 22.22.2，22.x 的 node:sqlite 仍为 1.1 Active development）；D-7 预算未定。N3.1–N3.4 已合入 `37123bd`；R0 代码与文档已通过本地门禁，`main` 首条绿 CI 为 `6b5449d`（R0.1 验收成立）；R1.1–R1.3 已落地并于 2026-09-13 部署 `d7f34eb` 实测通过（`--frozen-lockfile` 首过、`build.sha` 回显生效），R1.5 非 root 已执行，R1.4 发布目录仍待生产窗口；当前证据/剩余工作见 `docs/handoff.md`。用户允许门禁通过后提交推送 main，不等于允许部署或付费评测。本文取代 `docs/plan-next-2026-09-13.md` 的排期表；该文与 `docs/plan-unimplemented-2026-09-08.md` 的契约仍为引用源。以下正文保留起草时方案，实际进度以上述状态与 as-built 为准。
 
 沿用的既定决策（不再讨论）：产品三卖点（`plan-next` §0.1）；D1 长片定价 ¥20/30/40；D2 `edit_video`/`extend_video` 移出路线图；D3 通用中转 provider（N3.1–N3.3 已提交，N3.4 进行中）；D4 微信 + 支付宝都接。
 
@@ -138,11 +138,11 @@ R2 / R3 / R4 / R5 在 R1 之后可**并行**（不同文件域，见每片「触
 
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
-| R1.1（已落地，待 CI 定时验证） | e2e workflow：`workflow_dispatch` + 每日定时（`E2E_REQUIRE_MOCK=1`，装浏览器，上传 report 工件）；是否挂 PR 见 §8 D-2 | 定时运行连续 3 次绿 |
+| R1.1（已落地，`74248a5` 定时+手动各绿一次；验收口径连续 3 次绿） | e2e workflow：`workflow_dispatch` + 每日定时（`E2E_REQUIRE_MOCK=1`，装浏览器，上传 report 工件）；是否挂 PR 见 §8 D-2 | 定时运行连续 3 次绿 |
 | R1.2（已落地） | eslint 范围加 `e2e scripts`；`scripts/*.mjs` 加 `// @ts-check` 并纳入 `tsc`（`allowJs` 已开） | 三条门禁覆盖全部可执行代码 |
-| R1.3（已落地，待下一次部署验证） | `deploy.sh`：`git archive HEAD` 到临时目录构建；拒绝脏工作树（或显式 `--allow-dirty` 并打印 diffstat）；写 `BUILD_INFO.json {sha, builtAt, node}`；`/api/health` 登录态回显 `build.sha`；服务器 `pnpm install --prod --frozen-lockfile`；三条门禁齐跑，`--skip-check` 去留见 §8 D-3 | 部署后 `curl /api/health`（登录态）的 sha = 本地 `git rev-parse HEAD`；handoff「生产基线」行改为从 health 读 |
+| R1.3（已落地，2026-09-13 部署 d7f34eb 实测通过） | `deploy.sh`：`git archive HEAD` 到临时目录构建；拒绝脏工作树（或显式 `--allow-dirty` 并打印 diffstat）；写 `BUILD_INFO.json {sha, builtAt, node}`（`node` 是构建机版本）；`/api/health` 登录态回显 `build.sha`；服务器 `pnpm install --prod --frozen-lockfile`；三条门禁齐跑，`--skip-check` 已删（§8 D-3） | 部署后 `curl /api/health`（登录态）的 sha = 本地 `git rev-parse HEAD`；handoff「生产基线」行已改为从 health 读 |
 | R1.4（待生产窗口） | 发布目录 `releases/<sha>` + `current` 软链（`plan-unimplemented` §10）；回滚 = 切软链 | 一次演练：部署 → 切回上一 sha → health 绿 |
-| R1.5（待生产窗口） | 服务专用用户运行（非 root），`data/` 归属迁移；runbook 相应改写 | `systemctl show genius -p User` ≠ root；全部管理 CLI 以该用户执行成功 |
+| R1.5（已执行，2026-09-13） | 服务以专用账号 `genius`（uid 989）运行，drop-in 含 NoNewPrivileges/ProtectSystem=strict/ReadWritePaths/PrivateTmp；`/opt/genius` 整树 genius:genius、`.env` 640；runbook 已改写 | `systemctl show genius -p User` = genius 已验证；管理 CLI 以 `sudo -u genius` 执行成功 |
 | R1.6（已核对，保留现状） | 安全收紧评估（审查 F-19 / F-20）：核对 Caddyfile 对 XFF 是覆盖而非追加；评估 `proxy.ts` 对「带会话 Cookie 且 Origin/Referer 双缺」的非 GET 请求改为 403 | runbook 记录 Caddy 核对结果；若收紧，`proxy.test.ts` 补该用例且 e2e / smoke 不受影响 |
 
 ### R2 · 产品主线 A：多模型与中转（N3.4 → N3.5 → N4；M）
@@ -160,7 +160,7 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 
 ### R3 · 产品主线 B：产出质量成为一等公民（M，需付费预算）
 
-卖点①至今零证据。这一条线的产出是 `evals/runs/*.json` 与固定下来的 `HARNESS_QC_VISUAL_THRESHOLD`。
+卖点①至今零证据。这一条线的产出是 `evals/runs/*.json` 与固定下来的 `HARNESS_QC_VISUAL_THRESHOLD`。**已决：先出报价不开跑**（预算经 PR 描述拍板后才执行付费校准）。
 
 | 片 | 内容 | 验收 | 停止条件 |
 | --- | --- | --- | --- |
@@ -174,8 +174,8 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
-| R4.0 | 备份 drain 接口 + 异地加密副本 + `restore-check.mjs` 恢复演练 | 一次完整演练记录进 runbook：恢复出的用户数 / 两池余额 / `ref` 集合与源一致 |
-| R4.1 | `data/.lock` 或 CLI 走 admin 接口（D-4）；`admission_ms` 埋点；索引增量写；run 归档 | CLI 在服务运行时被拒绝的单测 / 手测；health 有 `admission.p95Ms`；`runHeldFunds` 只读活跃目录的回归用例 |
+| R4.0（已决：异地副本落阿里云 OSS） | 备份 drain 接口 + 异地加密副本 + `restore-check.mjs` 恢复演练 | 一次完整演练记录进 runbook：恢复出的用户数 / 两池余额 / `ref` 集合与源一致 |
+| R4.1（进行中：D-4=b 管理令牌 + CLI 走 `/api/admin/*` 已落地，`admission_ms` 埋点已进 health；索引增量写与 run 归档未做） | CLI 走 admin 接口（D-4）；`admission_ms` 埋点；索引增量写；run 归档 | CLI 在服务运行时 `--offline` 被拒绝的测试 / 手测；health 有 `admission.p95Ms`；`runHeldFunds` 只读活跃目录的回归用例 |
 | R4.2 | repository 接口 + JSON 实现（行为不变）→ SQLite 实现按 §3.2 顺序迁移 | 每模块迁移前后：既有单测不改断言全过；users+billing 迁移前后双 sha256 + 流水重放余额一致（沿用 `migrate-billing` 纪律） |
 
 ### R5 · 前端结构（M）
@@ -183,14 +183,14 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
 | R5.1（已测，数字见 handoff §5） | React Profiler 量化：提示词击键、SSE 进度到达两种场景下的消费者重渲次数与耗时（375 宽移动视口） | 数字进 PR 描述，作为拆分前基线 |
-| R5.2 | `ShellContext` 拆 `SessionProvider` / `JobsProvider` / `ComposerProvider` / `NoticesProvider`；`useShell()` 改为聚合四者的兼容 hook；组件逐个改用细粒度 hook | e2e 全绿；Profiler 重渲次数下降（与 R5.1 对比） |
+| R5.2（已决：本轮做；R5.1 基线见 handoff §5） | `ShellContext` 拆 `SessionProvider` / `JobsProvider` / `ComposerProvider` / `NoticesProvider`；`useShell()` 改为聚合四者的兼容 hook；组件逐个改用细粒度 hook | e2e 全绿；Profiler 重渲次数下降（与 R5.1 对比） |
 | R5.3 | `CanvasView.tsx` 拆节点卡 / 报价层 / 冲突弹层 / 轮询 hook；清掉 3 处 `exhaustive-deps` 禁用（改 ref 或正确依赖） | `react-hooks/exhaustive-deps` 0 disable；canvas e2e 全过 |
 | R5.4 | `globals.css` 按视图拆到 `styles/{shell,home,composer,create,login}.css` | 视觉回归：e2e 截图对比或人工五视图核对 |
 | R5.5（已落地） | Tailwind 去留（D-1）；legacy 重定向页改 `next.config.ts` `redirects()` | `pnpm build` 通过；四个旧路径 307 到 `/` |
 
 ### R6 · 支付网关（D4：微信 + 支付宝；L）
 
-前置：R1（发布可追溯）+ R4.0（备份可恢复）+ R4.1（CLI 与服务互斥——对账脚本会成为账本的第二个写者）。方案正文沿用 `plan-unimplemented` §8：`PaymentOrder` 状态机、回调验签（微信 v3 平台证书 / 支付宝公钥）、`ref:pay:<orderId>` 走 `applyBalanceChange`、退款 unknown 态、对账只查未定订单。
+前置：R1（发布可追溯）+ R4.0（备份可恢复）+ R4.1（CLI 与服务互斥——对账脚本会成为账本的第二个写者）。方案正文沿用 `plan-unimplemented` §8：`PaymentOrder` 状态机、回调验签（微信 v3 平台证书 / 支付宝公钥）、`ref:pay:<orderId>` 走 `applyBalanceChange`、退款 unknown 态、对账只查未定订单。**已决：无商户主体，继续走礼品码，R6 不开工。**
 
 | 片 | 内容 | 验收 |
 | --- | --- | --- |
@@ -204,7 +204,7 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 
 ### R7 · 运维扩容（N6；M）
 
-告警接实际渠道（`ALERT_WEBHOOK_URL` 生产配置 + 一次真实触发验证）；指标（`submission_unknown`、`settlement_pending`、备份年龄、队列等待、`admission_ms`）进 health 与日志；`MemoryMax` 下长片 + 生图 + 拼接峰值实测并定 `HARNESS_SHOT_CONCURRENCY`；会话 / 画布留存策略（沿媒体 30 天，明示；D-6）；`data/` 增长与 run 归档巡检进 runbook；服务器 Node 版本、Caddy 版本与 XFF 行为写进 runbook「环境事实」一节。
+告警接实际渠道（已决：飞书/钉钉/企微机器人 webhook；`ALERT_WEBHOOK_URL` 生产配置 + 一次真实触发验证）；指标（`submission_unknown`、`settlement_pending`、备份年龄、队列等待、`admission_ms`）进 health 与日志；`MemoryMax` 下长片 + 生图 + 拼接峰值实测并定 `HARNESS_SHOT_CONCURRENCY`；会话 / 画布留存策略（沿媒体 30 天，明示；D-6）；`data/` 增长与 run 归档巡检进 runbook；服务器 Node 版本、Caddy 版本与 XFF 行为写进 runbook「环境事实」一节。
 
 ### J · 暂缓
 
@@ -250,12 +250,12 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 
 | # | 决策 | 选项 | 建议 |
 | --- | --- | --- | --- |
-| D-1 | Tailwind 去留 | a) 删依赖换手写 reset；b) 保留并写明理由 | a——全仓 0 处工具类，少一层构建 |
-| D-2 | e2e 进 CI 的方式 | a) 仅定时 + 手动；b) 每个 PR 都跑（约 5 分钟 + 装浏览器） | a 起步，稳定后再 b |
-| D-3 | `deploy.sh --skip-check` | a) 删除；b) 保留但要求 `--reason "..."` 并写进 BUILD_INFO | a |
-| D-4 | 跨进程互斥方式 | a) `data/.lock` 文件锁；b) CLI 改走本机 admin 接口 | b 更彻底（操作有身份、有 ref、有日志），a 更快落地；可 a 先 b 后 |
+| D-1 | Tailwind 去留 | a) 删依赖换手写 reset；b) 保留并写明理由 | **已决 a**（已落地）——全仓 0 处工具类，少一层构建 |
+| D-2 | e2e 进 CI 的方式 | a) 仅定时 + 手动；b) 每个 PR 都跑（约 5 分钟 + 装浏览器） | **已决 a**，稳定后再 b |
+| D-3 | `deploy.sh --skip-check` | a) 删除；b) 保留但要求 `--reason "..."` 并写进 BUILD_INFO | **已决 a** |
+| D-4 | 跨进程互斥方式 | a) `data/.lock` 文件锁；b) CLI 改走本机 admin 接口 | **已决 b（本机管理令牌，R4.1 已落地）** |
 | D-5 | SQLite 选型（阶段 2 才用） | a) `node:sqlite`（零依赖，需核 Node 版本与稳定性标注）；b) `better-sqlite3` | 阶段 1 记录服务器 Node 版本后再定 |
-| D-6 | 画布素材留存期限 | a) 永久（随画布文档）；b) 沿媒体 30 天并明示 | b，与 H §9.4 一致 |
+| D-6 | 画布素材留存期限 | a) 永久（随画布文档）；b) 沿媒体 30 天并明示 | **已决 b**，与 H §9.4 一致 |
 | D-7 | R3 首轮校准预算上限 | 金额由你定 | 写进 PR 描述再开跑 |
-| D-8 | 服务运行身份改非 root（R1.5） | a) 本轮做；b) 推后 | a，改动小、收益明确 |
-| D-9 | 本文是否即刻取代 `plan-next` 排期 | 是 / 否 | 是 |
+| D-8 | 服务运行身份改非 root（R1.5） | a) 本轮做；b) 推后 | **已决 a（已执行）** |
+| D-9 | 本文是否即刻取代 `plan-next` 排期 | 是 / 否 | **已决：是** |

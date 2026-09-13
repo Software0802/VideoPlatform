@@ -39,6 +39,15 @@ export function adminUserId(): string | undefined {
 }
 
 /**
+ * 本机管理令牌（R4.1，D-4=b）：`/api/admin/*` 的 Bearer 凭据，给跑在同一台
+ * 机器上的管理 CLI 用。判据不在这里——令牌只在「无 XFF + host 为 loopback」
+ * 的直连里有效，见 `@/lib/admin-token`。空串按未配置处理。
+ */
+export function adminToken(): string | null {
+  return process.env.LUMEN_ADMIN_TOKEN?.trim() || null;
+}
+
+/**
  * 免费档每人每天能出的图数（plan §6.1）。口径是「今日成功 + 当前在途 < 上限」，
  * 失败 / 取消 / 过期不占额度，只对文生图计数。0 表示暂停所有人的生图提交。
  *

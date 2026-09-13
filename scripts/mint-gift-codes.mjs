@@ -6,8 +6,12 @@
  *   node scripts/mint-gift-codes.mjs 10 20 --note "十一活动"
  *   （铸 10 张，每张 ¥20）
  *
- * 码只写进 data/gift-codes/<code>.json 并打印到标准输出，**不写日志**——
- * stdout 由管理员直接分发，别重定向进文件、别贴进聊天。一张码就是一笔钱。
+ * 默认走 `POST /api/admin/gift-codes`（R4.1，`LUMEN_ADMIN_TOKEN`，见
+ * `scripts/lib/admin-client.mjs`）；`--offline` 退回直写文件，但会先探测
+ * 服务确实没在跑。
+ *
+ * 码只打印到标准输出，**不写日志**——stdout 由管理员直接分发，别重定向
+ * 进文件、别贴进聊天。一张码就是一笔钱。
  *
  * DATA_DIR 与服务端一致（不设时用 ./data）。字母表与 src/lib/users/schema.ts
  * 的 INVITE_ALPHABET 必须保持一致（.mjs 无法 import TypeScript）；记录形状与
@@ -17,6 +21,7 @@ import { randomBytes } from "node:crypto";
 import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { adminPost, assertServiceStopped, splitAdminArgs } from "./lib/admin-client.mjs";
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LENGTH = 12;
@@ -25,12 +30,13 @@ const MAX_AMOUNT = 100000;
 /** @param {string} message */
 function usage(message) {
   process.stderr.write(
-    `${message}\n用法: node scripts/mint-gift-codes.mjs <数量> <面额元> [--note "说明"]\n`,
+    `${message}\n用法: node scripts/mint-gift-codes.mjs <数量> <面额元> [--note "说明"] [--offline] [--env-file <路径>]\n`,
   );
   process.exit(1);
 }
 
-const argv = process.argv.slice(2);
+const { envFile, argv } = splitAdminArgs(process.argv.slice(2));
+const offline = argv.includes("--offline");
 const positional = argv.filter((a) => !a.startsWith("--"));
 const noteIndex = argv.indexOf("--note");
 const note = noteIndex >= 0 ? argv[noteIndex + 1] : undefined;
@@ -46,6 +52,20 @@ if (!Number.isFinite(rawAmount) || rawAmount <= 0 || rawAmount > MAX_AMOUNT) {
 // 服务端余额一律两位小数；这里先round好，免得码上写着 ¥9.999、到账 ¥10。
 const amountCny = Math.round(rawAmount * 100) / 100;
 if (amountCny <= 0) usage("面额四舍五入到分之后必须大于 0");
+
+if (!offline) {
+  const data = await adminPost(envFile, "/api/admin/gift-codes", {
+    count,
+    amountCny,
+    ...(note ? { note } : {}),
+  });
+  process.stderr.write(
+    `已生成 ${data.codes.length} 张礼品码，每张 ¥${amountCny}${note ? `（备注：${note}）` : ""}\n`,
+  );
+  for (const code of data.codes) process.stdout.write(`${code}\n`);
+  process.exit(0);
+}
+await assertServiceStopped();
 
 const dataDir = path.resolve(process.env.DATA_DIR ?? path.join(process.cwd(), "data"));
 const giftCodesDir = path.join(dataDir, "gift-codes");

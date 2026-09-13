@@ -9,13 +9,13 @@
 | 项 | 状态 |
 | --- | --- |
 | 代码基线 | `main`/`origin/main` 已包含 N3.4 `37123bd` 与交接提交 `fb37e53`；`main` 首条绿 CI 为 `6b5449d`（R0.1 验收成立）。精确当前 SHA 用 `git rev-parse HEAD origin/main` 核对 |
-| 生产版本依据 | N3.4 会话记录部署 `37123bd`；线上没有 `BUILD_INFO.json`，尚不能由 health 自动核对 SHA。本轮未执行部署，也未运行生产素材迁移 |
+| 生产版本依据 | 2026-09-13 用 deploy.sh 部署 `d7f34eb`（三条门禁、`--frozen-lockfile`、别名补链、health、公网 /login 全过）；`/opt/genius/BUILD_INFO.json` 与登录态 `GET /api/health` 的 `build.sha` 可机器核对线上版本。`build.node` 是构建机 Node（v24.16.0），运行时仍是 v22.22.2 |
 | 本机 | Windows / PowerShell，Node v24.16.0，pnpm 10.33.0，Next 16.3.3，React 19.2.8 |
-| 生产只读核查 | 阿里云 8.209.212.178，`/opt/genius`；Node v22.22.2，pnpm 10.33.0，Caddy v2.11.4；genius.service active，User 未设置即默认 root，MemoryMax 700 MiB；54 个标准任务目录、5 个用户目录 |
+| 生产只读核查 | 阿里云 8.209.212.178，`/opt/genius`；Node v22.22.2，pnpm 10.33.0，Caddy v2.11.4；genius.service active，`User=genius`（uid 989，R1.5 drop-in 已生效），MemoryMax 700 MiB；`/opt/genius` 整树 genius:genius，`.env` 640；生产画布 1 份文档、0 处 legacy uploadId，`data/assets/` 待首个素材节点创建 |
 | 入口 | `https://genius.homeaistack.online`；本地 `pnpm dev` 后访问 `http://localhost:3000`，不用 127.0.0.1（Next dev 可能 403） |
 | 整合门禁 | `fb37e53 + R0` 在隔离副本依次通过 typegen/tsc/eslint/test：107 文件、1245 通过、1 既有跳过；生产构建通过且无全仓追踪警告；整合 e2e 36/36，画布重复三轮 10/10。R1 起 eslint 范围为 `src e2e scripts`（CI 与 deploy.sh 同步），`scripts/**/*.mjs` 带 `// @ts-check` 纳入 tsc；e2e 走独立 workflow（`.github/workflows/e2e.yml`，每日 UTC 20:00 定时 + 手动，不挂 PR）。单测与 e2e 错开运行，未放宽全局超时 |
 | 测试环境 | 独立验证 worktree `D:\dev\repos\VideoPlatFrom-optimization-20260913`；e2e 端口 3178、E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1；不读生产密钥，不调用真实上游 |
-| 备份 | root cron 每日 03:17，最新本机包 `genius-data-20260913-031701.tgz`，共 4 包；ECS 自动快照未获控制台证据，异地副本与一致性恢复演练未完成 |
+| 备份 | root cron 每日 03:17 跑新版 backup.sh（白名单已随 d7f34eb 上线）；部署前手动包 `backups/genius-data-20260913-174421.tgz` 为旧脚本产物、不含 relays.json；ECS 自动快照未获控制台证据，异地副本（已决：阿里云 OSS）与一致性恢复演练未完成 |
 
 `37123bd` 部署记录中的 provider 配置：视频 ORDER `kling,yman,grok`，图片 ORDER `openai,yman`，无 XAI key；Grok 只是未启用的后备项。对话走 ccgoai `gpt-5.6-luna`，图片 `gpt-image-2/medium`，可灵 `kling-2.6`，YMan t2v `minimax-h3`、i2v `minimax-h3-933-图文`；Harness 与 OpenAI image edits 已开。原始真实验收见 `docs/acceptance-2026-09-13.md`，本轮未重新付费验证这些上游。
 
@@ -60,11 +60,11 @@
 | F-03 | 独立素材、30 天提示、迁移/归属/过期/刷新回归已落地 |
 | F-04 | 画布三轮重复 10/10；整合 N3.4 后全量 e2e 36/36 |
 | F-05 | 大 Context 结构确认；R5.1 重渲基线已测（§5），拆分为可维护性动机、待拍板 |
-| F-06 | R1.3 已落地：deploy.sh 三条门禁齐跑且不可跳过、脏树拒绝/`--allow-dirty`、生成 `BUILD_INFO.json` 并随包发布、服务器 `--frozen-lockfile` 与别名补链共享回滚；health 登录态回显 `build`。`--frozen-lockfile` 与 sha 回显待下一次部署验证；git archive 构建与发布目录（R1.4）未做 |
+| F-06 | R1.3 已落地并**生产实测通过**（2026-09-13 部署 d7f34eb：`--frozen-lockfile` 首次通过、`build.sha` 回显核对成功）；git archive 构建与发布目录（R1.4）未做 |
 | F-07 | 同机 cron 已核实；异地目标、加密、全写者维护屏障与恢复演练待 R4 |
 | F-08 | 交接区分代码/部署/实测，纠正目录数与备份状态；整合门禁按实际结果收口 |
 | F-09 | run/流水线性 IO 仍在；R4.1 的 `admission_ms` 埋点已落地（health 登录态 `admission.wait/hold` 分位数），其余治理待 R4 |
-| F-10 | 已拍板 CLI 走应用管理入口，尚未实装；当前离线 CLI 必须停服并串行 |
+| F-10 | 已落地（R4.1，D-4=b）：`/api/admin/*` 支持本机管理令牌（`LUMEN_ADMIN_TOKEN`，Bearer + XFF 缺失或全 loopback + loopback host 三判据，`src/lib/admin-token.ts`），五个管理 CLI 默认走 HTTP 接口；`--offline` 须先探测服务未运行（ECONNREFUSED）才允许直写 |
 | F-11 | 已落地：`withRelayLock` 进程级串行锁包住 create/update/delete 的读-改-写临界区，并发创建/更新不丢写的回归用例在 relay.test.ts |
 | F-12 | 规则压到 12KB 内，保留资金/安全约束与框架管理块，大小有回归门禁 |
 | F-13 | 大文件拆分待 R2/R5，不借修复改变业务行为 |
@@ -81,12 +81,12 @@
 
 - 无支付网关，订阅收入仍是内部记账；微信/支付宝都接的方向已定，但商户资质、渠道政策与沙箱条件未确认，R6 不直接开工。
 - R3 尚无预算授权与授权人物素材；现有场景用例只覆盖 h45-t2v-zh/en-scene，不能代替人物身份阈值校准。YMan 长片的 r2v 档 B、minimax-h3 真账单价格仍待验证。
-- CLI 仍直接写文件，`--offline` 只是声明；R4 应让常规管理变更经应用唯一写者执行。备份不能只停创作准入就声称一致性。
+- 常规管理变更（充值/重置密码/停用/铸码）已改走应用内唯一写者（管理令牌 + HTTP）；`--offline` 直写保留但须先探测服务未运行。migrate-billing 与备份仍要求停服窗口；备份不能只停创作准入就声称一致性。
 - SQLite 只在多写者/准入 p95/备份约束实际触发时选型。生产 Node 22.22.2 可支持内置模块，但 Node 22 文档仍标 1.1 Active development，不据此迁资金。
 - 会话/画布/run 的整体归档与留存未做；画布素材的 30 天期限已单独实现，不等于删除画布或资金记录。
 - 游离空 material 节点仍使整图报价失败；准入仍 strict 读用户 run 文件；这些行为尚未改变。
 - 移动软键盘需真机验证，mock e2e 不能证明它；质量与成本不能由 mock 成片证明。
-- 无异地备份恢复证据、无已核实的 ECS 自动快照设置、无构建 SHA 自动回显；非 root 迁移已获准备实施授权，具体停服/改归属仍须确认。
+- 无异地备份恢复证据、无已核实的 ECS 自动快照设置；构建 SHA 回显（BUILD_INFO/health `build.sha`）已随 d7f34eb 部署生效，非 root 迁移（R1.5）已执行。
 
 ## 5. R5.1 前端重渲基线（2026-09-13 实测）
 
@@ -108,6 +108,6 @@
 ## 6. 下一步与权限
 
 1. R0 整合单测复核、文档契约与差异复核完成后，按用户授权只提交本轮文件并推送 main，等待 GitHub CI；不把 N3.4 归入本轮提交。
-2. R1.1–R1.3 已落地：e2e 定时+手动 workflow（连续 3 次绿才算验收）、deploy.sh 新流程待下一次部署实测、health `build.sha` 对照随之生效。R1.4 发布目录/R1.5 非 root 待生产窗口逐项确认；R1.6 安全收紧评估见下一轮。继续审查未修项与 R2：relay 写锁（F-11）已落地，再按路线推进质量/数据层/前端结构。
+2. R1.1–R1.3 已落地：e2e 定时+手动 workflow 已在 `74248a5` 绿过一次（验收口径是连续 3 次绿）、deploy.sh 新流程已于 2026-09-13 部署 d7f34eb 实测通过、health `build.sha` 对照生效。R1.5 非 root 已执行；R1.4 发布目录仍待生产窗口；R1.6 已核对、保留现状。relay 写锁（F-11）已落地；R4.1 管理令牌与 CLI 改造已落地（F-10）；下一步按路线推进 R4/R5 余项（R5.2 已拍板本轮做）。
 3. 用户已定：移除 Tailwind；e2e 先定时+手动；删除 skip-check；CLI 走应用管理入口；素材 30 天明示；真实评测先报价；本轮准备非 root 迁移；新路线取代旧排期。尚未授权任何实际评测花费。
 4. 全程不启动未授权子代理；本轮 SureForge Standard 为 self-review-only。真实生产变更、停服务、改归属、覆盖/删除数据都须展示具体动作并确认。

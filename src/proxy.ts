@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { isLocalAdminRequest } from "@/lib/admin-token";
 import { REQUEST_ID_HEADER, newRequestId } from "@/lib/request-id";
 import { readSessionCookie, verifySessionValue } from "@/lib/users/session-token";
 
@@ -123,9 +124,16 @@ export function proxy(request: NextRequest) {
   }
 
   if (!isPublicApiPath(pathname)) {
-    const value = readSessionCookie(request);
-    if (!value || !verifySessionValue(value)) {
-      return refuse(401, "unauthorized", "请先登录");
+    // 本机管理令牌（R4.1，D-4=b）：`/api/admin/` 下、Bearer 匹配、无 XFF 且
+    // host 为 loopback 的直连请求不查会话。令牌只放行进门，路由内
+    // `requireAdminActor` 会用同一份判据复查（proxy 覆盖面不保证完备）。
+    const bypass =
+      pathname.startsWith("/api/admin/") && isLocalAdminRequest(request);
+    if (!bypass) {
+      const value = readSessionCookie(request);
+      if (!value || !verifySessionValue(value)) {
+        return refuse(401, "unauthorized", "请先登录");
+      }
     }
   }
 

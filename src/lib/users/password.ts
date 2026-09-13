@@ -93,6 +93,26 @@ export async function verifyPassword(password: string, stored: string): Promise<
   }
 }
 
+/**
+ * 随机口令。字母表去掉了会看错的字符（0/O、1/l/I）——这串东西要靠人念或
+ * 抄一次；与 `scripts/lib/users-store.mjs` 的 `generatePassword` 同一字母表，
+ * 用拒绝采样而不是 `% 字母表长度`。
+ */
+const PASSWORD_ALPHABET = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+export function generatePassword(length = 12): string {
+  const limit = 256 - (256 % PASSWORD_ALPHABET.length);
+  let out = "";
+  while (out.length < length) {
+    for (const byte of randomBytes(length * 2)) {
+      if (byte >= limit) continue;
+      out += PASSWORD_ALPHABET[byte % PASSWORD_ALPHABET.length];
+      if (out.length === length) break;
+    }
+  }
+  return out;
+}
+
 let dummyHash: Promise<string> | undefined;
 
 /**

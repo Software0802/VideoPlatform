@@ -200,3 +200,46 @@ test("素材刷新后可预览，30 天到期显示重新上传而不是失效�
   await expect(page.locator(".canvas-node__upload")).toBeVisible();
   await expect(page.locator(".canvas-node__img")).toHaveCount(0);
 });
+
+test("在途保存序列化：紧贴上一个 PATCH 的第二次改动不撞 409", async ({ page }) => {
+  // 第一步：建节点。等它的防抖 PATCH「已发出」那一刻立刻做第二步——此刻
+  // 服务端 revision 已 +1，但本地 doc 还没等到响应；没有保存链的话，第二次
+  // 保存会带旧 expectedRevision 撞出冲突弹层。
+  const firstSent = page.waitForRequest(
+    (r) => r.url().includes("/api/canvases/") && r.method() === "PATCH",
+  );
+  const firstDone = page.waitForResponse(
+    (r) =>
+      r.url().includes("/api/canvases/") &&
+      r.request().method() === "PATCH" &&
+      (r.request().postDataJSON()?.nodes?.length ?? 0) === 1,
+    { timeout: 20_000 },
+  );
+  await page.locator(".canvas-view").click({ button: "right", position: { x: 120, y: 200 } });
+  const menu = page.locator(".canvas-menu");
+  await menu.getByRole("button", { name: "文生图" }).click();
+  const node = page.locator(`.canvas-node[data-kind="gen_image"]`).last();
+  await expect(node).toBeVisible();
+  await firstSent;
+
+  const secondDone = page.waitForResponse(
+    (r) =>
+      r.url().includes("/api/canvases/") &&
+      r.request().method() === "PATCH" &&
+      Boolean(
+        r.request().postDataJSON()?.nodes?.some(
+          (n: { prompt?: string }) => n.prompt === "第二镜的提示词",
+        ),
+      ),
+    { timeout: 20_000 },
+  );
+  await node.locator(".canvas-node__textarea").fill("第二镜的提示词");
+
+  const [r1, r2] = await Promise.all([firstDone, secondDone]);
+  expect(r1.status()).toBe(200);
+  expect(r2.status()).toBe(200);
+  const rev1 = (await r1.json()).canvas.revision;
+  const rev2 = (await r2.json()).canvas.revision;
+  expect(rev2).toBe(rev1 + 1);
+  await expect(page.locator(".canvas-conflict")).toHaveCount(0);
+});

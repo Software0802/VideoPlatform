@@ -6,26 +6,31 @@
 
 | 项 | 已验证事实 |
 | --- | --- |
-| Node / pnpm | v22.22.2 / 10.33.0 |
+| Node / pnpm | v22.22.2 / 10.33.0（运行时；`BUILD_INFO.json` 的 `node` 字段记的是构建机版本 v24.16.0，两者不是一回事） |
 | Caddy | v2.11.4，容器 taiyu-caddy-1 |
-| genius.service | active；User 未设置，systemd 默认 root；MemoryHigh=550M、MemoryMax=700M（734003200 字节）；ExecStart=`next start -p 3000 -H 0.0.0.0` |
+| genius.service | active；`User=genius`（uid 989，R1.5 已执行，drop-in 见下文）；MemoryHigh=550M、MemoryMax=700M（734003200 字节）；ExecStart=`next start -p 3000 -H 0.0.0.0`；SELinux Disabled |
 | 反代链路 | 站点块 `genius.homeaistack.online { reverse_proxy 10.255.1.1:3000 }`：Caddy 容器经 docker 网关 `10.255.1.1` 连入宿主机，**服务必须绑 `0.0.0.0`，不能改成 loopback** |
-| 目录归属 | `/opt/genius` 与 `data/` 均为 root:root |
+| 目录归属 | `/opt/genius` 与 `data/` 均为 genius:genius；`.env` 为 `genius:genius` 640 |
 | 磁盘 | /dev/vda3：40G，总已用 24G，可用 14G（65%） |
-| 发布标识 | /opt/genius/BUILD_INFO.json 不存在（下次部署起由 `deploy.sh` 生成），不能把本地 HEAD 当作可机器核对的线上版本 |
-| 备份 | root crontab 每日 03:17 跑 backup.sh；最新包 genius-data-20260913-031701.tgz，本机共 4 包 |
+| 发布标识 | `/opt/genius/BUILD_INFO.json` = `{sha d7f34ebe…, shortSha d7f34eb, builtAt 2026-09-13T09:48:55Z, node v24.16.0（构建机）, dirty false}`；线上版本以它 / 登录态 `GET /api/health` 的 `build.sha` 为准 |
+| 备份 | root crontab 每日 03:17（`17 3 * * *`）跑 backup.sh（新版白名单已随 d7f34eb 上线）；部署前手动包 `backups/genius-data-20260913-174421.tgz` 为旧版脚本产物、**不含 relays.json** |
 
 站点块与全局配置都没有 `trusted_proxies`/`client_ip_headers`。按 Caddy v2.11.4 源码 `reverseproxy.go` 的 `addForwardedHeaders`：客户端不受信时 `X-Forwarded-For` **被覆盖为对端 IP**（不是追加），`X-Forwarded-Host` 覆盖为请求 Host——所以 `rate-limit.ts` 的 `clientIp()` 取首跳、`proxy.ts` 的 `expectedHost()` 认 x-forwarded-host 在当前拓扑下都成立（F-19 confirmed-safe，无需改配置）。以后接 CDN / 改 trusted_proxies 必须重新核对。
 
 Node 22.x 的 node:sqlite 官方标注仍为 Stability 1.1（Active development），不是已稳定资金数据库选型；SQLite 迁移等待 R4 的实际触发条件，不因内置模块可用就迁账。
 
-## 管理 CLI 的运行身份
+## 管理 CLI 的运行身份与令牌（R4.1）
 
-`genius.service` 以 root 运行，`/opt/genius/data` 整棵树归 root。所有 `scripts/*.mjs`（铸邀请码 / 礼品码、充值、重置密码、停用账号、用量统计）都直接写 `data/`，**必须以 root 或 `sudo` 执行**，普通用户（如 `admin`）会报 `EACCES: permission denied`（R1.5 迁移完成后改为 `sudo -u genius`，见下文「待执行」节）：
+`genius.service` 以 `genius` 运行，`/opt/genius` 整树归 `genius:genius`。管理脚本（铸邀请码 / 礼品码、充值、重置密码、停用账号）**默认走 HTTP 管理接口**，不再直写 `data/`：
 
 ```bash
-cd /opt/genius && sudo node scripts/mint-invites.mjs 1
+cd /opt/genius && sudo -u genius node scripts/mint-invites.mjs 1
 ```
+
+- 令牌：`LUMEN_ADMIN_TOKEN`（`openssl rand -hex 32` 生成）写进 `/opt/genius/.env` 后 `systemctl restart genius` 生效；也可以每次调用临时给 `sudo -u genius LUMEN_ADMIN_TOKEN=… node scripts/xxx.mjs`。脚本按 env → `--env-file` → `/opt/genius/.env` → `./.env.local` 的顺序找令牌，所以服务器上不带 env 也能读到 `.env`。
+- 令牌只在**本机 loopback 链路**生效（`x-forwarded-for` 缺失或每一跳都是 loopback，且 host 是 `127.0.0.1:*`/`localhost:*`；判据见 `src/lib/admin-token.ts`）——Caddy 对不受信客户端必把 XFF 覆盖为真实对端 IP，公网请求拿不到这个通道；`next dev` 内部代理注入的 `::ffff:127.x` 属合法 loopback 跳。`LUMEN_ADMIN_BASE_URL` 默认 `http://127.0.0.1:3000`。
+- `--offline` 仍在但语义收紧：先探测 `GET /api/health` 连不上（ECONNREFUSED）才允许直写文件；服务在跑就拒绝——这就是 D-4 的互斥，服务进程与 CLI 不再可能同时写 `data/`。
+- 直写 `data/` 的脚本（`--offline` 路径与 `usage.mjs`、migrate 脚本）必须以服务身份跑：`sudo -u genius`；root 跑出来的新文件服务写不动。
 
 ## 部署
 
@@ -39,8 +44,8 @@ bash scripts/deploy.sh
 
 - **门禁不可跳过**：上传前依次跑 `pnpm exec next typegen && pnpm exec tsc --noEmit`、`pnpm exec eslint src e2e scripts`、`pnpm test`，任一非零即中止。`--no-build` 只跳过 `pnpm build`，不跳过门禁；不再有 `--skip-check`。
 - **脏工作树默认拒绝**：`git status --porcelain` 非空则打印 diffstat 并以退出码 2 中止；确需发布未提交改动用 `--allow-dirty`（打印 diffstat 后继续）。
-- **发布指纹**：打包前在仓库根生成 `BUILD_INFO.json`（`sha`/`shortSha`/`builtAt`/`node`/`dirty`），随包上传到 `/opt/genius`。部署后用**登录态** `GET /api/health` 的 `build.sha` 对照本地 `git rev-parse HEAD` 即可确认线上版本；`dirty:true` 表示该包出自未提交的工作树。匿名请求仍只回 `{ ok }`。
-- **依赖与回滚**：服务器上 `pnpm install --prod --frozen-lockfile` 与 Turbopack 别名补链在同一失败域——任一步失败和 health 检查失败走同一条 `.next.prev` 回滚。注意 `--frozen-lockfile` 是 R1.3 新增、**首次在下一次部署验证**：若 lockfile 与 package.json 不同步会在这一步失败并按 `.next.prev` 回滚（回滚换的是 `.next`，不重建 node_modules）。
+- **发布指纹**：打包前在仓库根生成 `BUILD_INFO.json`（`sha`/`shortSha`/`builtAt`/`node`/`dirty`——`node` 是**构建机**的 Node 版本，不是服务器运行时），随包上传到 `/opt/genius`。部署后用**登录态** `GET /api/health` 的 `build.sha` 对照本地 `git rev-parse HEAD` 即可确认线上版本；`dirty:true` 表示该包出自未提交的工作树。匿名请求仍只回 `{ ok }`。
+- **依赖与回滚**：服务器上 `pnpm install --prod --frozen-lockfile` 与 Turbopack 别名补链在同一失败域——任一步失败和 health 检查失败走同一条 `.next.prev` 回滚（回滚换的是 `.next`，不重建 node_modules）。`--frozen-lockfile` 已在 2026-09-13 部署 d7f34eb 时实测通过。
 - 服务启动后轮询 `/api/health`（10 次 × 6s），非 200/`ok:true` 自动回滚。
 
 ## 回滚
@@ -65,55 +70,39 @@ curl -sS http://127.0.0.1:3000/api/health
 
 **必须与 `deploy.sh` 的发布改造同一窗口执行**（解到 `releases/<sha>` → 切链 → health → 失败切回旧链）；只改其中一侧会让 unit 路径与包落点脱节。本轮只写设计，脚本未改。
 
-## 待执行：服务改非 root（R1.5）
+## 服务账号（R1.5 已执行，2026-09-13）
 
-目标：`genius.service` 以专用账号 `genius` 运行（D-8=a），`/opt/genius` 整树归 `genius:genius`。以下在生产服务器以 root 执行，挑维护窗口：
-
-```bash
-# 1. 建服务账号（已存在则跳过这行）
-useradd --system --home /opt/genius --shell /usr/sbin/nologin genius
-
-# 2. 停服并改归属；.env 归 genius、收紧到 640（组内可读）
-systemctl stop genius
-chown -R genius:genius /opt/genius
-chown genius:genius /opt/genius/.env && chmod 640 /opt/genius/.env
-```
-
-3. 建 drop-in `/etc/systemd/system/genius.service.d/user.conf`：
+`genius.service` 以专用账号 `genius`（uid 989，`useradd --system` 所建）运行，`/opt/genius` 整树归 `genius:genius`，`.env` 为 640。生效方式是 drop-in `/etc/systemd/system/genius.service.d/user.conf`：
 
 ```ini
 [Service]
 User=genius
 Group=genius
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/genius
+PrivateTmp=yes
 ```
 
-可选加固（同一文件追加）：`NoNewPrivileges=yes`、`ProtectSystem=strict`、`ReadWritePaths=/opt/genius`、`PrivateTmp=yes`。可行性依据：`ffmpeg-static` 在 `node_modules` 内、服务写路径全部位于 `/opt/genius`（data、tmp、日志），`strict` 预期可行；**首次启用必须盯 `journalctl -u genius -f`**，若 ffmpeg 或写盘被拦就去掉对应行。
+已验证：`systemctl show genius -p User` = genius；health 200；`sudo -u genius touch data/.writetest` 成功；`sudo -u genius node scripts/usage.mjs` 正常（ffmpeg 与写盘在 strict 下未被拦）。
 
-```bash
-# 4. 生效并验证
-systemctl daemon-reload
-systemctl start genius
-systemctl show genius -p User    # 期望 User=genius
-curl -sS http://127.0.0.1:3000/api/health   # 200 + ok:true；登录态再核对 build.sha
-```
+约束与回退：
 
-切换后的约束：
-
-- 所有管理 CLI 必须以服务身份跑：`sudo -u genius node scripts/xxx.mjs`。root 跑出来的新文件（迁移产物等）服务写不动。
+- 所有管理 CLI 与直写 `data/` 的脚本必须以服务身份跑：`sudo -u genius node scripts/xxx.mjs`。root 跑出来的新文件服务写不动。
 - `backup.sh` 的 root cron 可保留：它只读源数据、写 `backups/`。
-- `deploy.sh` 远端段已在 install 之后加幂等 `chown -R genius:genius /opt/genius`（`genius` 不存在则跳过），本迁移完成前后部署都安全。
-
-回退：删除 `/etc/systemd/system/genius.service.d/user.conf` → `systemctl daemon-reload` → `systemctl restart genius`。文件归属可保留 `genius`，不影响 root 运行。
+- `deploy.sh` 远端段在 install 之后有幂等 `chown -R genius:genius /opt/genius`（`genius` 不存在则跳过），迁移前后部署都安全。
+- 回退：删除 `/etc/systemd/system/genius.service.d/user.conf` → `systemctl daemon-reload` → `systemctl restart genius`。文件归属可保留 `genius`，不影响 root 运行。
 
 ## key 轮换
 
 | 密钥 | 轮换影响 | 操作 |
 | --- | --- | --- |
 | `LUMEN_SESSION_SECRET` | **全体用户立刻登出**（所有会话 Cookie 签名失效）；**不影响**已签发的分享链接（分享令牌用独立派生密钥，见 `docs/design.md` §2g） | 改 `.env` → `systemctl restart genius`；提前在群里通知会掉线 |
+| `LUMEN_ADMIN_TOKEN` | 本机管理 CLI 的 Bearer 凭据；换掉即旧令牌作废，不影响任何用户会话 | `openssl rand -hex 32` → 写 `.env` → `systemctl restart genius` |
 | `SHARE_TTL_HOURS` | 只影响**新签发**的分享链接有效期，已签发的链接按签发时的 TTL 走完 | 改 `.env` → 重启即可，无需通知用户 |
 | 各 provider 的 `*_API_KEY`（`XAI_API_KEY`/`KLING_API_KEY`/`YMAN_API_KEY`/`OPENAI_API_KEY`） | 换成新 key 后立即生效，不影响在途任务的历史记录，但正在轮询的任务如果原 key 已失效会在下一次请求上游时报错 | 改 `.env` → 重启；建议先在低峰期换 |
 
-密钥只在服务器 `/opt/genius/.env`（权限 600），不进代码仓库、不进聊天。
+密钥只在服务器 `/opt/genius/.env`（`genius:genius` 640），不进代码仓库、不进聊天。
 
 ## 备份恢复
 
@@ -214,26 +203,28 @@ curl.exe -b "lumen_session=<...>" -X DELETE https://genius.homeaistack.online/ap
 ## 用户禁用与重置密码
 
 ```bash
-# 封禁账号：写 disabled:true 并使当前所有会话立即失效
-node scripts/disable-user.mjs <邮箱> --offline
+# 封禁账号：写 disabled:true 并使当前所有会话立即失效（走 /api/admin/users/[id]/disabled）
+sudo -u genius node scripts/disable-user.mjs <邮箱|usr_id>
 # 解封
-node scripts/disable-user.mjs <邮箱> --offline --enable
+sudo -u genius node scripts/disable-user.mjs <邮箱|usr_id> --enable
 
 # 管理员强制重置密码：生成随机口令打印到 stdout，并使该账号所有设备立即掉线
-node scripts/reset-password.mjs <邮箱> --offline
+sudo -u genius node scripts/reset-password.mjs <邮箱|usr_id>
 ```
 
-两个脚本都读 `DATA_DIR`（与服务端一致，未设为 `./data`），改的是同一份 `user.json` + `sessionEpoch`。`--offline` 是必须显式给出的声明：服务已停止、全部管理 CLI 串行执行——它们拿不到服务端的 `withUserLock`，撞写会被 billing 链校验拦下失败关闭（见 `scripts/backup-restore.md`「已知限制」），所以要先 `systemctl stop genius` 再操作，完成后 `systemctl start genius`；`sessionEpoch` 在每次请求时校验，重启后旧的禁用/重置立即生效。`reset-password.mjs` 打印的新口令只应口头/密码管理器传递给用户，不要写进工单或聊天记录。
+两个脚本默认走 HTTP 管理接口（令牌见上文「管理 CLI 的运行身份与令牌」），服务端在 `withUserLock` 里改 `user.json` + `sessionEpoch`。`--offline` 退回直写文件，但会先探测服务确实没在跑（`GET /api/health` ECONNREFUSED）才放行；服务在跑时直写会被 billing 链校验拦下或与服务端写盘交错（见 `scripts/backup-restore.md`「已知限制」），正确姿势永远是让 HTTP 路径生效。`sessionEpoch` 在每次请求时校验，禁用/重置立即生效，无需重启。`reset-password.mjs` 打印的新口令只应口头/密码管理器传递给用户，不要写进工单或聊天记录。
 
 ## 充值与资金迁移
 
 ```bash
 # 充值（金额可为负表示人工纠正）；--ref 给固定幂等键，结果不明时可安全重跑
-node scripts/grant-balance.mjs <邮箱> <金额> --offline [--ref "固定键"] [--note "说明"]
+sudo -u genius node scripts/grant-balance.mjs <邮箱|usr_id> <金额> [--ref "固定键"] [--note "说明"]
 
 # 存量账号迁入新资金格式（user.json 内嵌 billing 快照）：逐账号一份人工核对过的基线
-node scripts/migrate-billing.mjs --offline --baseline <已核对基线.json>
+sudo -u genius node scripts/migrate-billing.mjs --offline --baseline <已核对基线.json>
 ```
+
+充值走 `POST /api/admin/users/[id]/balance` → `applyBalanceChange`，幂等语义与服务端完全一致（同 ref 重放返回原记录、同键异输入 409）。migrate-billing 仍是纯文件工具：要求 `--offline` 声明 + 服务停止（先 `systemctl stop genius`，完成后 `systemctl start genius`），且以 `sudo -u genius` 跑。
 
 新版资金模型（`docs/design.md` §2d）下 `user.json` 是余额 + 流水的唯一提交点，`ledger/<id>.jsonl` 变成派生导出物。**部署含此模型的代码前必须先迁移所有存量账号**，否则它们的余额变动一律 409 `billing_migration_required`（新注册账号不受影响，首次写盘即自带快照）。基线 JSON 由管理员逐账号核对生成，字段含 `userId`、迁移前 `user.json` 与 `ledger/<id>.jsonl` 的 sha256、`opening` 期初两池余额、每条历史入账行的池归属 `grantPools`、`reviewedBy`/`evidence`；校验不过不会动任何字节，不支持 `--force`。
 
@@ -241,7 +232,7 @@ node scripts/migrate-billing.mjs --offline --baseline <已核对基线.json>
 
 ```bash
 # 铸 N 张、每张面额 M 元的礼品码，打印到标准输出（不写日志）
-node scripts/mint-gift-codes.mjs <数量> <金额> [--note "..."]
+sudo -u genius node scripts/mint-gift-codes.mjs <数量> <金额> [--note "..."]
 ```
 
 用户在订阅页「兑换礼品码」输入即可到账（`POST /api/me/redeem`）；同一张码只能兑一次（409 已用）、格式不对或不存在统一 404（不区分原因，防止探测码空间）。码本身就是钱，分发渠道要当作现金对待，别落进工单系统或聊天记录里。

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
-import { STORAGE_STATE } from "./e2e/paths";
+import { E2E_ADMIN_TOKEN, STORAGE_STATE } from "./e2e/paths";
 
 /**
  * Mock-mode smoke suite (docs/handoff.md §3). Runs against `pnpm dev` with the
@@ -63,6 +63,9 @@ export default defineConfig({
       // The server refuses to start without a session secret (plan §3). Fixed
       // throwaway value: e2e never depends on cookies surviving a restart.
       LUMEN_SESSION_SECRET: "e2e-only-session-secret-not-for-production",
+      // auth.setup.ts funds the throwaway account through the admin HTTP API;
+      // a reused dev server must have the same token in its own env.
+      LUMEN_ADMIN_TOKEN: E2E_ADMIN_TOKEN,
       // Only honoured when Playwright starts the server itself; a reused dev server keeps its data dir.
       DATA_DIR,
     },

@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { UserRecord } from "@/lib/users/schema";
 
 /**
@@ -225,5 +225,102 @@ describe("same-origin check on non-GET requests", () => {
       }),
     );
     expect(res.status).toBe(401);
+  });
+});
+
+describe("admin token (R4.1: loopback-only bearer for /api/admin/*)", () => {
+  const TOKEN = "test-admin-token-0123456789abcdef";
+
+  function adminPost(headers: Record<string, string>): NextRequest {
+    return req("/api/admin/invites", { method: "POST", headers });
+  }
+
+  afterEach(() => {
+    delete process.env.LUMEN_ADMIN_TOKEN;
+  });
+
+  it("passes /api/admin/* with no cookie when the token matches on a loopback direct hit", () => {
+    process.env.LUMEN_ADMIN_TOKEN = TOKEN;
+    const res = proxy(adminPost({ authorization: `Bearer ${TOKEN}`, host: "127.0.0.1:3000" }));
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+  });
+
+  it("accepts localhost as the loopback host too", () => {
+    process.env.LUMEN_ADMIN_TOKEN = TOKEN;
+    const res = proxy(adminPost({ authorization: `Bearer ${TOKEN}`, host: "localhost:3000" }));
+    expect(res.status).not.toBe(401);
+  });
+
+  it("401s the right token once x-forwarded-for carries a non-loopback hop (the request came through a proxy)", () => {
+    process.env.LUMEN_ADMIN_TOKEN = TOKEN;
+    const res = proxy(
+      adminPost({
+        authorization: `Bearer ${TOKEN}`,
+        host: "127.0.0.1:3000",
+        "x-forwarded-for": "1.2.3.4",
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("accepts an all-loopback XFF chain (next dev injects ::ffff:127.0.0.1 for direct hits)", () => {
+    process.env.LUMEN_ADMIN_TOKEN = TOKEN;
+    for (const xff of ["127.0.0.1", "::ffff:127.0.0.1", "::1", "127.0.0.1, ::ffff:127.0.0.1"]) {
+      const res = proxy(
+        adminPost({
+          authorization: `Bearer ${TOKEN}`,
+          host: "127.0.0.1:3000",
+          "x-forwarded-for": xff,
+        }),
+      );
+      expect(res.status, `xff=${xff}`).not.toBe(401);
+    }
+  });
+
+  it("401s a mixed XFF chain whose tail is loopback (spoofed suffix must not pass)", () => {
+    process.env.LUMEN_ADMIN_TOKEN = TOKEN;
+    const res = proxy(
+      adminPost({
+        authorization: `Bearer ${TOKEN}`,
+        host: "127.0.0.1:3000",
+        "x-forwarded-for": "1.2.3.4, 127.0.0.1",
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("401s the right token on a non-loopback host", () => {
+    process.env.LUMEN_ADMIN_TOKEN = TOKEN;
+    const res = proxy(adminPost({ authorization: `Bearer ${TOKEN}`, host: "genius.example.com" }));
+    expect(res.status).toBe(401);
+  });
+
+  it("401s a wrong token even on loopback", () => {
+    process.env.LUMEN_ADMIN_TOKEN = TOKEN;
+    const res = proxy(adminPost({ authorization: "Bearer wrong-token", host: "127.0.0.1:3000" }));
+    expect(res.status).toBe(401);
+  });
+
+  it("401s when no token is configured at all", () => {
+    delete process.env.LUMEN_ADMIN_TOKEN;
+    const res = proxy(adminPost({ authorization: "Bearer anything", host: "127.0.0.1:3000" }));
+    expect(res.status).toBe(401);
+  });
+
+  it("does not bypass the session gate outside /api/admin/*", () => {
+    process.env.LUMEN_ADMIN_TOKEN = TOKEN;
+    const res = proxy(
+      req("/api/jobs", {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}`, host: "127.0.0.1:3000" },
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("a valid session cookie still reaches /api/admin/* without any token", () => {
+    const res = proxy(req("/api/admin/relays", { authed: true }));
+    expect(res.status).not.toBe(401);
   });
 });

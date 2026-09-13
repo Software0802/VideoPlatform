@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { expect, test as setup, type APIRequestContext } from "@playwright/test";
 import { dataDirCandidates, newInviteCode, writeInvite } from "./invites";
-import { DATA_DIR_HINT, STORAGE_STATE } from "./paths";
+import { DATA_DIR_HINT, E2E_ADMIN_TOKEN, STORAGE_STATE } from "./paths";
 
 /**
  * Every `/api/*` route now needs a session (plan §4), so the smoke suite has to
@@ -36,17 +36,25 @@ async function mintInvite(dataDir: string): Promise<{ code: string; file: string
 
 /**
  * 余额模型（方案 §3.2）上线后，新账号只有注册赠送的 ¥5，跑不完整套用例——冒烟要真的
- * 出片，就得先充值。充值同样没有 HTTP 入口（和铸邀请码一样是管理员动作），所以这里
- * 直接调真正的 CLI：既省掉一份重复的落盘逻辑，也顺带在每次 e2e 里验证它还能跑。
+ * 出片，就得先充值。R4.1 起管理 CLI 默认走 HTTP 管理接口（`--offline` 直写文件要求
+ * 服务确实没在跑，而这里服务正在跑），所以这里调真正的 CLI + 管理令牌：既省掉一份
+ * 重复的落盘逻辑，也顺带在每次 e2e 里验证令牌通道还能跑。
+ * 复用 dev server 时它自己的 env 里必须有同一个 LUMEN_ADMIN_TOKEN。
  */
-async function fundAccount(dataDir: string): Promise<void> {
+async function fundAccount(): Promise<void> {
   const script = path.resolve(__dirname, "../scripts/grant-balance.mjs");
-  // R01/R03 起管理 CLI 要求 --offline 声明；这里是刚注册的新账号、没有任何
-  // 在途任务，并发写窗口不存在。--ref 让 setup 重跑同一账号时不重复入账。
+  const base = process.env.E2E_BASE_URL ?? `http://localhost:${process.env.E2E_PORT ?? 3000}`;
+  // --ref 让 setup 重跑同一账号时不重复入账（同 ref 重放返回原记录）。
   await promisify(execFile)(
     process.execPath,
-    [script, EMAIL, "1000", "--offline", "--ref", `e2e-fund:${EMAIL}`, "--note", "playwright e2e"],
-    { env: { ...process.env, DATA_DIR: dataDir } },
+    [script, EMAIL, "1000", "--ref", `e2e-fund:${EMAIL}`, "--note", "playwright e2e"],
+    {
+      env: {
+        ...process.env,
+        LUMEN_ADMIN_TOKEN: E2E_ADMIN_TOKEN,
+        LUMEN_ADMIN_BASE_URL: base,
+      },
+    },
   );
 }
 
@@ -78,7 +86,7 @@ setup("注册并登录一个 e2e 用户，Cookie 交给后续用例", async ({ r
     await login(request),
     `无法为 e2e 建立会话，已尝试的 DATA_DIR：\n${failures.join("\n")}`,
   ).toBeTruthy();
-  await fundAccount(liveDataDir);
+  await fundAccount();
 
   await mkdir(path.dirname(STORAGE_STATE), { recursive: true });
   await request.storageState({ path: STORAGE_STATE });

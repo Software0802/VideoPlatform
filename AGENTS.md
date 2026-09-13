@@ -44,14 +44,14 @@
 - 状态先写 job.json 再发 SSE，轮询是真相。job.json/user.json 是事实源，索引是可重建缓存；写事实再更索引，启动重建、读取自愈。
 - 配额、余额预留、留存、列表分页、activeCount 读任务索引，不对 jobs 做全表扫描；同一毫秒的任务不能被游标切开。
 - 任务 detail/SSE/media/cancel/retry、幂等 key、上传、素材、会话、画布都校验 ownerId；非本人一律 404、不可探测。上传认领属于请求体校验，统一 400 是明确例外。
-- LUMEN_SESSION_SECRET 缺失拒绝启动；会话同时校验禁用状态与 epoch。分享令牌使用独立 HMAC 派生密钥和信任域，不能复用会话签名/校验；公开分享入口不要求登录。
+- LUMEN_SESSION_SECRET 缺失拒绝启动；会话校验禁用状态与 epoch。分享令牌使用独立 HMAC 派生密钥和信任域，不能复用会话签名/校验；公开分享入口不要求登录。
 - 私有媒体与上传/素材 `Cache-Control: private, no-cache`，owner 校验先于 ETag/304；禁止 max-age/immutable，换账号不能吃到前一账号缓存。
 - Origin/Referer 双缺放行是现有明确取舍，收紧前须确认并核对 Cookie CLI/smoke。请求追踪走 AsyncLocalStorage；`log`/`billing/prices`/`cost` 必须可被客户端 import，不得顶层引入服务端依赖，async_hooks 按需加载。
 - 余额判定必须在 withAdmissionLock 内与 writeJob 同次准入；t2i 配额 create/retry 共用同一临界区。定价×余额为主闸门，日配额/失败限额只防滥用。
 - 锁序恒为 admission → user。扣款在 updateJob 写终态之前完成；扣款、补扣、退款统一走 applyBalanceChange，按 jobId/ref 幂等，不另写资金入口。
 - 退款必须带 refundOf，按原扣款 memberCny 拆回原池；找不到原扣款失败关闭，禁止把会员积分退成永久已购余额。
 - user.json.billing 操作链与两池余额同一次原子写提交；jsonl 只是派生导出物，不一致报 billing_export_corrupt，缺失可重建。同键不同输入 409 billing_idempotency_conflict。
-- 无 billing 的存量账号禁止余额变动；迁移必须离线、人工基线、user/ledger 双 sha256 与重放核对，不支持 --force。管理 CLI 的 --offline 目前只是停服声明，不是跨进程锁，不得与线上服务并发写。
+- 无 billing 的存量账号禁止余额变动；迁移须离线、人工基线、双 sha256 + 重放核对，不支持 --force。管理 CLI 走 /api/admin/*（LUMEN_ADMIN_TOKEN，限无 XFF loopback 直连）；--offline 须先探测服务停止（ECONNREFUSED）。
 - 订阅只能用已购池买，绝不允许会员池购买；正常扣款先会员后已购。assertBalance 前先 settleSubscription，跨期旧积分不进可用额；购买扣款保存订单快照，重放补记录不重扣；复用通用 ref 幂等（design §2i）。
 - 媒体留存只清终态产物、写 artifactsPurgedAt，不改 status，不碰非终态；已清产物禁止一键重试。画布素材独立存 assets，30 天到期明示；保存不续期，迁移缺原件标 missing，不伪造字节，不改运行快照（design §2j）。
 

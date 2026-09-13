@@ -16,31 +16,52 @@
  *
  * DATA_DIR 与服务端一致（不设时用 ./data）。
  */
+import { access } from "node:fs/promises";
 import process from "node:process";
 import {
+  USER_ID_RE,
   bumpEpoch,
   findUserIdByEmail,
   resolveDataDir,
-  requireOffline,
   updateUser,
   usage,
+  userFileOf,
   usersDirOf,
 } from "./lib/users-store.mjs";
+import { adminPost, assertServiceStopped, splitAdminArgs } from "./lib/admin-client.mjs";
 
-const HOWTO = "node scripts/disable-user.mjs <邮箱> --offline [--enable]";
+const HOWTO = "node scripts/disable-user.mjs <邮箱|usr_id> [--enable] [--offline] [--env-file <路径>]";
 
-const argv = process.argv.slice(2);
-requireOffline(argv, HOWTO);
+const { envFile, argv } = splitAdminArgs(process.argv.slice(2));
+const offline = argv.includes("--offline");
 const positional = argv.filter((a) => !a.startsWith("--"));
 const enable = argv.includes("--enable");
 const email = String(positional[0] ?? "").trim().toLowerCase();
-if (!email || !email.includes("@")) usage("第一个参数必须是邮箱", HOWTO);
+if (!email || (!email.includes("@") && !USER_ID_RE.test(email))) {
+  usage("第一个参数必须是邮箱或 usr_ 开头的用户 id", HOWTO);
+}
+
+if (!offline) {
+  const data = await adminPost(envFile, `/api/admin/users/${encodeURIComponent(email)}/disabled`, {
+    disabled: !enable,
+  });
+  const verb = enable ? "已恢复" : "已停用";
+  process.stdout.write(
+    `${email} ${verb}${data.noop ? "（此前就是这个状态）" : ""}；` +
+      `sessionEpoch ${data.sessionEpoch - 1} → ${data.sessionEpoch}，该账号所有设备已掉线。\n`,
+  );
+  process.exit(0);
+}
+await assertServiceStopped();
 
 const dataDir = resolveDataDir();
 const usersDir = usersDirOf(dataDir);
 
-const userId = await findUserIdByEmail(usersDir, email);
-if (!userId) {
+const userId = USER_ID_RE.test(email) ? email : await findUserIdByEmail(usersDir, email);
+const exists = userId
+  ? await access(userFileOf(usersDir, userId)).then(() => true, () => false)
+  : false;
+if (!userId || !exists) {
   process.stderr.write(`找不到账号: ${email}（DATA_DIR=${dataDir}）\n`);
   process.exit(1);
 }
