@@ -569,6 +569,7 @@ describe("createJob — model / product selection (契约 A1)", () => {
 
     expect(job.provider).toBe("yman");
     expect(job.product).toBe("video-fast");
+    expect(job.model).toBe("minimax_h3");
     expect(job.productName).toBeTruthy();
     await drainToTerminal(job.id);
   });
@@ -593,6 +594,7 @@ describe("createJob — model / product selection (契约 A1)", () => {
       );
       expect(job.provider).toBe("yman");
       expect(job.product).toBe("video-fast");
+      expect(job.model).toBe("minimax_h3");
       expect(job.durationSec).toBe(30);
       expect(job.harness.enabled).toBe(true);
       await drainToTerminal(job.id);

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderHttpError, type ProviderGenerateRequest } from "./types";
 import {
   currentProviderId,
@@ -25,6 +25,15 @@ const ENV_KEYS = [
   "VIDEO_PROVIDER_ORDER",
 ] as const;
 const previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+
+beforeAll(async () => {
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), "lumen-router-config-"));
+  process.env.DATA_DIR = dataRoot;
+  const { reconcileRelays } = await import("@/lib/providers/relay/assemble");
+  reconcileRelays();
+  delete process.env.DATA_DIR;
+  await rm(dataRoot, { recursive: true, force: true });
+});
 
 afterEach(() => {
   for (const key of ENV_KEYS) {

@@ -19,12 +19,11 @@ const RATIOS_LANDSCAPE_PORTRAIT: AspectRatio[] = ["16:9", "9:16"];
  * `YMAN_UNKNOWN_CREDITS` 估价）——宁可承认不知道，也不编一张价目表。
  *
  * 价目单位是**积分**，¥1 = 100 积分；一次调用 = 分辨率价 + 时长价，创建任务时预扣，
- * 失败自动退。这里只登记 720p 一档——上游这几个视频模型当前都只出 720p（图文那档
- * 文档写 768p，短边仍 <1080，按同一档记）。表随时会过期，改代码之外还留了
- * `YMAN_MODEL_CATALOG` 这条覆盖 / 追加的口子。
+ * 失败自动退。大多数旧档只登记 720p；`minimax_h3` 按当前目录另有 1080p 档。
+ * 表随时会过期，改代码之外还留了 `YMAN_MODEL_CATALOG` 这条覆盖 / 追加的口子。
  */
 export const YMAN_MODELS: Record<string, YmanModelSpec> = {
-  // 价目 2026-09-13 沿用旧档（`minimax-H3 文字`），未经账单核实。
+  // legacy 默认仍认旧展示名及别名；不要把 minimax_h3 合并进这条别名链。
   "minimax-h3": {
     aliases: ["minimax-H3 文字", "minimax_h3_t2v"],
     durations: [5, 10, 15],
@@ -33,6 +32,17 @@ export const YMAN_MODELS: Record<string, YmanModelSpec> = {
     // 纯文生：上游不收参考图，发上去会 400。
     maxReferenceImages: 0,
     credits: { resolution: { "720p": 10 }, duration: { "5": 40, "10": 90, "15": 140 } },
+  },
+  minimax_h3: {
+    aliases: [],
+    durations: [5, 10, 15],
+    resolutions: ["720p", "1080p"],
+    ratios: ["16:9", "9:16", "1:1"],
+    maxReferenceImages: 9,
+    credits: {
+      resolution: { "720p": 10, "1080p": 10 },
+      duration: { "5": 40, "10": 90, "15": 140 },
+    },
   },
   "minimax-h3-933-图文": {
     aliases: ["minimax_h3_ref2v"],

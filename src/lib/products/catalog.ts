@@ -10,7 +10,7 @@ import { isAvailable } from "@/lib/providers/health";
 import { envModelFor } from "@/lib/providers/model-name";
 import { liveRelayViews, relayViewFor, type RelayView } from "@/lib/providers/relay/live";
 import { relayModelDisplayName, type RelayModelSpec } from "@/lib/providers/relay/catalog";
-import { servesResolution } from "@/lib/providers/resolution";
+import { resolutionRank, servesResolution } from "@/lib/providers/resolution";
 import {
   currentProviderId,
   effectiveImageProviderOrder,
@@ -108,7 +108,7 @@ export const DEFAULT_PRODUCTS: readonly Product[] = [
     // 文生用纯文生模型，图生 / 参考生用收参考图的那个（上游是两个模型，同一个产品）。
     // 三个 mode 各自钉死，所以不需要兜底的 `model`。
     models: {
-      text_to_video: "minimax-h3",
+      text_to_video: "minimax_h3",
       image_to_video: "minimax-h3-933-图文",
       reference_to_video: "minimax-h3-933-图文",
     },
@@ -326,7 +326,7 @@ function relayProductFor(
     },
     modes,
     resolutions,
-    defaultResolution: [...resolutions].sort()[0],
+    defaultResolution: [...resolutions].sort((a, b) => resolutionRank(a) - resolutionRank(b))[0],
     aspectRatios: base.aspectRatios ?? ["16:9", "9:16"],
     durations: durations.length ? durations : undefined,
     audio: "uncontrolled",
@@ -449,7 +449,7 @@ export function modelForProduct(product: Product, mode: NativeMode): string {
 /** 用户没选分辨率时这个产品用哪一档。 */
 export function defaultResolutionOf(product: Product): Resolution | undefined {
   if (product.defaultResolution) return product.defaultResolution;
-  return [...product.resolutions].sort()[0];
+  return [...product.resolutions].sort((a, b) => resolutionRank(a) - resolutionRank(b))[0];
 }
 
 /**

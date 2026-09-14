@@ -194,7 +194,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 
 ## 2f. 产品目录与模型选择(2026-09-06 夜,阶段 A,as-built)
 
-方案 `docs/plan-frontend-backend-adaptation.md`(2026-09-06 决策「产品名不露供应商」已于 2026-09-13 随多模型定位改为：产品名为主、供应商与上游模型名作次级信息下发)。`src/lib/products/catalog.ts` 定义七档内置`Product`(视频 快速/标准/高清有声/Grok,图片 快速/标准/Grok),每档绑定一个 provider + 上游模型名(可选,缺省回落各 provider 自己的 env 模型)、能力(modes/resolutions/aspectRatios/durations/audio/supportsLastFrame/maxReferenceImages)与描述;`LUMEN_PRODUCTS`(JSON 数组,见 `.env.example`)按 id 覆盖或追加,坏 JSON/缺字段回落内置表并记 warn。
+方案 `docs/plan-frontend-backend-adaptation.md`(2026-09-06 决策「产品名不露供应商」已于 2026-09-13 随多模型定位改为：产品名为主、供应商与上游模型名作次级信息下发)。`src/lib/products/catalog.ts` 定义七档内置`Product`(视频 快速/标准/高清有声/Grok,图片 快速/标准/Grok),每档绑定一个 provider + 上游模型名(可选,缺省回落各 provider 自己的 env 模型)、能力(modes/resolutions/aspectRatios/durations/audio/supportsLastFrame/maxReferenceImages)与描述。YMan 默认「快速」的 t2v 字面钉 `minimax_h3`，i2v/r2v 仍钉 `minimax-h3-933-图文`；legacy 无产品路由仍读 `YMAN_T2V_MODEL`。`LUMEN_PRODUCTS`(JSON 数组,见 `.env.example`)按 id 覆盖或追加,坏 JSON/缺字段回落内置表并记 warn。
 
 `availableProducts()` 只列当前可用的产品：provider 在 ORDER 内、有 key、该通道未进入健康冷却、模型仍在目录，可灵有声档还要求实例允许 native audio；mock 实例按模拟目录返回。`GET /api/models` 需登录，白名单下发能力、samplePriceCny、providerId/providerName/upstreamModel/costHint（§2l），不下发密钥或上游错误详情。样例价不是本次提交的最终报价。
 

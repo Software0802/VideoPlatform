@@ -16,6 +16,7 @@ import {
 // resolveModel/modelFor/creditsFor/normalizeYmanDuration 认出，只是不再是权威输出。
 // 2026-09-13：上游把 `minimax-H3 文字` 下架改名 `minimax-h3`，旧名同样降级为 alias。
 const T2V_DISPLAY = "minimax-h3";
+const FAST_T2V_DISPLAY = "minimax_h3";
 const REF2V_DISPLAY = "minimax-h3-933-图文";
 const SEEDANCE_SVIP_DISPLAY = "seedance2.0-900-720p";
 const SEEDANCE_DISPLAY = "SD2.0 满血";
@@ -28,10 +29,25 @@ afterEach(() => {
 });
 
 describe("YMAN_MODELS", () => {
-  it("registers exactly six catalog models, keyed by their /v1/models display name", () => {
+  it("registers exactly seven catalog models, keyed by their /v1/models display name", () => {
     expect(Object.keys(YMAN_MODELS).sort()).toEqual(
-      [T2V_DISPLAY, REF2V_DISPLAY, GROK_PREVIEW_DISPLAY, SEEDANCE_SVIP_DISPLAY, SEEDANCE_DISPLAY, SD25_DISPLAY].sort(),
+      [
+        T2V_DISPLAY,
+        FAST_T2V_DISPLAY,
+        REF2V_DISPLAY,
+        GROK_PREVIEW_DISPLAY,
+        SEEDANCE_SVIP_DISPLAY,
+        SEEDANCE_DISPLAY,
+        SD25_DISPLAY,
+      ].sort(),
     );
+    expect(YMAN_MODELS[FAST_T2V_DISPLAY]).toMatchObject({
+      aliases: [],
+      durations: [5, 10, 15],
+      resolutions: ["720p", "1080p"],
+      ratios: ["16:9", "9:16", "1:1"],
+      maxReferenceImages: 9,
+    });
   });
 
   it("keeps each model's old internal name reachable only as an alias, not as a table key", () => {
@@ -132,6 +148,12 @@ describe("creditsFor — documented price points", () => {
     expect(creditsFor("minimax_h3_t2v", 5, "720p")).toBe(50);
     expect(creditsFor("minimax_h3_t2v", 10, "720p")).toBe(100);
     expect(creditsFor("minimax_h3_t2v", 15, "720p")).toBe(150);
+  });
+
+  it("prices minimax_h3 at the same fast ladder for 720p and 1080p", () => {
+    expect(creditsFor(FAST_T2V_DISPLAY, 5, "720p")).toBe(50);
+    expect(creditsFor(FAST_T2V_DISPLAY, 10, "1080p")).toBe(100);
+    expect(creditsFor(FAST_T2V_DISPLAY, 15, "1080p")).toBe(150);
   });
 
   it("prices grok-imagine-video-1.5-preview at 80 credits for 5s and 100 for 10s", () => {

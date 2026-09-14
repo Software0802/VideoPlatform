@@ -314,7 +314,7 @@ describe("defaultProductFor", () => {
 describe("modelForProduct / defaultResolutionOf", () => {
   it("modelForProduct returns the per-mode override for video-fast (yman has two upstream models)", () => {
     const fast = productById("video-fast")!;
-    expect(modelForProduct(fast, "text_to_video")).toBe("minimax-h3");
+    expect(modelForProduct(fast, "text_to_video")).toBe("minimax_h3");
     expect(modelForProduct(fast, "image_to_video")).toBe("minimax-h3-933-图文");
   });
 
@@ -341,6 +341,13 @@ describe("modelForProduct / defaultResolutionOf", () => {
   it("defaultResolutionOf prefers the declared default over the lowest listed tier", () => {
     expect(defaultResolutionOf(productById("video-hd-audio")!)).toBe("1080p");
     expect(defaultResolutionOf(productById("video-standard")!)).toBe("720p");
+  });
+
+  it("orders resolution tiers by capability rather than lexically", () => {
+    const standard = productById("video-standard")!;
+    expect(
+      defaultResolutionOf({ ...standard, defaultResolution: undefined, resolutions: ["1080p", "720p"] }),
+    ).toBe("720p");
   });
 });
 
