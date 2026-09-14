@@ -11,8 +11,8 @@
 | genius.service | active；`User=genius`（uid 989，R1.5 已执行，drop-in 见下文）；MemoryHigh=550M、MemoryMax=700M（734003200 字节）；ExecStart=`next start -p 3000 -H 0.0.0.0`；SELinux Disabled |
 | 反代链路 | 站点块 `genius.homeaistack.online { reverse_proxy 10.255.1.1:3000 }`：Caddy 容器经 docker 网关 `10.255.1.1` 连入宿主机，**服务必须绑 `0.0.0.0`，不能改成 loopback** |
 | 目录归属 | `/opt/genius` 与 `data/` 均为 genius:genius；`.env` 为 `genius:genius` 640 |
-| 磁盘 | /dev/vda3：40G，总已用 24G，可用 14G（65%） |
-| 发布标识 | `/opt/genius/BUILD_INFO.json` `shortSha 13fb9ee`、`dirty:false`。2026-09-14 `deploy.sh` 单次全流程通过（117 文件 / 1329 测试通过、1 既有跳过、build、`--frozen-lockfile`、重启、服务器 health 200、公网 `/login` 200）；生产 = `13fb9ee` 构建。线上版本以 BUILD_INFO / 登录态 `GET /api/health` 的 `build.sha` 为准，本轮后者因无生产管理员会话未核对 |
+| 磁盘 | /dev/vda3：40G，总已用 25G，可用 14G（65%）；`releases/` 两版共约 800M（node_modules 与 pnpm store 硬链接，KEEP_RELEASES=3） |
+| 发布标识 | `/opt/genius/BUILD_INFO.json -> current/BUILD_INFO.json`，`shortSha 0359830`、`dirty:false`；`current -> releases/0359830-20260914-234013`，`PREVIOUS=legacy-13fb9ee`。2026-09-15 `deploy.sh --no-build` 全流程通过（120 文件 / 1348 测试、1 既有跳过、`--frozen-lockfile`、切链、health 200、公网 `/login` 200），双向回滚演练通过。登录态 `build.sha` 仍因无生产管理员会话未核对 |
 | 对话与 relay 配置 | `.env` 已设 7 条 `AGENT_CHAT_MODELS`（默认 `gpt-5.6-luna`）和 `YMAN_T2V_MODEL=minimax_h3`，更新前状态备份 `.env.bak.20260914-220732`。`data/relays.json` 已首次创建且仅含 yman 文件条目（models-endpoint，24 模型：15 视频含 2 hidden、9 图片）；`data/relay-catalog/yman.json` 已首拉 24 模型快照。配置文件均归 genius:genius |
 | 备份 | root crontab 每日 03:17（`17 3 * * *`）跑 backup.sh（新版白名单含 relays.json）；部署前手动包 `backups/genius-data-20260913-211416.tgz`（新脚本产物）已跑过 `restore-check --compare data`：**一致**（users 4、ledger 幂等键 54 重复 0、jobs 54、canvases 2、canvas-runs 1、assets 0、relays.json 有）——首次真实恢复核对，未做实际切换恢复。更早的 `genius-data-20260913-174421.tgz` 为旧版脚本产物、**不含 relays.json** |
 
@@ -42,7 +42,7 @@ cd /opt/genius && sudo -u genius node scripts/mint-invites.mjs 1
 bash scripts/deploy.sh
 ```
 
-`deploy.sh` 的行为（本地段 R1.3 起，远端段 R1.4 于 `8b5282f` 改为 release 目录；**生产尚未用新脚本部署过，首次运行会自动完成布局迁移，见下**）：
+`deploy.sh` 的行为（本地段 R1.3 起，远端段 R1.4 于 `8b5282f`/`0359830` 改为 release 目录；**生产已于 2026-09-15 完成布局迁移与一次双向回滚演练**，现状：`current -> releases/0359830-20260914-234013`，`PREVIOUS=legacy-13fb9ee`）：
 
 - **门禁不可跳过**：上传前依次跑 `pnpm exec next typegen && pnpm exec tsc --noEmit`、`pnpm exec eslint src e2e scripts`、`pnpm test`，任一非零即中止。`--no-build` 只跳过 `pnpm build`，不跳过门禁；不再有 `--skip-check`。
 - **脏工作树默认拒绝**：`git status --porcelain` 非空则打印 diffstat 并以退出码 2 中止；确需发布未提交改动用 `--allow-dirty`（release id 以 `-dirty` 结尾）。
@@ -67,7 +67,7 @@ bash scripts/deploy.sh --rollback <id>    # 切到指定 release
 
 回滚目标 health 不绿会自动切回原 current。服务器上没有 `deploy.sh` 时的等价手工操作：`ln -sfn releases/<id> /opt/genius/current.tmp && mv -T /opt/genius/current.tmp /opt/genius/current && systemctl restart genius && curl -sS http://127.0.0.1:3000/api/health`。
 
-**R1.4 剩余动作**：脚本与自测已落地，生产首次迁移 + 一次真实回滚演练（部署 → `--rollback` 回 legacy → `--rollback <新 id>` 回来，各验 health 与公网 `/login`）待独立窗口执行；unit 回退方式 = 删 `release.conf` + `daemon-reload`，并把 `releases/legacy-*` 里的条目搬回顶层。
+**R1.4 已执行（2026-09-15）**：首次迁移把旧布局搬成 `releases/legacy-13fb9ee`，unit 备份在 `backups/systemd-20260915-073427/`；随后部署 `0359830`，`--rollback` 回 legacy、`--rollback 0359830-20260914-234013` 回来，两次都 health 200 且公网 `/api/health` 200，taiyu 未受影响。**事故记录**：首次迁移后 legacy 起服 500 约 2 分钟——旧 `node_modules` 里 Turbopack 别名软链是绝对路径（`/opt/genius/node_modules/.pnpm/…`），目录 `mv` 后悬空，`ffmpeg-static-<hash>` 找不到；人工在 legacy 目录重建为相对链接后恢复，`0359830` 起脚本统一写相对链接并在迁移时先重建再起服。unit 回退方式 = 删 `release.conf` + `daemon-reload`，并把 `releases/legacy-*` 里的条目搬回顶层（别名链接需再改回可解析路径）。顶层 `current`/`scripts`/`BUILD_INFO.json` 软链归 root，服务只读它们，不影响运行。
 
 ## 服务账号（R1.5 已执行，2026-09-13）
 

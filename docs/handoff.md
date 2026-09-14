@@ -8,8 +8,8 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 代码基线 | `main` 在 `13fb9ee`/`b615810` 之后新增四笔未部署提交：`3daf565` 通知覆盖画布 run 与智能体轮次、`031c7c2` 技能开关账号级持久化（`data/prefs/`）、`315818c` 会话/画布/终态 run 归档（`ARCHIVE_INACTIVE_DAYS`）、`8b5282f` 发布目录化 deploy 脚本（R1.4）。精确 SHA 与推送状态用 `git rev-parse HEAD origin/main` 核对 |
-| 生产版本依据 | 生产 = `13fb9ee` 构建（**不含**上面四笔）。2026-09-14 `deploy.sh` 单次全流程通过：本地门禁、build、上传、服务器 `pnpm install --prod --frozen-lockfile`、Turbopack 原生包别名、重启与 health 轮询均成功；`/opt/genius/BUILD_INFO.json` 为 `shortSha:13fb9ee`、`dirty:false`，公网匿名 health 200 `{"ok":true}`。登录态 `GET /api/health` 的 `build.sha` 本轮无生产会话，未核对 |
+| 代码基线 | `main`/`origin/main` = `0359830`（已推送）：`3daf565` 通知覆盖画布 run 与智能体轮次、`031c7c2` 技能开关账号级持久化（`data/prefs/`）、`315818c` 会话/画布/终态 run 归档（`ARCHIVE_INACTIVE_DAYS`）、`8b5282f`+`0359830` 发布目录化 deploy 脚本（R1.4）、`3942ae3` 文档。精确 SHA 用 `git rev-parse HEAD origin/main` 核对 |
+| 生产版本依据 | 生产 = `0359830` 构建，`current -> releases/0359830-20260914-234013`，`PREVIOUS=legacy-13fb9ee`（2026-09-15 部署 + 双向回滚演练通过，runbook「部署」节含事故记录）。以下为上一版 `13fb9ee` 的部署记录：2026-09-14 `deploy.sh` 单次全流程通过：本地门禁、build、上传、服务器 `pnpm install --prod --frozen-lockfile`、Turbopack 原生包别名、重启与 health 轮询均成功；`/opt/genius/BUILD_INFO.json` 为 `shortSha:13fb9ee`、`dirty:false`，公网匿名 health 200 `{"ok":true}`。登录态 `GET /api/health` 的 `build.sha` 本轮无生产会话，未核对 |
 | 生产配置 | `/opt/genius/.env` 已配置 7 条 `AGENT_CHAT_MODELS`，默认 `gpt-5.6-luna`；`YMAN_T2V_MODEL=minimax_h3`。更新前状态备份为 `.env.bak.20260914-220732`，当前与备份均为 genius:genius 640 |
 | 生产 relay | `data/relays.json` 于 2026-09-14 首次创建，仅含 `yman` 文件条目：`catalog.source=models-endpoint`，24 个模型配置（15 视频：13 定价 + 2 hidden；9 图片已定价），默认 t2v=`minimax_h3`、i2v/r2v=`minimax-h3-933-图文`、image=`gpt-image-2`。`data/relay-catalog/yman.json` 已自动生成 24 模型快照 |
 | 本机 | Windows / PowerShell，Node v24.16.0，pnpm 10.33.0，Next 16.3.3，React 19.2.8 |
@@ -68,7 +68,7 @@ Windows 本机的 mock 视频/ffmpeg、通知原子写入与 relay 首次动态�
 | F-03 | 独立素材、30 天提示、迁移/归属/过期/刷新回归已落地 |
 | F-04 | 画布每段独立文档 + 真实 409 断言 + 在途保存序列化；收口轮全量 e2e 40/40 |
 | F-05 | 已落地（`b1c71d0`）：ShellContext 拆 Session/Notices/Jobs/Composer 四 Provider，`useShell()` 为聚合兼容层，复测无 longtask、每击键重渲组件数与基线持平（§5） |
-| F-06 | R1.3 已落地并三次生产部署验证：`d7f34eb`/`c44f8a1` 的 `--frozen-lockfile` 与登录态 `build.sha` 通过，`13fb9ee` 的全流程、BUILD_INFO 与公网 health 通过；R1.4 发布目录脚本 `8b5282f` 已落地并本地自测（`deploy-layout-selftest.sh`），**生产首次迁移与回滚演练待窗口**；git archive 构建输入未做 |
+| F-06 | R1.3 已落地并三次生产部署验证：`d7f34eb`/`c44f8a1` 的 `--frozen-lockfile` 与登录态 `build.sha` 通过，`13fb9ee` 的全流程、BUILD_INFO 与公网 health 通过；R1.4 发布目录（`8b5282f`/`0359830`）已于 2026-09-15 生产迁移并双向回滚演练通过；git archive 构建输入未做 |
 | F-07 | 同机 cron 已核实；异地副本与恢复核对代码已落地（`34a8ac1`：`--stop-service` 一致性快照、openssl 加密 + ossutil 上传、`restore-check.mjs`），生产 `BACKUP_OSS_*`/`OSS_*` 配置、ossutil 安装与恢复演练待执行 |
 | F-08 | 交接区分代码/部署/实测，纠正目录数与备份状态；整合门禁按实际结果收口 |
 | F-09 | run/流水线性 IO 仍在；R4.1 的 `admission_ms` 埋点已落地（health 登录态 `admission.wait/hold` 分位数），其余治理待 R4 |
@@ -121,7 +121,7 @@ R5.2 已落地（`b1c71d0`）：`ShellContext` 拆为 `shell/{Session,Notices,Jo
 
 待用户/生产窗口动作：
 
-1. **部署四笔新提交 + R1.4 生产演练**：`bash scripts/deploy.sh` 首次运行会把 `/opt/genius` 迁成 `releases/legacy-13fb9ee` + `current` 并写 systemd `release.conf`（runbook「部署」节）；随后 `--rollback` 回 legacy、再 `--rollback <新 id>` 回来，各验 health 与公网 `/login`。属生产变更与两次短暂停服，须用户确认窗口。
+1. **登录态核对**：生产 `/api/health` 的 `build.sha` 应为 `0359830…`；`/api/models`、`/api/agent/skills`（7 个模型 + `off`）、铃铛与历史抽屉「已归档」在真实账号下过一眼。归档 sweep 首次将在部署后 1 小时的维护 tick 执行，默认 90 天阈值，生产目前不会有对象。
 2. **告警渠道**：`LUMEN_ADMIN_TOKEN` 已配置并实测生效（loopback→200 `{sent:false}`、公网→401，见 runbook「管理 CLI」节）；`.env` 仍待填 `ALERT_WEBHOOK_URL` + `ALERT_WEBHOOK_FORMAT`（feishu/dingtalk/wecom/generic）+ `ALERT_WEBHOOK_SECRET`（飞书/钉钉签名密钥），配后跑 `sudo -u genius node scripts/alert-test.mjs` 做真实触发验证（钉钉自定义机器人关键词填 `Lumen`）。
 3. **备份异地副本**：`.env` 配 `BACKUP_OSS_BUCKET`/`BACKUP_OSS_PREFIX`/`BACKUP_ENC_PASSPHRASE`/`OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET`/`OSS_REGION`（或 `OSS_ENDPOINT`），安装 ossutil 2.x（见 runbook 备份节）；首次 `--compare` 核对已做，完整恢复演练（解包→切换→验证）待执行。
 4. **R3 预算拍板**：scene-only ≈¥117–145 / 全 8 条 ≈¥350–425（报价见 plan R3 节）；全量评测还需**两张授权人物照**（`evals/README.md` 登记要求）。
