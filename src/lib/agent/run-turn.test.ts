@@ -20,6 +20,7 @@ let readTurn: typeof import("./run-turn").readTurn;
 let createSession: typeof import("./store").createSession;
 let readSession: typeof import("./store").readSession;
 let patchSession: typeof import("./store").patchSession;
+let updateSession: typeof import("./store").updateSession;
 let hasEntryFor: typeof import("@/lib/billing/ledger").hasEntryFor;
 let readUser: typeof import("@/lib/users/store").readUser;
 let writeUser: typeof import("@/lib/users/store").writeUser;
@@ -87,7 +88,7 @@ beforeAll(async () => {
   process.env.DATA_DIR = dataRoot;
   process.env.LUMEN_FORCE_MOCK = "1";
   ({ runTurn, approveTurn, rejectTurn, readTurn } = await import("./run-turn"));
-  ({ createSession, readSession, patchSession } = await import("./store"));
+  ({ createSession, readSession, patchSession, updateSession } = await import("./store"));
   ({ hasEntryFor } = await import("@/lib/billing/ledger"));
   ({ readUser, writeUser } = await import("@/lib/users/store"));
   ({ readNotifications } = await import("@/lib/notifications/store"));
@@ -982,6 +983,25 @@ describe("runTurn chatModel", () => {
     );
     expect(res.assistant?.model).toBe("mock-agent");
     expect(res.session.chatModel).toBe("mock-agent");
+  });
+
+  it("续聊已归档会话时自动恢复到活动列表", async () => {
+    const owner = "usr_0000000000000130";
+    await seedUser(owner, 10);
+    const created = await createSession(owner, { title: "旧会话" });
+    const archived = await updateSession(owner, created.id, (session) => ({
+      ...session,
+      archivedAt: "2026-01-01T00:00:00.000Z",
+    }));
+    expect(archived?.archivedAt).toBeTruthy();
+
+    const result = await runTurn(
+      archived!,
+      { ownerId: owner, text: "继续聊" },
+      { complete: completerReturning({ reply: "继续。", actions: [] }) },
+    );
+    expect(result.session.archivedAt).toBeUndefined();
+    expect((await readSession(owner, created.id))?.archivedAt).toBeUndefined();
   });
 
   it("同 turnId 换 chatModel 是 409 重放冲突", async () => {

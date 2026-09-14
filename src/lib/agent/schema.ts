@@ -183,6 +183,7 @@ export const agentSessionSchema = z.object({
   turns: z.array(agentTurnSchema).optional(),
   /** 会话预算闸门（B 包）；缺省 = 不限。 */
   budget: agentBudgetSchema.optional(),
+  archivedAt: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -195,6 +196,7 @@ export type AgentSessionSummary = {
   createdAt: string;
   updatedAt: string;
   skillId?: string;
+  archivedAt?: string;
 };
 
 /**

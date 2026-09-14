@@ -76,6 +76,11 @@ export function dataRetentionDays(): number {
   return intFromEnv(process.env.DATA_RETENTION_DAYS, 30, 0);
 }
 
+/** 会话、画布与终态 run 多久不活跃后归档；0 = 关闭，归档永不删除文件。 */
+export function archiveInactiveDays(): number {
+  return intFromEnv(process.env.ARCHIVE_INACTIVE_DAYS, 90, 0);
+}
+
 /**
  * 分享链接的有效期（小时，默认 24）。令牌本身就是权限，没有服务端的吊销表，所以
  * 到期是唯一的收回手段——不接受 0 / 负数 / 非法值（那等于签一条永久链接），一律

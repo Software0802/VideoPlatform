@@ -27,6 +27,7 @@ export type AgentSessionPublic = {
   /** 会话预算闸门（B 包）；缺省 = 不限。 */
   budget?: AgentSession["budget"];
   jobs: JobPublic[];
+  archivedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -61,6 +62,7 @@ export async function toPublicSession(session: AgentSession): Promise<AgentSessi
     turns,
     ...(session.budget ? { budget: session.budget } : {}),
     jobs: records.filter((r) => r !== null).map((r) => toPublic(r)),
+    ...(session.archivedAt ? { archivedAt: session.archivedAt } : {}),
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   };

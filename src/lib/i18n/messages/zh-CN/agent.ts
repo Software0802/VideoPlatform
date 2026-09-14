@@ -31,6 +31,8 @@ export const agent = {
 
   /* 历史抽屉 */
   "agent.history": "历史记录",
+  "agent.history.archived": "已归档",
+  "agent.history.archivedEmpty": "没有已归档的会话",
   "agent.historyAria": "智能体历史",
   "agent.drawerTitle": "智能体",
   "agent.collapseHistory": "收起历史记录",

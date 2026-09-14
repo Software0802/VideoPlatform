@@ -14,7 +14,8 @@ export const runtime = "nodejs";
 async function list(request: Request): Promise<Response> {
   try {
     const user = await requireUser(request);
-    return Response.json({ sessions: await listSessions(user.id) });
+    const archived = new URL(request.url).searchParams.get("archived") === "1";
+    return Response.json({ sessions: await listSessions(user.id, { archived }) });
   } catch (e) {
     return jsonError(e);
   }

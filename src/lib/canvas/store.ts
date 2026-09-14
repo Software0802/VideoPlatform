@@ -107,6 +107,7 @@ export async function listCanvases(ownerId: string): Promise<{ id: string; title
   );
   return docs
     .filter((d): d is CanvasDocument => d !== null)
+    .filter((d) => !d.archivedAt)
     .map((d) => ({ id: d.id, title: d.title, updatedAt: d.updatedAt }))
     .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 }
@@ -174,6 +175,20 @@ export async function updateCanvas(
     const next = fn(current);
     if (!next) return current;
     return writeCanvas({ ...next, revision: current.revision + 1, updatedAt: new Date().toISOString() });
+  });
+}
+
+export async function archiveCanvas(
+  ownerId: string,
+  canvasId: string,
+  archivedAt: string,
+  shouldArchive?: (doc: CanvasDocument) => boolean,
+): Promise<CanvasDocument | null> {
+  return withCanvasLock(async () => {
+    const current = await readCanvas(ownerId, canvasId);
+    if (!current || current.archivedAt || (shouldArchive && !shouldArchive(current))) return current;
+    // 归档是列表轴，不是用户编辑：不推进 revision，也不刷新 updatedAt。
+    return writeCanvas({ ...current, archivedAt });
   });
 }
 

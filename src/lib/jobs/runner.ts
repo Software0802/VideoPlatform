@@ -1,3 +1,4 @@
+import { sweepArchive } from "@/lib/archive/sweep";
 import { jobConcurrency } from "@/lib/env";
 import { isHarnessDuration } from "@/lib/harness/durations";
 import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
@@ -70,7 +71,7 @@ async function refillTodo(): Promise<void> {
 
 /**
  * Housekeeping on the runner's own hourly timer (plan §8): staging files and
- * idempotency replays older than a day, then the artifact retention sweep.
+ * idempotency replays older than a day, then artifact retention and inactive-record archiving.
  *
  * Deliberately in the runner process rather than a separate cron: retention
  * rewrites `job.json` through `store.updateJob`, and doing that from a second
@@ -80,7 +81,7 @@ async function refillTodo(): Promise<void> {
  * runner from starting.
  */
 async function maintenance() {
-  for (const step of [sweepTmp, sweepIdempotency, sweepRetention, refillTodo]) {
+  for (const step of [sweepTmp, sweepIdempotency, sweepRetention, sweepArchive, refillTodo]) {
     try {
       await step();
     } catch (error) {

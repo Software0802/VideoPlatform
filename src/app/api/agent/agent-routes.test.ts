@@ -21,6 +21,8 @@ let saved: Record<string, string | undefined> = {};
 let writeUser: typeof import("@/lib/users/store").writeUser;
 let SESSION_COOKIE: string;
 let issueSessionValue: typeof import("@/lib/users/session").issueSessionValue;
+let createSession: typeof import("@/lib/agent/store").createSession;
+let updateSession: typeof import("@/lib/agent/store").updateSession;
 
 let GET_SKILLS: typeof import("./skills/route").GET;
 let GET_SESSIONS: typeof import("./sessions/route").GET;
@@ -45,6 +47,7 @@ beforeAll(async () => {
   }
   ({ writeUser } = await import("@/lib/users/store"));
   ({ SESSION_COOKIE, issueSessionValue } = await import("@/lib/users/session"));
+  ({ createSession, updateSession } = await import("@/lib/agent/store"));
   ({ GET: GET_SKILLS } = await import("./skills/route"));
   ({ GET: GET_SESSIONS, POST: POST_SESSIONS } = await import("./sessions/route"));
   ({ GET: GET_SESSION, PATCH: PATCH_SESSION, DELETE: DELETE_SESSION } = await import("./sessions/[id]/route"));
@@ -179,6 +182,27 @@ describe("GET /api/agent/skills", () => {
 });
 
 describe("agent sessions", () => {
+  it("lists active and archived sessions separately", async () => {
+    const user = await seedUser("usr_0000000000000215");
+    const active = await createSession(user.id, { title: "活动" });
+    const archived = await createSession(user.id, { title: "归档" });
+    await updateSession(user.id, archived.id, (session) => ({
+      ...session,
+      archivedAt: "2026-01-01T00:00:00.000Z",
+    }));
+
+    const activeResponse = await GET_SESSIONS(req("http://localhost/api/agent/sessions", user));
+    expect(((await activeResponse.json()) as { sessions: { id: string }[] }).sessions.map((s) => s.id)).toEqual([
+      active.id,
+    ]);
+    const archivedResponse = await GET_SESSIONS(
+      req("http://localhost/api/agent/sessions?archived=1", user),
+    );
+    expect(
+      ((await archivedResponse.json()) as { sessions: { id: string; archivedAt?: string }[] }).sessions,
+    ).toEqual([expect.objectContaining({ id: archived.id, archivedAt: expect.any(String) })]);
+  });
+
   it("opens a session, proposes a job and files it on approval", async () => {
     const user = await seedUser("usr_0000000000000202");
     const res = await POST_SESSIONS(

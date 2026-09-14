@@ -92,6 +92,21 @@ describe("agent session store", () => {
     expect(list[0]).not.toHaveProperty("messages");
   });
 
+  it("separates active and archived session lists", async () => {
+    const owner = "usr_00000000000000c4";
+    const active = await store.createSession(owner, { title: "活动" });
+    const archived = await store.createSession(owner, { title: "归档" });
+    await store.updateSession(owner, archived.id, (session) => ({
+      ...session,
+      archivedAt: "2026-09-14T00:00:00.000Z",
+    }));
+
+    expect((await store.listSessions(owner)).map((session) => session.id)).toEqual([active.id]);
+    expect((await store.listSessions(owner, { archived: true })).map((session) => session.id)).toEqual([
+      archived.id,
+    ]);
+  });
+
   it("refuses to open session 201", async () => {
     const owner = "usr_00000000000000d4";
     const dir = store.agentUserDir(owner);

@@ -206,7 +206,9 @@ test("智能体：历史抽屉列出真实会话，点进去能读回对话", as
   await page.getByRole("button", { name: "历史记录" }).click();
   const drawer = page.locator(".agent-drawer");
   await expect(drawer).toBeVisible();
-  const row = drawer.locator(".agent-drawer__row").first();
+  await drawer.locator(".agent-history__archived-toggle").click();
+  await expect(drawer.getByText("没有已归档的会话")).toBeVisible();
+  const row = drawer.locator('.agent-drawer__row:not([data-archived="true"])').first();
   await expect(row).toBeVisible();
   // 标题来自第一句用户输入，不是占位字符串。
   await expect(row.locator(".agent-drawer__item-name")).toContainText("海报");

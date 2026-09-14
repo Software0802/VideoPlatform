@@ -30,6 +30,8 @@ export const agent: Record<keyof typeof zh, string> = {
   "agent.manageSkills": "Manage skills",
 
   "agent.history": "History",
+  "agent.history.archived": "Archived",
+  "agent.history.archivedEmpty": "No archived sessions",
   "agent.historyAria": "Agent history",
   "agent.drawerTitle": "Agent",
   "agent.collapseHistory": "Collapse history",

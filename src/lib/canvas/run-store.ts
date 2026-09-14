@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/lib/env";
 import { log } from "@/lib/log";
@@ -36,6 +36,15 @@ export function canvasRunPath(ownerId: string, runId: string): string {
   return path.join(canvasRunsUserDir(ownerId), `${runId}.json`);
 }
 
+export function canvasRunArchiveDir(ownerId: string): string {
+  return path.join(canvasRunsUserDir(ownerId), "archive");
+}
+
+export function archivedCanvasRunPath(ownerId: string, runId: string): string {
+  if (!CANVAS_RUN_ID_RE.test(runId)) throw new Error("invalid canvas run id");
+  return path.join(canvasRunArchiveDir(ownerId), `${runId}.json`);
+}
+
 export function newCanvasRunId(): string {
   return `crun_${randomBytes(6).toString("hex")}`;
 }
@@ -58,15 +67,12 @@ export async function withRunLock<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** 非本人、不存在、坏文件一律 `null`——调用方渲染成 404，与任务/画布同一条纪律。 */
-export async function readCanvasRun(ownerId: string, runId: string): Promise<CanvasRun | null> {
-  if (!CANVAS_RUN_ID_RE.test(runId)) return null;
-  let raw: string;
-  try {
-    raw = await readFile(canvasRunPath(ownerId, runId), "utf8");
-  } catch {
-    return null;
-  }
+async function readCanvasRunFile(
+  ownerId: string,
+  runId: string,
+  filePath: string,
+): Promise<CanvasRun | null> {
+  const raw = await readFile(filePath, "utf8");
   const parsed = canvasRunSchema.safeParse(safeJson(raw));
   if (!parsed.success) {
     log("warn", "画布运行文件无法解析", { runId, ownerId });
@@ -74,6 +80,34 @@ export async function readCanvasRun(ownerId: string, runId: string): Promise<Can
   }
   if (parsed.data.ownerId !== ownerId) return null;
   return parsed.data;
+}
+
+type LocatedCanvasRun = { run: CanvasRun; filePath: string; archived: boolean };
+
+async function locateCanvasRun(ownerId: string, runId: string): Promise<LocatedCanvasRun | null> {
+  if (!CANVAS_RUN_ID_RE.test(runId)) return null;
+  const activePath = canvasRunPath(ownerId, runId);
+  try {
+    const run = await readCanvasRunFile(ownerId, runId, activePath);
+    return run ? { run, filePath: activePath, archived: false } : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null;
+  }
+  const archivePath = archivedCanvasRunPath(ownerId, runId);
+  try {
+    const run = await readCanvasRunFile(ownerId, runId, archivePath);
+    return run ? { run, filePath: archivePath, archived: true } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 主目录 ENOENT 时回退 archive，详情 API 因而仍可打开已归档的终态 run。
+ * 非本人、不存在、坏文件一律 `null`——调用方渲染成 404，与任务/画布同一条纪律。
+ */
+export async function readCanvasRun(ownerId: string, runId: string): Promise<CanvasRun | null> {
+  return (await locateCanvasRun(ownerId, runId))?.run ?? null;
 }
 
 /** 原子写：先临时文件再 rename（含 Windows EPERM/EBUSY 重试，见 atomic-json）。 */
@@ -95,7 +129,9 @@ export async function listCanvasRuns(ownerId: string): Promise<CanvasRun[]> {
       .filter((n) => n.endsWith(".json"))
       .map((n) => n.slice(0, -".json".length))
       .filter((id) => CANVAS_RUN_ID_RE.test(id))
-      .map((id) => readCanvasRun(ownerId, id)),
+      .map((id) =>
+        readCanvasRunFile(ownerId, id, canvasRunPath(ownerId, id)).catch(() => null),
+      ),
   );
   return runs
     .filter((r): r is CanvasRun => r !== null)
@@ -136,11 +172,14 @@ export async function updateCanvasRun(
   fn: (r: CanvasRun) => CanvasRun | null | undefined | Promise<CanvasRun | null | undefined>,
 ): Promise<CanvasRun | null> {
   return withRunLock(async () => {
-    const current = await readCanvasRun(ownerId, runId);
-    if (!current) return null;
+    const located = await locateCanvasRun(ownerId, runId);
+    if (!located) return null;
+    const current = located.run;
     const next = await fn(current);
     if (!next) return current;
-    const written = await writeCanvasRun({ ...next, updatedAt: new Date().toISOString() });
+    const written = { ...next, updatedAt: new Date().toISOString() };
+    // 归档 run 只读不复活：修改仍原子写回 archive 原路径，主目录不会出现第二份。
+    await writeJsonAtomic(located.filePath, written);
     // 通知锁只串行本用户通知文件，不获取 run/admission/user 等任何锁，不改变既有锁序。
     try {
       await appendRunNotifications(current, written);
@@ -155,7 +194,9 @@ export async function updateCanvasRun(
   });
 }
 
-/** 按幂等键找这个用户已建过的 run（同 key 重放交回、异参 409 由调用方判）。 */
+/**
+ * 按幂等键只扫活动目录：归档 90 天后同 key 重放会新建 run，这是减少泵与资金扫描 IO 的有意取舍。
+ */
 export async function findRunByIdempotencyKey(
   ownerId: string,
   key: string,
@@ -164,11 +205,29 @@ export async function findRunByIdempotencyKey(
   return runs.find((r) => r.idempotency?.key === key) ?? null;
 }
 
+export async function archiveCanvasRun(ownerId: string, runId: string): Promise<boolean> {
+  return withRunLock(async () => {
+    const source = canvasRunPath(ownerId, runId);
+    let current: CanvasRun | null;
+    try {
+      current = await readCanvasRunFile(ownerId, runId, source);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (!current || current.status === "running") return false;
+    await mkdir(canvasRunArchiveDir(ownerId), { recursive: true });
+    await rename(source, archivedCanvasRunPath(ownerId, runId));
+    return true;
+  });
+}
+
 export async function deleteCanvasRun(ownerId: string, runId: string): Promise<boolean> {
   return withRunLock(async () => {
     const current = await readCanvasRun(ownerId, runId);
     if (!current) return false;
     await rm(canvasRunPath(ownerId, runId), { force: true });
+    await rm(archivedCanvasRunPath(ownerId, runId), { force: true });
     return true;
   });
 }

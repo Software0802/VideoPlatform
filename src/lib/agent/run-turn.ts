@@ -258,6 +258,7 @@ export async function runTurn(
           chatModel: chatOption.id,
           ...(imageProduct ? { imageProduct } : {}),
           ...(videoProduct ? { videoProduct } : {}),
+          archivedAt: undefined,
           messages: [...s.messages, userMessage],
           turns: [...(s.turns ?? []), turn],
           ...(s.budget ? { budget: { ...s.budget, spentCny: round2(s.budget.spentCny + turnPrice) } } : {}),

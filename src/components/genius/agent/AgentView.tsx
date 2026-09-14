@@ -59,6 +59,9 @@ export default function AgentView() {
   const [products, setProducts] = useState<Product[]>([]);
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [archivedSessions, setArchivedSessions] = useState<AgentSessionSummary[]>([]);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [archivedLoaded, setArchivedLoaded] = useState(false);
   const [session, setSession] = useState<AgentSessionDetail | null>(null);
 
   const [prompt, setPrompt] = useState("");
@@ -155,6 +158,20 @@ export default function AgentView() {
     );
   }, [migrateLegacyOff, say]);
 
+  const toggleArchived = useCallback(() => {
+    const opening = !archivedOpen;
+    setArchivedOpen(opening);
+    if (!opening || archivedLoaded) return;
+    fetchAgentSessions({ archived: true }).then(
+      (list) => {
+        if (!alive.current) return;
+        setArchivedSessions(list);
+        setArchivedLoaded(true);
+      },
+      say,
+    );
+  }, [archivedLoaded, archivedOpen, say]);
+
   /* 会话里还有任务没跑完、或有轮次停在 thinking/executing 时才轮询；
      全终态就停下来，别对着一个不会变的东西每 3 秒问一次。 */
   const sessionId = session?.id ?? null;
@@ -233,9 +250,21 @@ export default function AgentView() {
       setError(null);
       setBusy(true);
       setPendingText(text);
+      const wasArchived = Boolean(session.archivedAt);
       try {
         const next = await sendAgentMessage(session.id, turnBody(text));
         if (alive.current) syncSession(next);
+        if (wasArchived) {
+          Promise.all([fetchAgentSessions(), fetchAgentSessions({ archived: true })]).then(
+            ([active, archived]) => {
+              if (!alive.current) return;
+              setSessions(active);
+              setArchivedSessions(archived);
+              setArchivedLoaded(true);
+            },
+            () => undefined,
+          );
+        }
       } catch (e) {
         say(e);
       } finally {
@@ -336,6 +365,7 @@ export default function AgentView() {
       }
       if (!alive.current) return;
       setSessions((list) => list.filter((s) => s.id !== id));
+      setArchivedSessions((list) => list.filter((s) => s.id !== id));
       setSession((cur) => (cur?.id === id ? null : cur));
       setScreen((cur) => (cur === "chat" ? "home" : cur));
     },
@@ -497,6 +527,44 @@ export default function AgentView() {
                   </div>
                 ))
               )}
+              <button
+                type="button"
+                className="agent-history__archived-toggle"
+                aria-expanded={archivedOpen}
+                onClick={toggleArchived}
+              >
+                {t("agent.history.archived")}
+              </button>
+              {archivedOpen && archivedLoaded ? (
+                archivedSessions.length === 0 ? (
+                  <p className="agent-drawer__empty">{t("agent.history.archivedEmpty")}</p>
+                ) : (
+                  archivedSessions.map((s) => (
+                    <div
+                      className="agent-drawer__row"
+                      key={s.id}
+                      data-session-id={s.id}
+                      data-archived="true"
+                    >
+                      <button
+                        type="button"
+                        className="agent-drawer__item"
+                        onClick={() => void open(s.id)}
+                      >
+                        <span className="agent-drawer__item-name">{s.title}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="agent-drawer__item-del"
+                        aria-label={t("agent.deleteSession", { title: s.title })}
+                        onClick={() => void remove(s.id)}
+                      >
+                        <IconTrash size={12} />
+                      </button>
+                    </div>
+                  ))
+                )
+              ) : null}
             </aside>
           ) : null}
         </>

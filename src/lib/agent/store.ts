@@ -101,8 +101,14 @@ export async function writeSession(session: AgentSession): Promise<AgentSession>
   return session;
 }
 
-/** 列表按 `updatedAt` 倒序（新→旧）。坏文件跳过而不是让整个抽屉 500。 */
-export async function listSessions(ownerId: string): Promise<AgentSessionSummary[]> {
+/**
+ * 列表按 `updatedAt` 倒序（新→旧）；默认活动会话，`archived:true` 只列归档。
+ * 坏文件跳过而不是让整个抽屉 500。
+ */
+export async function listSessions(
+  ownerId: string,
+  opts: { archived?: boolean } = {},
+): Promise<AgentSessionSummary[]> {
   let names: string[];
   try {
     names = await readdir(agentUserDir(ownerId));
@@ -116,12 +122,14 @@ export async function listSessions(ownerId: string): Promise<AgentSessionSummary
   const sessions = await Promise.all(ids.map((id) => readSession(ownerId, id)));
   return sessions
     .filter((s): s is AgentSession => s !== null)
+    .filter((s) => Boolean(s.archivedAt) === Boolean(opts.archived))
     .map((s) => ({
       id: s.id,
       title: s.title,
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
       ...(s.skillId ? { skillId: s.skillId } : {}),
+      ...(s.archivedAt ? { archivedAt: s.archivedAt } : {}),
     }))
     .sort((a, b) => (a.updatedAt === b.updatedAt ? (a.id < b.id ? 1 : -1) : a.updatedAt < b.updatedAt ? 1 : -1));
 }

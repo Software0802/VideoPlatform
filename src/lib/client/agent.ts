@@ -76,6 +76,7 @@ export type AgentSessionSummary = {
   createdAt: string;
   updatedAt: string;
   skillId?: string;
+  archivedAt?: string;
 };
 
 export type AgentSessionDetail = AgentSessionSummary & {
@@ -240,6 +241,7 @@ function readSummary(raw: unknown): AgentSessionSummary | null {
     createdAt: str(s.createdAt),
     updatedAt: str(s.updatedAt),
     ...(optStr(s.skillId) ? { skillId: str(s.skillId) } : {}),
+    ...(optStr(s.archivedAt) ? { archivedAt: str(s.archivedAt) } : {}),
   };
 }
 
@@ -322,8 +324,12 @@ export async function setAgentSkillOff(skillId: string, off: boolean): Promise<s
   return Array.isArray(data.off) ? [...new Set(data.off.map(str).filter(Boolean))].sort() : [];
 }
 
-export async function fetchAgentSessions(): Promise<AgentSessionSummary[]> {
-  const res = await fetch("/api/agent/sessions", { cache: "no-store" });
+export async function fetchAgentSessions(
+  opts: { archived?: boolean } = {},
+): Promise<AgentSessionSummary[]> {
+  const res = await fetch(`/api/agent/sessions${opts.archived ? "?archived=1" : ""}`, {
+    cache: "no-store",
+  });
   const data = await parseAuthed<{ sessions?: unknown }>(res, "无法读取会话列表");
   const raw = Array.isArray(data.sessions) ? data.sessions : [];
   return raw.map(readSummary).filter((s): s is AgentSessionSummary => s !== null);

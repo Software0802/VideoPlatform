@@ -612,6 +612,19 @@
   color: var(--ag-weak);
   padding-left: 2px;
 }
+.agent-history__archived-toggle {
+  padding: 7px 9px;
+  text-align: left;
+  font-size: 11.5px;
+  color: var(--ag-weak);
+}
+.agent-history__archived-toggle:hover {
+  color: var(--ag-fg-2);
+  background: var(--ag-chip);
+}
+.agent-drawer__row[data-archived="true"] .agent-drawer__item {
+  color: var(--ag-weak);
+}
 .agent-drawer__item {
   display: flex;
   align-items: center;

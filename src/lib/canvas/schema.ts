@@ -66,6 +66,7 @@ export const canvasDocSchema = z.object({
   edges: z.array(canvasEdgeSchema),
   createdAt: z.string(),
   updatedAt: z.string(),
+  archivedAt: z.string().optional(),
 });
 export type CanvasDocument = z.infer<typeof canvasDocSchema>;
 
