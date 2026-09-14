@@ -59,6 +59,7 @@ const WHITELIST_DIRS = [
   "canvases",
   "canvas-runs",
   "notifications",
+  "prefs",
   "assets",
 ];
 

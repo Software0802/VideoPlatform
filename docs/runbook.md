@@ -42,35 +42,32 @@ cd /opt/genius && sudo -u genius node scripts/mint-invites.mjs 1
 bash scripts/deploy.sh
 ```
 
-`deploy.sh` 的行为（R1.3 起）：
+`deploy.sh` 的行为（本地段 R1.3 起，远端段 R1.4 于 `8b5282f` 改为 release 目录；**生产尚未用新脚本部署过，首次运行会自动完成布局迁移，见下**）：
 
 - **门禁不可跳过**：上传前依次跑 `pnpm exec next typegen && pnpm exec tsc --noEmit`、`pnpm exec eslint src e2e scripts`、`pnpm test`，任一非零即中止。`--no-build` 只跳过 `pnpm build`，不跳过门禁；不再有 `--skip-check`。
-- **脏工作树默认拒绝**：`git status --porcelain` 非空则打印 diffstat 并以退出码 2 中止；确需发布未提交改动用 `--allow-dirty`（打印 diffstat 后继续）。
-- **发布指纹**：打包前在仓库根生成 `BUILD_INFO.json`（`sha`/`shortSha`/`builtAt`/`node`/`dirty`——`node` 是**构建机**的 Node 版本，不是服务器运行时），随包上传到 `/opt/genius`。部署后用**登录态** `GET /api/health` 的 `build.sha` 对照本地 `git rev-parse HEAD` 即可确认线上版本；`dirty:true` 表示该包出自未提交的工作树。匿名请求仍只回 `{ ok }`。
-- **依赖与回滚**：服务器上 `pnpm install --prod --frozen-lockfile` 与 Turbopack 别名补链在同一失败域——任一步失败和 health 检查失败走同一条 `.next.prev` 回滚（回滚换的是 `.next`，不重建 node_modules）。`--frozen-lockfile` 已在 2026-09-13 部署 d7f34eb 时实测通过。
-- 服务启动后轮询 `/api/health`（10 次 × 6s），非 200/`ok:true` 自动回滚。
+- **脏工作树默认拒绝**：`git status --porcelain` 非空则打印 diffstat 并以退出码 2 中止；确需发布未提交改动用 `--allow-dirty`（release id 以 `-dirty` 结尾）。
+- **发布指纹**：打包前在仓库根生成 `BUILD_INFO.json`（`sha`/`shortSha`/`builtAt`/`node`/`dirty`——`node` 是**构建机**的 Node 版本）。部署后用**登录态** `GET /api/health` 的 `build.sha` 对照本地 `git rev-parse HEAD`；匿名请求仍只回 `{ ok }`。
+- **release 目录**（远端逻辑在 `scripts/deploy-remote.sh`，经 `bash -s` 推到服务器执行）：包解到 `/opt/genius/releases/<shortSha>-<builtAt YYYYMMDD-HHMMSS>[-dirty]/`，在该目录内 `pnpm install --prod --frozen-lockfile` + Turbopack 别名补链；任一步失败 → 目录改名 `<id>.failed`，**不切链、服务不停**。成功后 `chown -R genius:genius`，`/opt/genius/current` 用「临时软链 + `mv -T`」原子切到新 release，`releases/PREVIOUS` 记下上一个 id，`systemctl restart genius`，轮询 `/api/health`（10 次 × 6s）。
+- **共享物不进 release**：`.env`（unit 的 `EnvironmentFile`）、`data/`（每个 release 内 `data -> /opt/genius/data` 软链，应用 `dataDir()` 仍是 cwd/data）、`backups/`、顶层 `data-seed`。顶层 `scripts -> current/scripts`、`BUILD_INFO.json -> current/BUILD_INFO.json` 是软链，所以 cron 的 `/opt/genius/scripts/backup.sh` 与 runbook 里 `cd /opt/genius && sudo -u genius node scripts/xxx.mjs` 都不用改。
+- **修剪**：`KEEP_RELEASES`（默认 3）——current、PREVIOUS 必留，其余按 mtime 补足；多出的只在 `releases/` 下 `rm -rf`；`*.failed` 只留最新一份。
+- **首次迁移**（`current` 还不是软链时自动执行，幂等）：停服 → 把顶层 `.next .next.prev .next.old node_modules package.json pnpm-lock.yaml pnpm-workspace.yaml next.config.ts BUILD_INFO.json public scripts src` 逐项 `mv` 进 `releases/legacy-<shortSha>/`，`cp -a` 一份 `data-seed` → `current` 指向它 → 建顶层软链 → 备份 unit 与 drop-in 到 `backups/systemd-<ts>/` → 写 drop-in `/etc/systemd/system/genius.service.d/release.conf`（`WorkingDirectory=/opt/genius/current`、`ExecStart=` 重置为 `/opt/genius/current/node_modules/next/dist/bin/next start -p 3000 -H 0.0.0.0`；`user.conf` 不动）→ `daemon-reload` → 起服并验 health，**绿了才继续装新 release**。老布局因此成为第一个可回滚目标。不动 `.env*`、`data*`、`backups`、`app`、`migrate-baselines`、`gen-baselines.mjs`。
+- 本地可用 `scripts/deploy-layout-selftest.sh`（Git Bash，临时目录 + 假 systemd/curl）演练迁移 → 两次发布 → 回滚 → 修剪，不碰生产。
 
 ## 回滚
 
-`deploy.sh` 健康检查失败时**自动**执行：把 `.next.prev` 换回 `.next` → `systemctl restart genius` → 再验一次 `/api/health` → 仍不行则脚本非零退出并明确提示「回滚也没救」，此时需要人工介入（看 `journalctl -u genius -n 200`）。
+`deploy.sh` 健康检查失败时**自动**执行：`current` 原子切回 `PREVIOUS` → `systemctl restart genius` → 再验 `/api/health` → 失败版改名 `.failed`；仍不行则非零退出提示「回滚也没救」，看 `journalctl -u genius -n 200`。
 
-手动回滚（`deploy.sh` 之外，比如发现是数据问题而非代码问题）：
+手动回滚（不跑门禁与构建，只连远端）：
 
 ```bash
-systemctl stop genius
-mv /opt/genius/.next /opt/genius/.next.bad
-mv /opt/genius/.next.prev /opt/genius/.next   # 前提是上一次部署留下了 .next.prev
-systemctl start genius
-curl -sS http://127.0.0.1:3000/api/health
+bash scripts/deploy.sh --list             # 看 current / PREVIOUS / 全部 release
+bash scripts/deploy.sh --rollback         # 切到 PREVIOUS
+bash scripts/deploy.sh --rollback <id>    # 切到指定 release
 ```
 
-首次部署没有 `.next.prev`，`deploy.sh` 会打印警告并保留当前构建重启，不会回滚到「什么都没有」。
+回滚目标 health 不绿会自动切回原 current。服务器上没有 `deploy.sh` 时的等价手工操作：`ln -sfn releases/<id> /opt/genius/current.tmp && mv -T /opt/genius/current.tmp /opt/genius/current && systemctl restart genius && curl -sS http://127.0.0.1:3000/api/health`。
 
-## 待执行：发布目录化（R1.4，设计定稿）
-
-方案 `docs/plan-unimplemented-2026-09-08.md` §10：每次发布解到 `/opt/genius/releases/<sha>/`，`/opt/genius/current` 软链指向当前版本，unit 的 `WorkingDirectory`/`ExecStart` 指向 `current`；`data/` 与 `.env` 留在 `/opt/genius` 顶层（不进 release），各版本共享。回滚 = 把 `current` 切回上一个 sha 的目录再 `systemctl restart genius`，等价于今天的 `.next.prev` 但粒度是整个发布包。
-
-**必须与 `deploy.sh` 的发布改造同一窗口执行**（解到 `releases/<sha>` → 切链 → health → 失败切回旧链）；只改其中一侧会让 unit 路径与包落点脱节。本轮只写设计，脚本未改。
+**R1.4 剩余动作**：脚本与自测已落地，生产首次迁移 + 一次真实回滚演练（部署 → `--rollback` 回 legacy → `--rollback <新 id>` 回来，各验 health 与公网 `/login`）待独立窗口执行；unit 回退方式 = 删 `release.conf` + `daemon-reload`，并把 `releases/legacy-*` 里的条目搬回顶层。
 
 ## 服务账号（R1.5 已执行，2026-09-13）
 

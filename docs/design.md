@@ -292,9 +292,18 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 方案 `docs/plan-h-account-notifications-2026-09-12.md`(Codex 评审后修订)。目标:任务终态通知跨刷新/跨设备保留,未读计数一致;SSE 仍只做即时提醒。
 
 - **存储** `src/lib/notifications/store.ts`:`data/notifications/<userId>.json`,`{schemaVersion, ownerId, epoch, nextSeq, lastReadSeq, items≤200}`。`epoch` 是存储代际(随机 `nep_*`),文件缺失/损坏记 warn 后以**新 epoch** 重建——通知是展示数据,不 fail closed;每用户一把内存 tail-promise 锁(与 admission/user/job 锁无交集);`writeJsonAtomic` 落盘。
-- **唯一写入点**:`updateJob` 在写 `job.json` + 索引之后、返回之前判「非终态 → 终态」边沿调 `appendJobNotification`,幂等键 `${jobId}:${status}`;**best-effort**,抛错只 `log warn`,不挡任务落盘与扣款。画布 run / 智能体轮次不入此索引(`kind` 字段已预留,二期并入)。
+- **通知项按 `kind` 分三类**(discriminatedUnion,旧的 job-only 文件照常解析):`job`(`${jobId}:${status}`,四个终态);`run`(画布 run 终态 `${runId}:${status}`,`succeeded|partially_failed|failed|canceled` 带 `nodeCounts{succeeded,failed,blocked}`;节点首次进入待审批 `${runId}:${nodeId}:awaiting_approval`,`cancelRequestedAt` 已设时不发;best-effort 附 `canvasTitle`);`agent`(轮次 `${turnId}:awaiting_approval` 带 `totalCny/actionCount`、`${turnId}:failed` 带 `errorCode/errorMessage`;succeeded/rejected/executing 不发)。
+- **写入点**:三处都在各自事实源落盘之后、锁内、best-effort(抛错只 `log warn`):`updateJob` 的「非终态 → 终态」边沿调 `appendJobNotification`;`updateCanvasRun` 与 `createCanvasRun` 的「创建即终态」分支调 `appendRunNotifications(before, after)`;`updateSession` 调 `appendAgentNotifications(before, after)`。边沿判定是纯函数 `runNotificationEdges`/`agentNotificationEdges`。通知锁只串行本用户通知文件、不再取任何别的锁,不进 admission → user 锁序。`appendItems` 一次拿锁、按 id 幂等、截 200、一次写盘,实际新增后经 `notifications/events.ts` 在共用总线(`jobs/events.ts` 的 `lumenBus()`)发 `notification:<ownerId>`;`GET /api/events` 订阅本人频道并推 `event: notification` 帧,客户端收到即 `syncNotices()`。
 - **API**:`GET /api/notifications` 全量 `{epoch, items(seq 倒序), lastReadSeq, unread}`(不分页,≤200 条一次给齐);`POST /api/notifications/read {epoch, upToSeq}` 游标只进不退,epoch 不符 409 `notifications_stale`。
-- **客户端** `ShellContext.syncNotifications()`:整体覆盖本地 notices/unread,触发点为挂载、SSE 每次 open(`useEvents` 的 `onOpen`,含重连——断线期间漏掉的终态靠它补齐)、页面回到前台、本地观察到终态边沿之后;失败 2s/5s/10s 退避三次放弃,在飞合并。SSE 那一跳仍即时插入 Notice + toast(等不了同步),随后 sync 以服务端为准覆盖。「打开铃铛 = 全部已读」:本地持全量,`markNoticesRead` 带 `epoch + 本地最大 seq` POST,409 则重拉不重试。
+- **客户端** `ShellContext.syncNotifications()`:整体覆盖本地 notices/unread,触发点为挂载、SSE 每次 open(`useEvents` 的 `onOpen`,含重连——断线期间漏掉的终态靠它补齐)、页面回到前台、本地观察到终态边沿之后;失败 2s/5s/10s 退避三次放弃,在飞合并。SSE 那一跳仍即时插入 Notice + toast(等不了同步),随后 sync 以服务端为准覆盖。「打开铃铛 = 全部已读」:本地持全量,`markNoticesRead` 带 `epoch + 本地最大 seq` POST,409 则重拉不重试。非 job 项的 toast 在 `applyNotificationState` 里补:非首拉、`seq` 大于上次最大值的 run/agent 项取最新一条弹出,用户已在目标页(`/canvas`、`/agent`)时不弹;点击通知 job → `/create`、run → `/canvas`、agent → `/agent?session=<id>`(AgentView 读该 query 深链打开会话)。
+
+## 2k'. 账号偏好与归档留存(2026-09-15,as-built)
+
+- **偏好** `src/lib/prefs/store.ts`:`data/prefs/<userId>.json` `{schemaVersion:1, ownerId, agent:{skillsOff:string[]}, updatedAt}`,每用户 tail-promise 锁 + `writeJsonAtomic`,坏文件记 warn 后按空值重建。**不写 user.json**——它是资金事实源,偏好不得与余额共用一次写。`GET /api/agent/skills` 下发 `off`(按当前 `publicSkills()` 过滤,已下架 id 可残留在文件里);`PATCH /api/agent/skills {skillId, off}`(strict,未知技能 400 `invalid_argument`)。前端乐观切换、失败回滚;旧 localStorage 键 `genius.agent.skillsOff` 只作一次性迁移入口(服务端为空时逐个 PATCH,完成后删键;服务端已有值直接删键)。
+- **归档** `src/lib/archive/sweep.ts`,`ARCHIVE_INACTIVE_DAYS`(默认 90,≤0 关闭),挂在 runner 每小时 `maintenance()` 的 `sweepRetention` 之后。归档**永不删文件、不改任何资金字段**:
+  - 会话:`updatedAt` 早于 N 天且无 `thinking|executing|awaiting_approval` 轮次 → `updateSession` 写 `archivedAt`;`listSessions` 默认只列未归档,`GET /api/agent/sessions?archived=1` 只列已归档;对已归档会话发新一轮,在追加 turn 的同一次 `updateSession` 里清掉 `archivedAt`。历史抽屉「已归档」disclosure 展开时才拉列表。
+  - 画布文档:早于 N 天、不是该用户 `updatedAt` 最新的一张、没有 running run 指向它 → 画布锁内写 `archivedAt`(不推进 revision、不刷新 updatedAt);`listCanvases` 排除,`readCanvas`/PATCH 不变。用户永远至少留着最新一张。
+  - run:`status!=="running"` 且 `finishedAt ?? updatedAt` 早于 N 天 → `withRunLock` 内 rename 到 `data/canvas-runs/<userId>/archive/<runId>.json`。`readCanvasRun` 主路径 ENOENT 时回退 archive(详情仍可读);`updateCanvasRun` 对归档 run 写回 archive 原路径,不在主目录复活;`listCanvasRuns`/`listActiveCanvasRuns`/严格资金扫描/`findRunByIdempotencyKey` **只扫主目录**——泵与 `runHeldFunds` 少读终态文件是这项的收益,同 idempotency key 90 天后重放会新建 run 是有意取舍。
 
 ## 2l. relay provider 与 `data/relays.json`(2026-09-13 N3.2,as-built)
 
@@ -350,7 +359,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 | `GET /api/me/ledger`(阶段 A) | `?before=&limit=&kind=`;倒序游标分页,`limit≤200`;已迁移账号读 billing 快照(顺带自愈导出文件),未迁移账号读 jsonl、坏行跳过 |
 | `POST /api/me/redeem`(阶段 A) | `{ code }`;礼品码认领 + 入账同一临界区(§5);成功 `{ amountCny, balance }`;404 无效 / 409 已用 / 429(IP+用户各一桶,5 次/分钟) |
 | `GET/POST /api/subscription`(2026-09-07,§2i) | `GET` 返回当前订阅状态(先惰性结算);`POST { planId, cycle }` 购买/续订,只扣已购池,`idempotencyKey` 必填;402 `insufficient_balance`(带 `purchasableCny`)/409 `subscription_active` |
-| `GET/POST /api/agent/sessions`、`GET/PATCH/DELETE /api/agent/sessions/:id`、`POST /api/agent/sessions/:id/messages`、`GET /api/agent/skills`(2026-09-07,§2h) | 会话增删改查与发消息(消息 20 次/分钟/用户);LLM 不可用时消息接口 503 `agent_unavailable` |
+| `GET/POST /api/agent/sessions`(`?archived=1` 只列已归档)、`GET/PATCH/DELETE /api/agent/sessions/:id`、`POST /api/agent/sessions/:id/messages`、`GET/PATCH /api/agent/skills`(2026-09-07,§2h;PATCH `{skillId,off}` 写账号偏好,§2k') | 会话增删改查与发消息(消息 20 次/分钟/用户);LLM 不可用时消息接口 503 `agent_unavailable` |
 | `GET /api/media/:jobId/:file` | 白名单 `video.mp4|poster.jpg|image.jpg`;`jobId` 经 `assertSafeId`;先做 owner 校验(§12.2)再看缓存头;`Cache-Control: private, no-cache` + 弱 ETag(size+mtime)+ `Last-Modified`,`If-None-Match` 命中在 owner 校验**之后**评估、回 304(§9);Range/206;支持 suffix range `bytes=-N`,416 带 `Content-Range: bytes */size`;`?download=1` 加 attachment |
 | `GET /api/health` | ffmpeg 二进制/字体/dataDir 可写/upstream kind/队列深度;新增 `audioAvailable`(当前视频 provider 会不会真的出音轨,§2d);缺 ffmpeg → `ok:false`(匿名可访问) |
 | `POST /api/auth/register` | 邮箱 + 密码(≥8 位) + 一次性邀请码;成功即写会话 Cookie 并返回 `MePublic` |
@@ -408,8 +417,10 @@ data/
   canvases/<userId>/<canvasId>.json     # 2026-09-11:画布文档,ownerId 校验,revision 乐观并发(§2j)
   canvas-runs/<userId>/<runId>.json     # 2026-09-12:画布整图运行——冻结图快照/逐节点报价与执行位/
                                          # run 级预算预留台账/审批门/复用判定(§2j)
-  notifications/<userId>.json           # 2026-09-12 H 包:任务终态通知,{epoch,nextSeq,lastReadSeq,items≤200};
+  canvas-runs/<userId>/archive/<runId>.json  # 2026-09-15:超过 ARCHIVE_INACTIVE_DAYS 的终态 run 归档位,只有详情读回退到这里(§2k')
+  notifications/<userId>.json           # 2026-09-12 H 包:job/run/agent 三类通知,{epoch,nextSeq,lastReadSeq,items≤200};
                                          # 坏文件以新 epoch 重建(展示数据不 fail closed),§2k
+  prefs/<userId>.json                   # 2026-09-15:账号偏好(智能体技能开关),独立于 user.json(§2k')
   templates/*.json                      # 2026-09-06 深夜:创作模板,首次部署需 cp -r data-seed/templates data/templates
                                          # (data-seed/templates 提供六条示例种子,不随代码自动生成)
 ```

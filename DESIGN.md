@@ -60,7 +60,7 @@ easing:
 
 1. **主页 `/`**：活动横幅占位槽 → 标签页 视频 / 图片 / 模板 / 挑战（本轮为给文生图作品加入口新增「图片」，模板/挑战 `aria-disabled`）→ 分类芯片（仅样式）→ 瀑布流 `columns:220px 5` 展示用户真实作品（`jobs` 中 `status==="succeeded"`，按 `output.kind` 分视频/图片），卡片标题胶囊 + hover 上浮，点击开详情浮层（播放器/图片 + 元信息 +「用这条提示词再生成」+「下载」）；`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡；无作品用样片占位并提示「还没有作品」。底部收起态输入条点击展开创作面板。
 2. **创作页 `/create`**：上部「当前任务」区（阶段行 / 百分比 / 分镜 n/m / 成片 / 失败原因 / 取消 / 重新生成；`retryBlocked` 非空时显示阻断说明并隐藏「重新生成」；`artifactsPurgedAt` 非空同样禁止重试）+ 下方「最近任务」列表；创作面板默认展开。内容块底部留白 236px（`main` 本身不留，避免主页等其它视图也被顶开）。
-3. **智能体 `/agent`**（见 `docs/design.md` §2h）：首屏渐变标题 + 输入卡 + 技能卡片网格（20 个技能来自 `GET /api/agent/skills`），首页与会话输入行共用 `AgentPickers` 四枚芯片：对话模型（弹层内分「对话模型」与只调发散度/篇幅的「创意档」）、图片产品、视频产品、技能；切换只影响下一轮。技能广场开关存 localStorage，历史抽屉读真实会话。会话页每条待批 action 用 `.agent-chat__proposal-product` 标明实际产品与报价，助手用 `.agent-chat__meta[data-model]` 落款实际模型和创意档；右侧资产栏跟进任务并可预览。服务端没配对话 provider/白名单时整个视图置灰显示「智能体暂未开放」。
+3. **智能体 `/agent`**（见 `docs/design.md` §2h）：首屏渐变标题 + 输入卡 + 技能卡片网格（20 个技能来自 `GET /api/agent/skills`），首页与会话输入行共用 `AgentPickers` 四枚芯片：对话模型（弹层内分「对话模型」与只调发散度/篇幅的「创意档」）、图片产品、视频产品、技能；切换只影响下一轮。技能广场开关是账号级偏好（`PATCH /api/agent/skills`，多设备一致），历史抽屉读真实会话并可展开「已归档」。会话页每条待批 action 用 `.agent-chat__proposal-product` 标明实际产品与报价，助手用 `.agent-chat__meta[data-model]` 落款实际模型和创意档；右侧资产栏跟进任务并可预览。服务端没配对话 provider/白名单时整个视图置灰显示「智能体暂未开放」。
 4. **画布 `/canvas`**（2026-09-11/12 起接真数据，见 `docs/design.md` §2j）：空态 → 900×620 作者坐标场景层（`fit×zoom` 缩放）→ 右键建四类节点（文本/素材/文生图/生成视频）、拖拽定位、文本与提示词防抖 600ms 落盘（`PATCH` 带 `expectedRevision`，409 保留本地并弹二选一，不静默覆盖）；素材节点保存独立 `assetId`，明示 30 天期限、刷新可预览，过期/缺失显示重新上传；富文本条/提示词面板/模型列表/工具箱抽屉沿用原型本地交互。顶栏「运行整图」→ `.canvas-quote` 报价弹层（逐节点价 + 复用行「重跑」勾选 + 可执行行「执行前需我批准」勾选——生成视频节点默认勾 + 合计）→ 确认建 run；节点徽标 `.canvas-node__exec[data-exec]` 显示执行态（待批准/已复用/已跳过等），`awaiting_approval` 节点带「批准/驳回」按钮，产物以真实 `<img>` / `<video controls>` 展示；3s 轮询 run，运行中可「取消运行」。
 5. **订阅 `/subscription`**（2026-09-07 凌晨起接真数据，见 `docs/design.md` §2i）：我的方案卡显示当前档位/到期日/会员积分/今日已发日积分/已购余额，兑换礼品码与流水抽屉；四档卡片是真实人民币价格（`costRatio` 成本 ÷ (1−15%毛利率) 推得，非占位值），年/月切换，「订阅」按钮真的调用 `POST /api/subscription` 从已购余额扣款，成功后刷新顶栏并 toast，余额不足提示「余额不足，请先兑换礼品码」。
 
@@ -136,6 +136,8 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 | 模型芯片 | `.composer__model` |
 | 智能体选择器 | `.agent-pickers` 四个 `.agent-chip`；模型项 `.agent-pop__item[data-chat-model]`，创意档 `.agent-pop__plain[data-tier]` |
 | 智能体提案与落款 | `.agent-chat__proposal-product` 显示实际产品；`.agent-chat__meta[data-model]` 显示模型与创意档 |
+| 顶栏铃铛 | 按钮名 `通知`（有未读时 `.top__dot[data-count]`）；面板 `.notify` 内 `.notify__item[data-kind="job\|run\|agent"][data-status][data-ok]`，job 项另带 `data-job-id`；点击 job → `/create`、run → `/canvas`、agent → `/agent?session=<id>` |
+| 智能体历史抽屉 | `.agent-drawer__row[data-session-id]`；`.agent-history__archived-toggle`（`aria-expanded`）展开已归档会话，条目 `data-archived="true"`，空态 `.agent-drawer__empty` |
 | 中转模型表 | `.relay-models[data-relay-id]`、`.relay-models__row[data-model-id][data-listed]` |
 | 创作按钮 | `button.composer__send` 名 `创作`，`data-busy`，含 `.composer__credits` |
 | 错误行 | `.composer__error[role="alert"]` |

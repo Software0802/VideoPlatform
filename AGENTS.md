@@ -21,7 +21,7 @@
 - t2v/i2v/t2i 为基础路径，参考与首尾帧按产品能力开放；未开放模式置灰并提示，不伪造成功。`reference_to_video/edit_video/extend_video` 后端保留，edit/extend UI 继续置灰。
 - 规格按钮保留 `data-dur/data-ratio/data-res`；Harness 开启才给 t2v/i2v 加 30/45/60 秒，进度按 job.shots 显示分镜。¥1=100 积分只做显示换算，不改后端 priceCny。
 - 一次逻辑创作复用同一 idempotencyKey，成功才清，提示词/选项改变则作废；网络重试不新造 key。智能体每次发送生成 turnId，重试原样带回。
-- 作品用 `GET /api/jobs?before&limit&kind` 分页；标签/删除/分享/模板用既有客户端入口。通知以持久索引为准，SSE 提醒并触发对齐（design §2k）。
+- 作品分页 `GET /api/jobs?before&limit&kind`；通知（job/run/agent）以持久索引为准，SSE 只提醒并触发对齐（design §2k）。
 
 ## 供应商与执行
 
@@ -58,22 +58,22 @@
 ## 智能体与画布
 
 - Agent LLM 顺序为 mock → AGENT_API_KEY/BASE_URL → XAI → 503 agent_unavailable，不静默 mock；上游调用失败用 502 agent_upstream_failed 并按原池退轮次费，不混淆「未配置」。
-- Agent 模型走 AGENT_CHAT_MODELS，turn 带 chatModel；显式表外模型扣款前 400。proposal 用 resolveProductChoice 钉产品，批准才进 createJob 限流桶；拒绝不建不退。同 turnId 同参重放、异参 409；thinking 惰性退款，核 budget/imageRef/kinds，按 locale 回复（design §2h）。
+- Agent 模型走 AGENT_CHAT_MODELS，turn 带 chatModel；显式表外模型扣款前 400。proposal 用 resolveProductChoice 钉产品，批准才进 createJob 限流桶；拒绝不建不退。同 turnId 同参重放、异参 409；thinking 惰性退款，核 budget/imageRef/kinds（design §2h）。
 - 画布 PATCH 必带 expectedRevision；409 保留本地并明确二选一，不静默覆盖。单节点与 DAG 统一走 createJob，输入缺失不降为无图生成，素材先复制再认领。
 - DAG 先确定性报价再冻结图与总价；run.reservation → transfer → job.reservation 一份钱恰好预留一次。查回既有 job 先于价变判断；运行不回写画布文档，产物用执行位 overlay。
 - runHeldFunds 不能只靠任务索引：索引缺失但执行位已终态不复活预留，非终态孤儿继续占用。取消意图持久化、停新提交；取消后不接受审批。
-- 审批 24h、排队 1h 超时均收敛 blocked，预留随 run 终态释放；内容寻址复用须校验产物在盘，已清则 output_purged，只有显式 regenerate 才重跑（design §2j）。
+- 审批 24h、排队 1h 超时均收敛 blocked，预留随 run 终态释放；内容寻址复用须校验产物在盘，已清则 output_purged，只有显式 regenerate 才重跑（design §2j）。归档只写 archivedAt 或移入 canvas-runs/*/archive/，永不删文件、不动资金；偏好存 prefs/，不写 user.json（§2k'）。
 
 ## 验证、评审与运维
 
 - 代码门禁依次为 `pnpm exec next typegen && pnpm exec tsc --noEmit`、`pnpm exec eslint src e2e scripts`、`pnpm test`；全绿才完成，不能依赖 dev 遗留类型。CI Ubuntu 同样执行并安装原生依赖。
 - UI 必跑 `pnpm e2e`（mock）；隔离用 E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1、独立 E2E_PORT。中文断言保留 zh-CN locale/accept-language，不把真实 key 导致的 skip 当通过。
-- 端到端清单以 `e2e/*.spec.ts` 为准；画布冲突用独立文档与真实 PATCH 409 断言。移动端须核对 375/390/768，软键盘需真机验证，不能冒充 Playwright 已覆盖。
-- 探索浏览器优先 Playwright MCP，回归用 pnpm e2e；若内置面板滚动截图空白，用真实浏览器或 translateY 检查，不凭空断定 UI 消失。
-- PR 的机器人/人工意见逐条判定；成立的修复并推送后，在原线程用 gh api 回复提交号、修改与验证，再标已解决；不成立的也说明理由。只回复已推送事实，不预告「将要修」。
+- 端到端清单以 `e2e/*.spec.ts` 为准；画布冲突用独立文档与真实 PATCH 409 断言。移动端核对 375/390/768，软键盘需真机验证。
+- 探索用 Playwright MCP，回归用 pnpm e2e；面板截图空白时用真实浏览器复核，不凭空断定 UI 消失。
+- PR 意见逐条判定；成立的修复推送后在原线程用 gh api 回复提交号与验证再标已解决，不成立的说明理由；只回复已推送事实，不预告「将要修」。
 - 密钥仅本地 .env.local / 服务器 .env，不进聊天/提交；未设 LUMEN_ACCESS_TOKEN 时不要把开发端口暴露公网。真实上游评测先确认报价与预算，缺授权素材不能用占位图凑绿。
 - 生产 8.209.212.178 `/opt/genius`、genius.service，借用 taiyu Caddy；运维查 runbook。生产变更/停服/改归属单独确认，不自动部署。
-- Windows→Linux 禁止复制原生 node_modules；sharp/ffmpeg-static 在部署机 pnpm install --prod，打包与 external 别名见 design §10.1。开发用 localhost，127.0.0.1 可能被 Next dev 403。
+- Windows→Linux 禁止复制原生 node_modules；sharp/ffmpeg-static 在部署机 pnpm install --prod，打包与 external 别名见 design §10.1；发布为 releases/<id> + current 软链（runbook）。开发用 localhost。
 
 <!-- BEGIN:nextjs-agent-rules -->
 
