@@ -1,3 +1,4 @@
+import type { ProductPriceOverride } from "@/lib/billing/prices";
 import type { AspectRatio, NativeMode, Resolution } from "@/lib/providers/types";
 
 /**
@@ -27,6 +28,21 @@ export type RelayModelSpec = {
    * 参与产品生成；快照里的 image / chat 模型不生成视频产品。
    */
   kind?: "video" | "image" | "chat";
+  /**
+   * `/models` 快照带来的上游展示名（`name` 字段，≠ id 时才记）。快照专用：
+   * 用户的展示名写 `name`（配置覆盖），两者都不要时回落目录键。
+   */
+  upstreamName?: string;
+  /** 配置里给用户看的展示名（中文）。解析顺序：`name` → `upstreamName` → 目录键。 */
+  name?: string;
+  /** 不上架：目录仍认得这个模型（默认模型 / 内部调用不受影响），只是不生成产品。 */
+  hidden?: boolean;
+  /**
+   * 产品级售价覆盖（元）：对全局售价表 `video` / `image` 同名字段的覆盖。
+   * **上架门槛**：video 至少要给 `5` 与 `10`，image 至少要给 `1k`——没定价的模型
+   * 不生成产品，防止一个高价上游模型被按 ¥2 默认档卖出去。
+   */
+  price?: ProductPriceOverride;
   /** 积分 = 分辨率价 + 时长价。键分别是分辨率名与时长的十进制字符串。 */
   credits: {
     resolution: Partial<Record<RelayResolution, number>>;
@@ -35,6 +51,59 @@ export type RelayModelSpec = {
     flat?: number;
   };
 };
+
+/**
+ * 单个模型的「快照 ∪ 配置」深合并：配置里的字段覆盖快照，`undefined` 不覆盖
+ * （浅合并会让配置里只写 `price` 的条目把快照的 ratios / resolutions 全丢掉）；
+ * `credits` / `price` 按子对象再合并一层。
+ */
+export function mergeModelSpecs(
+  base: RelayModelSpec | undefined,
+  over: RelayModelSpec | undefined,
+): RelayModelSpec {
+  if (!base) return over ?? UNKNOWN_RELAY_MODEL;
+  if (!over) return base;
+  const merged: RelayModelSpec = { ...base };
+  for (const [key, value] of Object.entries(over)) {
+    if (value === undefined || key === "credits" || key === "price") continue;
+    (merged as Record<string, unknown>)[key] = value;
+  }
+  merged.credits = {
+    resolution: { ...base.credits?.resolution, ...over.credits?.resolution },
+    duration: { ...base.credits?.duration, ...over.credits?.duration },
+    flat: over.credits?.flat ?? base.credits?.flat,
+  };
+  if (base.price || over.price) {
+    merged.price = {
+      video: { ...base.price?.video, ...over.price?.video },
+      image: { ...base.price?.image, ...over.price?.image },
+    };
+    if (!Object.keys(merged.price.video!).length) delete merged.price.video;
+    if (!Object.keys(merged.price.image!).length) delete merged.price.image;
+  }
+  return merged;
+}
+
+/** 快照表 ∪ 配置表：同名模型按 `mergeModelSpecs` 深合并，其余键两边都保留。 */
+export function mergeModelTables(
+  snapshot: Record<string, RelayModelSpec>,
+  config: Record<string, RelayModelSpec>,
+): Record<string, RelayModelSpec> {
+  const out: Record<string, RelayModelSpec> = { ...snapshot };
+  for (const [id, spec] of Object.entries(config)) {
+    out[id] = mergeModelSpecs(out[id], spec);
+  }
+  return out;
+}
+
+/** 用户看到的展示名：配置 `name` → 快照 `upstreamName` → 目录键（上游 id）。 */
+export function relayModelDisplayName(id: string, spec: RelayModelSpec): string {
+  const configured = spec.name?.trim();
+  if (configured) return configured;
+  const upstream = spec.upstreamName?.trim();
+  if (upstream) return upstream;
+  return id;
+}
 
 /**
  * 认不出的模型（配置里填了个目录没有的名字）的兜底能力。取上游最常见的形状，
@@ -99,7 +168,10 @@ export function makeRelayCatalog(opts: {
   }
 
   function specFor(model: string): RelayModelSpec {
-    return opts.table()[resolveModel(model)] ?? UNKNOWN_RELAY_MODEL;
+    const spec = opts.table()[resolveModel(model)];
+    // 配置-only 条目可能只有 `{hidden:true}` 或 `price`，缺的能力字段用通用兜底
+    // 补齐，否则 normalizeDuration / videoRatios 会读到 undefined 抛错。
+    return spec ? mergeModelSpecs(UNKNOWN_RELAY_MODEL, spec) : UNKNOWN_RELAY_MODEL;
   }
 
   function modelFor(mode: NativeMode): string {
@@ -148,8 +220,8 @@ export function makeRelayCatalog(opts: {
       return sorted.find((d) => d >= sec) ?? sorted[sorted.length - 1] ?? smallest;
     },
     creditsFor(model, durationSec, resolution) {
-      const spec = opts.table()[resolveModel(model)];
-      if (!spec) return opts.unknownCredits();
+      if (!opts.table()[resolveModel(model)]) return opts.unknownCredits();
+      const spec = specFor(model);
       const res = spec.credits.resolution[resolution];
       const dur = spec.credits.duration[String(durationSec)];
       if (res == null && dur == null) return spec.credits.flat ?? opts.unknownCredits();

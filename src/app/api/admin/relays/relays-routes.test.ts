@@ -166,6 +166,87 @@ describe("CRUD", () => {
     expect(providerForId("fixture-admin").id).toBe("fixture-admin");
   });
 
+  it("PATCH catalog.models 是部分更新：只换给到的键，null 删除该模型的配置覆盖", async () => {
+    const admin = adminUser;
+    const created = await POST_CREATE(
+      req(admin, {
+        method: "POST",
+        body: JSON.stringify(
+          fixtureBody({
+            id: "fixture-patch",
+            catalog: {
+              source: "static",
+              models: {
+                "m-a": {
+                  durations: [5],
+                  resolutions: ["720p"],
+                  ratios: ["16:9"],
+                  maxReferenceImages: 0,
+                  price: { video: { "5": 2, "10": 4 } },
+                },
+                "m-b": {
+                  durations: [5],
+                  resolutions: ["720p"],
+                  ratios: ["16:9"],
+                  maxReferenceImages: 0,
+                },
+                "m-c": { hidden: true },
+              },
+            },
+          }),
+        ),
+      }),
+    );
+    expect(created.status).toBe(201);
+
+    const res = await PATCH_ONE(
+      req(admin, {
+        method: "PATCH",
+        body: JSON.stringify({
+          catalog: {
+            models: {
+              // 整键替换：m-a 变成只有 name + price。
+              "m-a": { name: "改名档", price: { video: { "5": 6, "10": 9 } } },
+              "m-c": null,
+            },
+          },
+        }),
+      }, "http://t/x"),
+      paramsOf("fixture-patch"),
+    );
+    expect(res.status).toBe(200);
+    const { relay } = (await res.json()) as {
+      relay: {
+        catalog: {
+          source: string;
+          models: {
+            id: string;
+            name?: string;
+            price?: { video?: Record<string, number> };
+            listed: boolean;
+            fromConfig: boolean;
+          }[];
+        };
+      };
+    };
+    const models = relay.catalog.models;
+    const a = models.find((m) => m.id === "m-a");
+    expect(a?.name).toBe("改名档");
+    expect(a?.price?.video?.["5"]).toBe(6);
+    expect(a?.listed).toBe(true); // 5s/10s 都给了 → 上架
+    expect(models.some((m) => m.id === "m-b")).toBe(true); // 没给的键原样保留
+    expect(models.some((m) => m.id === "m-c")).toBe(false); // null 删掉了唯一来源（配置）
+
+    // 落盘验证：m-c 的覆盖没了，m-b 没被动过。
+    const { readRelaysFile } = await import("@/lib/providers/relay/config");
+    const file = readRelaysFile().find((r) => r.id === "fixture-patch");
+    expect(file?.catalog?.models["m-c"]).toBeUndefined();
+    expect(file?.catalog?.models["m-b"]).toBeDefined();
+    expect(file?.catalog?.models["m-a"]?.name).toBe("改名档");
+
+    await DELETE_ONE(req(admin, { method: "DELETE" }, "http://t/x"), paramsOf("fixture-patch"));
+  });
+
   it("schema 校验失败 400、重复 id 409", async () => {
     const admin = adminUser;
     const bad = await POST_CREATE(

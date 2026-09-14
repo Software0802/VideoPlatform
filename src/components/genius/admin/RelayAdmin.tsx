@@ -8,8 +8,10 @@ import {
   probeRelay,
   removeRelay,
   updateRelay,
+  type RelayCatalogModel,
   type RelayCreateInput,
   type RelayEntry,
+  type RelayModelPatch,
 } from "@/lib/client/relays";
 import { ApiError } from "@/lib/client/http";
 import { useT } from "@/components/genius/i18n/I18nProvider";
@@ -83,6 +85,88 @@ const EMPTY_FORM: FormState = {
   catalogSource: "",
 };
 
+/** 模型表一行的编辑草稿：数值字段保持字符串，保存时才解析（空 = 不覆盖）。 */
+type ModelDraft = {
+  kind: "video" | "image" | "chat";
+  name: string;
+  hidden: boolean;
+  v5: string;
+  v10: string;
+  hd: string;
+  audio: string;
+  i1k: string;
+  i2k: string;
+  maxRefs: string;
+  durations: string;
+};
+
+const numStr = (n: number | undefined): string => (n == null ? "" : String(n));
+
+function draftOf(m: RelayCatalogModel): ModelDraft {
+  return {
+    kind: m.kind ?? "video",
+    name: m.name ?? "",
+    hidden: m.hidden === true,
+    v5: numStr(m.price?.video?.["5"]),
+    v10: numStr(m.price?.video?.["10"]),
+    hd: numStr(m.price?.video?.hd),
+    audio: numStr(m.price?.video?.audio),
+    i1k: numStr(m.price?.image?.["1k"]),
+    i2k: numStr(m.price?.image?.["2k"]),
+    maxRefs: String(m.maxReferenceImages),
+    durations: m.durations.join(","),
+  };
+}
+
+/** 草稿 → 数字价覆盖；全是空串返回 undefined（不定价）。 */
+function priceOf(draft: ModelDraft): RelayModelPatch["price"] {
+  const num = (s: string) => {
+    const n = Number(s);
+    return s.trim() !== "" && Number.isFinite(n) && n >= 0 ? n : undefined;
+  };
+  const video = { "5": num(draft.v5), "10": num(draft.v10), hd: num(draft.hd), audio: num(draft.audio) };
+  const image = { "1k": num(draft.i1k), "2k": num(draft.i2k) };
+  const hasVideo = Object.values(video).some((v) => v !== undefined);
+  const hasImage = Object.values(image).some((v) => v !== undefined);
+  return hasVideo || hasImage
+    ? { video: hasVideo ? video : undefined, image: hasImage ? image : undefined }
+    : undefined;
+}
+
+/**
+ * 草稿 → PATCH 的模型覆盖。服务端对 `catalog.models[key]` 是**整键替换**，
+ * 所以改任何字段都要带上完整的一份（UI 不编辑的 resolutions / ratios 从
+ * 合并视图原样抄回），否则会把同模型没改的配置抹掉。草稿与下发视图全同返回
+ * null（未改，不进 PATCH）。
+ */
+function draftToPatch(draft: ModelDraft, m: RelayCatalogModel): RelayModelPatch | null {
+  const base = draftOf(m);
+  const durations = draft.durations
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const maxRefs = Number(draft.maxRefs);
+  const spec: RelayModelPatch = {
+    kind: draft.kind,
+    hidden: draft.hidden,
+    price: priceOf(draft),
+    durations: durations.length ? durations : m.durations,
+    resolutions: m.resolutions as RelayModelPatch["resolutions"],
+    ratios: m.ratios,
+    maxReferenceImages:
+      Number.isFinite(maxRefs) && maxRefs >= 0 ? Math.floor(maxRefs) : m.maxReferenceImages,
+  };
+  if (draft.name.trim()) spec.name = draft.name.trim();
+  const dirty =
+    draft.kind !== base.kind ||
+    draft.name !== base.name ||
+    draft.hidden !== base.hidden ||
+    JSON.stringify(priceOf(draft) ?? null) !== JSON.stringify(priceOf(base) ?? null) ||
+    draft.durations !== base.durations ||
+    draft.maxRefs !== base.maxRefs;
+  return dirty ? spec : null;
+}
+
 function formToBody(form: FormState): RelayCreateInput {
   const body: RelayCreateInput = {
     id: form.id.trim(),
@@ -112,6 +196,8 @@ export function RelayAdmin() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [createErr, setCreateErr] = useState<string | null>(null);
+  const [modelsOpen, setModelsOpen] = useState<Record<string, boolean>>({});
+  const [modelDrafts, setModelDrafts] = useState<Record<string, Record<string, ModelDraft>>>({});
 
   /* 403/404 = 权限丧失（或会话降级）：显示「无权限」并停在那里，不再重试。 */
   const refresh = useCallback(async () => {
@@ -207,6 +293,86 @@ export function RelayAdmin() {
         await removeRelay(relay.id);
       });
     },
+    [runRow, t],
+  );
+
+  /** 模型表草稿：未碰过的行回落服务端下发的合并视图。 */
+  const draftFor = useCallback(
+    (relay: RelayEntry, m: RelayCatalogModel): ModelDraft =>
+      modelDrafts[relay.id]?.[m.id] ?? draftOf(m),
+    [modelDrafts],
+  );
+
+  const setDraft = useCallback((relayId: string, modelId: string, draft: ModelDraft) => {
+    setModelDrafts((prev) => ({
+      ...prev,
+      [relayId]: { ...prev[relayId], [modelId]: draft },
+    }));
+  }, []);
+
+  /** 底部「保存」：只 PATCH 改过的模型（draftToPatch 返回 null 的行不进请求体）。 */
+  const saveModels = useCallback(
+    (relay: RelayEntry) =>
+      runRow(relay.id, async () => {
+        const models: Record<string, RelayModelPatch> = {};
+        for (const m of relay.catalog?.models ?? []) {
+          const draft = modelDrafts[relay.id]?.[m.id];
+          if (!draft) continue;
+          const patch = draftToPatch(draft, m);
+          if (patch) models[m.id] = patch;
+        }
+        if (!Object.keys(models).length) return;
+        await updateRelay(relay.id, { catalog: { models } });
+        setModelDrafts((prev) => ({ ...prev, [relay.id]: {} }));
+        return t("admin.relays.models.saved");
+      }),
+    [modelDrafts, runRow, t],
+  );
+
+  /** 行尾「还原覆盖」：PATCH 该模型传 null，删掉配置覆盖（快照模型仍留在目录里）。 */
+  const resetModel = useCallback(
+    (relay: RelayEntry, modelId: string) =>
+      runRow(relay.id, async () => {
+        await updateRelay(relay.id, { catalog: { models: { [modelId]: null } } });
+        setModelDrafts((prev) => {
+          const next = { ...(prev[relay.id] ?? {}) };
+          delete next[modelId];
+          return { ...prev, [relay.id]: next };
+        });
+      }),
+    [runRow],
+  );
+
+  /** env 预设 → 文件条目：把视图给出的通道底稿（默认模型 / 生图模型）落成显式配置。 */
+  const promote = useCallback(
+    (relay: RelayEntry) =>
+      runRow(relay.id, async () => {
+        const cat = relay.catalog;
+        const body: RelayCreateInput = {
+          id: relay.id,
+          name: relay.name,
+          baseUrl: relay.baseUrl,
+          keyEnv: relay.keyEnv,
+          enabled: relay.enabled,
+          priority: relay.priority,
+        };
+        if (relay.channels.video) {
+          const defaults = Object.fromEntries(
+            Object.entries(cat?.videoDefaults ?? {}).filter(
+              ([, v]) => typeof v === "string" && v.trim(),
+            ),
+          ) as Record<string, string>;
+          body.video = { protocol: "openai-videos", defaults };
+        }
+        if (relay.channels.image) {
+          body.image = { protocol: "openai-images", model: cat?.imageModel ?? "" };
+        }
+        if (relay.catalogSource) {
+          body.catalog = { source: "models-endpoint", models: {} };
+        }
+        await createRelay(body);
+        return t("admin.relays.models.promoted");
+      }),
     [runRow, t],
   );
 
@@ -511,6 +677,29 @@ export function RelayAdmin() {
                     >
                       {t("admin.relays.probe")}
                     </button>
+                    {relay.catalog ? (
+                      <button
+                        type="button"
+                        className="relay-admin__btn"
+                        disabled={busy}
+                        aria-expanded={!!modelsOpen[relay.id]}
+                        onClick={() =>
+                          setModelsOpen((prev) => ({ ...prev, [relay.id]: !prev[relay.id] }))
+                        }
+                      >
+                        {t("admin.relays.models.toggle")}
+                      </button>
+                    ) : null}
+                    {!relay.managed ? (
+                      <button
+                        type="button"
+                        className="relay-admin__btn"
+                        disabled={busy}
+                        onClick={() => promote(relay)}
+                      >
+                        {t("admin.relays.models.promote")}
+                      </button>
+                    ) : null}
                     {relay.managed ? (
                       <button
                         type="button"
@@ -529,6 +718,185 @@ export function RelayAdmin() {
                     <p className="relay-admin__err" role="alert">
                       {rowErr[relay.id]}
                     </p>
+                  ) : null}
+                  {modelsOpen[relay.id] && relay.catalog ? (
+                    <div className="relay-models" data-relay-id={relay.id}>
+                      <div className="relay-models__scroll">
+                        <div className="relay-models__row relay-models__row--head">
+                          <span>{t("admin.relays.models.col.id")}</span>
+                          <span>{t("admin.relays.models.col.kind")}</span>
+                          <span>{t("admin.relays.models.col.name")}</span>
+                          <span>{t("admin.relays.models.col.hidden")}</span>
+                          <span>{t("admin.relays.models.col.price")}</span>
+                          <span>{t("admin.relays.models.col.refs")}</span>
+                          <span>{t("admin.relays.models.col.durations")}</span>
+                          <span>{t("admin.relays.models.col.status")}</span>
+                        </div>
+                        {relay.catalog.models.length === 0 ? (
+                          <p className="relay-models__empty">
+                            {t("admin.relays.models.empty")}
+                          </p>
+                        ) : (
+                          relay.catalog.models.map((m) => {
+                            const draft = draftFor(relay, m);
+                            const editable = relay.managed;
+                            const priced =
+                              draft.kind === "image"
+                                ? draft.i1k.trim() !== ""
+                                : draft.v5.trim() !== "" && draft.v10.trim() !== "";
+                            const badge = draft.hidden
+                              ? "admin.relays.models.badge.hidden"
+                              : m.defaultPinned
+                                ? "admin.relays.models.badge.pinned"
+                                : draft.kind === "chat"
+                                  ? "admin.relays.models.badge.chat"
+                                  : !priced
+                                    ? "admin.relays.models.badge.unpriced"
+                                    : m.listed
+                                      ? "admin.relays.models.badge.listed"
+                                      : "admin.relays.models.badge.unpriced";
+                            type PriceField = Extract<
+                              keyof ModelDraft,
+                              "v5" | "v10" | "hd" | "audio" | "i1k" | "i2k"
+                            >;
+                            const priceFields: [PriceField, MessageKey][] =
+                              draft.kind === "image"
+                                ? [
+                                    ["i1k", "admin.relays.models.price.1k"],
+                                    ["i2k", "admin.relays.models.price.2k"],
+                                  ]
+                                : draft.kind === "chat"
+                                  ? []
+                                  : [
+                                      ["v5", "admin.relays.models.price.5"],
+                                      ["v10", "admin.relays.models.price.10"],
+                                      ["hd", "admin.relays.models.price.hd"],
+                                      ["audio", "admin.relays.models.price.audio"],
+                                    ];
+                            return (
+                              <div
+                                key={m.id}
+                                className="relay-models__row"
+                                data-model-id={m.id}
+                                data-listed={m.listed}
+                              >
+                                <span className="relay-models__id" title={m.id}>
+                                  {m.id}
+                                </span>
+                                <select
+                                  className="relay-models__input"
+                                  value={draft.kind}
+                                  disabled={!editable || busy}
+                                  onChange={(e) =>
+                                    setDraft(relay.id, m.id, {
+                                      ...draft,
+                                      kind: e.target.value as ModelDraft["kind"],
+                                    })
+                                  }
+                                >
+                                  <option value="video">video</option>
+                                  <option value="image">image</option>
+                                  <option value="chat">chat</option>
+                                </select>
+                                <input
+                                  className="relay-models__input"
+                                  value={draft.name}
+                                  disabled={!editable || busy}
+                                  placeholder={m.upstreamName ?? m.id}
+                                  onChange={(e) =>
+                                    setDraft(relay.id, m.id, { ...draft, name: e.target.value })
+                                  }
+                                />
+                                <input
+                                  type="checkbox"
+                                  className="relay-models__check"
+                                  checked={draft.hidden}
+                                  disabled={!editable || busy}
+                                  onChange={(e) =>
+                                    setDraft(relay.id, m.id, {
+                                      ...draft,
+                                      hidden: e.target.checked,
+                                    })
+                                  }
+                                />
+                                <span className="relay-models__prices">
+                                  {priceFields.map(([field, key]) => (
+                                    <label key={field} className="relay-models__price">
+                                      <span>{t(key)}</span>
+                                      <input
+                                        className="relay-models__num"
+                                        inputMode="decimal"
+                                        value={draft[field]}
+                                        disabled={!editable || busy}
+                                        onChange={(e) =>
+                                          setDraft(relay.id, m.id, {
+                                            ...draft,
+                                            [field]: e.target.value,
+                                          })
+                                        }
+                                      />
+                                    </label>
+                                  ))}
+                                </span>
+                                <input
+                                  className="relay-models__num"
+                                  inputMode="numeric"
+                                  value={draft.maxRefs}
+                                  disabled={!editable || busy}
+                                  onChange={(e) =>
+                                    setDraft(relay.id, m.id, {
+                                      ...draft,
+                                      maxRefs: e.target.value,
+                                    })
+                                  }
+                                />
+                                <input
+                                  className="relay-models__input"
+                                  value={draft.durations}
+                                  disabled={!editable || busy}
+                                  placeholder="5,10"
+                                  onChange={(e) =>
+                                    setDraft(relay.id, m.id, {
+                                      ...draft,
+                                      durations: e.target.value,
+                                    })
+                                  }
+                                />
+                                <span className="relay-models__badge" data-badge={badge.split(".").pop()}>
+                                  {t(badge as MessageKey)}
+                                  {m.fromConfig && editable ? (
+                                    <button
+                                      type="button"
+                                      className="relay-models__reset"
+                                      disabled={busy}
+                                      onClick={() => resetModel(relay, m.id)}
+                                    >
+                                      {t("admin.relays.models.reset")}
+                                    </button>
+                                  ) : null}
+                                </span>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                      {relay.managed ? (
+                        <div className="relay-models__foot">
+                          <button
+                            type="button"
+                            className="relay-admin__btn relay-admin__submit"
+                            disabled={busy}
+                            onClick={() => saveModels(relay)}
+                          >
+                            {t("admin.relays.models.save")}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="relay-models__empty">
+                          {t("admin.relays.models.readonly")}
+                        </p>
+                      )}
+                    </div>
                   ) : null}
                 </div>
               );

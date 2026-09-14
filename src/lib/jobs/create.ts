@@ -3,13 +3,12 @@ import { access, cp, mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { estimateCostUsd, type ImagePricingHint } from "@/lib/cost";
 import { reserveJobFunds } from "@/lib/billing/admission";
-import { priceCny } from "@/lib/billing/prices";
+import { priceCny, priceTable, priceTableFor } from "@/lib/billing/prices";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { harnessEnabled, maxQueuedJobs, maxQueuedJobsPerUser } from "@/lib/env";
 import {
   harnessSettingsFor,
   harnessSubmitEstimateUsd,
-  modelForProvider,
   providerSettingsFor,
   videoPricingOf,
 } from "@/lib/jobs/provider-settings";
@@ -45,7 +44,7 @@ import {
 } from "@/lib/providers/openai-image/rest-map";
 import { providerForId } from "@/lib/providers/router";
 import { isProductAvailable, productById } from "@/lib/products/catalog";
-import { chooseProduct, labelProduct } from "@/lib/jobs/product-choice";
+import { resolveProductChoice } from "@/lib/jobs/product-choice";
 import { mediaStore } from "@/lib/storage/local-fs";
 
 /**
@@ -179,7 +178,7 @@ async function createJobUnlocked(
   // 画幅、分辨率、尾帧一起交给路由 / 产品校验：接不下的 provider 不该被选中（选中了
   // 只会把竖屏悄悄换成横屏、把 1080p 降成 720p，或者被上游 400）。没有一家接得下时
   // `chooseProduct` 自己抛 400。用户点名了产品（`body.model` 是产品 id）时绕过 ORDER。
-  const choice = chooseProduct({
+  const choice = resolveProductChoice({
     mode,
     requestedId: body.model,
     harness,
@@ -191,8 +190,8 @@ async function createJobUnlocked(
     durationSec,
   });
   const provider = choice.provider;
-  const model = modelForProvider(provider, mode, choice.product);
-  const product = labelProduct(choice, mode, model);
+  const model = choice.model;
+  const product = choice.labelledProduct;
   const providerImpl = providerForId(provider);
   const caps = providerImpl.capabilities();
   // 尾帧只有声明 `supportsLastFrameLock` 的 provider 发得出去（当前只有可灵，且强制 1080p）。
@@ -313,7 +312,10 @@ async function createJobUnlocked(
     // mock 更是只出一段占位片。记成 true 却没锁，就是按锁了收钱。
     lastFrameLocksOutput: provider === "kling" && Boolean(last),
     harness: { enabled: harness },
-    priceCny: priceCny({ mode, durationSec: dur, resolution, generateAudio, imageResolution }),
+    priceCny: priceCny(
+      { mode, durationSec: dur, resolution, generateAudio, imageResolution },
+      priceTableFor(priceTable(), product?.price),
+    ),
     costUsdEstimate: harness
       ? harnessSubmitEstimateUsd(packHarnessDuration(dur as 30 | 45 | 60), {
           model,
@@ -420,7 +422,7 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
   //（可能是 mock 实例随手打的）不该让重试卡在「所选模型不支持长片」上。
   const sourceProduct = harness ? undefined : productById(source.product);
   const keepProduct = sourceProduct && isProductAvailable(sourceProduct) ? sourceProduct : undefined;
-  const choice = chooseProduct({
+  const choice = resolveProductChoice({
     mode: source.mode,
     requestedId: keepProduct?.id,
     harness,
@@ -432,8 +434,8 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     durationSec: source.durationSec,
   });
   const provider = choice.provider;
-  const model = modelForProvider(provider, source.mode, choice.product);
-  const product = labelProduct(choice, source.mode, model);
+  const model = choice.model;
+  const product = choice.labelledProduct;
   // 源任务可能是 grok 时代的 6 秒片：换了 provider 后同样要归一，否则重试会照着一个上游
   // 根本不收的时长下单，账目也还是旧 provider 的估价。
   // 长片例外于时长归一：30/45/60 是管线目标总长，`harnessSettingsFor` 只取分辨率 /
@@ -484,7 +486,10 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     // 同 `createJob`：重试可能换了 provider，锁没锁尾帧要按**这次**的落点算。
     lastFrameLocksOutput: provider === "kling" && Boolean(source.assets.last),
     harness: { enabled: harness },
-    priceCny: priceCny({ mode: source.mode, durationSec, resolution, generateAudio, imageResolution }),
+    priceCny: priceCny(
+      { mode: source.mode, durationSec, resolution, generateAudio, imageResolution },
+      priceTableFor(priceTable(), product?.price),
+    ),
     costUsdEstimate: harness
       ? harnessSubmitEstimateUsd(packHarnessDuration(durationSec as 30 | 45 | 60), {
           model,

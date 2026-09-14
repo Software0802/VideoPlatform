@@ -1,3 +1,4 @@
+import type { ProductPriceOverride } from "@/lib/billing/prices";
 import type { AspectRatio, ImageResolution, NativeMode, Resolution } from "@/lib/providers/types";
 import { parseAuthed } from "@/lib/client/http";
 
@@ -43,6 +44,8 @@ export type Product = {
   providerName?: string;
   upstreamModel?: string;
   costHint?: "low" | "mid" | "high";
+  /** 产品级售价覆盖（relay 模型定价）；面板算价用 `priceTableFor(me.prices, product.price)`。 */
+  price?: ProductPriceOverride;
   description: string;
   /** 下拉里 ⚡ 读数的基准价（人民币元），乘 100 就是积分。 */
   samplePriceCny: number;
@@ -60,6 +63,26 @@ const RESOLUTIONS: readonly Resolution[] = ["480p", "720p", "1080p"];
 const IMAGE_RESOLUTIONS: readonly ImageResolution[] = ["1k", "2k"];
 const RATIOS: readonly AspectRatio[] = ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"];
 const AUDIO_KINDS: readonly ProductAudio[] = ["off", "native", "uncontrolled"];
+
+const PRICE_KEYS = { video: ["5", "10", "hd", "audio"], image: ["1k", "2k"] } as const;
+
+function readPrice(raw: unknown): ProductPriceOverride | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const src = raw as Record<string, unknown>;
+  const pick = (group: unknown, keys: readonly string[]) => {
+    if (!group || typeof group !== "object" || Array.isArray(group)) return undefined;
+    const row = group as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const key of keys) {
+      const n = row[key];
+      if (typeof n === "number" && Number.isFinite(n) && n >= 0) out[key] = n;
+    }
+    return Object.keys(out).length ? out : undefined;
+  };
+  const video = pick(src.video, PRICE_KEYS.video) as ProductPriceOverride["video"];
+  const image = pick(src.image, PRICE_KEYS.image) as ProductPriceOverride["image"];
+  return video || image ? { video, image } : undefined;
+}
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 const num = (value: unknown, fallback: number): number =>
@@ -119,6 +142,7 @@ function readProduct(raw: unknown): Product | null {
       p.costHint === "low" || p.costHint === "mid" || p.costHint === "high"
         ? p.costHint
         : undefined,
+    price: readPrice(p.price),
     description: str(p.description),
     samplePriceCny: Math.max(0, num(p.samplePriceCny, 0)),
   };

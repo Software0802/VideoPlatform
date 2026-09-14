@@ -448,7 +448,7 @@ async function seedProductBalance(id: string, balanceCny: number) {
  * once the calling test's `afterEach` unstubs it — same safety rule as the YMan block's
  * local `drain` above, redefined here since that one is out of scope for this block. */
 async function drainToTerminal(id: string) {
-  for (let i = 0; i < 20; i += 1) {
+  for (let i = 0; i < 100; i += 1) {
     const current = await readJob(id);
     if (current && ["succeeded", "failed", "expired"].includes(current.status)) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -521,6 +521,7 @@ describe("createJob — model / product selection (契约 A1)", () => {
     delete process.env.VIDEO_PROVIDER_ORDER;
     delete process.env.YMAN_API_KEY;
     delete process.env.XAI_API_KEY;
+    delete process.env.LUMEN_PRODUCTS;
     process.env.LUMEN_FORCE_MOCK = "1";
   });
 
@@ -600,6 +601,53 @@ describe("createJob — model / product selection (契约 A1)", () => {
     }
   });
 
+  it("applies a product-level price override: 5s/720p → ¥6, 5s/1080p → ¥9 (hd 沿用全局 ×1.5)", async () => {
+    // 面板 ⚡ 读数与 createJob 写进 priceCny 的数必须一致：两侧都过
+    // priceTableFor(base, product.price)（方案 §3.2）。
+    process.env.LUMEN_PRODUCTS = JSON.stringify([
+      {
+        id: "video-priced",
+        provider: "mock",
+        kind: "video",
+        name: "定价档",
+        model: "priced-upstream",
+        modes: ["text_to_video"],
+        resolutions: ["720p", "1080p"],
+        price: { video: { "5": 6 } },
+      },
+    ]);
+    const id = productOwner("fab1");
+    await seedProductBalance(id, 1000);
+
+    const { job } = await createJob(
+      {
+        mode: "text_to_video",
+        prompt: "p",
+        model: "video-priced",
+        durationSec: 5,
+        resolution: "720p",
+        generateAudio: false,
+      } as Parameters<typeof createJob>[0],
+      id,
+    );
+    expect(job.priceCny).toBe(6);
+    expect(job.model).toBe("priced-upstream");
+
+    const { job: hd } = await createJob(
+      {
+        mode: "text_to_video",
+        prompt: "p",
+        model: "video-priced",
+        durationSec: 5,
+        resolution: "1080p",
+        generateAudio: false,
+      } as Parameters<typeof createJob>[0],
+      id,
+    );
+    expect(hd.priceCny).toBe(9);
+    await Promise.all([drainToTerminal(job.id), drainToTerminal(hd.id)]);
+  }, 15_000);
+
   it("still stamps a product when no model is given, based on whichever provider the router picks", async () => {
     delete process.env.LUMEN_FORCE_MOCK;
     process.env.VIDEO_PROVIDER_ORDER = "yman";
@@ -615,6 +663,66 @@ describe("createJob — model / product selection (契约 A1)", () => {
 
     expect(job.provider).toBe("yman");
     expect(job.product).toBe("video-fast");
+    await drainToTerminal(job.id);
+  });
+
+  it("retry prices the actual fallback product when the source product is unavailable", async () => {
+    delete process.env.LUMEN_FORCE_MOCK;
+    process.env.VIDEO_PROVIDER_ORDER = "yman";
+    process.env.YMAN_API_KEY = "yman-test-key";
+    process.env.LUMEN_PRODUCTS = JSON.stringify([
+      {
+        id: "source-priced",
+        provider: "grok",
+        kind: "video",
+        name: "旧定价产品",
+        model: "retired-upstream",
+        modes: ["text_to_video"],
+        resolutions: ["720p"],
+        price: { video: { "5": 6 } },
+      },
+    ]);
+    stubYmanFetch();
+    const owner = productOwner("fab2");
+    await seedProductBalance(owner, 1000);
+    const now = new Date().toISOString();
+    const source: JobRecord = {
+      schemaVersion: 1,
+      id: "job_fab2fab2fab2",
+      ownerId: owner,
+      status: "failed",
+      progress: 0,
+      mode: "text_to_video",
+      model: "retired-upstream",
+      provider: "grok",
+      product: "source-priced",
+      productName: "旧定价产品",
+      productPicked: true,
+      prompt: "旧产品重试",
+      durationSec: 5,
+      aspectRatio: "16:9",
+      resolution: "720p",
+      imageResolution: null,
+      generateAudio: false,
+      lastFrameStored: false,
+      lastFrameLocksOutput: false,
+      harness: { enabled: false },
+      priceCny: 6,
+      costUsdEstimate: 0.1,
+      costUsdActual: null,
+      error: { code: "internal", message: "上游失败" },
+      output: null,
+      createdAt: now,
+      updatedAt: now,
+      bible: null,
+      shots: null,
+      assets: {},
+    };
+
+    const job = await retryJob(source, owner);
+    expect(job.provider).toBe("yman");
+    expect(job.product).toBe("video-fast");
+    expect(job.priceCny).toBe(2);
     await drainToTerminal(job.id);
   });
 });

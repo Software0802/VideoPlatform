@@ -7,6 +7,7 @@ import {
   type Product,
 } from "@/lib/products/catalog";
 import { isHarnessDuration } from "@/lib/harness/durations";
+import { modelForProvider } from "@/lib/jobs/provider-settings";
 import { currentProviderId, providerForId } from "@/lib/providers/router";
 import { ProviderHttpError } from "@/lib/providers/types";
 import type {
@@ -29,6 +30,10 @@ import type {
  *    运维把 `YMAN_T2V_MODEL` 换成另一个模型时，不该被产品表悄悄改回去。
  */
 export type ProductChoice = { provider: ProviderId; product?: Product };
+export type ResolvedProductChoice = ProductChoice & {
+  model: string;
+  labelledProduct?: Product;
+};
 
 export type ChooseProductInput = {
   mode: NativeMode;
@@ -142,4 +147,18 @@ export function labelProduct(
   model: string,
 ): Product | undefined {
   return choice.product ?? productForProvider(choice.provider, mode, model);
+}
+
+/**
+ * 把路由、上游模型与最终展示产品一次解析完。报价与真正创建任务共用这一入口，
+ * 避免「提案显示自动，批准后任务却落了具体产品」的分叉。
+ */
+export function resolveProductChoice(input: ChooseProductInput): ResolvedProductChoice {
+  const choice = chooseProduct(input);
+  const model = modelForProvider(choice.provider, input.mode, choice.product);
+  return {
+    ...choice,
+    model,
+    labelledProduct: labelProduct(choice, input.mode, model),
+  };
 }

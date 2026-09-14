@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { priceCny } from "@/lib/billing/prices";
+import { priceCny, priceTable, priceTableFor } from "@/lib/billing/prices";
 import { stableJsonHash } from "@/lib/jobs/idempotency";
 import {
   modelForProvider,
@@ -196,7 +196,10 @@ export function planNodeJob(
   return {
     mode,
     prompt,
-    priceCny: priceCny({ mode, durationSec: dur, resolution, generateAudio, imageResolution }),
+    priceCny: priceCny(
+      { mode, durationSec: dur, resolution, generateAudio, imageResolution },
+      priceTableFor(priceTable(), product?.price),
+    ),
     productName: product?.name,
   };
 }

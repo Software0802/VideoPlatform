@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_PRICE_TABLE, formatCny, priceCny, priceTable, type PriceTable } from "./prices";
+import {
+  DEFAULT_PRICE_TABLE,
+  formatCny,
+  priceCny,
+  priceTable,
+  priceTableFor,
+  type PriceTable,
+} from "./prices";
 
 /**
  * 售价表（方案 §3.2）：视频 ≤5s/更长两档、1080p 倍率、出声加价、extend/edit 定值、
@@ -205,5 +212,48 @@ describe("priceTable() and LUMEN_PRICE_TABLE", () => {
     const table = priceTable();
     expect(table.video["5"]).toBe(DEFAULT_PRICE_TABLE.video["5"]);
     expect(table.video["10"]).toBe(DEFAULT_PRICE_TABLE.video["10"]);
+  });
+});
+
+describe("priceTableFor — 产品级售价覆盖", () => {
+  it("无 override 原样返回同一引用", () => {
+    expect(priceTableFor(DEFAULT_PRICE_TABLE)).toBe(DEFAULT_PRICE_TABLE);
+    expect(priceTableFor(DEFAULT_PRICE_TABLE, undefined)).toBe(DEFAULT_PRICE_TABLE);
+    expect(priceTableFor(DEFAULT_PRICE_TABLE, {})).toBe(DEFAULT_PRICE_TABLE);
+    expect(priceTableFor(DEFAULT_PRICE_TABLE, { video: {}, image: {} })).toBe(DEFAULT_PRICE_TABLE);
+  });
+
+  it("只覆盖给到的同名字段，未给的沿用基表", () => {
+    const table = priceTableFor(DEFAULT_PRICE_TABLE, { video: { "5": 6 } });
+    expect(table).not.toBe(DEFAULT_PRICE_TABLE);
+    expect(table.video["5"]).toBe(6);
+    expect(table.video["10"]).toBe(4);
+    expect(table.video.hd).toBe(1.5); // hd 没被覆盖：6 × 1.5 = 9
+    expect(table.image).toEqual(DEFAULT_PRICE_TABLE.image);
+    // 基表不被改动（纯函数）。
+    expect(DEFAULT_PRICE_TABLE.video["5"]).toBe(2);
+  });
+
+  it("image 覆盖独立于 video", () => {
+    const table = priceTableFor(DEFAULT_PRICE_TABLE, { image: { "1k": 3 } });
+    expect(table.image["1k"]).toBe(3);
+    expect(table.image["2k"]).toBe(1);
+    expect(table.video["5"]).toBe(2);
+  });
+
+  it("非法数字逐字段忽略（负价 / NaN / 非数字不能把档变成免费）", () => {
+    const table = priceTableFor(DEFAULT_PRICE_TABLE, {
+      video: { "5": -2, "10": Number.NaN, hd: "x" as unknown as number, audio: 0.5 },
+    });
+    expect(table.video["5"]).toBe(2);
+    expect(table.video["10"]).toBe(4);
+    expect(table.video.hd).toBe(1.5);
+    expect(table.video.audio).toBe(0.5); // 0 与正数合法
+  });
+
+  it("与 priceCny 联用：产品覆盖生效于一次真实计价", () => {
+    const table = priceTableFor(DEFAULT_PRICE_TABLE, { video: { "5": 6 } });
+    expect(priceCny({ mode: "text_to_video", durationSec: 5, resolution: "720p" }, table)).toBe(6);
+    expect(priceCny({ mode: "text_to_video", durationSec: 5, resolution: "1080p" }, table)).toBe(9);
   });
 });

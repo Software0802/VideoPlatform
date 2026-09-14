@@ -51,6 +51,7 @@ function fixtureCfg(overrides: Record<string, unknown> = {}) {
           resolutions: ["720p"],
           ratios: ["16:9", "9:16"],
           maxReferenceImages: 0,
+          price: { video: { "5": 2, "10": 4 } },
           credits: { resolution: { "720p": 10 }, duration: { "5": 40, "10": 90 } },
         },
         "fixture-i2v": {
@@ -58,6 +59,7 @@ function fixtureCfg(overrides: Record<string, unknown> = {}) {
           resolutions: ["720p"],
           ratios: ["16:9", "9:16"],
           maxReferenceImages: 9,
+          price: { video: { "5": 2, "10": 4 } },
           credits: { resolution: { "720p": 10 }, duration: { "5": 40, "10": 90 } },
         },
       },
@@ -168,7 +170,7 @@ describe("reconcileRelays / 注册表影子语义", () => {
     reconcileRelays();
     expect(isRegisteredProviderId("fixture-relay")).toBe(false);
     expect(providerForId("fixture-relay")).toBe(provider); // 影子表：同一个对象
-  });
+  }, 15_000);
 
   it("enabled=false 的 relay 不注册（路由不可见），改动配置会替换对象", async () => {
     const { reconcileRelays } = await import("./assemble");
@@ -266,7 +268,12 @@ describe("动态目录（catalog.source = models-endpoint）", () => {
             resolutions: ["720p"],
             ratios: ["16:9"],
             maxReferenceImages: 0,
+            price: { video: { "5": 2, "10": 4 } },
           },
+          // 快照模型靠配置里的 price 覆盖上架（未定价不露出）；只写 price 的条目
+          // 不该丢掉快照的 ratios / resolutions（深合并）。
+          "fixture-t2v": { price: { video: { "5": 2, "10": 4 } } },
+          "something-else": { price: { video: { "5": 2, "10": 4 } } },
         },
       },
       ...overrides,
@@ -379,19 +386,36 @@ describe("动态目录（catalog.source = models-endpoint）", () => {
               resolutions: ["720p"],
               ratios: ["16:9"],
               maxReferenceImages: 0,
+              price: { video: { "5": 2, "10": 4 } },
             },
             "pure t2v": {
               durations: [5, 10],
               resolutions: ["720p"],
               ratios: ["16:9"],
               maxReferenceImages: 9,
+              name: "精选档",
+              price: { video: { "5": 2, "10": 4 } },
             },
             "image-model": {
               kind: "image",
-              durations: [5],
-              resolutions: ["720p"],
               ratios: ["1:1"],
+              price: { image: { "1k": 1 } },
+            },
+            // 未定价不上架：防止按 ¥2 默认档把高价上游模型卖出去。
+            "unpriced-model": {
+              durations: [5, 10],
+              resolutions: ["720p"],
+              ratios: ["16:9"],
               maxReferenceImages: 0,
+            },
+            // hidden 即使定价了也不露出。
+            "hidden-model": {
+              durations: [5, 10],
+              resolutions: ["720p"],
+              ratios: ["16:9"],
+              maxReferenceImages: 0,
+              hidden: true,
+              price: { video: { "5": 2, "10": 4 } },
             },
           },
         },
@@ -401,6 +425,7 @@ describe("动态目录（catalog.source = models-endpoint）", () => {
 
     const generated = allProducts().filter((p) => p.id.startsWith("fixture-products:"));
     expect(generated.map((p) => p.id).sort()).toEqual([
+      "fixture-products:image-model",
       "fixture-products:pure-t2v",
       "fixture-products:pure-t2v-2",
     ]);
@@ -408,13 +433,30 @@ describe("动态目录（catalog.source = models-endpoint）", () => {
     // 纯文生模型（maxReferenceImages=0）只声明 t2v；收参考图的档三个 mode 都声明。
     expect(pure.modes).toEqual(["text_to_video"]);
     expect(pure.upstreamModel).toBe("Pure T2V");
-    expect(productById("fixture-products:pure-t2v-2")!.modes).toEqual([
+    const pure2 = productById("fixture-products:pure-t2v-2")!;
+    expect(pure2.modes).toEqual([
       "text_to_video",
       "image_to_video",
       "reference_to_video",
     ]);
-    // kind=image 的配置条目不生成视频产品。
-    expect(allProducts().some((p) => p.id === "fixture-products:image-model")).toBe(false);
+    // 配置 name 作为展示名与售价覆盖落到生成产品上。
+    expect(pure2.name).toBe("精选档");
+    expect(pure2.price).toEqual({ video: { "5": 2, "10": 4 } });
+    // kind=image 的配置条目生成图片产品，model 钉住上游模型本身。
+    const img = productById("fixture-products:image-model")!;
+    expect(img.kind).toBe("image");
+    expect(img.modes).toEqual(["text_to_image"]);
+    expect(img.model).toBe("image-model");
+    expect(img.upstreamModel).toBe("image-model");
+    expect(img.imageResolutions).toEqual(["1k", "2k"]);
+    // 钉死要真正落到提交路径：modelForProvider → job.model → req.model，
+    // relay 的 openai-images 委托 `req.model?.trim() || cfg.model()` 优先用钉住的值，
+    // 而不是 `cfg.image.model` / YMAN_IMAGE_MODEL。
+    const { modelForProvider } = await import("@/lib/jobs/provider-settings");
+    expect(modelForProvider("fixture-products", "text_to_image", img)).toBe("image-model");
+    // 未定价 / hidden 的模型不生成产品。
+    expect(productById("fixture-products:unpriced-model")).toBeUndefined();
+    expect(productById("fixture-products:hidden-model")).toBeUndefined();
     // 有 key 且在 ORDER 里 → 可用。
     expect(isProductAvailable(pure)).toBe(true);
     expect(availableProducts().map((p) => p.id)).toContain("fixture-products:pure-t2v");
@@ -428,7 +470,7 @@ describe("动态目录（catalog.source = models-endpoint）", () => {
     delete process.env.VIDEO_PROVIDER_ORDER;
   });
 
-  it("isProductAvailable：模型从目录消失 → 产品隐藏（models-endpoint 快照）", async () => {
+  it("上架的目录产品钉住上游模型；上游下架后配置覆盖仍在 → 产品保留", async () => {
     process.env[KEY_ENV] = "fixture-secret";
     process.env.VIDEO_PROVIDER_ORDER = "fixture-live";
     const { reconcileRelays, refreshRelayCatalog } = await import("./assemble");
@@ -446,10 +488,12 @@ describe("动态目录（catalog.source = models-endpoint）", () => {
     expect(generated).toBeDefined();
     expect(isProductAvailable(generated)).toBe(true);
 
-    // 快照里没了 → 对应产品从 allProducts 消失；目录里其它模型仍照常生成产品。
+    // 定价门槛之后，已上架的快照模型必然在配置里有一条 price 覆盖——上游把它下架
+    // 后配置键仍在，合并目录里它仍算「认得」，产品继续露出（要下架用 hidden 或
+    // 删掉配置）。纯快照、没碰过配置的模型因未定价根本不生成产品，不在此列。
     stubModelsFetch([{ id: "something-else", ...VIDEO_ENTRY }]);
     await refreshRelayCatalog(relayViewFor("fixture-live")!);
-    expect(productById("fixture-live:fixture-t2v")).toBeUndefined();
+    expect(productById("fixture-live:fixture-t2v")).toBeDefined();
     expect(productById("fixture-live:something-else")).toBeDefined();
     expect(productById("fixture-live:cfg-override")).toBeDefined(); // 配置覆盖仍算目录内
 

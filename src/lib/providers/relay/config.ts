@@ -23,13 +23,33 @@ const KEY_ENV_RE = /^[A-Z][A-Z0-9_]*$/;
 /** 仍是代码内建、不可被 relay 抢占的 id（yman / openai 已是 relay 预设 id，不在其中）。 */
 export const RESERVED_PROVIDER_IDS = ["grok", "mock", "jimeng", "kling"] as const;
 
-const modelSpecSchema = z.object({
+const priceOverrideSchema = z.object({
+  video: z
+    .object({
+      "5": z.number().min(0).optional(),
+      "10": z.number().min(0).optional(),
+      hd: z.number().min(0).optional(),
+      audio: z.number().min(0).optional(),
+    })
+    .optional(),
+  image: z
+    .object({
+      "1k": z.number().min(0).optional(),
+      "2k": z.number().min(0).optional(),
+    })
+    .optional(),
+});
+
+export const modelSpecSchema = z.object({
   aliases: z.array(z.string()).optional(),
   durations: z.array(z.number().positive()).optional(),
   resolutions: z.array(z.enum(["720p", "1080p"])).optional(),
   ratios: z.array(z.string()).optional(),
   maxReferenceImages: z.number().int().min(0).optional(),
   kind: z.enum(["video", "image", "chat"]).optional(),
+  name: z.string().min(1).max(64).optional(),
+  hidden: z.boolean().optional(),
+  price: priceOverrideSchema.optional(),
   credits: z
     .object({
       resolution: z.record(z.string(), z.number().min(0)).optional(),

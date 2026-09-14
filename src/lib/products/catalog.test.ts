@@ -43,11 +43,20 @@ const previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]
 
 // 整个文件都不碰仓库真实的 data/：availableProducts -> isExhausted 会读
 // `<DATA_DIR>/provider-state.json`，不隔离就会被开发机上真实的耗尽记录污染。
+// relay 注册表是模块加载时装配的（builtin.ts → assembleRelays），那时 DATA_DIR
+// 还没换——这里显式 reconcile 一次，把仓库真实的 data/relays.json 条目清出去。
 let fileDataRoot = "";
 
 beforeAll(async () => {
   fileDataRoot = await mkdtemp(path.join(os.tmpdir(), "lumen-catalog-test-"));
   process.env.DATA_DIR = fileDataRoot;
+  const { reconcileRelays } = await import("@/lib/providers/relay/assemble");
+  reconcileRelays();
+  // reconcile 只注销 provider，live 视图故意保留给历史任务——文件条目要显式摘除。
+  const { liveRelayViews, removeRelayView } = await import("@/lib/providers/relay/live");
+  for (const view of liveRelayViews()) {
+    if (view.source === "file") removeRelayView(view.id);
+  }
 });
 
 afterAll(async () => {

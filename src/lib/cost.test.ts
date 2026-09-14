@@ -166,6 +166,78 @@ describe("estimateCostUsd for image models", () => {
     expect(estimateCostUsd("grok-imagine-video-1.5", 8)).toBe(0.64);
     expect(estimateCostUsd("grok-imagine-video", 8)).toBe(0.4);
   });
+
+  it("uses the relay catalog's credits.flat for an image model, ahead of the channel price table", async () => {
+    const { setRelayView, removeRelayView } = await import("@/lib/providers/relay/live");
+    type RelayView = import("@/lib/providers/relay/live").RelayView;
+    const { makeRelayCatalog } = await import("@/lib/providers/relay/catalog");
+    process.env.USD_CNY_RATE = "8";
+    const catalog = makeRelayCatalog({
+      table: () => ({
+        "flat-img": {
+          aliases: [],
+          durations: [5],
+          resolutions: ["720p"],
+          ratios: ["1:1"],
+          maxReferenceImages: 0,
+          credits: { resolution: {}, duration: {}, flat: 160 },
+        },
+      }),
+      unknownCredits: () => 150,
+      configuredModel: () => undefined,
+    });
+    const view: RelayView = {
+      id: "fixture-flat",
+      name: "Fixture Flat",
+      keyEnvName: "FIXTURE_FLAT_KEY",
+      apiKey: () => undefined,
+      base: () => "https://flat.example/v1",
+      implicitOrder: false,
+      priority: 0,
+      enabled: true,
+      catalog,
+      videoTaskTimeoutMs: () => undefined,
+      image: {
+        id: "fixture-flat",
+        keyEnvName: "FIXTURE_FLAT_KEY",
+        apiKey: () => undefined,
+        base: () => "https://flat.example/v1",
+        model: () => "flat-img",
+        shape: () => ({ flexibleSizes: false, quality: "medium" }),
+        imageEditsEnabled: () => false,
+        // 档表若被用到会给出 0.13；credits.flat 应赢过它。
+        priceTable: () => ({ medium: { "1K": 0.13, "2K": 0.13, "4K": 0.15 } }),
+        timeoutMs: () => 60_000,
+        taskTimeoutMs: () => 60_000,
+      },
+      chatModel: () => undefined,
+      creditsPerCny: 100,
+      creditsToUsd: (c) => c / 100 / 8,
+      source: "file",
+    };
+    setRelayView(view);
+    try {
+      // 160 / 100 / 8 = 0.2，不是档表的 0.13。
+      expect(
+        estimateCostUsd("flat-img", 0, {
+          provider: "fixture-flat",
+          size: "1024x1024",
+          quality: "medium",
+        }),
+      ).toBeCloseTo(0.2, 6);
+      // 目录里没有的模型回落档表（0.13）。
+      expect(
+        estimateCostUsd("other-img", 0, {
+          provider: "fixture-flat",
+          size: "1024x1024",
+          quality: "medium",
+        }),
+      ).toBeCloseTo(0.13, 6);
+    } finally {
+      removeRelayView("fixture-flat");
+      delete process.env.USD_CNY_RATE;
+    }
+  });
 });
 
 describe("Kling pricing table", () => {

@@ -89,6 +89,7 @@ function toPublicProduct(product: Product) {
     providerName: providerNameOf(product.provider),
     upstreamModel: product.upstreamModel ?? modelForProduct(product, product.modes[0] ?? "text_to_video"),
     costHint: costHintOf(product, price),
+    price: product.price,
     description: product.description,
     samplePriceCny: price,
   };

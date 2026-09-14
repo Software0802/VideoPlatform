@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useRouter } from "next/navigation";
 import type { JobPublic } from "@/lib/jobs/schema";
 import type { AspectRatio, ImageResolution, NativeMode, Resolution } from "@/lib/providers/types";
-import { priceCny } from "@/lib/billing/prices";
+import { DEFAULT_PRICE_TABLE, priceCny, priceTableFor } from "@/lib/billing/prices";
 import { HARNESS_DURATIONS } from "@/lib/harness/durations";
 import { createJob, newIdempotencyKey, uploadFile, uploadFromJob } from "@/lib/client/jobs";
 import { fetchProducts, supportsMode, type Product } from "@/lib/client/models";
@@ -336,7 +336,7 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     isImageTab
       ? { mode: "text_to_image", imageResolution: imageRes }
       : { mode: nativeMode, durationSec: dur, resolution: res, generateAudio: audioOn },
-    me?.prices,
+    priceTableFor(me?.prices ?? DEFAULT_PRICE_TABLE, product?.price),
   );
   const batchPrice = price * count;
   const sendCredits = tab === "audio" ? 0 : creditsOf(batchPrice);

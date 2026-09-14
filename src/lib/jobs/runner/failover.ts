@@ -1,4 +1,4 @@
-import { priceCny } from "@/lib/billing/prices";
+import { priceCny, priceTable, priceTableFor } from "@/lib/billing/prices";
 import { estimateCostUsd } from "@/lib/cost";
 import { relayMaxSwitches } from "@/lib/env";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
@@ -159,15 +159,18 @@ export async function switchProvider(id: string, error: unknown, submitMs: numbe
     audio: (settings ?? hSettings)?.audio,
   });
   // 新家归一后这次任务该值多少钱。图片模式 `settings` 恒为 null，算出来与原价同档。
-  const switchedPrice = priceCny({
-    mode: rec.mode,
-    durationSec: settings ? settings.durationSec : rec.durationSec,
-    resolution: (settings ?? hSettings)?.resolution ?? rec.resolution,
-    generateAudio: (settings ?? hSettings)
-      ? (settings ?? hSettings)!.audio === "native"
-      : rec.generateAudio,
-    imageResolution: rec.imageResolution,
-  });
+  const switchedPrice = priceCny(
+    {
+      mode: rec.mode,
+      durationSec: settings ? settings.durationSec : rec.durationSec,
+      resolution: (settings ?? hSettings)?.resolution ?? rec.resolution,
+      generateAudio: (settings ?? hSettings)
+        ? (settings ?? hSettings)!.audio === "native"
+        : rec.generateAudio,
+      imageResolution: rec.imageResolution,
+    },
+    priceTableFor(priceTable(), product?.price),
+  );
   // 用户选的是 5 秒，新家最短 10 秒且因此更贵：这不是「同一件事换个门」，是另一件商品。
   if (settings && settings.durationSec > rec.durationSec && switchedPrice > rec.priceCny) {
     log("info", `provider ${rec.provider} 积分耗尽，但 ${next} 的时长档更长且更贵，放弃换家`, {

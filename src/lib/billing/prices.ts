@@ -51,6 +51,31 @@ export type PriceTable = {
   agent: { turn: number };
 };
 
+/**
+ * 产品级售价覆盖（relay 目录生成的产品可用）：只覆盖 `video` / `image` 两个分组的
+ * 同名字段——长片定档、extend/edit 定值与智能体轮次价不接受产品级覆盖。
+ */
+export type ProductPriceOverride = {
+  video?: Partial<PriceTable["video"]>;
+  image?: Partial<PriceTable["image"]>;
+};
+
+/**
+ * 基表叠加产品覆盖。`override` 缺省返回 `base` 同一引用；非法数字（非有限 / 负数）
+ * 逐字段忽略，与 `parseTable` 同一口径——一个错字不能把某档变成免费或负价。
+ */
+export function priceTableFor(base: PriceTable, override?: ProductPriceOverride): PriceTable {
+  if (!override) return base;
+  const video = numbers(override.video, ["5", "10", "hd", "audio"]) as Partial<PriceTable["video"]>;
+  const image = numbers(override.image, ["1k", "2k"]) as Partial<PriceTable["image"]>;
+  if (!Object.keys(video).length && !Object.keys(image).length) return base;
+  return {
+    ...base,
+    video: { ...base.video, ...video },
+    image: { ...base.image, ...image },
+  };
+}
+
 /** 一轮智能体对话的默认售价（元）。`DEFAULT_PRICE_TABLE` 与缺项回落共用这一个数。 */
 export const DEFAULT_AGENT_TURN_CNY = 0.05;
 

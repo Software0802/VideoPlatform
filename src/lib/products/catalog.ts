@@ -1,9 +1,15 @@
-import { priceCny } from "@/lib/billing/prices";
+import {
+  priceCny,
+  priceTable,
+  priceTableFor,
+  type ProductPriceOverride,
+} from "@/lib/billing/prices";
 import { isMockMode, klingVideoAudio, lumenProductsRaw } from "@/lib/env";
 import { log } from "@/lib/log";
 import { isAvailable } from "@/lib/providers/health";
 import { envModelFor } from "@/lib/providers/model-name";
-import { liveRelayViews, relayViewFor } from "@/lib/providers/relay/live";
+import { liveRelayViews, relayViewFor, type RelayView } from "@/lib/providers/relay/live";
+import { relayModelDisplayName, type RelayModelSpec } from "@/lib/providers/relay/catalog";
 import { servesResolution } from "@/lib/providers/resolution";
 import {
   currentProviderId,
@@ -78,6 +84,12 @@ export type Product = {
    * 可用性还受「该模型此刻仍在 relay 目录里」约束——上游下架时产品自动隐藏。
    */
   upstreamModel?: string;
+  /**
+   * 产品级售价覆盖（relay 目录模型的 `price` 落到这）：对全局售价表 `video`/`image`
+   * 同名字段的覆盖。服务端算价走 `priceTableFor(priceTable(), product.price)`，
+   * 面板 ⚡ 读数经 `/api/models` 的 `price` 字段用同一函数复算。
+   */
+  price?: ProductPriceOverride;
   description: string;
 };
 
@@ -228,13 +240,106 @@ let cache: CatalogCache | null = null;
  * 一个模型，对应产品立刻从列表消失（`isProductAvailable` 的目录判据）；
  * `LUMEN_PRODUCTS` 仍能按 id 覆盖它们。
  */
-function generatedRelayProducts(): Product[] {
+/** 上架门槛：没定价不露出（2026-09-13 用户决定）——防止按 ¥2 默认档卖出高价模型。 */
+function relayModelPriced(kind: "video" | "image", price: ProductPriceOverride | undefined): boolean {
+  if (kind === "image") return price?.image?.["1k"] != null;
+  return price?.video?.["5"] != null && price.video["10"] != null;
+}
+
+/**
+ * 同一 provider 的默认产品若已把这个模型钉在 `model` / `models` 里（别名也算），
+ * 就不再为它生成重复产品——`resolveModel` 把钉的名字归一到展示名再比。
+ */
+export function relayModelPinnedByDefault(view: RelayView, display: string): boolean {
+  const catalog = view.catalog;
+  if (!catalog) return false;
+  for (const product of DEFAULT_PRODUCTS) {
+    if (product.provider !== view.id) continue;
+    const pinned = [product.model, ...Object.values(product.models ?? {})].filter(
+      (m): m is string => typeof m === "string" && Boolean(m.trim()),
+    );
+    if (pinned.some((m) => catalog.resolveModel(m) === display)) return true;
+  }
+  return false;
+}
+
+const IMAGE_RATIOS: AspectRatio[] = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"];
+
+function relayProductFor(
+  view: RelayView,
+  display: string,
+  spec: RelayModelSpec,
+  candidate: string,
+): Product {
+  const name = relayModelDisplayName(display, spec);
+  const description = `${view.name} · ${display}`;
+  // 配置里手写的条目（zod 输出）字段可能缺省——数组 / 数值一律先兜底再用。
+  const ratios = spec.ratios?.length ? spec.ratios : undefined;
+  const resolutions = spec.resolutions ?? [];
+  const durations = spec.durations ?? [];
+  const base = {
+    id: `${view.id}:${candidate}`,
+    name,
+    provider: view.id,
+    aspectRatios: ratios,
+    supportsLastFrame: false,
+    supportsLongForm: false,
+    upstreamModel: display,
+    price: spec.price,
+    description,
+  };
+  if (spec.kind === "image") {
+    return {
+      ...base,
+      kind: "image",
+      // 钉死模型：这条产品发的必须是目录里这一个，而不是 `cfg.image.model`。
+      model: display,
+      modes: ["text_to_image"],
+      resolutions: [],
+      aspectRatios: base.aspectRatios ?? IMAGE_RATIOS,
+      imageResolutions: ["1k", "2k"],
+      audio: "off",
+      maxReferenceImages: 0,
+    };
+  }
+  const maxRefs = spec.maxReferenceImages ?? 0;
+  const acceptsImages = maxRefs > 0;
+  const modes: NativeMode[] = acceptsImages
+    ? ["text_to_video", "image_to_video", "reference_to_video"]
+    : ["text_to_video"];
+  return {
+    ...base,
+    kind: "video",
+    models: {
+      text_to_video: display,
+      image_to_video: display,
+      reference_to_video: display,
+    },
+    modes,
+    resolutions,
+    defaultResolution: [...resolutions].sort()[0],
+    aspectRatios: base.aspectRatios ?? ["16:9", "9:16"],
+    durations: durations.length ? durations : undefined,
+    audio: "uncontrolled",
+    supportsLongForm:
+      modes.includes("text_to_video") &&
+      modes.includes("image_to_video") &&
+      durations.includes(10),
+    maxReferenceImages: maxRefs,
+  };
+}
+
+export function generatedRelayProducts(): Product[] {
   const out: Product[] = [];
   for (const view of liveRelayViews()) {
     if (!view.enabled || !view.catalog || view.source === "legacy") continue;
     const taken = new Set<string>();
     for (const [display, spec] of Object.entries(view.catalog.table())) {
-      if (spec.kind && spec.kind !== "video") continue;
+      const kind = spec.kind ?? "video";
+      if (kind === "chat") continue;
+      if (spec.hidden) continue;
+      if (!relayModelPriced(kind, spec.price)) continue;
+      if (relayModelPinnedByDefault(view, display)) continue;
       let slug = display
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
@@ -246,35 +351,7 @@ function generatedRelayProducts(): Product[] {
         candidate = `${slug}-${n}`;
       }
       taken.add(candidate);
-      const acceptsImages = spec.maxReferenceImages > 0;
-      const modes: NativeMode[] = acceptsImages
-        ? ["text_to_video", "image_to_video", "reference_to_video"]
-        : ["text_to_video"];
-      out.push({
-        id: `${view.id}:${candidate}`,
-        name: display,
-        kind: "video",
-        provider: view.id,
-        models: {
-          text_to_video: display,
-          image_to_video: display,
-          reference_to_video: display,
-        },
-        modes,
-        resolutions: spec.resolutions,
-        defaultResolution: [...spec.resolutions].sort()[0],
-        aspectRatios: spec.ratios,
-        durations: spec.durations,
-        audio: "uncontrolled",
-        supportsLastFrame: false,
-        supportsLongForm:
-          modes.includes("text_to_video") &&
-          modes.includes("image_to_video") &&
-          spec.durations.includes(10),
-        maxReferenceImages: spec.maxReferenceImages,
-        upstreamModel: display,
-        description: `${view.name} 目录模型，按上游档位计费。`,
-      });
+      out.push(relayProductFor(view, display, spec, candidate));
     }
   }
   return out;
@@ -289,7 +366,9 @@ function catalogKey(): string {
     .map(
       (v) =>
         `${v.id}:${v.source}:${v.enabled ? 1 : 0}:${
-          v.catalog ? Object.keys(v.catalog.table()).sort().join(",") : ""
+          // 键集合之外还要带上每个模型的规格：PATCH 改 price/name/hidden 不改键，
+          // 只比键会让生成的产品继续用旧值。
+          v.catalog ? JSON.stringify(v.catalog.table()) : ""
         }`,
     )
     .join(";");
@@ -421,15 +500,19 @@ export function defaultProductFor(
  * 图片按 1K 算。真实售价仍在提交时按归一后的参数重算（`create.ts`），这里只是标价牌。
  */
 export function samplePriceCny(product: Product): number {
+  const table = priceTableFor(priceTable(), product.price);
   if (product.kind === "image") {
-    return priceCny({ mode: "text_to_image", imageResolution: "1k" });
+    return priceCny({ mode: "text_to_image", imageResolution: "1k" }, table);
   }
-  return priceCny({
-    mode: product.modes[0] ?? "text_to_video",
-    durationSec: product.durations?.[0] ?? 5,
-    resolution: defaultResolutionOf(product) ?? null,
-    generateAudio: product.audio === "native",
-  });
+  return priceCny(
+    {
+      mode: product.modes[0] ?? "text_to_video",
+      durationSec: product.durations?.[0] ?? 5,
+      resolution: defaultResolutionOf(product) ?? null,
+      generateAudio: product.audio === "native",
+    },
+    table,
+  );
 }
 
 /** 这个产品接不接得下这个分辨率（向上归一后算接得下）。 */
@@ -526,6 +609,7 @@ function parseProduct(id: string, value: Record<string, unknown>, base?: Product
     imageResolutions:
       (strArray(value.imageResolutions) as ImageResolution[] | undefined) ?? base?.imageResolutions,
     upstreamModel: str(value.upstreamModel) ?? base?.upstreamModel,
+    price: (isRecord(value.price) ? (value.price as ProductPriceOverride) : undefined) ?? base?.price,
     description: str(value.description) ?? base?.description ?? "",
   };
   if (!merged.provider || !merged.modes.length) return null;

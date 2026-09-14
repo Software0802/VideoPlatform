@@ -163,8 +163,13 @@ function specFromUpstream(entry: Record<string, unknown>): RelayModelSpec {
     : typeof entry.credits === "number" && Number.isFinite(entry.credits) && entry.credits >= 0
       ? { resolution: {}, duration: {}, flat: entry.credits }
       : undefined;
+  const upstreamName =
+    typeof entry.name === "string" && entry.name.trim() && entry.name.trim() !== entry.id
+      ? entry.name.trim()
+      : undefined;
   return {
     aliases: aliases.length ? [...new Set(aliases)] : fallback.aliases,
+    upstreamName,
     durations: fallback.durations,
     resolutions: resolutions?.length ? resolutions : fallback.resolutions,
     ratios: ratios?.length ? ratios : fallback.ratios,

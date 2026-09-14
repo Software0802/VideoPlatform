@@ -1,15 +1,31 @@
+import { z } from "zod";
 import {
   loadRelaysDetailed,
   readRelaysFile,
   relaysFileExists,
   relayConfigSchema,
   writeRelays,
+  modelSpecSchema,
   type RelayConfig,
 } from "@/lib/providers/relay/config";
 import { reconcileRelays, currentRelayViews } from "@/lib/providers/relay/assemble";
 import { withRelayLock } from "@/lib/providers/relay/lock";
 import { healthList } from "@/lib/providers/health";
-import { relayCatalogSnapshotFetchedAt } from "@/lib/providers/relay/discover";
+import {
+  readRelayCatalogSnapshot,
+  relayCatalogSnapshotFetchedAt,
+} from "@/lib/providers/relay/discover";
+import {
+  mergeModelTables,
+  relayModelDisplayName,
+  type RelayModelSpec,
+} from "@/lib/providers/relay/catalog";
+import type { RelayView } from "@/lib/providers/relay/live";
+import type { ProductPriceOverride } from "@/lib/billing/prices";
+import {
+  generatedRelayProducts,
+  relayModelPinnedByDefault,
+} from "@/lib/products/catalog";
 import { isRegisteredProviderId } from "@/lib/providers/registry";
 import { ProviderHttpError } from "@/lib/providers/types";
 
@@ -38,12 +54,95 @@ export type RelaySummary = {
   health: { video?: "ok" | "cooldown" | "half-open"; image?: "ok" | "cooldown" | "half-open" };
   /** 是否由文件管理（false = env 预设，PATCH/DELETE 不适用）。 */
   managed: boolean;
+  /**
+   * 模型目录明细（管理页「模型表」）：快照 ∪ 配置深合并后的每模型视图。
+   * `listed` = 此刻会生成为产品（非 hidden、价已给、kind≠chat、未被默认产品表钉住）。
+   * legacy 预设也返回（`managed:false` 时页面只读）。
+   */
+  catalog?: {
+    source: "static" | "models-endpoint";
+    snapshotAt?: string;
+    /** 「转为可管理条目」要用的通道底稿（视频默认模型 / 生图模型名）。 */
+    videoDefaults: Partial<Record<"text_to_video" | "image_to_video" | "reference_to_video", string>>;
+    imageModel?: string;
+    models: RelayCatalogModelEntry[];
+  };
 };
 
-export function listRelays(): RelaySummary[] {
-  const fileIds = new Set(
-    relaysFileExists() ? readRelaysFile().map((r) => r.id) : [],
+export type RelayCatalogModelEntry = {
+  /** 目录键 = 上游模型 id（发出去的名字）。 */
+  id: string;
+  kind?: "video" | "image" | "chat";
+  /** 上游 `/models` 给的展示名（快照字段）。 */
+  upstreamName?: string;
+  /** 配置里给用户看的展示名（解析顺序 name → upstreamName → id）。 */
+  name?: string;
+  /** 解析后的展示名（产品名就是它）。 */
+  displayName: string;
+  hidden?: boolean;
+  price?: ProductPriceOverride;
+  durations: number[];
+  resolutions: string[];
+  ratios: string[];
+  maxReferenceImages: number;
+  credits?: RelayModelSpec["credits"];
+  fromSnapshot: boolean;
+  fromConfig: boolean;
+  /** 默认产品表已钉住这个模型（不再生成重复产品）。 */
+  defaultPinned: boolean;
+  listed: boolean;
+};
+
+function catalogDetailOf(view: RelayView, fileCfg: RelayConfig | undefined): RelaySummary["catalog"] {
+  if (!view.catalog) return undefined;
+  const configModels = (fileCfg?.catalog?.models ?? {}) as Record<string, RelayModelSpec>;
+  const snapshot = view.catalogSource === "models-endpoint" ? readRelayCatalogSnapshot(view.id) : {};
+  const table = mergeModelTables(snapshot, configModels);
+  // static 目录没有快照层：配置表就是全部认知；legacy 预设读视图自己的表。
+  const entries = Object.keys(table).length
+    ? table
+    : (view.catalog.table() as Record<string, RelayModelSpec>);
+  const listed = new Map(
+    generatedRelayProducts()
+      .filter((p) => p.provider === view.id && p.upstreamModel)
+      .map((p) => [p.upstreamModel!, p.id]),
   );
+  const models: RelayCatalogModelEntry[] = Object.entries(entries).map(([id, spec]) => ({
+    id,
+    kind: spec.kind,
+    upstreamName: spec.upstreamName,
+    name: spec.name,
+    displayName: relayModelDisplayName(id, spec),
+    hidden: spec.hidden,
+    price: spec.price,
+    durations: spec.durations ?? [],
+    resolutions: spec.resolutions ?? [],
+    ratios: spec.ratios ?? [],
+    maxReferenceImages: spec.maxReferenceImages ?? 0,
+    credits: spec.credits,
+    fromSnapshot: Boolean(snapshot[id]),
+    fromConfig: Boolean(configModels[id]),
+    defaultPinned: relayModelPinnedByDefault(view, id),
+    listed: listed.has(id),
+  }));
+  return {
+    source: view.catalogSource ?? "static",
+    snapshotAt: relayCatalogSnapshotFetchedAt(view.id),
+    videoDefaults: {
+      text_to_video: fileCfg?.video?.defaults.text_to_video ?? view.catalog.configuredModel("text_to_video"),
+      image_to_video: fileCfg?.video?.defaults.image_to_video ?? view.catalog.configuredModel("image_to_video"),
+      reference_to_video:
+        fileCfg?.video?.defaults.reference_to_video ?? view.catalog.configuredModel("reference_to_video"),
+    },
+    imageModel: fileCfg?.image?.model ?? view.image?.model(),
+    models,
+  };
+}
+
+export function listRelays(): RelaySummary[] {
+  const fileList = relaysFileExists() ? readRelaysFile() : [];
+  const fileIds = new Set(fileList.map((r) => r.id));
+  const fileById = new Map(fileList.map((r) => [r.id, r]));
   return currentRelayViews().map((view) => ({
     id: view.id,
     name: view.name,
@@ -66,6 +165,7 @@ export function listRelays(): RelaySummary[] {
       image: view.image ? healthStateFor(view.id, "image") : undefined,
     },
     managed: fileIds.has(view.id),
+    catalog: catalogDetailOf(view, fileById.get(view.id)),
   }));
 }
 
@@ -91,7 +191,19 @@ export async function createRelay(body: unknown): Promise<RelaySummary> {
   });
 }
 
-const patchSchema = relayConfigSchema.partial().omit({ id: true });
+/**
+ * PATCH 形状：`catalog.models` 是**按模型的部分更新**——只替换给到的键，其它模型
+ * 的配置保留；某个模型传 `null` 表示删掉它的配置覆盖（模型本身若来自快照仍存在）。
+ */
+const patchSchema = relayConfigSchema.partial().omit({ id: true, catalog: true }).extend({
+  catalog: z
+    .object({
+      source: z.enum(["static", "models-endpoint"]).optional(),
+      models: z.record(z.string(), modelSpecSchema.nullable()).optional(),
+      unknownCredits: z.number().positive().optional(),
+    })
+    .optional(),
+});
 
 export async function updateRelay(id: string, body: unknown): Promise<RelaySummary> {
   const patch = patchSchema.parse(body);
@@ -101,13 +213,33 @@ export async function updateRelay(id: string, body: unknown): Promise<RelaySumma
     if (index < 0) {
       throw new ProviderHttpError(404, "not_found", `relay ${id} 不存在（env 预设不由接口管理）`);
     }
-    const merged = relayConfigSchema.parse({ ...relays[index], ...patch, id });
+    const prev = relays[index];
+    const catalog = mergeCatalogPatch(prev.catalog, patch.catalog);
+    const merged = relayConfigSchema.parse({ ...prev, ...patch, id, catalog });
     const next = [...relays];
     next[index] = merged;
     await writeRelays(next);
     reconcileRelays();
     return summaryOf(id);
   });
+}
+
+/** `catalog` 的部分更新：models 按键替换 / `null` 删除，其余字段给了才换。 */
+function mergeCatalogPatch(
+  prev: RelayConfig["catalog"],
+  patch: { source?: "static" | "models-endpoint"; models?: Record<string, unknown>; unknownCredits?: number } | undefined,
+): RelayConfig["catalog"] {
+  if (patch === undefined) return prev;
+  const models: Record<string, z.infer<typeof modelSpecSchema>> = { ...(prev?.models ?? {}) };
+  for (const [key, value] of Object.entries(patch.models ?? {})) {
+    if (value === null) delete models[key];
+    else models[key] = value as z.infer<typeof modelSpecSchema>;
+  }
+  return {
+    source: patch.source ?? prev?.source ?? "static",
+    models,
+    unknownCredits: patch.unknownCredits ?? prev?.unknownCredits,
+  };
 }
 
 export async function deleteRelay(id: string): Promise<void> {

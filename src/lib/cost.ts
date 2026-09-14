@@ -347,9 +347,16 @@ export function estimateCostUsd(
  */
 function estimateImageSubmitCostUsd(model: string, image?: ImagePricingHint): number {
   if (image) {
+    // relay 目录里该模型若有 `credits.flat`（上游单次平价 / 配置手写），按它折 USD——
+    // 比档表与模型名单价都更贴近这家中转的真实收费。
+    const relay = image.provider ? relayViewFor(image.provider) : undefined;
+    const flat = relay?.catalog?.specFor(model).credits?.flat;
+    if (relay?.catalog && typeof flat === "number" && Number.isFinite(flat) && flat > 0) {
+      return roundMicro(relay.creditsToUsd(flat));
+    }
     // relay（含 yman / openai 两个 env 预设）读自己的档表；视图未装配时保留
     // 原来的 env 分支，其余回落 openai 表。
-    const relayImage = image.provider ? relayViewFor(image.provider)?.image : undefined;
+    const relayImage = relay?.image;
     const table = relayImage
       ? relayImage.priceTable()
       : image.provider === "yman"

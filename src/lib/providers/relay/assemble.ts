@@ -8,7 +8,11 @@ import { notifyAlert } from "@/lib/alerts";
 import { imagePriceTableFromRaw } from "@/lib/cost";
 import { log } from "@/lib/log";
 import type { OpenaiImageConfig } from "@/lib/providers/openai-image/config";
-import { makeRelayCatalog, type RelayModelSpec } from "@/lib/providers/relay/catalog";
+import {
+  makeRelayCatalog,
+  mergeModelTables,
+  type RelayModelSpec,
+} from "@/lib/providers/relay/catalog";
 import {
   fetchRelayModels,
   readRelayCatalogSnapshot,
@@ -44,13 +48,15 @@ export function viewForConfig(cfg: RelayConfig, source: RelayView["source"]): Re
   const catalogSource = cfg.catalog?.source ?? "static";
   const catalog = cfg.video
     ? makeRelayCatalog({
-        // models-endpoint：目录 = `/models` 快照 ∪ 配置覆盖（配置赢同名模型）。
+        // models-endpoint：目录 = `/models` 快照 ∪ 配置覆盖——同名模型按字段
+        // 深合并（`mergeModelTables`），配置里只写 `price` 的条目不会丢掉快照的
+        // ratios / resolutions。
         table: () =>
           catalogSource === "models-endpoint"
-            ? {
-                ...readRelayCatalogSnapshot(cfg.id),
-                ...((cfg.catalog?.models ?? {}) as Record<string, RelayModelSpec>),
-              }
+            ? mergeModelTables(
+                readRelayCatalogSnapshot(cfg.id),
+                (cfg.catalog?.models ?? {}) as Record<string, RelayModelSpec>,
+              )
             : ((cfg.catalog?.models ?? {}) as Record<string, RelayModelSpec>),
         unknownCredits: () => cfg.catalog?.unknownCredits ?? 150,
         configuredModel: (mode: NativeMode) =>
@@ -84,10 +90,10 @@ export function viewForConfig(cfg: RelayConfig, source: RelayView["source"]): Re
       ? () => {
           const snapshot = readRelayCatalogSnapshot(cfg.id);
           if (!Object.keys(snapshot).length) return EMPTY_MODE_SET;
-          const merged: Record<string, RelayModelSpec> = {
-            ...snapshot,
-            ...((cfg.catalog?.models ?? {}) as Record<string, RelayModelSpec>),
-          };
+          const merged: Record<string, RelayModelSpec> = mergeModelTables(
+            snapshot,
+            (cfg.catalog?.models ?? {}) as Record<string, RelayModelSpec>,
+          );
           const out = new Set<NativeMode>();
           for (const mode of VIDEO_MODES) {
             const configured = cfg.video?.defaults[mode as "text_to_video"];

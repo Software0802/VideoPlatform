@@ -11,6 +11,45 @@ import { parseAuthed } from "@/lib/client/http";
 export type RelaySource = "file" | "env-seed" | "legacy";
 export type RelayHealthState = "ok" | "cooldown" | "half-open";
 export type RelayCatalogSource = "static" | "models-endpoint";
+export type RelayModelKind = "video" | "image" | "chat";
+
+/** 产品级售价覆盖的镜像（`ProductPriceOverride` 的白名单读取结果）。 */
+export type RelayModelPrice = {
+  video?: { "5"?: number; "10"?: number; hd?: number; audio?: number };
+  image?: { "1k"?: number; "2k"?: number };
+};
+
+/** `GET /api/admin/relays` 的 `catalog.models[]` 镜像。 */
+export type RelayCatalogModel = {
+  id: string;
+  kind?: RelayModelKind;
+  upstreamName?: string;
+  name?: string;
+  displayName: string;
+  hidden?: boolean;
+  price?: RelayModelPrice;
+  durations: number[];
+  resolutions: string[];
+  ratios: string[];
+  maxReferenceImages: number;
+  credits?: {
+    resolution: Record<string, number>;
+    duration: Record<string, number>;
+    flat?: number;
+  };
+  fromSnapshot: boolean;
+  fromConfig: boolean;
+  defaultPinned: boolean;
+  listed: boolean;
+};
+
+export type RelayCatalog = {
+  source: RelayCatalogSource;
+  snapshotAt?: string;
+  videoDefaults: Partial<Record<"text_to_video" | "image_to_video" | "reference_to_video", string>>;
+  imageModel?: string;
+  models: RelayCatalogModel[];
+};
 
 export type RelayEntry = {
   id: string;
@@ -28,6 +67,7 @@ export type RelayEntry = {
   health: { video?: RelayHealthState; image?: RelayHealthState };
   /** false = env 预设（PATCH / DELETE 不适用，页面上显示为只读）。 */
   managed: boolean;
+  catalog?: RelayCatalog;
 };
 
 /** `POST /api/admin/relays/:id/discover` 的响应形状（`DiscoverResult` 的镜像）。 */
@@ -67,7 +107,25 @@ export type RelayCreateInput = {
   catalog?: { source: RelayCatalogSource; models?: Record<string, unknown> };
 };
 
-export type RelayPatchInput = Partial<Omit<RelayCreateInput, "id">>;
+/** PATCH 的 catalog.models 是按模型的部分更新：给到的键替换、传 `null` 删除该模型的覆盖。 */
+export type RelayModelPatch = {
+  kind?: RelayModelKind;
+  name?: string;
+  hidden?: boolean;
+  price?: RelayModelPrice;
+  durations?: number[];
+  resolutions?: ("720p" | "1080p")[];
+  ratios?: string[];
+  maxReferenceImages?: number;
+};
+
+export type RelayPatchInput = Partial<Omit<RelayCreateInput, "id" | "catalog">> & {
+  catalog?: {
+    source?: RelayCatalogSource;
+    models?: Record<string, RelayModelPatch | null>;
+    unknownCredits?: number;
+  };
+};
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const num = (v: unknown, fallback = 0): number =>
@@ -76,6 +134,100 @@ const bool = (v: unknown): boolean => v === true;
 
 function readHealth(raw: unknown): RelayHealthState | undefined {
   return raw === "ok" || raw === "cooldown" || raw === "half-open" ? raw : undefined;
+}
+
+function strOrUndef(v: unknown): string | undefined {
+  const s = str(v).trim();
+  return s || undefined;
+}
+
+function numMap(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  }
+  return out;
+}
+
+function readPrice(raw: unknown): RelayModelPrice | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const src = raw as Record<string, unknown>;
+  const video = numMap(src.video);
+  const image = numMap(src.image);
+  const out: RelayModelPrice = {};
+  if (Object.keys(video).length) {
+    out.video = {};
+    for (const k of ["5", "10", "hd", "audio"] as const) if (k in video) out.video[k] = video[k];
+  }
+  if (Object.keys(image).length) {
+    out.image = {};
+    for (const k of ["1k", "2k"] as const) if (k in image) out.image[k] = image[k];
+  }
+  return out.video || out.image ? out : undefined;
+}
+
+function readCatalogModel(raw: unknown): RelayCatalogModel | null {
+  if (!raw || typeof raw !== "object") return null;
+  const m = raw as Record<string, unknown>;
+  const id = str(m.id);
+  if (!id) return null;
+  const credits =
+    m.credits && typeof m.credits === "object" && !Array.isArray(m.credits)
+      ? {
+          resolution: numMap((m.credits as Record<string, unknown>).resolution),
+          duration: numMap((m.credits as Record<string, unknown>).duration),
+          flat:
+            typeof (m.credits as Record<string, unknown>).flat === "number"
+              ? ((m.credits as Record<string, unknown>).flat as number)
+              : undefined,
+        }
+      : undefined;
+  return {
+    id,
+    kind: m.kind === "video" || m.kind === "image" || m.kind === "chat" ? m.kind : undefined,
+    upstreamName: strOrUndef(m.upstreamName),
+    name: strOrUndef(m.name),
+    displayName: str(m.displayName) || id,
+    hidden: bool(m.hidden),
+    price: readPrice(m.price),
+    durations: Array.isArray(m.durations)
+      ? m.durations.filter((d): d is number => typeof d === "number" && Number.isFinite(d))
+      : [],
+    resolutions: Array.isArray(m.resolutions)
+      ? m.resolutions.filter((r): r is string => typeof r === "string")
+      : [],
+    ratios: Array.isArray(m.ratios) ? m.ratios.filter((r): r is string => typeof r === "string") : [],
+    maxReferenceImages: Math.max(0, Math.trunc(num(m.maxReferenceImages))),
+    credits,
+    fromSnapshot: bool(m.fromSnapshot),
+    fromConfig: bool(m.fromConfig),
+    defaultPinned: bool(m.defaultPinned),
+    listed: bool(m.listed),
+  };
+}
+
+function readCatalog(raw: unknown): RelayCatalog | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const c = raw as Record<string, unknown>;
+  const models = Array.isArray(c.models)
+    ? c.models.map(readCatalogModel).filter((m): m is RelayCatalogModel => m !== null)
+    : [];
+  const defaults =
+    c.videoDefaults && typeof c.videoDefaults === "object" && !Array.isArray(c.videoDefaults)
+      ? (c.videoDefaults as Record<string, unknown>)
+      : {};
+  return {
+    source: c.source === "models-endpoint" ? "models-endpoint" : "static",
+    snapshotAt: strOrUndef(c.snapshotAt),
+    videoDefaults: {
+      text_to_video: strOrUndef(defaults.text_to_video),
+      image_to_video: strOrUndef(defaults.image_to_video),
+      reference_to_video: strOrUndef(defaults.reference_to_video),
+    },
+    imageModel: strOrUndef(c.imageModel),
+    models,
+  };
 }
 
 function readRelay(raw: unknown): RelayEntry | null {
@@ -105,6 +257,7 @@ function readRelay(raw: unknown): RelayEntry | null {
     catalogSnapshotAt: str(r.catalogSnapshotAt) || undefined,
     health: { video: readHealth(health.video), image: readHealth(health.image) },
     managed: bool(r.managed),
+    catalog: readCatalog(r.catalog),
   };
 }
 
