@@ -192,6 +192,8 @@ migrate_legacy() {
     echo "   复制: data-seed（顶层保留）"
   fi
   ln -sfn "$GENIUS_ROOT/data" "$release/data"
+  # 旧布局的别名软链是绝对路径，搬家后悬空——按新位置重建成相对链接再起服。
+  if [ "$SKIP_INSTALL" != 1 ]; then link_turbopack_aliases "$release"; fi
   switch_release "$id" 0
   ensure_root_links
   write_release_dropin
@@ -224,17 +226,16 @@ process.stdout.write(`${d.shortSha}-${m[1]}${m[2]}${m[3]}-${m[4]}${m[5]}${m[6]}$
   printf '%s\n' "$id"
 }
 
-install_release() {
+# Turbopack external 别名（sharp / ffmpeg-static 编成 `<pkg>-<hash>`）。软链目标必须是
+# **相对 node_modules 的路径**：2026-09-15 首次迁移时旧布局的绝对链接指向
+# /opt/genius/node_modules/.pnpm/…，目录被 mv 进 releases/ 后全部悬空，服务起来 500。
+link_turbopack_aliases() {
   local release="$1"
-  if [ "$SKIP_INSTALL" = 1 ]; then
-    mkdir -p "$release/node_modules/next/dist/bin"
-    : > "$release/node_modules/next/dist/bin/next"
-    return 0
-  fi
+  [ -d "$release/.next/server/chunks" ] || return 0
+  [ -d "$release/node_modules" ] || return 0
   (
     set -e
     cd "$release"
-    pnpm install --prod --frozen-lockfile
     node -e '
 const fs=require("fs"),path=require("path");
 const dir=".next/server/chunks", nm="node_modules", names=new Set();
@@ -248,10 +249,26 @@ for(const alias of names){
   if(!fs.existsSync(target)){ console.log("   跳过(无真实包):",real); continue; }
   const link=path.join(nm,alias);
   try{fs.rmSync(link,{recursive:true,force:true});}catch{}
-  fs.symlinkSync(fs.realpathSync(target),link,"dir");
-  console.log("   别名:",alias,"->",real);
+  const rel=path.relative(path.dirname(link), fs.realpathSync(target));
+  fs.symlinkSync(rel,link,"dir");
+  console.log("   别名:",alias,"->",rel);
 }'
   )
+}
+
+install_release() {
+  local release="$1"
+  if [ "$SKIP_INSTALL" = 1 ]; then
+    mkdir -p "$release/node_modules/next/dist/bin"
+    : > "$release/node_modules/next/dist/bin/next"
+    return 0
+  fi
+  (
+    set -e
+    cd "$release"
+    pnpm install --prod --frozen-lockfile
+  ) || return 1
+  link_turbopack_aliases "$release"
 }
 
 mark_failed() {
