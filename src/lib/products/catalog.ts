@@ -247,20 +247,29 @@ function relayModelPriced(kind: "video" | "image", price: ProductPriceOverride |
 }
 
 /**
- * 同一 provider 的默认产品若已把这个模型钉在 `model` / `models` 里（别名也算），
- * 就不再为它生成重复产品——`resolveModel` 把钉的名字归一到展示名再比。
+ * 同一 provider 的默认产品若已使用这个模型（别名也算），就不再生成重复产品。
+ * 除字面 `model/models` 外还解析省略模型字段的产品：它们会在运行时读取 relay
+ * video defaults / image.model，去重必须与实际提交使用的模型保持一致。
  */
 export function relayModelPinnedByDefault(view: RelayView, display: string): boolean {
   const catalog = view.catalog;
   if (!catalog) return false;
+  const pinned = new Set<string>();
   for (const product of DEFAULT_PRODUCTS) {
     if (product.provider !== view.id) continue;
-    const pinned = [product.model, ...Object.values(product.models ?? {})].filter(
-      (m): m is string => typeof m === "string" && Boolean(m.trim()),
-    );
-    if (pinned.some((m) => catalog.resolveModel(m) === display)) return true;
+    if (product.model?.trim()) pinned.add(product.model);
+    for (const model of Object.values(product.models ?? {})) {
+      if (model?.trim()) pinned.add(model);
+    }
+    for (const mode of product.modes) {
+      const model = modelForProduct(product, mode);
+      if (model.trim()) pinned.add(model);
+    }
   }
-  return false;
+  const imageModel = view.image?.model().trim();
+  if (imageModel) pinned.add(imageModel);
+  const target = catalog.resolveModel(display);
+  return [...pinned].some((model) => catalog.resolveModel(model) === target);
 }
 
 const IMAGE_RATIOS: AspectRatio[] = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"];

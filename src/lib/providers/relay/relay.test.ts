@@ -470,6 +470,35 @@ describe("动态目录（catalog.source = models-endpoint）", () => {
     delete process.env.VIDEO_PROVIDER_ORDER;
   });
 
+  it("文件 relay 的运行时 image.model 不重复生成目录产品", async () => {
+    process.env[KEY_ENV] = "fixture-secret";
+    const { reconcileRelays } = await import("./assemble");
+    const { productById } = await import("@/lib/products/catalog");
+
+    writeRelaysFile([
+      fixtureCfg({
+        id: "yman",
+        image: { protocol: "openai-images", model: "img-a" },
+        catalog: {
+          source: "static",
+          models: {
+            "img-a": { kind: "image", price: { image: { "1k": 0.5 } } },
+            "img-b": { kind: "image", price: { image: { "1k": 0.8 } } },
+          },
+        },
+      }),
+    ]);
+    reconcileRelays();
+
+    expect(productById("image-fast")).toBeDefined();
+    expect(productById("yman:img-a")).toBeUndefined();
+    expect(productById("yman:img-b")).toMatchObject({
+      name: "img-b",
+      kind: "image",
+      model: "img-b",
+    });
+  });
+
   it("上架的目录产品钉住上游模型；上游下架后配置覆盖仍在 → 产品保留", async () => {
     process.env[KEY_ENV] = "fixture-secret";
     process.env.VIDEO_PROVIDER_ORDER = "fixture-live";
