@@ -60,13 +60,13 @@ easing:
 
 1. **主页 `/`**：活动横幅占位槽 → 标签页 视频 / 图片 / 模板 / 挑战（本轮为给文生图作品加入口新增「图片」，模板/挑战 `aria-disabled`）→ 分类芯片（仅样式）→ 瀑布流 `columns:220px 5` 展示用户真实作品（`jobs` 中 `status==="succeeded"`，按 `output.kind` 分视频/图片），卡片标题胶囊 + hover 上浮，点击开详情浮层（播放器/图片 + 元信息 +「用这条提示词再生成」+「下载」）；`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡；无作品用样片占位并提示「还没有作品」。底部收起态输入条点击展开创作面板。
 2. **创作页 `/create`**：上部「当前任务」区（阶段行 / 百分比 / 分镜 n/m / 成片 / 失败原因 / 取消 / 重新生成；`retryBlocked` 非空时显示阻断说明并隐藏「重新生成」；`artifactsPurgedAt` 非空同样禁止重试）+ 下方「最近任务」列表；创作面板默认展开。内容块底部留白 236px（`main` 本身不留，避免主页等其它视图也被顶开）。
-3. **智能体 `/agent`**（2026-09-07 起接真数据，见 `docs/design.md` §2h）：首屏渐变标题 + 输入卡 + 技能卡片网格（20 个技能来自 `GET /api/agent/skills`）、下拉（文本档位「自动 · 极速 / 均衡 / 精创」、图片 / 视频产品来自 `GET /api/models`、技能 + 悬停预览卡）、技能广场（本地 state，开关存 localStorage）、历史抽屉（真实会话列表）、会话页（真实对话，每轮 ¥0.05，助手可触发生图 / 生视频任务，右侧资产栏列本会话任务并跟进状态，可栏内预览）。服务端没配对话 key 时整个视图置灰显示「智能体暂未开放」。
+3. **智能体 `/agent`**（见 `docs/design.md` §2h）：首屏渐变标题 + 输入卡 + 技能卡片网格（20 个技能来自 `GET /api/agent/skills`），首页与会话输入行共用 `AgentPickers` 四枚芯片：对话模型（弹层内分「对话模型」与只调发散度/篇幅的「创意档」）、图片产品、视频产品、技能；切换只影响下一轮。技能广场开关存 localStorage，历史抽屉读真实会话。会话页每条待批 action 用 `.agent-chat__proposal-product` 标明实际产品与报价，助手用 `.agent-chat__meta[data-model]` 落款实际模型和创意档；右侧资产栏跟进任务并可预览。服务端没配对话 provider/白名单时整个视图置灰显示「智能体暂未开放」。
 4. **画布 `/canvas`**（2026-09-11/12 起接真数据，见 `docs/design.md` §2j）：空态 → 900×620 作者坐标场景层（`fit×zoom` 缩放）→ 右键建四类节点（文本/素材/文生图/生成视频）、拖拽定位、文本与提示词防抖 600ms 落盘（`PATCH` 带 `expectedRevision`，409 保留本地并弹二选一，不静默覆盖）；素材节点保存独立 `assetId`，明示 30 天期限、刷新可预览，过期/缺失显示重新上传；富文本条/提示词面板/模型列表/工具箱抽屉沿用原型本地交互。顶栏「运行整图」→ `.canvas-quote` 报价弹层（逐节点价 + 复用行「重跑」勾选 + 可执行行「执行前需我批准」勾选——生成视频节点默认勾 + 合计）→ 确认建 run；节点徽标 `.canvas-node__exec[data-exec]` 显示执行态（待批准/已复用/已跳过等），`awaiting_approval` 节点带「批准/驳回」按钮，产物以真实 `<img>` / `<video controls>` 展示；3s 轮询 run，运行中可「取消运行」。
 5. **订阅 `/subscription`**（2026-09-07 凌晨起接真数据，见 `docs/design.md` §2i）：我的方案卡显示当前档位/到期日/会员积分/今日已发日积分/已购余额，兑换礼品码与流水抽屉；四档卡片是真实人民币价格（`costRatio` 成本 ÷ (1−15%毛利率) 推得，非占位值），年/月切换，「订阅」按钮真的调用 `POST /api/subscription` 从已购余额扣款，成功后刷新顶栏并 toast，余额不足提示「余额不足，请先兑换礼品码」。
 
 ### 管理页 `/admin/relays`（N3.5，2026-09-13 落地）
 
-不进侧栏五视图：入口在头像菜单，只对 `caps.isAdmin`（`LUMEN_ADMIN_USER_ID` 点名）露出；页面服务端 `notFound()` 非管理员（与 `/api/admin/*` 404 同口径）。结构：`section.relay-card[data-card="head"|"create"|"list"]`，列表按 `priority` 升序，每行 `.relay-row[data-relay-id][data-managed][data-enabled]`：名称 + id + 来源芯片（file/env 种子/老 env）+ baseUrl + `keyEnv` 变量名与 hasKey 灯（颜色+文字双编码）+ 通道芯片（视频/图片/对话）+ 健康灯 `.relay-admin__health[data-health="ok|cooldown|half-open"]`（ok=成功色、cooldown=失败色、half-open=警示色，各附文字）+ 目录来源与快照时间。动作：enabled 开关、上移/下移（与相邻行交换 priority，两次 PATCH）、目录发现、探测（先弹「上游可能计费」确认）、删除——启停/排序/删除只对 `managed`（文件条目）可用，env 预设显示「由环境变量定义，改 .env」。新建表单字段与 `relayConfigSchema` 一一对应，zod 报错原文显示（`invalid_argument` 拼服务端 message）。样式 `styles/admin.css`（块名 `relay-admin`/`relay-row`），移动端 375 表单单列、行内操作换行不溢出。
+不进侧栏五视图：入口在头像菜单，只对 `caps.isAdmin`（`LUMEN_ADMIN_USER_ID` 点名）露出；页面服务端 `notFound()` 非管理员（与 `/api/admin/*` 404 同口径）。结构：`section.relay-card[data-card="head"|"create"|"list"]`，列表按 `priority` 升序，每行 `.relay-row[data-relay-id][data-managed][data-enabled]` 显示来源、baseUrl、keyEnv/hasKey、通道、健康、目录来源与快照时间。动作包括 enabled、排序、discover、probe 与删除，只对文件条目开放；legacy 条目提供「转为可管理条目」。每行可展开 `.relay-models[data-relay-id]`，内部 `.relay-models__row[data-model-id][data-listed]` 编辑 kind、展示名、hidden、视频/图片售价、参考图数和时长档，状态徽标显示已上架/未定价/已隐藏/默认表已含，保存只提交改过的模型。样式在 `styles/admin.css`；1253px 桌面状态列完整可见，375px 仅 `.relay-models__scroll` 横向滚动、页面本身不溢出。
 
 ## 语言切换（2026-09-07 凌晨新增）
 
@@ -134,6 +134,9 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 | 规格芯片/弹层 | `.composer__specs` 文本如 `720P \| 16:9 \| 5s`；`.specs-pop` 内 `button[data-res]/[data-ratio]/[data-dur]`，选中 `aria-pressed="true"` |
 | 音频开关 | `.composer__audio[role="switch"]`，`aria-checked` |
 | 模型芯片 | `.composer__model` |
+| 智能体选择器 | `.agent-pickers` 四个 `.agent-chip`；模型项 `.agent-pop__item[data-chat-model]`，创意档 `.agent-pop__plain[data-tier]` |
+| 智能体提案与落款 | `.agent-chat__proposal-product` 显示实际产品；`.agent-chat__meta[data-model]` 显示模型与创意档 |
+| 中转模型表 | `.relay-models[data-relay-id]`、`.relay-models__row[data-model-id][data-listed]` |
 | 创作按钮 | `button.composer__send` 名 `创作`，`data-busy`，含 `.composer__credits` |
 | 错误行 | `.composer__error[role="alert"]` |
 | 图片槽 | `.composer__slot` + `input[type=file]`（`aria-label="上传图片"`），有图 `data-state="ready"` |

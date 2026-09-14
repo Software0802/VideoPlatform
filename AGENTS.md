@@ -29,7 +29,7 @@
 - 配了真 key 但无人可接时返 503 `no_provider_available`，绝不静默 mock；页面/health 用不抛错的 `uiProviderId()`。文生图七种画幅独立于视频能力。
 - 付费创建固定 `maxAttempts:1`；读超时、断连、裸 5xx 属模糊提交，查回接管或 `uncertain_submit` 锁重试，绝不重买。确定拒单才换家；priceCny 只降不升，点名产品不换成别人家的产品。
 - N3.4 治理见 `providers/{health,rejection}.ts` 与 design §2e/§7；排除已试过的家，遵守 RELAY_MAX_SWITCHES 并记录 providerSwitches。分镜只换失败镜，不动成功镜。
-- relay 统一工厂，配置来源为文件 > LUMEN_RELAYS 种子 > 老 env 折算；缺省 yman/openai 仍可解析。注销进影子表以支持历史任务；管理接口 requireAdmin，非管理员 404；keyEnv 只存环境变量名（design §2l）。
+- relay 来源：文件 > LUMEN_RELAYS > 老 env；yman/openai 可回落，注销留影子。管理接口 requireAdmin，非管理员 404，keyEnv 只存变量名；未定价/hidden/chat 不生产品（design §2l）。
 - Grok 只走 xAI REST `/videos/generations|edits|extensions`、`/images/generations`，禁止 `openai.videos.*`。Grok 是普通 provider，不是平台基座。
 - 尾帧永不进入 Grok 请求体（golden 保证）；仅声明 supportsLastFrameLock 的可灵 i2v 发 last_frame，并强制 1080p 写回记录与售价。其它不支持的 provider 只存尾帧；源视频禁止 data URI 兜底。
 - 可灵只有 5/10 秒档，创建与重试都归一并写回；国际账号用 api-singapore.klingai.com。YMan 视频为 POST /videos → GET /videos/:id → GET /content，模型用 /models 展示名、旧名只作别名。
@@ -58,7 +58,7 @@
 ## 智能体与画布
 
 - Agent LLM 顺序为 mock → AGENT_API_KEY/BASE_URL → XAI → 503 agent_unavailable，不静默 mock；上游调用失败用 502 agent_upstream_failed 并按原池退轮次费，不混淆「未配置」。
-- Agent 默认提案批准：proposal 落报价/有效期，批准才走同一限流桶 createJob；拒绝不建不退轮次费。同 turnId 同参重放、异参 409，陈旧 thinking 惰性退款；轮次/提案均核 budget，校验 imageRef/kinds，按 locale 回复（design §2h）。
+- Agent 模型走 AGENT_CHAT_MODELS，turn 带 chatModel；显式表外模型扣款前 400。proposal 用 resolveProductChoice 钉产品，批准才进 createJob 限流桶；拒绝不建不退。同 turnId 同参重放、异参 409；thinking 惰性退款，核 budget/imageRef/kinds，按 locale 回复（design §2h）。
 - 画布 PATCH 必带 expectedRevision；409 保留本地并明确二选一，不静默覆盖。单节点与 DAG 统一走 createJob，输入缺失不降为无图生成，素材先复制再认领。
 - DAG 先确定性报价再冻结图与总价；run.reservation → transfer → job.reservation 一份钱恰好预留一次。查回既有 job 先于价变判断；运行不回写画布文档，产物用执行位 overlay。
 - runHeldFunds 不能只靠任务索引：索引缺失但执行位已终态不复活预留，非终态孤儿继续占用。取消意图持久化、停新提交；取消后不接受审批。

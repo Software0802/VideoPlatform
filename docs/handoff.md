@@ -9,15 +9,18 @@
 | 项 | 状态 |
 | --- | --- |
 | 代码基线 | `main`/`origin/main` = `1de057b`（已推送）；含 N3.4 `37123bd`、非 root/管理令牌 `8f2dfba`、ShellContext 拆分 `b1c71d0`、告警与备份 `34a8ac1`、管理页与面板分组 `d9675ab`、restore-check 幂等键口径与 tar 路径修正 `81b0a34`/`1de057b`。精确 SHA 用 `git rev-parse HEAD origin/main` 核对 |
+| 当前工作树 | **未提交、未部署**：relay 目录模型已支持展示名/隐藏/kind/产品售价、管理页模型表与图片/视频产品生成；智能体已支持对话模型白名单、逐模型轮次价、首页/会话共享选择器、提案产品名与模型/档位落款。生产与本地 `.env.local` 尚未配置 `AGENT_CHAT_MODELS`；当前 3000 端口的双 mock 模型仅由本轮开发进程临时注入 |
 | 生产版本依据 | 生产 = `c44f8a1` 构建 + `1de057b` 脚本：2026-09-13 第二次部署 `c44f8a1`（deploy.sh 全流程：门禁、build、`--frozen-lockfile`、health 200、公网 200 全过，BUILD_INFO shortSha c44f8a1）；随后 `81b0a34`/`1de057b` 的 `alert-test.mjs`/`restore-check.mjs` 经 scp 单独同步到 `/opt/genius/scripts`（无需重启）。main 现为 `1de057b`。`/opt/genius/BUILD_INFO.json` 与登录态 `GET /api/health` 的 `build.sha` 可机器核对线上版本。`build.node` 是构建机 Node（v24.16.0），运行时仍是 v22.22.2 |
 | 本机 | Windows / PowerShell，Node v24.16.0，pnpm 10.33.0，Next 16.3.3，React 19.2.8 |
 | 生产只读核查 | 阿里云 8.209.212.178，`/opt/genius`；Node v22.22.2，pnpm 10.33.0，Caddy v2.11.4；genius.service active，`User=genius`（uid 989，R1.5 drop-in 已生效），MemoryMax 700 MiB；`/opt/genius` 整树 genius:genius，`.env` 640；生产画布 1 份文档、0 处 legacy uploadId，`data/assets/` 待首个素材节点创建 |
 | 入口 | `https://genius.homeaistack.online`；本地 `pnpm dev` 后访问 `http://localhost:3000`，不用 127.0.0.1（Next dev 可能 403） |
-| 整合门禁 | 收口轮（`d9675ab` 工作树）实测：typegen+tsc 0 错、eslint 0、`vitest` 116 文件 1296 通过 / 1 既有跳过、`next build` 通过、e2e 40/40（隔离端口，mock+harness）。eslint 范围为 `src e2e scripts`（CI 与 deploy.sh 同步），`scripts/**/*.mjs` 带 `// @ts-check` 纳入 tsc；e2e 走独立 workflow（`.github/workflows/e2e.yml`，每日 UTC 20:00 定时 + 手动，不挂 PR）。单测与 e2e 错开运行，未放宽全局超时 |
+| 整合门禁 | 当前未提交工作树本地实测：typegen+tsc 0 错、eslint 0、Vitest 117 文件 / 1326 通过 / 1 既有跳过，隔离 mock+harness E2E 41/41。eslint 范围为 `src e2e scripts`；e2e 走独立 workflow（每日 UTC 20:00 定时 + 手动，不挂 PR）。单测与 e2e 错开运行，未放宽全局超时；仅 §0 下述四个慢用例有局部等待上限调整 |
 | 测试环境 | 独立验证 worktree `D:\dev\repos\VideoPlatFrom-optimization-20260913`；e2e 端口 3177/3178、E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1；不读生产密钥，不调用真实上游 |
 | 备份 | root cron 每日 03:17 跑 backup.sh（白名单含 `relays.json`+`assets/`）；2026-09-13 部署前手动包 `backups/genius-data-20260913-211416.tgz`（新脚本）已做首次真实恢复核对：`restore-check --compare data` 一致（users 4、ledger 幂等键 54 重复 0、jobs 54、canvases 2、canvas-runs 1、relays.json 有），未做切换恢复；ECS 自动快照未获控制台证据。R4.0 代码已落地（`34a8ac1`）：`--stop-service` 一致性快照、openssl/OSS 加密异地副本、`restore-check.mjs`；生产 OSS 变量配置仍待执行 |
 
 `37123bd` 部署记录中的 provider 配置：视频 ORDER `kling,yman,grok`，图片 ORDER `openai,yman`，无 XAI key；Grok 只是未启用的后备项。对话走 ccgoai `gpt-5.6-luna`，图片 `gpt-image-2/medium`，可灵 `kling-2.6`，YMan t2v `minimax-h3`、i2v `minimax-h3-933-图文`；Harness 与 OpenAI image edits 已开。原始真实验收见 `docs/acceptance-2026-09-13.md`，本轮未重新付费验证这些上游。
+
+Windows 本机的 mock 视频/ffmpeg、通知原子写入与 relay 首次动态导入会超过原 5 秒窗口，因此工作树只放宽了 `create.test.ts`、`canvas.test.ts`、`notifications/store.test.ts`、`relay.test.ts` 的单测等待/超时；断言与业务超时均未放宽。
 
 ## 1. 系统地图
 
@@ -39,10 +42,10 @@
 ## 2. 已实现产品能力
 
 - **创作**：t2v/i2v/t2i，参考与首尾帧按产品能力；数量 1–4、素材复用、产品规格、分镜进度。可灵与 YMan 30 秒长片已有真实成片记录；30/45/60 售价独立档 ¥20/30/40，高清/有声加价按价表。edit/extend 后端保留、UI 置灰，当前生产无承接者。
-- **中转**：N3.1–N3.5 已落地——注册表、通用工厂、配置管理接口、动态模型目录、产品生成、健康冷却/半开与确定拒单换家、管理页 `/admin/relays`（服务端 `isAdminUser` 门禁 + 非管理员 404，入口在头像菜单经 `caps.isAdmin` 露出；启停/排序/删除只管文件条目）与创作面板按供应商分组（`ModelPop` 组头 = DTO `providerName`，每项带 `data-cost` 成本档徽标与时长/分辨率/参考图 meta 行）。点名产品不换家；模糊提交绝不重发。
+- **中转**：注册表、通用工厂、配置管理、动态目录、健康冷却/半开与确定拒单换家均已落地。目录模型可配置 `name/hidden/kind/price`，快照与配置深合并；只有已定价且非 hidden/chat、未被默认产品覆盖的模型生成图片或视频产品。管理页 `/admin/relays` 可展开模型表编辑并只 PATCH 改动项；legacy env 条目须先「转为可管理条目」。创作面板按供应商分组并按产品价格覆盖报价。点名产品不换家；模糊提交绝不重发。
 - **作品与通知**：游标分页、标签、删除、分享、模板回填；终态通知持久化，SSE/重连/回前台对齐。通知最多 200 条，铃铛显示 10 条，打开即全部已读；run/agent 事件尚未进入该索引。
 - **账号与钱**：邀请码注册赠 ¥5、改密、退出全部设备、账户页、礼品码兑换、流水、余额两池与订阅。订阅只能用已购池买，会员积分到期/跨期清零；R01–R09 资金与执行恢复修复已在既有提交中，协议见 design §2d/§3。
-- **智能体**：真实 LLM 提案、价格快照、批准/驳回、会话预算、图生视频 imageRef、技能 kinds、locale 回复；一轮 ¥0.05，调用失败按原池退款，配置缺失与上游失败用不同错误码。
+- **智能体**：真实 LLM 提案、价格快照、批准/驳回、会话预算、图生视频 imageRef、技能 kinds、locale 回复；`AGENT_CHAT_MODELS` 白名单下发真实模型名与逐模型 `turnCny`，turn 点名未知模型在扣款前 400，旧会话模型下架后回落默认。首页与会话页共用模型/图片/视频/技能选择器，提案按 `resolveProductChoice` 钉住实际产品并显示产品名，消息落款显示模型与创意档。调用失败按原池退款，配置缺失与上游失败用不同错误码。
 - **画布**：四类节点、连线输入、拖拽与保存冲突二选一；单节点或整图运行复用 createJob。总价冻结、逐节点转移份额、人工审批、内容寻址复用；审批 24h/排队 1h 超时收敛，已清产物不暗中重生成。
 - **R0 素材修复**：保存素材时复制为独立 assetId，首次认领起 30 天，保存/重放不续期；刷新仍可预览，到期或缺失提示重新上传。启动在 tmp 清理前保护旧素材，缺原件标 missing；活动 run 的冻结图、报价与资金台账不被迁移改写。
 - **R0 工程修复**：CI/部署 typecheck 前补 next typegen；备份加入 relay 配置与素材；画布 e2e 每段独立文档、断言真实 409；AGENTS 瘦身并保留 Next 受管理块，文档索引与大小有自动回归检查。收口时额外修复 relay probe 的付费 POST 默认重试风险：显式 maxAttempts:1；billed:false 只表示平台不记账，上游仍可能收费，本轮未运行真实探针。
@@ -79,6 +82,10 @@
 
 ## 4. 未完成与边界
 
+- 生产与本地持久配置都尚未设置 `AGENT_CHAT_MODELS`，当前仅隔离 E2E/dev 进程注入双 mock 模型；待用户提供正式模型 id、展示名与 `turnCny` 清单。
+- YMan `/models` 已发现 23 个目录模型，但尚未逐项配置用户售价；未定价模型按上架门槛不向用户露出。
+- YMan 当前仍是 legacy env 预设。要放出目录产品，须在 `/admin/relays` 点「转为可管理条目」、为目标模型配置 price，并确保 yman 位于相应 `VIDEO_PROVIDER_ORDER`/`IMAGE_PROVIDER_ORDER`；只有 key 不等于启用。
+- 本工作树尚未提交，也未部署生产；生产仍以 §0 的构建与脚本依据为准。
 - 无支付网关，订阅收入仍是内部记账；2026-09-13 用户确认无商户主体 → R6 停止条件成立、不开工，继续礼品码；重开条件：取得可开通微信/支付宝商户号的主体。
 - R3 首轮校准报价已冻结（plan R3 节，2026-09-13）：仅 scene 用例 ≈¥117–¥145，全 8 条（需授权人物照）≈¥350–¥425；状态「已报价，未开跑，等用户批预算」。授权人物素材仍缺，现有场景用例只覆盖 h45-t2v-zh/en-scene。YMan 长片的 r2v 档 B、minimax-h3 真账单价格仍待验证（R2.4 待用户提供账单实付积分）。
 - 常规管理变更（充值/重置密码/停用/铸码）已改走应用内唯一写者（管理令牌 + HTTP）；`--offline` 直写保留但须先探测服务未运行。migrate-billing 与备份仍要求停服窗口；备份不能只停创作准入就声称一致性。
