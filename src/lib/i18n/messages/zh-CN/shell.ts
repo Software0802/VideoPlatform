@@ -28,6 +28,18 @@ export const shell = {
   "shell.notice.canceled": "任务已取消",
   "shell.notice.failed": "生成失败",
   "shell.notice.unknownReason": "未知原因",
+  "shell.notice.run.succeeded": "画布运行完成",
+  "shell.notice.run.partially_failed": "画布运行部分失败",
+  "shell.notice.run.failed": "画布运行失败",
+  "shell.notice.run.canceled": "画布运行已取消",
+  "shell.notice.run.awaiting_approval": "画布节点等待审批",
+  "shell.notice.run.detail": "{title} · 成功 {ok} · 失败或跳过 {bad}",
+  "shell.notice.run.awaitingDetail": "{title} · 批准后才继续生成，24 小时内有效",
+  "shell.notice.run.untitled": "画布",
+  "shell.notice.agent.awaiting_approval": "智能体提案待批准",
+  "shell.notice.agent.awaitingDetail": "{title} · {n} 个动作 · 合计 {credits} 积分",
+  "shell.notice.agent.failed": "智能体本轮失败",
+  "shell.notice.agent.refunded": "（本轮费用已退回）",
 
   /* 语言切换（顶栏与登录页共用） */
   "shell.lang.switch": "切换语言",

@@ -23,6 +23,7 @@ let patchSession: typeof import("./store").patchSession;
 let hasEntryFor: typeof import("@/lib/billing/ledger").hasEntryFor;
 let readUser: typeof import("@/lib/users/store").readUser;
 let writeUser: typeof import("@/lib/users/store").writeUser;
+let readNotifications: typeof import("@/lib/notifications/store").readNotifications;
 
 const TURN_PRICE = 0.05;
 
@@ -89,6 +90,7 @@ beforeAll(async () => {
   ({ createSession, readSession, patchSession } = await import("./store"));
   ({ hasEntryFor } = await import("@/lib/billing/ledger"));
   ({ readUser, writeUser } = await import("@/lib/users/store"));
+  ({ readNotifications } = await import("@/lib/notifications/store"));
 });
 
 afterAll(async () => {
@@ -284,6 +286,13 @@ describe("runTurn", () => {
     expect(first.assistant?.approval).toBe("pending");
     expect(first.assistant?.jobs?.[0].jobId).toBeUndefined();
     expect(first.session.jobIds).toEqual([]);
+    expect((await readNotifications(owner))?.items).toContainEqual(
+      expect.objectContaining({
+        id: `${first.turn.id}:awaiting_approval`,
+        kind: "agent",
+        status: "awaiting_approval",
+      }),
+    );
 
     // 批准那一刻才创建任务、才扣任务钱。
     const { session: next, assistant } = await approveTurn(owner, session.id, first.turn.id);
@@ -395,6 +404,13 @@ describe("runTurn", () => {
       refundRef: expect.stringContaining(":refund"),
       error: { code: "agent_upstream_failed" },
     });
+    expect((await readNotifications(owner))?.items).toContainEqual(
+      expect.objectContaining({
+        id: `${stored!.turns![0].id}:failed`,
+        kind: "agent",
+        errorCode: "agent_upstream_failed",
+      }),
+    );
   });
 
   it("R02：整轮失败退款按原扣款的分池原路退回，会员积分不转成已购余额", async () => {

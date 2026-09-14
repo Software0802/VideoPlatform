@@ -2,6 +2,8 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { AgentSession, AgentTurnStatus } from "@/lib/agent/schema";
+import type { CanvasNodeExecution, CanvasRun } from "@/lib/canvas/schema";
 import type { JobRecord } from "@/lib/jobs/schema";
 
 /**
@@ -11,6 +13,10 @@ import type { JobRecord } from "@/lib/jobs/schema";
  */
 let dataRoot = "";
 let appendJobNotification: typeof import("./store").appendJobNotification;
+let appendRunNotifications: typeof import("./store").appendRunNotifications;
+let appendAgentNotifications: typeof import("./store").appendAgentNotifications;
+let runNotificationEdges: typeof import("./store").runNotificationEdges;
+let agentNotificationEdges: typeof import("./store").agentNotificationEdges;
 let markRead: typeof import("./store").markRead;
 let notificationPath: typeof import("./store").notificationPath;
 let notificationsDir: typeof import("./store").notificationsDir;
@@ -22,6 +28,10 @@ beforeAll(async () => {
   process.env.DATA_DIR = dataRoot;
   ({
     appendJobNotification,
+    appendRunNotifications,
+    appendAgentNotifications,
+    runNotificationEdges,
+    agentNotificationEdges,
     markRead,
     notificationPath,
     notificationsDir,
@@ -79,6 +89,71 @@ function userId(tag: string): string {
   return `usr_${tag.padStart(16, "0")}`;
 }
 
+function runFixture(
+  ownerId: string,
+  overrides: Partial<CanvasRun> = {},
+  executions: CanvasNodeExecution[] = [{ nodeId: "n_00000001", attempt: 1, status: "ready" }],
+): CanvasRun {
+  const now = "2026-09-14T00:00:00.000Z";
+  return {
+    schemaVersion: 1,
+    id: "crun_000000000001",
+    ownerId,
+    canvasId: "cv_000000000001",
+    documentRevision: 0,
+    graphSnapshot: { nodes: [], edges: [] },
+    quote: { hash: "quote-hash", totalCny: 0, items: [] },
+    status: "running",
+    nodeExecutions: executions,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function sessionFixture(
+  ownerId: string,
+  status: AgentTurnStatus,
+  overrides: Partial<AgentSession> = {},
+): AgentSession {
+  const now = "2026-09-14T00:00:00.000Z";
+  return {
+    schemaVersion: 1,
+    id: "ses_0000000000000001",
+    ownerId,
+    title: "海报会话",
+    messages: [],
+    jobIds: [],
+    turns: [
+      {
+        id: "msg_0000000000000001",
+        requestHash: "0".repeat(64),
+        status,
+        priceCny: 0.05,
+        chargeRef: "agent:msg_0000000000000001",
+        jobIds: [],
+        ...(status === "awaiting_approval"
+          ? {
+              proposal: {
+                actions: [{ type: "image", prompt: "海报", priceCny: 0.5 }],
+                totalCny: 0.5,
+                expiresAt: "2026-09-15T00:00:00.000Z",
+              },
+            }
+          : {}),
+        ...(status === "failed"
+          ? { error: { code: "agent_upstream_failed", message: "上游失败" } }
+          : {}),
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
 describe("appendJobNotification", () => {
   it("appends a terminal job once — the same jobId:status id is idempotent", async () => {
     const id = userId("a1");
@@ -101,15 +176,25 @@ describe("appendJobNotification", () => {
     expect(file?.epoch).toMatch(/^nep_[0-9a-f]{16}$/);
   });
 
-  it("keeps at most MAX_NOTIFICATIONS items, dropping the oldest first", async () => {
+  it("keeps at most MAX_NOTIFICATIONS mixed items, dropping the oldest first", async () => {
     const id = userId("a2");
-    for (let i = 0; i < MAX_NOTIFICATIONS + 1; i += 1) {
+    for (let i = 0; i < MAX_NOTIFICATIONS - 1; i += 1) {
       await appendJobNotification(jobFixture(id, i % 2 ? "failed" : "succeeded"));
     }
+    const beforeRun = runFixture(id);
+    const afterRun = runFixture(id, { status: "succeeded", finishedAt: "2026-09-14T00:01:00.000Z" }, [
+      { nodeId: "n_00000001", attempt: 1, status: "succeeded" },
+    ]);
+    await appendRunNotifications(beforeRun, afterRun);
+    await appendAgentNotifications(
+      sessionFixture(id, "thinking"),
+      sessionFixture(id, "failed"),
+    );
     const file = await readNotifications(id);
     expect(file?.items).toHaveLength(MAX_NOTIFICATIONS);
-    // 最旧的那条（seq 1）已被截掉；seq 单调递增不回退。
     expect(file?.items[0]?.seq).toBe(2);
+    expect(file?.items.at(-2)?.kind).toBe("run");
+    expect(file?.items.at(-1)?.kind).toBe("agent");
     expect(file?.items.at(-1)?.seq).toBe(MAX_NOTIFICATIONS + 1);
     expect(file?.nextSeq).toBe(MAX_NOTIFICATIONS + 2);
   }, 15_000);
@@ -119,12 +204,14 @@ describe("appendJobNotification", () => {
     const job = jobFixture(id, "failed", "长".repeat(200));
     await appendJobNotification(job);
     const file = await readNotifications(id);
-    expect(file?.items[0]).toMatchObject({
+    const item = file?.items[0];
+    expect(item).toMatchObject({
+      kind: "job",
       status: "failed",
       errorCode: "internal",
       errorMessage: "上游炸了",
     });
-    expect([...(file?.items[0]?.prompt ?? "")]).toHaveLength(120);
+    expect([...(item?.kind === "job" ? item.prompt : "")]).toHaveLength(120);
   });
 
   it("ignores non-terminal jobs and ownerless records", async () => {
@@ -134,6 +221,129 @@ describe("appendJobNotification", () => {
     // 上面两条都不该落任何文件：该用户的通知文件不存在。
     const names = await readdir(notificationsDir()).catch(() => [] as string[]);
     expect(names).not.toContain(`${id}.json`);
+  });
+});
+
+describe("run notifications", () => {
+  it("emits terminal and awaiting-approval edges with node counts", () => {
+    const owner = userId("e1");
+    const before = runFixture(owner, {}, [
+      { nodeId: "n_00000001", attempt: 1, status: "running" },
+      { nodeId: "n_00000002", attempt: 1, status: "ready" },
+      { nodeId: "n_00000003", attempt: 1, status: "waiting_dependencies" },
+    ]);
+    const terminal = runFixture(owner, { status: "partially_failed", finishedAt: "2026-09-14T00:02:00.000Z" }, [
+      { nodeId: "n_00000001", attempt: 1, status: "succeeded" },
+      { nodeId: "n_00000002", attempt: 1, status: "failed" },
+      { nodeId: "n_00000003", attempt: 1, status: "blocked" },
+    ]);
+    const terminalItems = [
+      expect.objectContaining({
+        id: `${terminal.id}:partially_failed`,
+        status: "partially_failed",
+        nodeCounts: { succeeded: 1, failed: 1, blocked: 1 },
+        at: terminal.finishedAt,
+      }),
+    ];
+    expect(runNotificationEdges(before, terminal)).toEqual(terminalItems);
+    expect(runNotificationEdges(null, terminal)).toEqual(terminalItems);
+
+    const awaiting = runFixture(owner, { updatedAt: "2026-09-14T00:03:00.000Z" }, [
+      { nodeId: "n_00000001", attempt: 1, status: "running" },
+      { nodeId: "n_00000002", attempt: 1, status: "awaiting_approval" },
+    ]);
+    expect(runNotificationEdges(before, awaiting)).toEqual([
+      expect.objectContaining({
+        id: `${awaiting.id}:n_00000002:awaiting_approval`,
+        status: "awaiting_approval",
+        nodeId: "n_00000002",
+      }),
+    ]);
+    expect(
+      runNotificationEdges(before, { ...awaiting, cancelRequestedAt: "2026-09-14T00:02:30.000Z" }),
+    ).toEqual([]);
+  });
+
+  it("appends the same before/after edge only once", async () => {
+    const owner = userId("e2");
+    const before = runFixture(owner);
+    const after = runFixture(owner, { status: "succeeded", finishedAt: "2026-09-14T00:04:00.000Z" }, [
+      { nodeId: "n_00000001", attempt: 1, status: "succeeded" },
+    ]);
+    await appendRunNotifications(before, after);
+    await appendRunNotifications(before, after);
+    expect((await readNotifications(owner))?.items).toHaveLength(1);
+  });
+});
+
+describe("agent notifications", () => {
+  it("emits awaiting and failed edges, but not succeeded or rejected", async () => {
+    const owner = userId("f1");
+    const before = sessionFixture(owner, "thinking");
+    const awaiting = sessionFixture(owner, "awaiting_approval");
+    const failed = sessionFixture(owner, "failed");
+    expect(agentNotificationEdges(before, awaiting)).toEqual([
+      expect.objectContaining({
+        id: "msg_0000000000000001:awaiting_approval",
+        status: "awaiting_approval",
+        totalCny: 0.5,
+        actionCount: 1,
+      }),
+    ]);
+    expect(agentNotificationEdges(before, failed)).toEqual([
+      expect.objectContaining({
+        id: "msg_0000000000000001:failed",
+        status: "failed",
+        errorCode: "agent_upstream_failed",
+        errorMessage: "上游失败",
+      }),
+    ]);
+    expect(agentNotificationEdges(before, sessionFixture(owner, "succeeded"))).toEqual([]);
+    expect(agentNotificationEdges(before, sessionFixture(owner, "rejected"))).toEqual([]);
+
+    await appendAgentNotifications(before, awaiting);
+    await appendAgentNotifications(before, failed);
+    expect((await readNotifications(owner))?.items).toEqual([
+      expect.objectContaining({ status: "awaiting_approval" }),
+      expect.objectContaining({ status: "failed" }),
+    ]);
+  });
+});
+
+describe("mixed notification files", () => {
+  it("parses an old job-only file and appends a run item", async () => {
+    const owner = userId("e3");
+    const job = jobFixture(owner, "succeeded");
+    await writeFile(
+      notificationPath(owner),
+      JSON.stringify({
+        schemaVersion: 1,
+        ownerId: owner,
+        epoch: "nep_0000000000000001",
+        nextSeq: 2,
+        lastReadSeq: 0,
+        items: [
+          {
+            seq: 1,
+            id: `${job.id}:succeeded`,
+            kind: "job",
+            jobId: job.id,
+            status: "succeeded",
+            mode: job.mode,
+            prompt: job.prompt,
+            at: job.updatedAt,
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const before = runFixture(owner);
+    const after = runFixture(owner, { status: "succeeded", finishedAt: "2026-09-14T00:05:00.000Z" }, [
+      { nodeId: "n_00000001", attempt: 1, status: "succeeded" },
+    ]);
+    await appendRunNotifications(before, after);
+    const file = await readNotifications(owner);
+    expect(file?.items.map((item) => item.kind)).toEqual(["job", "run"]);
   });
 });
 

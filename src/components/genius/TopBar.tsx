@@ -119,7 +119,9 @@ export function TopBar({ view }: { view: ShellView }) {
                       <button
                         type="button"
                         className="notify__item"
-                        data-job-id={n.jobId}
+                        data-kind={n.kind}
+                        data-status={n.status}
+                        data-job-id={n.kind === "job" ? n.jobId : undefined}
                         data-ok={n.ok}
                         onClick={() => {
                           setBell(false);

@@ -116,12 +116,18 @@ export type Pop = null | "specs" | "model" | "count" | "buddy" | "picker";
  *    同步。随后那次 `syncNotifications` 会用服务端结果整体覆盖（去重键 `id`）。
  */
 export type Notice = {
-  /** jobId + 终态，同一条任务的同一次完成只入队一次 */
+  /** kind 内幂等键：job 为 jobId:终态，run 为 runId:status 或 runId:nodeId:awaiting_approval，agent 为 turnId:status。 */
   id: string;
-  jobId: string;
+  kind: "job" | "run" | "agent";
+  jobId?: string;
+  runId?: string;
+  canvasId?: string;
+  sessionId?: string;
+  turnId?: string;
+  status: string;
   ok: boolean;
   title: string;
-  /** 成功时是提示词摘要，失败时是服务端给的原因 */
+  /** 成功时是提示词摘要或执行统计，失败时是服务端原因，待审批时是动作摘要。 */
   detail: string;
   at: string;
 };

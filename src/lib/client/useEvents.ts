@@ -26,6 +26,7 @@ export function useEvents(
    * 终态通知。可选；不给时行为与之前完全一致。
    */
   onOpen?: () => void,
+  onNotification?: () => void,
 ) {
   // 回调每次 render 都是新的（组件里的闭包），但订阅不该因此重建——否则每次状态更新
   // 都会断开重连一次 SSE。用 ref 转发，effect 只依赖 `enabled`。
@@ -33,10 +34,12 @@ export function useEvents(
   // 而且 StrictMode 的双渲染下语义也不明确。事件是异步到的，晚一个 commit 更新没影响。
   const handler = useRef(onJob);
   const openHandler = useRef(onOpen);
+  const notificationHandler = useRef(onNotification);
   useEffect(() => {
     handler.current = onJob;
     openHandler.current = onOpen;
-  }, [onJob, onOpen]);
+    notificationHandler.current = onNotification;
+  }, [onJob, onOpen, onNotification]);
 
   useEffect(() => {
     if (!enabled || typeof EventSource === "undefined") return;
@@ -71,6 +74,7 @@ export function useEvents(
       });
       source.addEventListener("message", apply);
       source.addEventListener("job", apply);
+      source.addEventListener("notification", () => notificationHandler.current?.());
       source.addEventListener("error", () => {
         // EventSource 自带重连，但路由不存在（后端还没落地）时它会空转重试；
         // 这里接管：关掉再按退避重来，次数越多间隔越长。

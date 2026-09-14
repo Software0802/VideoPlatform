@@ -8,7 +8,7 @@ export type JobEvent = { type: string; job: JobPublic };
 /** 全站频道：每条任务事件都会**额外**在这里发一份，见 `onAnyJob`。 */
 const ANY_JOB = "job:*";
 
-function bus(): Bus {
+export function lumenBus(): Bus {
   const g = globalThis as typeof globalThis & { __lumenBus?: Bus };
   if (!g.__lumenBus) {
     g.__lumenBus = new EventEmitter();
@@ -19,12 +19,12 @@ function bus(): Bus {
 
 export function emitJob(job: JobPublic, extra?: { type?: string }) {
   const event: JobEvent = { type: extra?.type ?? "snapshot", job };
-  bus().emit(`job:${job.id}`, event);
-  bus().emit(ANY_JOB, event);
+  lumenBus().emit(`job:${job.id}`, event);
+  lumenBus().emit(ANY_JOB, event);
 }
 
 export function onJob(id: string, fn: (ev: JobEvent) => void) {
-  const b = bus();
+  const b = lumenBus();
   const key = `job:${id}`;
   b.on(key, fn);
   return () => b.off(key, fn);
@@ -40,7 +40,7 @@ export function onJob(id: string, fn: (ev: JobEvent) => void) {
  * 读一次盘。
  */
 export function onAnyJob(fn: (ev: JobEvent) => void) {
-  const b = bus();
+  const b = lumenBus();
   b.on(ANY_JOB, fn);
   return () => b.off(ANY_JOB, fn);
 }

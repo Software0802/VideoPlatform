@@ -1,6 +1,7 @@
 import { jsonError } from "@/lib/http";
 import { onAnyJob, type JobEvent } from "@/lib/jobs/events";
 import { readJobForUser } from "@/lib/jobs/store";
+import { onNotification } from "@/lib/notifications/events";
 import { readSessionCookie, requireUser, sessionUserFromValue } from "@/lib/users/session";
 
 export const runtime = "nodejs";
@@ -41,13 +42,15 @@ export async function GET(request: Request) {
   const stream = new ReadableStream({
     start(controller) {
       let closed = false;
-      let off: () => void = () => undefined;
+      let offJobs: () => void = () => undefined;
+      let offNotifications: () => void = () => undefined;
       const close = () => {
         if (closed) return;
         closed = true;
         clearInterval(ping);
         clearInterval(recheck);
-        off();
+        offJobs();
+        offNotifications();
         try {
           controller.close();
         } catch {
@@ -85,7 +88,10 @@ export async function GET(request: Request) {
           .catch(() => undefined);
       };
 
-      off = onAnyJob(deliver);
+      offJobs = onAnyJob(deliver);
+      offNotifications = onNotification(userId, () => {
+        send(`event: notification\ndata: ${JSON.stringify({ type: "notification" })}\n\n`);
+      });
       const ping = setInterval(() => send(": ping\n\n"), 15_000);
       // 会话没了就关流。读盘抛错也关：拿不准这张 Cookie 还算不算数时，宁可让浏览器的
       // EventSource 重连一次（它会重新走完整的鉴权），也不继续推。

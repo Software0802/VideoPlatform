@@ -82,6 +82,7 @@ let loadBalanceUsage: typeof import("@/lib/billing/admission").loadBalanceUsage;
 let storeUploadFromBuffer: typeof import("@/lib/jobs/upload").storeUploadFromBuffer;
 let readUploadSidecar: typeof import("@/lib/jobs/upload").readUploadSidecar;
 let mediaStore: typeof import("@/lib/storage/local-fs").mediaStore;
+let readNotifications: typeof import("@/lib/notifications/store").readNotifications;
 
 type CanvasRun = import("./schema").CanvasRun;
 
@@ -113,6 +114,7 @@ beforeAll(async () => {
   ({ loadBalanceUsage } = await import("@/lib/billing/admission"));
   ({ storeUploadFromBuffer, readUploadSidecar } = await import("@/lib/jobs/upload"));
   ({ mediaStore } = await import("@/lib/storage/local-fs"));
+  ({ readNotifications } = await import("@/lib/notifications/store"));
 });
 
 afterAll(async () => {
@@ -361,6 +363,13 @@ describe("sweep 执行器", () => {
     const vid = final.nodeExecutions.find((e) => e.nodeId === "n_00110002");
     expect(img?.status).toBe("succeeded");
     expect(vid?.status).toBe("succeeded");
+    expect((await readNotifications(owner))?.items).toContainEqual(
+      expect.objectContaining({
+        id: `${run.id}:succeeded`,
+        kind: "run",
+        nodeCounts: { succeeded: 2, failed: 0, blocked: 0 },
+      }),
+    );
     const vidJob = vid?.jobId ? await readJob(vid.jobId) : null;
     expect(vidJob?.mode).toBe("image_to_video");
     // run 不回写画布文档：节点上的 jobId 仍是空的，产物只活在执行位里。
@@ -930,6 +939,13 @@ describe("审批门", () => {
     const gated = observed?.nodeExecutions.find((e) => e.nodeId === "n_05300002");
     expect(gated).toMatchObject({ status: "awaiting_approval" });
     expect(gated?.jobId).toBeUndefined();
+    expect((await readNotifications(owner))?.items).toContainEqual(
+      expect.objectContaining({
+        id: `${run.id}:n_05300002:awaiting_approval`,
+        kind: "run",
+        nodeId: "n_05300002",
+      }),
+    );
 
     // 批准 → 回 ready，下一轮提交。
     const decided = await decideCanvasRunApproval(owner, run.id, {

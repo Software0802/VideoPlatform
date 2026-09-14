@@ -9,6 +9,7 @@ import {
   type CanvasRun,
 } from "@/lib/canvas/schema";
 import type { JobReservation } from "@/lib/jobs/schema";
+import { appendRunNotifications } from "@/lib/notifications/store";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { writeJsonAtomic } from "@/lib/storage/atomic-json";
 import { assertUserId } from "@/lib/users/store";
@@ -139,7 +140,18 @@ export async function updateCanvasRun(
     if (!current) return null;
     const next = await fn(current);
     if (!next) return current;
-    return writeCanvasRun({ ...next, updatedAt: new Date().toISOString() });
+    const written = await writeCanvasRun({ ...next, updatedAt: new Date().toISOString() });
+    // 通知锁只串行本用户通知文件，不获取 run/admission/user 等任何锁，不改变既有锁序。
+    try {
+      await appendRunNotifications(current, written);
+    } catch (error) {
+      log("warn", "画布运行通知落盘失败（不影响运行本身）", {
+        ownerId,
+        runId,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return written;
   });
 }
 

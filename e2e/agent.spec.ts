@@ -149,6 +149,15 @@ test("智能体：对话模型可换、提案标产品、消息落款写明模�
   await expect(proposal).toBeVisible();
   await expect(proposal.locator(".agent-chat__proposal-product").first()).not.toHaveText("自动");
 
+  await page.getByRole("button", { name: /通知/ }).click();
+  const agentNotice = page
+    .locator('.notify__item[data-kind="agent"][data-status="awaiting_approval"]')
+    .first();
+  await expect(agentNotice).toBeVisible();
+  await agentNotice.click();
+  await expect(page).toHaveURL(/\/agent\?session=ses_[0-9a-f]{16}$/);
+  await expect(view(page)).toHaveAttribute("data-screen", "chat");
+
   // 对话页芯片可交互：换图片产品，下一轮生效。
   const imgChip = page.locator(".agent-chat__composer .agent-chip").nth(1);
   await imgChip.click();

@@ -11,6 +11,7 @@ import { copyCanvasMaterial } from "@/lib/assets/store";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { mediaStore } from "@/lib/storage/local-fs";
 import { log } from "@/lib/log";
+import { appendRunNotifications } from "@/lib/notifications/store";
 import { readCanvas } from "@/lib/canvas/store";
 import {
   computeQuote,
@@ -281,6 +282,18 @@ export async function createCanvasRun(
       run.finishedAt = now;
     }
     await writeCanvasRun(run);
+    if (settled) {
+      // 通知锁不获取 admission/run/user 锁；创建即终态没有 updateCanvasRun 可替它补边沿。
+      try {
+        await appendRunNotifications(null, run);
+      } catch (error) {
+        log("warn", "画布运行通知落盘失败（不影响运行本身）", {
+          ownerId,
+          runId: run.id,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     return { run, replay: false };
   });
   if (!created.replay && created.run.status === "running") kickSweep(ownerId, created.run.id);

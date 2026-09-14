@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import type { JobPublic } from "@/lib/jobs/schema";
 import {
   fetchNotifications,
@@ -12,7 +13,7 @@ import { ApiError } from "@/lib/client/jobs";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { errorText } from "@/lib/i18n/errorText";
 import { hasMessage } from "@/lib/i18n/messages";
-import { kindOfJob, type Notice } from "./shared";
+import { creditsOf, kindOfJob, type Notice } from "./shared";
 import { useSessionBridge } from "./SessionProvider";
 
 /*
@@ -71,6 +72,7 @@ export function useNoticesBridge(): NoticesBridge {
 export function NoticesProvider({ children }: { children: ReactNode }) {
   const { caps } = useSessionBridge();
   const t = useT();
+  const pathname = usePathname();
 
   const [toast, setToast] = useState<string | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
@@ -111,41 +113,122 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
   const notifSyncing = useRef(false);
   const notifPending = useRef(false);
 
-  /** 一条落盘通知 → 面板条目。标题 / 失败原因按 status 与 errorCode 现渲染，不落盘。 */
+  /** 一条落盘通知 → 面板条目。标题 / 失败原因按 kind 与 status 现渲染，不落盘。 */
   const noticeOfItem = useCallback(
     (item: NotificationItem): Notice => {
-      const ok = item.status === "succeeded";
-      const title = ok
-        ? t("shell.notice.done")
-        : item.status === "canceled"
-          ? t("shell.notice.canceled")
-          : t("shell.notice.failed");
+      if (item.kind === "job") {
+        const ok = item.status === "succeeded";
+        const title = ok
+          ? t("shell.notice.done")
+          : item.status === "canceled"
+            ? t("shell.notice.canceled")
+            : t("shell.notice.failed");
+        const errKey = item.errorCode ? `common.err.${item.errorCode}` : "";
+        const detail = ok
+          ? item.prompt ||
+            (item.mode === "text_to_image" ? t("create.mode.text_to_image") : t("create.firstFrame"))
+          : errKey && hasMessage(errKey)
+            ? t(errKey)
+            : (item.errorMessage ?? t("shell.notice.unknownReason"));
+        return {
+          id: item.id,
+          kind: "job",
+          jobId: item.jobId,
+          status: item.status,
+          ok,
+          title,
+          detail,
+          at: item.at,
+        };
+      }
+      if (item.kind === "run") {
+        const title =
+          item.status === "succeeded"
+            ? t("shell.notice.run.succeeded")
+            : item.status === "partially_failed"
+              ? t("shell.notice.run.partially_failed")
+              : item.status === "failed"
+                ? t("shell.notice.run.failed")
+                : item.status === "canceled"
+                  ? t("shell.notice.run.canceled")
+                  : t("shell.notice.run.awaiting_approval");
+        const canvasTitle = item.canvasTitle ?? t("shell.notice.run.untitled");
+        const detail =
+          item.status === "awaiting_approval"
+            ? t("shell.notice.run.awaitingDetail", { title: canvasTitle })
+            : t("shell.notice.run.detail", {
+                title: canvasTitle,
+                ok: item.nodeCounts?.succeeded ?? 0,
+                bad: (item.nodeCounts?.failed ?? 0) + (item.nodeCounts?.blocked ?? 0),
+              });
+        return {
+          id: item.id,
+          kind: "run",
+          runId: item.runId,
+          canvasId: item.canvasId,
+          status: item.status,
+          ok: item.status === "succeeded" || item.status === "awaiting_approval",
+          title,
+          detail,
+          at: item.at,
+        };
+      }
+      const title =
+        item.status === "awaiting_approval"
+          ? t("shell.notice.agent.awaiting_approval")
+          : t("shell.notice.agent.failed");
       let detail: string;
-      if (ok) {
-        detail =
-          item.prompt ||
-          (item.mode === "text_to_image" ? t("create.mode.text_to_image") : t("create.firstFrame"));
+      if (item.status === "awaiting_approval") {
+        detail = t("shell.notice.agent.awaitingDetail", {
+          title: item.sessionTitle,
+          n: item.actionCount ?? 0,
+          credits: creditsOf(item.totalCny ?? 0),
+        });
       } else {
         const errKey = item.errorCode ? `common.err.${item.errorCode}` : "";
-        detail =
+        const reason =
           errKey && hasMessage(errKey)
             ? t(errKey)
             : (item.errorMessage ?? t("shell.notice.unknownReason"));
+        detail = `${reason}${t("shell.notice.agent.refunded")}`;
       }
-      return { id: item.id, jobId: item.jobId, ok, title, detail, at: item.at };
+      return {
+        id: item.id,
+        kind: "agent",
+        sessionId: item.sessionId,
+        turnId: item.turnId,
+        status: item.status,
+        ok: item.status === "awaiting_approval",
+        title,
+        detail,
+        at: item.at,
+      };
     },
     [t],
   );
 
-  /** 服务端同步结果整体覆盖本地（items 已按 seq 倒序）；同时记下代际与最大 seq。 */
+  /** 服务端同步结果整体覆盖本地；非首拉的新 run/agent 项补一条 toast。 */
   const applyNotificationState = useCallback(
     (state: NotificationsState) => {
+      const previousMax = notifMaxSeq.current;
+      const latest =
+        previousMax > 0
+          ? state.items
+              .filter((item) => item.seq > previousMax && item.kind !== "job")
+              .sort((a, b) => b.seq - a.seq)[0]
+          : undefined;
       notifEpoch.current = state.epoch;
       notifMaxSeq.current = state.items.reduce((m, i) => Math.max(m, i.seq), state.lastReadSeq);
       setNotices(state.items.map(noticeOfItem));
       setUnread(state.unread);
+      if (latest) {
+        const onTargetPage =
+          (latest.kind === "run" && pathname === "/canvas") ||
+          (latest.kind === "agent" && pathname === "/agent");
+        if (!onTargetPage) setNoticeToast(noticeOfItem(latest));
+      }
     },
-    [noticeOfItem],
+    [noticeOfItem, pathname],
   );
 
   /**
@@ -195,7 +278,9 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
       const ok = job.status === "succeeded";
       const notice: Notice = {
         id: `${job.id}:${job.status}`,
+        kind: "job",
         jobId: job.id,
+        status: job.status,
         ok,
         title: ok
           ? t("shell.notice.done")

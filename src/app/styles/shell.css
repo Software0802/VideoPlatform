@@ -415,6 +415,9 @@
 .notify__item[data-ok="false"] .notify__name {
   color: var(--danger);
 }
+.notify__item[data-status="awaiting_approval"] .notify__name {
+  color: var(--accent);
+}
 .notify__when {
   margin-left: auto;
   font-size: 11px;

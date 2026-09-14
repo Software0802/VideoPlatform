@@ -3,6 +3,7 @@ import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/lib/env";
 import { log } from "@/lib/log";
+import { appendAgentNotifications } from "@/lib/notifications/store";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { writeJsonAtomic } from "@/lib/storage/atomic-json";
 import { assertUserId } from "@/lib/users/store";
@@ -246,7 +247,18 @@ export async function updateSession(
     if (!current) return null;
     const next = fn(current);
     if (!next) return current;
-    return writeSession({ ...next, updatedAt: new Date().toISOString() });
+    const written = await writeSession({ ...next, updatedAt: new Date().toISOString() });
+    // 通知锁只操作该用户通知文件，不回取 agent/user/admission 锁，不改变既有锁序。
+    try {
+      await appendAgentNotifications(current, written);
+    } catch (error) {
+      log("warn", "智能体轮次通知落盘失败（不影响会话本身）", {
+        ownerId,
+        sessionId,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return written;
   });
 }
 

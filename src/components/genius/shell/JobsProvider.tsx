@@ -236,13 +236,23 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     [observeJobStatus, upsert, emitJobTerminal],
   );
   const onEventsOpen = useCallback(() => syncNotices(), [syncNotices]);
-  useEvents(true, onEventJob, onEventsOpen);
+  useEvents(true, onEventJob, onEventsOpen, syncNotices);
 
   /** 点通知：选中那条任务并跳创作页。 */
   const openNotice = useCallback(
     (notice: Notice) => {
       dismissNoticeToast();
-      const job = jobsRef.current.find((j) => j.id === notice.jobId);
+      if (notice.kind === "run") {
+        router.push("/canvas");
+        return;
+      }
+      if (notice.kind === "agent") {
+        router.push(notice.sessionId ? `/agent?session=${notice.sessionId}` : "/agent");
+        return;
+      }
+      const noticeJobId = notice.jobId;
+      if (!noticeJobId) return;
+      const job = jobsRef.current.find((j) => j.id === noticeJobId);
       if (job) {
         setCurrentJob(job);
         router.push("/create");
@@ -253,7 +263,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
         或留存期被清了产物的任务都还在通知里。点之前先把那条任务取回来再跳，
         取不到（已删除）也照跳——创作页会落到最新一条。
       */
-      void fetchJob(notice.jobId).then(
+      void fetchJob(noticeJobId).then(
         (next) => {
           if (next) {
             upsert(next);

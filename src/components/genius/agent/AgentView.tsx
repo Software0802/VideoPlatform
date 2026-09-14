@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useI18n, useT } from "@/components/genius/i18n/I18nProvider";
 import {
   approveAgentTurn,
@@ -67,11 +68,13 @@ function readOff(): Record<string, boolean> {
 export default function AgentView() {
   const t = useT();
   const { locale } = useI18n();
+  const requestedSession = useSearchParams().get("session");
 
   const [screen, setScreen] = useState<Screen>("home");
   const [skills, setSkills] = useState<AgentSkill[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [session, setSession] = useState<AgentSessionDetail | null>(null);
 
   const [prompt, setPrompt] = useState("");
@@ -98,6 +101,7 @@ export default function AgentView() {
 
   // 卸载后到达的响应不该再 setState（切走视图、退出登录都会命中）。
   const alive = useRef(true);
+  const openedDeepLink = useRef<string | null>(null);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -123,7 +127,14 @@ export default function AgentView() {
     }, say);
     // 产品拉不到不该让整页不可用：下拉退回只有「自动」一项，照样能创作。
     fetchProducts().then((list) => alive.current && setProducts(list), () => undefined);
-    fetchAgentSessions().then((list) => alive.current && setSessions(list), say);
+    fetchAgentSessions().then(
+      (list) => {
+        if (!alive.current) return;
+        setSessions(list);
+        setSessionsLoaded(true);
+      },
+      say,
+    );
   }, [say]);
 
   /* 会话里还有任务没跑完、或有轮次停在 thinking/executing 时才轮询；
@@ -236,6 +247,13 @@ export default function AgentView() {
     },
     [say, syncSession],
   );
+
+  // `(shell)` layout 明确 force-dynamic，useSearchParams 不触发静态预渲染的 Suspense 要求。
+  useEffect(() => {
+    if (!requestedSession || !sessionsLoaded || openedDeepLink.current === requestedSession) return;
+    openedDeepLink.current = requestedSession;
+    void open(requestedSession);
+  }, [open, requestedSession, sessionsLoaded]);
 
   /** 批准提案：批准那一刻才真的创建任务（B 包默认批准制）。 */
   const approve = useCallback(

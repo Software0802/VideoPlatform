@@ -27,6 +27,18 @@ export const shell: Record<keyof typeof zh, string> = {
   "shell.notice.canceled": "Job canceled",
   "shell.notice.failed": "Generation failed",
   "shell.notice.unknownReason": "Unknown reason",
+  "shell.notice.run.succeeded": "Canvas run complete",
+  "shell.notice.run.partially_failed": "Canvas run partially failed",
+  "shell.notice.run.failed": "Canvas run failed",
+  "shell.notice.run.canceled": "Canvas run canceled",
+  "shell.notice.run.awaiting_approval": "Canvas node awaiting approval",
+  "shell.notice.run.detail": "{title} · {ok} succeeded · {bad} failed or skipped",
+  "shell.notice.run.awaitingDetail": "{title} · Approve to continue generation within 24 hours",
+  "shell.notice.run.untitled": "Canvas",
+  "shell.notice.agent.awaiting_approval": "Agent proposal awaiting approval",
+  "shell.notice.agent.awaitingDetail": "{title} · {n} actions · {credits} credits total",
+  "shell.notice.agent.failed": "Agent turn failed",
+  "shell.notice.agent.refunded": " (This turn was refunded)",
 
   "shell.lang.switch": "Switch language",
 

@@ -4,7 +4,11 @@ import path from "node:path";
 import { z } from "zod";
 import { dataDir } from "@/lib/env";
 import { log } from "@/lib/log";
+import { readCanvas } from "@/lib/canvas/store";
+import type { CanvasRun } from "@/lib/canvas/schema";
+import type { AgentSession } from "@/lib/agent/schema";
 import { isTerminalStatus, nativeModeSchema, type JobRecord } from "@/lib/jobs/schema";
+import { emitNotification } from "@/lib/notifications/events";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { writeJsonAtomic } from "@/lib/storage/atomic-json";
 import { USER_ID_RE } from "@/lib/users/schema";
@@ -29,14 +33,18 @@ export const MAX_NOTIFICATIONS = 200;
 /** 通知正文摘要的最大字数（按码点截，与 `tagLength` 同口径）。 */
 const PROMPT_MAX_CHARS = 120;
 
-/** 终态子集：item.status 只允许这四个值。 */
+/** job 通知沿用的终态子集。 */
 const terminalStatusSchema = z.enum(["succeeded", "failed", "canceled", "expired"]);
 export type NotificationStatus = z.infer<typeof terminalStatusSchema>;
 
-const notificationItemSchema = z.object({
+const itemBase = {
   seq: z.number().int().min(1),
-  /** `${jobId}:${status}` —— 同一次完成只入一次（幂等键）。 */
   id: z.string().min(1),
+  at: z.string(),
+};
+
+const jobNotificationItemSchema = z.object({
+  ...itemBase,
   kind: z.literal("job"),
   jobId: z.string().min(1),
   status: terminalStatusSchema,
@@ -44,9 +52,51 @@ const notificationItemSchema = z.object({
   prompt: z.string(),
   errorCode: z.string().optional(),
   errorMessage: z.string().optional(),
-  at: z.string(),
 });
+
+const runNotificationItemSchema = z.object({
+  ...itemBase,
+  kind: z.literal("run"),
+  runId: z.string().min(1),
+  canvasId: z.string().min(1),
+  canvasTitle: z.string().optional(),
+  status: z.enum(["succeeded", "partially_failed", "failed", "canceled", "awaiting_approval"]),
+  nodeId: z.string().optional(),
+  nodeCounts: z
+    .object({
+      succeeded: z.number().int().nonnegative(),
+      failed: z.number().int().nonnegative(),
+      blocked: z.number().int().nonnegative(),
+    })
+    .optional(),
+});
+
+const agentNotificationItemSchema = z.object({
+  ...itemBase,
+  kind: z.literal("agent"),
+  sessionId: z.string().min(1),
+  turnId: z.string().min(1),
+  sessionTitle: z.string(),
+  status: z.enum(["awaiting_approval", "failed"]),
+  totalCny: z.number().optional(),
+  actionCount: z.number().int().nonnegative().optional(),
+  errorCode: z.string().optional(),
+  errorMessage: z.string().optional(),
+});
+
+const notificationItemSchema = z.discriminatedUnion("kind", [
+  jobNotificationItemSchema,
+  runNotificationItemSchema,
+  agentNotificationItemSchema,
+]);
 export type NotificationItem = z.infer<typeof notificationItemSchema>;
+export type RunNotificationItem = z.infer<typeof runNotificationItemSchema>;
+export type AgentNotificationItem = z.infer<typeof agentNotificationItemSchema>;
+type NotificationItemInput = NotificationItem extends infer Item
+  ? Item extends NotificationItem
+    ? Omit<Item, "seq">
+    : never
+  : never;
 
 const notificationFileSchema = z.object({
   schemaVersion: z.literal(1),
@@ -128,7 +178,7 @@ type LoadResult =
   读出通知文件；不存在 / 损坏时**就地重建**一份新 epoch 的空文件并照常返回
   （通知不是资金，不 fail closed——代价只是客户端手里的游标作废，重拉一次就好）。
 */
-async function loadOrRebuild(ownerId: string): Promise<LoadResult> {
+async function loadOrRebuild(ownerId: string, persistRebuild = true): Promise<LoadResult> {
   let raw: string;
   try {
     raw = await readFile(notificationPath(ownerId), "utf8");
@@ -136,14 +186,14 @@ async function loadOrRebuild(ownerId: string): Promise<LoadResult> {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     log("warn", "通知文件不存在，以新 epoch 重建空文件", { ownerId });
     const file = emptyFile(ownerId);
-    await writeJsonAtomic(notificationPath(ownerId), file);
+    if (persistRebuild) await writeJsonAtomic(notificationPath(ownerId), file);
     return { kind: "ok", file };
   }
   const parsed = notificationFileSchema.safeParse(safeJson(raw));
   if (!parsed.success) {
     log("warn", "通知文件损坏，以新 epoch 重建空文件", { ownerId });
     const file = emptyFile(ownerId);
-    await writeJsonAtomic(notificationPath(ownerId), file);
+    if (persistRebuild) await writeJsonAtomic(notificationPath(ownerId), file);
     return { kind: "ok", file };
   }
   if (parsed.data.ownerId !== ownerId) return { kind: "mismatch" };
@@ -167,42 +217,152 @@ export async function readNotifications(ownerId: string): Promise<NotificationFi
   });
 }
 
+async function appendItems(
+  ownerId: string,
+  items: NotificationItemInput[],
+): Promise<NotificationFile | null> {
+  if (!items.length) return null;
+  assertUserId(ownerId);
+  return withNotificationLock(ownerId, async () => {
+    const loaded = await loadOrRebuild(ownerId, false);
+    // 文件记的不是这个人：内容不可信，按损坏处理——换新 epoch 重建再追加。
+    const file = loaded.kind === "ok" ? loaded.file : emptyFile(ownerId);
+    const known = new Set(file.items.map((item) => item.id));
+    let added = 0;
+    for (const item of items) {
+      if (known.has(item.id)) continue;
+      file.items.push({ ...item, seq: file.nextSeq } as NotificationItem);
+      file.nextSeq += 1;
+      known.add(item.id);
+      added += 1;
+    }
+    if (!added) return file;
+    if (file.items.length > MAX_NOTIFICATIONS) {
+      file.items = file.items.slice(file.items.length - MAX_NOTIFICATIONS);
+    }
+    const written = await writeFile(file);
+    emitNotification(ownerId);
+    return written;
+  });
+}
+
 /**
- * `updateJob` 的终态边沿调用（唯一写入点）：把一条「非终态 → 终态」的任务落成
- * 一条通知。幂等键是 `${jobId}:${status}`——崩溃恢复把同一终态再推一遍时不会重复入。
- *
- * 非终态 / 无主任务直接返回（`updateJob` 在调用处已判过边沿与 ownerId，这里是
- * 第二道防线，让「忘记判」的调用方也不会写出半成品通知）。
+ * `updateJob` 的终态边沿调用（唯一写入点）：构造 job 项后交给 `appendItems` 批量路径。
+ * 幂等键仍是 `${jobId}:${status}`，崩溃恢复重推同一终态不会重复入队。
+ * 非终态 / 无主任务直接返回——调用处已经判过边沿，这里保留第二道防线。
  */
 export async function appendJobNotification(job: JobRecord): Promise<NotificationFile | null> {
   if (!job.ownerId || !isTerminalStatus(job.status)) return null;
-  const ownerId = job.ownerId;
-  return withNotificationLock(ownerId, async () => {
-    const loaded = await loadOrRebuild(ownerId);
-    // 文件记的不是这个人：内容不可信，按损坏处理——换新 epoch 重建再追加。
-    const file = loaded.kind === "ok" ? loaded.file : emptyFile(ownerId);
-    const id = `${job.id}:${job.status}`;
-    if (file.items.some((i) => i.id === id)) return file;
-    const item: NotificationItem = {
-      seq: file.nextSeq,
-      id,
+  return appendItems(job.ownerId, [
+    {
+      id: `${job.id}:${job.status}`,
       kind: "job",
       jobId: job.id,
       status: job.status as NotificationStatus,
       mode: job.mode,
       prompt: [...job.prompt].slice(0, PROMPT_MAX_CHARS).join(""),
-      ...(job.error
-        ? { errorCode: job.error.code, errorMessage: job.error.message }
-        : {}),
+      ...(job.error ? { errorCode: job.error.code, errorMessage: job.error.message } : {}),
       at: job.completedAt ?? job.updatedAt,
-    };
-    file.nextSeq += 1;
-    file.items.push(item);
-    if (file.items.length > MAX_NOTIFICATIONS) {
-      file.items = file.items.slice(file.items.length - MAX_NOTIFICATIONS);
+    },
+  ]);
+}
+
+export function runNotificationEdges(
+  before: CanvasRun | null,
+  after: CanvasRun,
+): Omit<RunNotificationItem, "seq">[] {
+  const items: Omit<RunNotificationItem, "seq">[] = [];
+  if ((!before || before.status === "running") && after.status !== "running") {
+    const nodeCounts = { succeeded: 0, failed: 0, blocked: 0 };
+    for (const execution of after.nodeExecutions) {
+      if (execution.status === "succeeded") nodeCounts.succeeded += 1;
+      else if (execution.status === "failed") nodeCounts.failed += 1;
+      else if (execution.status === "blocked") nodeCounts.blocked += 1;
     }
-    return writeFile(file);
-  });
+    items.push({
+      id: `${after.id}:${after.status}`,
+      kind: "run",
+      runId: after.id,
+      canvasId: after.canvasId,
+      status: after.status,
+      nodeCounts,
+      at: after.finishedAt ?? after.updatedAt,
+    });
+  }
+  if (after.status === "running" && !after.cancelRequestedAt) {
+    const prior = new Map(before?.nodeExecutions.map((execution) => [execution.nodeId, execution.status]));
+    for (const execution of after.nodeExecutions) {
+      if (execution.status !== "awaiting_approval" || prior.get(execution.nodeId) === "awaiting_approval") {
+        continue;
+      }
+      items.push({
+        id: `${after.id}:${execution.nodeId}:awaiting_approval`,
+        kind: "run",
+        runId: after.id,
+        canvasId: after.canvasId,
+        status: "awaiting_approval",
+        nodeId: execution.nodeId,
+        at: after.updatedAt,
+      });
+    }
+  }
+  return items;
+}
+
+export async function appendRunNotifications(
+  before: CanvasRun | null,
+  after: CanvasRun,
+): Promise<NotificationFile | null> {
+  const edges = runNotificationEdges(before, after);
+  if (!edges.length) return null;
+  let canvasTitle: string | undefined;
+  try {
+    canvasTitle = (await readCanvas(after.ownerId, after.canvasId))?.title;
+  } catch {
+    canvasTitle = undefined;
+  }
+  return appendItems(
+    after.ownerId,
+    edges.map((item) => (canvasTitle ? { ...item, canvasTitle } : item)),
+  );
+}
+
+export function agentNotificationEdges(
+  before: AgentSession,
+  after: AgentSession,
+): Omit<AgentNotificationItem, "seq">[] {
+  const prior = new Map((before.turns ?? []).map((turn) => [turn.id, turn.status]));
+  const items: Omit<AgentNotificationItem, "seq">[] = [];
+  for (const turn of after.turns ?? []) {
+    if (turn.status !== "awaiting_approval" && turn.status !== "failed") continue;
+    if (prior.get(turn.id) === turn.status) continue;
+    items.push({
+      id: `${turn.id}:${turn.status}`,
+      kind: "agent",
+      sessionId: after.id,
+      turnId: turn.id,
+      sessionTitle: after.title,
+      status: turn.status,
+      ...(turn.status === "awaiting_approval" && turn.proposal
+        ? {
+            totalCny: turn.proposal.totalCny,
+            actionCount: turn.proposal.actions.length,
+          }
+        : {}),
+      ...(turn.status === "failed" && turn.error
+        ? { errorCode: turn.error.code, errorMessage: turn.error.message }
+        : {}),
+      at: turn.updatedAt,
+    });
+  }
+  return items;
+}
+
+export async function appendAgentNotifications(
+  before: AgentSession,
+  after: AgentSession,
+): Promise<NotificationFile | null> {
+  return appendItems(after.ownerId, agentNotificationEdges(before, after));
 }
 
 /**
