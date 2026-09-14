@@ -1,8 +1,8 @@
 # 设计计划书 · 全仓优化与路线重排（2026-09 起）
 
-状态：2026-09-13 **收口，本文已作为当前执行路线**。代码基线 `main` @ `1de057b`（已推送，CI 绿）；生产 = `c44f8a1` 构建（2026-09-13 第二次部署全流程通过，`build.sha` 回显二次验证）+ `1de057b` 脚本（scp 同步，无需重启）。已决（§8 标注）：D-1 a 移除 Tailwind（`a1e5a1e` 已落地）；D-2 a e2e 定时+手动（`74248a5` 已绿，验收口径连续 3 次绿）；D-3 a 删除 skip-check；D-4 b 本机管理令牌（`8f2dfba` 已落地）；D-6 b 素材 30 天并明示；D-8 a 非 root（已执行）；D-9 是。另已决：R3 先出报价不开跑；R6 无商户主体→继续礼品码，R6 不开工；R7 告警接飞书/钉钉/企微机器人（`34a8ac1` 代码已落地，生产 webhook 配置待执行）；R4.0 异地副本落阿里云 OSS（`34a8ac1` 代码已落地，生产 OSS 变量与恢复演练待执行）；R5.2 已做（`b1c71d0`）。D-5 待 SQLite 触发条件成立再定（生产 Node 22.22.2，22.x 的 node:sqlite 仍为 1.1 Active development）；D-7 预算未定。N3.1–N3.4 已合入 `37123bd`，N3.5 管理页与 N4 面板分组随 `d9675ab` 落地；R0/R1.1–R1.3/R1.5/R1.6/R2/R5 全部代码落地，`main` 首条绿 CI 为 `6b5449d`，`d7f34eb` 已部署实测（`--frozen-lockfile` 首过、`build.sha` 回显生效）；R1.4 发布目录/回滚演练待生产窗口。当前证据/剩余工作见 `docs/handoff.md`。用户允许门禁通过后提交推送 main，不等于允许部署或付费评测。本文取代 `docs/plan-next-2026-09-13.md` 的排期表；该文与 `docs/plan-unimplemented-2026-09-08.md` 的契约仍为引用源。以下正文保留起草时方案，实际进度以上述状态与 as-built 为准。
+状态：2026-09-13 **收口，本文已作为当前执行路线**。代码基线 `main` @ `13fb9ee`（已推送）；生产 = `13fb9ee` 构建（2026-09-14 deploy.sh 全流程通过，BUILD_INFO shortSha 与公网 health 已核对；登录态 `build.sha` 未核对）。已决（§8 标注）：D-1 a 移除 Tailwind（`a1e5a1e` 已落地）；D-2 a e2e 定时+手动（`74248a5` 已绿，验收口径连续 3 次绿）；D-3 a 删除 skip-check；D-4 b 本机管理令牌（`8f2dfba` 已落地）；D-6 b 素材 30 天并明示；D-8 a 非 root（已执行）；D-9 是。另已决：R3 先出报价不开跑；R6 无商户主体→继续礼品码，R6 不开工；R7 告警接飞书/钉钉/企微机器人（`34a8ac1` 代码已落地，生产 webhook 配置待执行）；R4.0 异地副本落阿里云 OSS（`34a8ac1` 代码已落地，生产 OSS 变量与恢复演练待执行）；R5.2 已做（`b1c71d0`）。D-5 待 SQLite 触发条件成立再定（生产 Node 22.22.2，22.x 的 node:sqlite 仍为 1.1 Active development）；D-7 预算未定。N3.1–N3.4 已合入 `37123bd`，N3.5 管理页与 N4 面板分组随 `d9675ab` 落地；R0/R1.1–R1.3/R1.5/R1.6/R2/R5 全部代码落地，`main` 首条绿 CI 为 `6b5449d`，`d7f34eb` 已部署实测（`--frozen-lockfile` 首过、`build.sha` 回显生效）；R1.4 发布目录/回滚演练待生产窗口。当前证据/剩余工作见 `docs/handoff.md`。用户允许门禁通过后提交推送 main，不等于允许部署或付费评测。本文取代 `docs/plan-next-2026-09-13.md` 的排期表；该文与 `docs/plan-unimplemented-2026-09-08.md` 的契约仍为引用源。以下正文保留起草时方案，实际进度以上述状态与 as-built 为准。
 
-当前未提交、未部署的工作树已补齐 relay 目录定价/精选与智能体模型透明化；正式 `AGENT_CHAT_MODELS` 和 YMan 23 个目录模型售价仍待用户提供，未定价模型不露出。
+`13fb9ee` 已部署生产：`AGENT_CHAT_MODELS` 7 条（默认 `gpt-5.6-luna`）、YMan 文件 relay 与 24 模型目录定价/隐藏配置已同步，目录快照已生成；生产登录态 `/api/models`、`/api/agent/skills` 与真实账单成本仍待核对。
 
 沿用的既定决策（不再讨论）：产品三卖点（`plan-next` §0.1）；D1 长片定价 ¥20/30/40；D2 `edit_video`/`extend_video` 移出路线图；D3 通用中转 provider（N3.1–N3.3 已提交，N3.4 进行中）；D4 微信 + 支付宝都接。
 
@@ -232,7 +232,7 @@ N3.4（治理：分级冷却 / 半开 / 提交时确定失败换家 / 分镜级�
 | C-3 | e2e | 35/35，`--repeat-each 3` 下 canvas.spec 稳定 | mock，3177 隔离端口 | ✅ 收口轮 40/40（spec 集重构后口径）；canvas 用例断言真实 409，此前 `--repeat-each 3` 三轮已验 |
 | C-4 | 备份 | `tar tzf` 含 `relays.json`、`assets/`；异地副本可下载解密；restore-check 通过 | 服务器 | ⏳ 白名单已上线；`restore-check --compare` 已对生产备份跑过一次且一致（2026-09-13）；**缺**：生产 `BACKUP_OSS_*`/`OSS_*` 配置、ossutil 安装、异地副本下载解密核对 |
 | C-5 | 画布素材 | 建节点 → 人为把 sidecar mtime 改到 25h 前 → sweep → 节点仍可用 | 本地 | ✅ R0.3 落地（`4a6c605` + `src/lib/assets/`），保留期/迁移/过期回归在测 |
-| C-6 | 部署 | health 回显 sha = 部署 commit；回滚演练一次 | 服务器 | ⏳ sha 回显两次部署均验证（`d7f34eb`、`c44f8a1`）；**缺**：`releases/<sha>` 目录与回滚演练（R1.4 待独立生产窗口） |
+| C-6 | 部署 | health 回显 sha = 部署 commit；回滚演练一次 | 服务器 | ⏳ 三次部署已验证：`d7f34eb`/`c44f8a1` 登录态 sha、`13fb9ee` BUILD_INFO + 公网 health；**缺**：`releases/<sha>` 目录与回滚演练（R1.4 待独立生产窗口） |
 | C-7 | 资金基线 | R4 每次迁移前后：全部账号两池余额 + `ref` 集合逐字节一致 | 服务器（离线窗口） | ◻ 未触发：R4.2 迁移未开始，无对照对象 |
 | C-8 | 前端 | Profiler 基线 vs 拆分后；五视图 375/390/768/1440 视觉核对 | 本机 Chrome | ✅ Profiler 基线 vs 拆分后已测（handoff §5，拆分前后持平、无 longtask）；375/1440 截图已核对，390/768 未单独截图 |
 | C-9 | 质量 | `evals/runs/` 至少一份校准 + 一份报告；`HARNESS_QC_VISUAL_THRESHOLD` 写进生产 `.env` 并记录依据 | 真实上游，预算显式 | ⏳ **缺**：预算未批 + 两张授权人物照；报价已冻结（R3 节） |

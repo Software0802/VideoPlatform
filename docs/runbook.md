@@ -2,7 +2,7 @@
 
 面向已经读过 `docs/handoff.md`（当前状态）与 `docs/design.md`（as-built）的人，是「出了事怎么办」的操作清单，不重复讲设计。生产实例：阿里云 8.209.212.178，`/opt/genius`，systemd `genius.service`。
 
-## 环境事实（2026-09-13 只读核查）
+## 环境事实（2026-09-14 只读核查）
 
 | 项 | 已验证事实 |
 | --- | --- |
@@ -12,7 +12,8 @@
 | 反代链路 | 站点块 `genius.homeaistack.online { reverse_proxy 10.255.1.1:3000 }`：Caddy 容器经 docker 网关 `10.255.1.1` 连入宿主机，**服务必须绑 `0.0.0.0`，不能改成 loopback** |
 | 目录归属 | `/opt/genius` 与 `data/` 均为 genius:genius；`.env` 为 `genius:genius` 640 |
 | 磁盘 | /dev/vda3：40G，总已用 24G，可用 14G（65%） |
-| 发布标识 | `/opt/genius/BUILD_INFO.json` `shortSha c44f8a1`（2026-09-13 第二次部署，deploy.sh 全流程通过）；`81b0a34`/`1de057b` 的两个脚本（`alert-test.mjs`、`restore-check.mjs`）经 scp 单独同步到 `/opt/genius/scripts`（脚本不需重启），即生产 = c44f8a1 构建 + 1de057b 脚本。线上版本以 BUILD_INFO / 登录态 `GET /api/health` 的 `build.sha` 为准 |
+| 发布标识 | `/opt/genius/BUILD_INFO.json` `shortSha 13fb9ee`、`dirty:false`。2026-09-14 `deploy.sh` 单次全流程通过（117 文件 / 1329 测试通过、1 既有跳过、build、`--frozen-lockfile`、重启、服务器 health 200、公网 `/login` 200）；生产 = `13fb9ee` 构建。线上版本以 BUILD_INFO / 登录态 `GET /api/health` 的 `build.sha` 为准，本轮后者因无生产管理员会话未核对 |
+| 对话与 relay 配置 | `.env` 已设 7 条 `AGENT_CHAT_MODELS`（默认 `gpt-5.6-luna`）和 `YMAN_T2V_MODEL=minimax_h3`，更新前状态备份 `.env.bak.20260914-220732`。`data/relays.json` 已首次创建且仅含 yman 文件条目（models-endpoint，24 模型：15 视频含 2 hidden、9 图片）；`data/relay-catalog/yman.json` 已首拉 24 模型快照。配置文件均归 genius:genius |
 | 备份 | root crontab 每日 03:17（`17 3 * * *`）跑 backup.sh（新版白名单含 relays.json）；部署前手动包 `backups/genius-data-20260913-211416.tgz`（新脚本产物）已跑过 `restore-check --compare data`：**一致**（users 4、ledger 幂等键 54 重复 0、jobs 54、canvases 2、canvas-runs 1、assets 0、relays.json 有）——首次真实恢复核对，未做实际切换恢复。更早的 `genius-data-20260913-174421.tgz` 为旧版脚本产物、**不含 relays.json** |
 
 站点块与全局配置都没有 `trusted_proxies`/`client_ip_headers`。按 Caddy v2.11.4 源码 `reverseproxy.go` 的 `addForwardedHeaders`：客户端不受信时 `X-Forwarded-For` **被覆盖为对端 IP**（不是追加），`X-Forwarded-Host` 覆盖为请求 Host——所以 `rate-limit.ts` 的 `clientIp()` 取首跳、`proxy.ts` 的 `expectedHost()` 认 x-forwarded-host 在当前拓扑下都成立（F-19 confirmed-safe，无需改配置）。以后接 CDN / 改 trusted_proxies 必须重新核对。
