@@ -661,6 +661,14 @@ export function agentChatModel(): string | undefined {
   return process.env.AGENT_CHAT_MODEL?.trim() || undefined;
 }
 
+/**
+ * 对话模型白名单的原文（`AGENT_CHAT_MODELS`）：JSON 数组 `[{id, name?, turnCny?}]`
+ * 或逗号分隔的 id 列表。解析归 `src/lib/agent/llm.ts` 的 `agentChatModels()`。
+ */
+export function agentChatModelsRaw(): string | undefined {
+  return process.env.AGENT_CHAT_MODELS?.trim() || undefined;
+}
+
 export function upstreamRetryBaseMs(): number {
   const n = Number(process.env.UPSTREAM_RETRY_BASE_MS ?? 250);
   return Number.isFinite(n) && n >= 0 ? Math.min(Math.floor(n), 10_000) : 250;

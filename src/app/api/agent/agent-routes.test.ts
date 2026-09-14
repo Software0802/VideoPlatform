@@ -155,6 +155,27 @@ describe("GET /api/agent/skills", () => {
     expect(body.skills[0]).toHaveProperty("name");
     for (const skill of body.skills) expect(skill).not.toHaveProperty("systemPrompt");
   });
+
+  it("carries the chat-model whitelist", async () => {
+    const user = await seedUser("usr_0000000000000210");
+    process.env.AGENT_CHAT_MODELS = JSON.stringify([
+      { id: "mock-agent", name: "Mock 甲" },
+      { id: "mock-agent-b", name: "Mock 乙", turnCny: 0.08 },
+    ]);
+    try {
+      const res = await GET_SKILLS(req("http://localhost/api/agent/skills", user));
+      const body = (await res.json()) as {
+        chat: { models: { id: string; name: string; turnCny: number }[]; default?: string };
+      };
+      expect(body.chat.models).toEqual([
+        { id: "mock-agent", name: "Mock 甲", turnCny: 0.05 },
+        { id: "mock-agent-b", name: "Mock 乙", turnCny: 0.08 },
+      ]);
+      expect(body.chat.default).toBe("mock-agent");
+    } finally {
+      delete process.env.AGENT_CHAT_MODELS;
+    }
+  });
 });
 
 describe("agent sessions", () => {
@@ -331,6 +352,52 @@ describe("agent sessions", () => {
       ctxFor(session.id),
     );
     expect(gone.status).toBe(404);
+  });
+
+  it("rejects a chatModel outside the whitelist with 400 agent_model_unknown", async () => {
+    const user = await seedUser("usr_0000000000000211");
+    process.env.AGENT_CHAT_MODELS = JSON.stringify([{ id: "mock-agent", name: "Mock 甲" }]);
+    try {
+      const res = await POST_SESSIONS(
+        jsonReq("http://localhost/api/agent/sessions", user, "POST", {
+          text: "你好",
+          chatModel: "gpt-9-turbo",
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe("agent_model_unknown");
+      // 被拒的第一轮不留空壳会话。
+      const listed = await GET_SESSIONS(req("http://localhost/api/agent/sessions", user));
+      expect(((await listed.json()) as { sessions: unknown[] }).sessions).toHaveLength(0);
+    } finally {
+      delete process.env.AGENT_CHAT_MODELS;
+    }
+  });
+
+  it("records the picked chatModel on the session and the assistant message", async () => {
+    const user = await seedUser("usr_0000000000000212");
+    process.env.AGENT_CHAT_MODELS = JSON.stringify([
+      { id: "mock-agent", name: "Mock 甲" },
+      { id: "mock-agent-b", name: "Mock 乙", turnCny: 0.08 },
+    ]);
+    try {
+      const res = await POST_SESSIONS(
+        jsonReq("http://localhost/api/agent/sessions", user, "POST", {
+          text: "聊聊",
+          chatModel: "mock-agent-b",
+        }),
+      );
+      expect(res.status).toBe(201);
+      const { session } = (await res.json()) as {
+        session: { chatModel?: string; messages: { role: string; model?: string; priceCny?: number }[] };
+      };
+      expect(session.chatModel).toBe("mock-agent-b");
+      const assistant = session.messages[1];
+      expect(assistant.model).toBe("mock-agent-b");
+      expect(assistant.priceCny).toBe(0.08);
+    } finally {
+      delete process.env.AGENT_CHAT_MODELS;
+    }
   });
 
   it("rejects an unknown field in the turn body", async () => {

@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n, useT } from "@/components/genius/i18n/I18nProvider";
 import { creditsOf } from "@/components/genius/ShellContext";
-import type { AgentSessionDetail, AgentSkill, AgentTier } from "@/lib/client/agent";
+import type { AgentChatModel, AgentSessionDetail, AgentSkill, AgentTier } from "@/lib/client/agent";
+import type { Product } from "@/lib/client/models";
 import type { JobPublic } from "@/lib/jobs/schema";
+import AgentPickers, { type PickerPop } from "./AgentPickers";
 import { TIER_KEY, statusKey, stillOf } from "./data";
 import {
   IconArrowUp,
@@ -25,9 +27,23 @@ type Props = {
   /** 这台实例配了对话提供方吗。`false` = 输入条置灰，历史仍然读得到。 */
   available: boolean;
   skills: AgentSkill[];
+  /** 芯片行（与首页同一份 AgentPickers）：切换在下一轮生效。 */
+  chatModels: AgentChatModel[];
+  chatDefault?: string;
+  chatModel: string | null;
+  onChatModel: (v: string) => void;
   tier: AgentTier;
-  imageName: string;
-  videoName: string;
+  onTier: (v: AgentTier) => void;
+  imageProduct: string | null;
+  onImageProduct: (v: string | null) => void;
+  videoProduct: string | null;
+  onVideoProduct: (v: string | null) => void;
+  products: Product[];
+  skillHover: number;
+  onSkillHover: (v: number) => void;
+  activeSkill: string | null;
+  onActiveSkill: (v: string | null) => void;
+  onManageSkills: () => void;
   onSend: (text: string) => void;
   onBack: () => void;
   onDelete: () => void;
@@ -57,9 +73,22 @@ export default function AgentChat(props: Props) {
     error,
     available,
     skills,
+    chatModels,
+    chatDefault,
+    chatModel,
+    onChatModel,
     tier,
-    imageName,
-    videoName,
+    onTier,
+    imageProduct,
+    onImageProduct,
+    videoProduct,
+    onVideoProduct,
+    products,
+    skillHover,
+    onSkillHover,
+    activeSkill,
+    onActiveSkill,
+    onManageSkills,
     onSend,
     onBack,
     onDelete,
@@ -74,6 +103,7 @@ export default function AgentChat(props: Props) {
   const [picked, setPicked] = useState<string | null>(null);
   const [budgetEdit, setBudgetEdit] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState("");
+  const [pop, setPop] = useState<PickerPop>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
 
   const messages = session?.messages ?? [];
@@ -92,6 +122,9 @@ export default function AgentChat(props: Props) {
   const preview = picked ? (jobs.find((j) => j.id === picked) ?? null) : null;
   const skillName = (id: string | undefined) =>
     id ? (skills.find((s) => s.id === id)?.name[locale] ?? id) : null;
+  /** 消息上记的是模型 id；白名单里能找到就显示它的展示名，找不到照实显示 id。 */
+  const chatModelName = (id: string | undefined) =>
+    id ? (chatModels.find((m) => m.id === id)?.name ?? id) : null;
 
   const send = () => {
     const text = draft.trim();
@@ -145,6 +178,7 @@ export default function AgentChat(props: Props) {
                     <span className="agent-chat__proposal-label">{t("agent.proposal")}</span>
                     {m.jobs?.map((ref, i) => (
                       <span className="agent-chat__proposal-item" key={`${m.id}-${i}`} data-kind={ref.kind}>
+                        <span className="agent-chat__proposal-product">{ref.productName ?? t("agent.auto")}</span>
                         <span className="agent-chat__job-prompt">{ref.prompt}</span>
                         {ref.priceCny ? (
                           <span className="agent-chat__proposal-price">⚡{creditsOf(ref.priceCny)}</span>
@@ -229,6 +263,12 @@ export default function AgentChat(props: Props) {
                     {t("agent.credits", { n: creditsOf(m.priceCny) })}
                   </span>
                 ) : null}
+                {m.model ? (
+                  <span className="agent-chat__meta" data-model={m.model}>
+                    {chatModelName(m.model)}
+                    {m.tier ? ` · ${t(TIER_KEY[m.tier])}` : ""}
+                  </span>
+                ) : null}
               </div>
             ),
           )}
@@ -269,9 +309,27 @@ export default function AgentChat(props: Props) {
             <button type="button" className="agent-chat__icon" aria-label={t("agent.addAsset")} disabled>
               <IconPlus size={14} />
             </button>
-            <span className="agent-chat__tag">{t(TIER_KEY[tier])}</span>
-            <span className="agent-chat__tag">{t("agent.imageChip", { name: imageName })}</span>
-            <span className="agent-chat__tag">{t("agent.videoChip", { name: videoName })}</span>
+            <AgentPickers
+              pop={pop}
+              onPop={setPop}
+              chatModels={chatModels}
+              chatDefault={chatDefault}
+              chatModel={chatModel}
+              onChatModel={onChatModel}
+              tier={tier}
+              onTier={onTier}
+              imageProduct={imageProduct}
+              onImageProduct={onImageProduct}
+              videoProduct={videoProduct}
+              onVideoProduct={onVideoProduct}
+              products={products}
+              skills={skills}
+              skillHover={skillHover}
+              onSkillHover={onSkillHover}
+              activeSkill={activeSkill}
+              onActiveSkill={onActiveSkill}
+              onManageSkills={onManageSkills}
+            />
             {budgetEdit ? (
               <input
                 className="agent-chat__budget-input"

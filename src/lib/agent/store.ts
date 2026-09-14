@@ -141,7 +141,7 @@ export async function countSessions(ownerId: string): Promise<number> {
  */
 export async function createSession(
   ownerId: string,
-  init: Pick<AgentSession, "title"> & Partial<Pick<AgentSession, "skillId" | "tier" | "imageProduct" | "videoProduct">>,
+  init: Pick<AgentSession, "title"> & Partial<Pick<AgentSession, "skillId" | "tier" | "chatModel" | "imageProduct" | "videoProduct">>,
 ): Promise<AgentSession> {
   return withAgentLock(async () => {
     if ((await countSessions(ownerId)) >= MAX_SESSIONS_PER_USER) {
@@ -159,6 +159,7 @@ export async function createSession(
       title: init.title,
       ...(init.skillId ? { skillId: init.skillId } : {}),
       ...(init.tier ? { tier: init.tier } : {}),
+      ...(init.chatModel ? { chatModel: init.chatModel } : {}),
       ...(init.imageProduct ? { imageProduct: init.imageProduct } : {}),
       ...(init.videoProduct ? { videoProduct: init.videoProduct } : {}),
       messages: [],
@@ -170,7 +171,7 @@ export async function createSession(
 }
 
 export type SessionPatch = Partial<
-  Pick<AgentSession, "title" | "skillId" | "tier" | "imageProduct" | "videoProduct">
+  Pick<AgentSession, "title" | "skillId" | "tier" | "chatModel" | "imageProduct" | "videoProduct">
 >;
 
 /**

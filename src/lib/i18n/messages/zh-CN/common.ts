@@ -30,6 +30,7 @@ export const common = {
   "common.err.requestId": "（请求号 {requestId}）",
   "common.err.notifications_stale": "通知已过期，正在刷新",
   "common.err.account_disabled": "账号已被停用，请联系管理员",
+  "common.err.agent_model_unknown": "未知的对话模型，请重新选择",
   "common.err.agent_unavailable": "智能体暂时不可用，请稍后再试",
   "common.err.agent_upstream_failed": "智能体暂时无法回复，本轮费用已退回",
   "common.err.artifacts_purged": "作品已过期清理，请重新生成",

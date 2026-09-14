@@ -66,6 +66,8 @@ export const agentJobRefSchema = z.object({
   error: z.string().optional(),
   /** 提案阶段带上的报价（批准后才创建任务、才真扣这笔钱）。 */
   priceCny: z.number().optional(),
+  /** 这条动作将走的产品展示名；服务端路由兜底（自动）时缺省。 */
+  productName: z.string().optional(),
 });
 export type AgentJobRef = z.infer<typeof agentJobRefSchema>;
 
@@ -81,6 +83,10 @@ export const agentMessageSchema = z.object({
   jobs: z.array(agentJobRefSchema).optional(),
   /** 这一轮的对话售价（人民币元），只挂在助手消息上。 */
   priceCny: z.number().optional(),
+  /** 这一轮实际用的对话模型 id（白名单里的那条），只挂在助手消息上。 */
+  model: z.string().optional(),
+  /** 这一轮的创意档（温度 / 篇幅），只挂在助手消息上。 */
+  tier: agentTierSchema.optional(),
   /**
    * 提案审批状态（B 包默认批准制）：带 actions 的助手消息以 `pending` 落盘，
    * 任务在批准那一刻才创建；approve/reject 路由把它改写成终态。
@@ -110,7 +116,11 @@ export const agentTurnStatusSchema = z.enum(AGENT_TURN_STATUSES);
 export type AgentTurnStatus = z.infer<typeof agentTurnStatusSchema>;
 
 /** 提案里每个动作的报价快照——批准时按这个价建任务，不重新算价。 */
-export const agentQuotedActionSchema = agentActionSchema.extend({ priceCny: z.number() });
+export const agentQuotedActionSchema = agentActionSchema.extend({
+  priceCny: z.number(),
+  /** 这条动作将走的产品展示名（提案卡上给用户看的）；自动选择时缺省。 */
+  productName: z.string().optional(),
+});
 export type AgentQuotedAction = z.infer<typeof agentQuotedActionSchema>;
 
 export const agentProposalSchema = z.object({
@@ -133,6 +143,9 @@ export const agentTurnSchema = z.object({
   status: agentTurnStatusSchema,
   /** 本轮对话费。 */
   priceCny: z.number(),
+  /** 本轮实际用的对话模型与创意档（B 包之前的轮次没有，读作 undefined）。 */
+  model: z.string().optional(),
+  tier: agentTierSchema.optional(),
   chargeRef: z.string(),
   /** 失败退款行的 ref；存在即「这轮的账已经退过了」。 */
   refundRef: z.string().optional(),
@@ -159,6 +172,8 @@ export const agentSessionSchema = z.object({
   title: z.string(),
   skillId: z.string().optional(),
   tier: agentTierSchema.optional(),
+  /** 会话头记住的对话模型（`agentChatModels` 白名单里的 id）；下一轮缺省沿用。 */
+  chatModel: z.string().optional(),
   imageProduct: z.string().optional(),
   videoProduct: z.string().optional(),
   messages: z.array(agentMessageSchema),
@@ -193,6 +208,8 @@ export const agentTurnBodySchema = z
     tier: agentTierSchema.optional(),
     imageProduct: z.string().max(64).optional(),
     videoProduct: z.string().max(64).optional(),
+    /** 本轮点名的对话模型：必须是 `AGENT_CHAT_MODELS` 白名单里的 id，否则 400。 */
+    chatModel: z.string().min(1).max(64).optional(),
     /**
      * 一轮对话的稳定身份（R08）：客户端在「一次发送」时生成，HTTP 层重试原样重发。
      * 服务端用它做幂等键（扣款 `agent:<turnId>`、动作 `agent:<turnId>:<i>`），

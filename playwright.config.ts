@@ -70,6 +70,8 @@ export default defineConfig({
       LUMEN_ADMIN_TOKEN: E2E_ADMIN_TOKEN,
       // admin.spec.ts seeds this fixed id's user.json into DATA_DIR and forges its session.
       LUMEN_ADMIN_USER_ID: E2E_ADMIN_USER_ID,
+      // agent.spec.ts 的对话模型白名单：两个 mock 条目，第二轮价不同。
+      AGENT_CHAT_MODELS: '[{"id":"mock-agent","name":"Mock 甲"},{"id":"mock-agent-b","name":"Mock 乙","turnCny":0.08}]',
       // Only honoured when Playwright starts the server itself; a reused dev server keeps its data dir.
       DATA_DIR,
     },

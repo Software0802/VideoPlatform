@@ -1,16 +1,18 @@
 import { createHash } from "node:crypto";
 import { assertBalance } from "@/lib/billing/admission";
 import { applyBalanceChange, hasEntryFor } from "@/lib/billing/ledger";
-import { agentTurnPriceCny, priceCny } from "@/lib/billing/prices";
+import { priceCny, priceTable, priceTableFor } from "@/lib/billing/prices";
 import { log } from "@/lib/log";
 import { round2 } from "@/lib/billing/protocol.mjs";
 import { withAdmissionLock } from "@/lib/jobs/admission";
 import { createJob } from "@/lib/jobs/create";
+import { resolveProductChoice } from "@/lib/jobs/product-choice";
 import { consumeJobCreation } from "@/lib/jobs/rate-limit";
 import type { CreateJobBody } from "@/lib/jobs/schema";
-import { availableProducts, isProductAvailable, productById } from "@/lib/products/catalog";
+import { availableProducts, isProductAvailable, productById, type Product } from "@/lib/products/catalog";
 import { ProviderHttpError } from "@/lib/providers/types";
 import {
+  agentChatModels,
   completeAgentTurn,
   requireAgentLlmConfig,
   type AgentChatMessage,
@@ -89,6 +91,8 @@ export type RunTurnInput = {
   tier?: AgentTier;
   imageProduct?: string;
   videoProduct?: string;
+  /** 本轮点名的对话模型（`agentChatModels` 白名单里的 id），缺省沿用会话头 / 默认。 */
+  chatModel?: string;
   /** 一轮的稳定身份（R08）：HTTP 重试原样带回，扣款 / 提案 / 建任务全部按它幂等。 */
   turnId?: string;
   /** 回复语言（B 包）：跟随界面语言，缺省中文。 */
@@ -111,6 +115,7 @@ export function hashTurnRequest(input: Omit<RunTurnInput, "ownerId" | "turnId" |
         tier: input.tier ?? null,
         imageProduct: input.imageProduct ?? null,
         videoProduct: input.videoProduct ?? null,
+        chatModel: input.chatModel ?? null,
       }),
     )
     .digest("hex");
@@ -177,9 +182,6 @@ export async function runTurn(
     }
   }
 
-  // 一家可用的对话提供方都没有时到此为止，而且必须在扣款**之前**：先扣再退会在流水上
-  // 留下一对无意义的进出，用户却什么都没拿到。注入了替身的调用（测试）不需要真凭据。
-  if (!options.complete && !options.config) requireAgentLlmConfig();
   const tier = input.tier ?? fresh.tier ?? "balanced";
   const skillId = input.skillId ?? fresh.skillId;
   const skill = agentSkillById(skillId);
@@ -187,7 +189,26 @@ export async function runTurn(
   const videoProduct = input.videoProduct ?? fresh.videoProduct;
   const locale = input.locale ?? "zh-CN";
 
-  const turnPrice = agentTurnPriceCny();
+  // 请求体点名的模型必须在白名单；会话头只是偏好，管理员下架它后老会话回落到当前默认。
+  const chat = agentChatModels();
+  const requestedOption = input.chatModel
+    ? chat.models.find((model) => model.id === input.chatModel)
+    : undefined;
+  if (input.chatModel && !requestedOption) {
+    throw new ProviderHttpError(400, "agent_model_unknown", "未知的对话模型");
+  }
+  const sessionOption = fresh.chatModel
+    ? chat.models.find((model) => model.id === fresh.chatModel)
+    : undefined;
+  const chatOption = requestedOption ?? sessionOption ?? chat.models.find((model) => model.id === chat.default);
+  if (!chatOption) {
+    if (!options.complete && !options.config) requireAgentLlmConfig();
+    throw new ProviderHttpError(503, "agent_unavailable", "智能体暂未开放");
+  }
+  // 白名单验证之后再检查提供方可用性；两条检查都先于扣款。
+  if (!options.complete && !options.config) requireAgentLlmConfig();
+
+  const turnPrice = chatOption.turnCny;
   const userMessage: AgentMessage = {
     id: newMessageId(),
     role: "user",
@@ -201,6 +222,8 @@ export async function runTurn(
     requestHash,
     status: "thinking",
     priceCny: turnPrice,
+    model: chatOption.id,
+    tier,
     chargeRef: ref,
     jobIds: [],
     createdAt: now,
@@ -210,8 +233,9 @@ export async function runTurn(
   // 判定与扣款必须在同一个 `withAdmissionLock` 临界区里（AGENTS.md 硬约束）：出了锁，
   // 并发的两轮会读到同一份「还够一次」的余额然后一起放行。会话预算的检查落在
   // `updateSession` 的锁内回调里（会话锁），超额时抛错由外层补退款。
-  if (turnPrice > 0) {
-    await withAdmissionLock(async () => {
+  // 记消息 + turn 账本与价格无关：某个模型 turnCny 配成 0 时这轮免费，但轮次照样要落盘。
+  await withAdmissionLock(async () => {
+    if (turnPrice > 0) {
       await assertBalance(ownerId, turnPrice);
       await applyBalanceChange(ownerId, -turnPrice, {
         kind: "charge",
@@ -219,34 +243,35 @@ export async function runTurn(
         ref,
         note: "智能体对话",
       });
-      try {
-        const persisted = await updateSession(ownerId, session.id, (s) => {
-          if (s.budget && round2(s.budget.spentCny + turnPrice) > s.budget.limitCny) {
-            throw new ProviderHttpError(402, "budget_exhausted", "本会话预算已用完，可在会话设置里调高上限");
-          }
-          if (s.turns?.some((t) => t.id === turnId)) return s; // 重放：账已记过
-          return {
-            ...s,
-            // 这轮点名的技能 / 档位 / 产品同步进会话头（旧 appendTurn 的 patch 语义）。
-            ...(skill ? { skillId: skill.id } : {}),
-            tier,
-            ...(imageProduct ? { imageProduct } : {}),
-            ...(videoProduct ? { videoProduct } : {}),
-            messages: [...s.messages, userMessage],
-            turns: [...(s.turns ?? []), turn],
-            ...(s.budget ? { budget: { ...s.budget, spentCny: round2(s.budget.spentCny + turnPrice) } } : {}),
-          };
-        });
-        if (!persisted) throw new ProviderHttpError(404, "not_found", "会话不存在");
-      } catch (error) {
-        // 预算 / 会话已删的拒绝发生在扣款之后——把刚扣的轮次费退回去再抛。
-        if (error instanceof ProviderHttpError && error.code === "budget_exhausted") {
-          await refundTurn(ownerId, turnPrice, ref);
+    }
+    try {
+      const persisted = await updateSession(ownerId, session.id, (s) => {
+        if (s.budget && round2(s.budget.spentCny + turnPrice) > s.budget.limitCny) {
+          throw new ProviderHttpError(402, "budget_exhausted", "本会话预算已用完，可在会话设置里调高上限");
         }
-        throw error;
+        if (s.turns?.some((t) => t.id === turnId)) return s; // 重放：账已记过
+        return {
+          ...s,
+          // 这轮点名的技能 / 档位 / 产品 / 对话模型同步进会话头（旧 appendTurn 的 patch 语义）。
+          ...(skill ? { skillId: skill.id } : {}),
+          tier,
+          chatModel: chatOption.id,
+          ...(imageProduct ? { imageProduct } : {}),
+          ...(videoProduct ? { videoProduct } : {}),
+          messages: [...s.messages, userMessage],
+          turns: [...(s.turns ?? []), turn],
+          ...(s.budget ? { budget: { ...s.budget, spentCny: round2(s.budget.spentCny + turnPrice) } } : {}),
+        };
+      });
+      if (!persisted) throw new ProviderHttpError(404, "not_found", "会话不存在");
+    } catch (error) {
+      // 预算 / 会话已删的拒绝发生在扣款之后——把刚扣的轮次费退回去再抛。
+      if (turnPrice > 0 && error instanceof ProviderHttpError && error.code === "budget_exhausted") {
+        await refundTurn(ownerId, turnPrice, ref);
       }
-    });
-  }
+      throw error;
+    }
+  });
 
   let reply: Awaited<ReturnType<typeof completeAgentTurn>>;
   try {
@@ -255,6 +280,7 @@ export async function runTurn(
       tier,
       complete: options.complete,
       config: options.config,
+      model: chatOption.id,
     });
   } catch (error) {
     if (turnPrice > 0) await refundTurn(ownerId, turnPrice, ref);
@@ -295,6 +321,8 @@ export async function runTurn(
     text: reply.reply,
     ...(skill ? { skillId: skill.id } : {}),
     priceCny: turnPrice,
+    model: chatOption.id,
+    tier,
     at: new Date().toISOString(),
   };
 
@@ -318,8 +346,17 @@ export async function runTurn(
     };
   }
 
-  // 默认批准制：报价快照落提案，turn 停 awaiting_approval，助手消息带 approval=pending。
-  const quoted: AgentQuotedAction[] = actions.map((a) => ({ ...a, priceCny: quoteAction(a) }));
+  // 默认批准制：报价时就按 createJob 的同一条路由解析最终产品并钉进 action，
+  // 因此提案显示的产品、价格覆盖和批准后任务记录保持一致。
+  const quoted: AgentQuotedAction[] = actions.map((action) => {
+    const picked = action.type === "image" ? imageProduct : videoProduct;
+    const product = productForAction(action, picked);
+    return {
+      ...action,
+      ...(product ? { product: product.id, productName: product.name } : {}),
+      priceCny: quoteAction(action, product),
+    };
+  });
   const proposal: AgentProposal = {
     actions: quoted,
     totalCny: round2(quoted.reduce((sum, a) => sum + a.priceCny, 0)),
@@ -328,7 +365,12 @@ export async function runTurn(
   const proposalMessage: AgentMessage = {
     ...assistant,
     approval: "pending",
-    jobs: quoted.map((a) => ({ kind: a.type, prompt: a.prompt, priceCny: a.priceCny })),
+    jobs: quoted.map((a) => ({
+      kind: a.type,
+      prompt: a.prompt,
+      priceCny: a.priceCny,
+      ...(a.productName ? { productName: a.productName } : {}),
+    })),
   };
   const next = await updateSession(ownerId, session.id, (s) => {
     if (!s.turns?.some((t) => t.id === turnId)) return undefined;
@@ -545,19 +587,48 @@ async function refundTurn(ownerId: string, priceCny: number, ref: string): Promi
   }
 }
 
+function productForAction(action: AgentAction, picked: string | undefined): Product | undefined {
+  const selectedId = usableProductId(picked, action.type) ?? usableProductId(action.product, action.type);
+  if (selectedId) return productById(selectedId);
+
+  const mode = action.type === "image" ? "text_to_image" : action.imageRef ? "image_to_video" : "text_to_video";
+  try {
+    return resolveProductChoice({
+      mode,
+      harness: false,
+      aspectRatio: action.aspectRatio,
+      imageResolution: action.type === "image" ? "1k" : undefined,
+      needsLastFrame: false,
+      referenceCount: 0,
+      durationSec:
+        action.durationSec && ALLOWED_DURATIONS.has(action.durationSec)
+          ? action.durationSec
+          : undefined,
+    }).labelledProduct;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * 提案报价：按这条动作将要走的 mode 用价表算一个数。它是**快照**不是合约——
  * 真扣款由 `createJob` 按路由后的实际档位算，两个数可能有差（产品路由换家、
  * 档位归一）；批准以这个数为预期，界面上展示的是它。
  */
-function quoteAction(action: AgentAction): number {
+function quoteAction(action: AgentAction, product?: Product): number {
+  // 报价按选定产品的价格覆盖算（`priceTableFor`），与 createJob 实际扣款同一张表——
+  // 不然 relay 产品会「标价 ¥2、实收 ¥6」。
+  const table = priceTableFor(priceTable(), product?.price);
   if (action.type === "image") {
-    return priceCny({ mode: "text_to_image", imageResolution: "1k" });
+    return priceCny({ mode: "text_to_image", imageResolution: "1k" }, table);
   }
-  return priceCny({
-    mode: action.imageRef ? "image_to_video" : "text_to_video",
-    durationSec: action.durationSec && ALLOWED_DURATIONS.has(action.durationSec) ? action.durationSec : 5,
-  });
+  return priceCny(
+    {
+      mode: action.imageRef ? "image_to_video" : "text_to_video",
+      durationSec: action.durationSec && ALLOWED_DURATIONS.has(action.durationSec) ? action.durationSec : 5,
+    },
+    table,
+  );
 }
 
 async function createForAction(

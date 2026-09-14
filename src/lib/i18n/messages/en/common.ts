@@ -30,6 +30,7 @@ export const common: Record<keyof typeof zh, string> = {
   "common.err.requestId": " (request {requestId})",
   "common.err.notifications_stale": "Notifications are out of date — refreshing",
   "common.err.account_disabled": "This account has been disabled. Contact the administrator.",
+  "common.err.agent_model_unknown": "Unknown chat model — please pick another one.",
   "common.err.agent_unavailable": "The agent is unavailable right now. Please try again later.",
   "common.err.agent_upstream_failed": "The agent could not reply; this turn's fee has been refunded.",
   "common.err.artifacts_purged": "This work has been cleaned up. Please generate it again.",

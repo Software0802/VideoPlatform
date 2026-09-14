@@ -14,6 +14,7 @@ import {
   rejectAgentTurn,
   sendAgentMessage,
   setAgentSessionBudget,
+  type AgentChatModel,
   type AgentSessionDetail,
   type AgentSessionSummary,
   type AgentSkill,
@@ -76,6 +77,9 @@ export default function AgentView() {
   const [prompt, setPrompt] = useState("");
   const [pop, setPop] = useState<AskPop>(null);
   const [tier, setTier] = useState<AgentTier>("balanced");
+  const [chatModels, setChatModels] = useState<AgentChatModel[]>([]);
+  const [chatDefault, setChatDefault] = useState<string | undefined>(undefined);
+  const [chatModel, setChatModel] = useState<string | null>(null);
   const [imageProduct, setImageProduct] = useState<string | null>(null);
   const [videoProduct, setVideoProduct] = useState<string | null>(null);
   const [skillHover, setSkillHover] = useState(0);
@@ -113,6 +117,9 @@ export default function AgentView() {
       if (!alive.current) return;
       setSkills(res.skills);
       setAvailable(res.available);
+      setChatModels(res.chat.models);
+      setChatDefault(res.chat.default);
+      setChatModel((current) => current ?? res.chat.default ?? null);
     }, say);
     // 产品拉不到不该让整页不可用：下拉退回只有「自动」一项，照样能创作。
     fetchProducts().then((list) => alive.current && setProducts(list), () => undefined);
@@ -136,6 +143,15 @@ export default function AgentView() {
     return () => clearInterval(timer);
   }, [sessionId, pendingJobs, activeTurns]);
 
+  /** 会话回来了就把芯片同步到它实际用的那一组（会话头记了模型 / 档位 / 产品）。 */
+  const syncSession = useCallback((next: AgentSessionDetail) => {
+    setSession(next);
+    setChatModel(next.chatModel ?? chatDefault ?? null);
+    setTier(next.tier ?? "balanced");
+    setImageProduct(next.imageProduct ?? null);
+    setVideoProduct(next.videoProduct ?? null);
+  }, [chatDefault]);
+
   const turnBody = useCallback(
     (text: string): AgentTurnBody => ({
       text,
@@ -143,11 +159,12 @@ export default function AgentView() {
       tier,
       ...(imageProduct ? { imageProduct } : {}),
       ...(videoProduct ? { videoProduct } : {}),
+      ...(chatModel ? { chatModel } : {}),
       // 每次调用生成一个：同一句话被用户再发一次就是新的一轮（该再扣一次钱）；
       // 只有同一笔 HTTP 请求的透明重发才共享这个 id，被服务端按重放拦下。
       turnId: newAgentTurnId(),
     }),
-    [activeSkill, tier, imageProduct, videoProduct],
+    [activeSkill, tier, imageProduct, videoProduct, chatModel],
   );
 
   const start = useCallback(
@@ -164,7 +181,7 @@ export default function AgentView() {
       try {
         const next = await createAgentSession(turnBody(value));
         if (!alive.current) return;
-        setSession(next);
+        syncSession(next);
         setPrompt("");
         fetchAgentSessions().then((list) => alive.current && setSessions(list), () => undefined);
       } catch (e) {
@@ -178,7 +195,7 @@ export default function AgentView() {
         }
       }
     },
-    [available, busy, say, turnBody],
+    [available, busy, say, syncSession, turnBody],
   );
 
   const send = useCallback(
@@ -189,7 +206,7 @@ export default function AgentView() {
       setPendingText(text);
       try {
         const next = await sendAgentMessage(session.id, turnBody(text));
-        if (alive.current) setSession(next);
+        if (alive.current) syncSession(next);
       } catch (e) {
         say(e);
       } finally {
@@ -199,7 +216,7 @@ export default function AgentView() {
         }
       }
     },
-    [available, busy, say, session, turnBody],
+    [available, busy, say, session, syncSession, turnBody],
   );
 
   const open = useCallback(
@@ -211,13 +228,13 @@ export default function AgentView() {
       setScreen("chat");
       try {
         const next = await fetchAgentSession(id);
-        if (alive.current) setSession(next);
+        if (alive.current) syncSession(next);
       } catch (e) {
         say(e);
         if (alive.current) setScreen("home");
       }
     },
-    [say],
+    [say, syncSession],
   );
 
   /** 批准提案：批准那一刻才真的创建任务（B 包默认批准制）。 */
@@ -302,8 +319,6 @@ export default function AgentView() {
   }, []);
 
   const enabled = skills.filter((s) => !off[s.id]);
-  const nameOfProduct = (id: string | null) =>
-    (id ? products.find((p) => p.id === id)?.name : undefined) ?? t("agent.auto");
 
   return (
     <div className="agent-view" data-screen={screen} data-available={available ? "true" : "false"}>
@@ -320,6 +335,10 @@ export default function AgentView() {
                 onPrompt={setPrompt}
                 pop={pop}
                 onPop={setPop}
+                chatModels={chatModels}
+                chatDefault={chatDefault}
+                chatModel={chatModel}
+                onChatModel={setChatModel}
                 tier={tier}
                 onTier={setTier}
                 imageProduct={imageProduct}
@@ -452,9 +471,22 @@ export default function AgentView() {
           error={error}
           available={available}
           skills={skills}
+          chatModels={chatModels}
+          chatDefault={chatDefault}
+          chatModel={chatModel}
+          onChatModel={setChatModel}
           tier={tier}
-          imageName={nameOfProduct(imageProduct)}
-          videoName={nameOfProduct(videoProduct)}
+          onTier={setTier}
+          imageProduct={imageProduct}
+          onImageProduct={setImageProduct}
+          videoProduct={videoProduct}
+          onVideoProduct={setVideoProduct}
+          products={products}
+          skillHover={skillHover}
+          onSkillHover={setSkillHover}
+          activeSkill={activeSkill}
+          onActiveSkill={setActiveSkill}
+          onManageSkills={() => setScreen("plaza")}
           onSend={(text) => void send(text)}
           onBack={() => {
             setScreen("home");

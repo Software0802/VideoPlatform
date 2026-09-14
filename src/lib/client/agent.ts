@@ -14,7 +14,18 @@ import { parseAuthed } from "@/lib/client/http";
 export type AgentTier = "fast" | "balanced" | "quality";
 export const AGENT_TIERS: readonly AgentTier[] = ["fast", "balanced", "quality"];
 
-export type AgentJobRef = { jobId?: string; kind: "image" | "video"; prompt: string; error?: string; priceCny?: number };
+export type AgentJobRef = {
+  jobId?: string;
+  kind: "image" | "video";
+  prompt: string;
+  error?: string;
+  priceCny?: number;
+  /** 这条动作将走的产品展示名；自动选择时缺省。 */
+  productName?: string;
+};
+
+/** 对话模型白名单里的一项（`GET /api/agent/skills` 的 `chat.models`）。 */
+export type AgentChatModel = { id: string; name: string; turnCny: number };
 
 /** 提案审批状态（B 包默认批准制）：带 actions 的助手消息先 `pending`，批准/拒绝后盖终态戳。 */
 export type AgentApproval = "pending" | "approved" | "rejected";
@@ -26,6 +37,9 @@ export type AgentMessage = {
   skillId?: string;
   jobs?: AgentJobRef[];
   priceCny?: number;
+  /** 这一轮实际用的对话模型 id 与创意档（老会话没有，读作 undefined）。 */
+  model?: string;
+  tier?: AgentTier;
   approval?: AgentApproval;
   at: string;
 };
@@ -43,6 +57,8 @@ export type AgentTurn = {
   requestHash: string;
   status: AgentTurnStatus;
   priceCny: number;
+  model?: string;
+  tier?: AgentTier;
   chargeRef: string;
   refundRef?: string;
   proposal?: { actions: unknown[]; totalCny: number; expiresAt: string };
@@ -64,6 +80,7 @@ export type AgentSessionSummary = {
 
 export type AgentSessionDetail = AgentSessionSummary & {
   tier?: AgentTier;
+  chatModel?: string;
   imageProduct?: string;
   videoProduct?: string;
   messages: AgentMessage[];
@@ -87,6 +104,8 @@ export type AgentTurnBody = {
   tier?: AgentTier;
   imageProduct?: string;
   videoProduct?: string;
+  /** 本轮点名的对话模型（白名单 id）；缺省沿会话头 / 服务端默认。 */
+  chatModel?: string;
   /**
    * 一轮对话的稳定身份（R08）：一次逻辑发送生成一个，网络层重试时原样带上，
    * 服务端按它幂等——重放不会扣第二次钱、不会多出半轮对话。
@@ -149,6 +168,7 @@ function readJobRef(raw: unknown): AgentJobRef | null {
     ...(optStr(j.jobId) ? { jobId: str(j.jobId) } : {}),
     ...(optStr(j.error) ? { error: str(j.error) } : {}),
     ...(typeof j.priceCny === "number" && Number.isFinite(j.priceCny) ? { priceCny: j.priceCny } : {}),
+    ...(optStr(j.productName) ? { productName: str(j.productName) } : {}),
   };
 }
 
@@ -169,6 +189,8 @@ function readMessage(raw: unknown): AgentMessage | null {
     ...(optStr(m.skillId) ? { skillId: str(m.skillId) } : {}),
     ...(jobs.length ? { jobs } : {}),
     ...(typeof m.priceCny === "number" && Number.isFinite(m.priceCny) ? { priceCny: m.priceCny } : {}),
+    ...(optStr(m.model) ? { model: str(m.model) } : {}),
+    ...(readTier(m.tier) ? { tier: readTier(m.tier) } : {}),
     ...(m.approval === "pending" || m.approval === "approved" || m.approval === "rejected"
       ? { approval: m.approval }
       : {}),
@@ -188,6 +210,8 @@ function readTurn(raw: unknown): AgentTurn | null {
     requestHash: str(t.requestHash),
     status,
     priceCny: typeof t.priceCny === "number" ? t.priceCny : 0,
+    ...(optStr(t.model) ? { model: str(t.model) } : {}),
+    ...(readTier(t.tier) ? { tier: readTier(t.tier) } : {}),
     chargeRef: str(t.chargeRef),
     ...(optStr(t.refundRef) ? { refundRef: str(t.refundRef) } : {}),
     ...(t.proposal && typeof t.proposal === "object" ? { proposal: t.proposal as AgentTurn["proposal"] } : {}),
@@ -226,6 +250,7 @@ function readDetail(raw: unknown): AgentSessionDetail {
   return {
     ...base,
     ...(readTier(s.tier) ? { tier: readTier(s.tier) } : {}),
+    ...(optStr(s.chatModel) ? { chatModel: str(s.chatModel) } : {}),
     ...(optStr(s.imageProduct) ? { imageProduct: str(s.imageProduct) } : {}),
     ...(optStr(s.videoProduct) ? { videoProduct: str(s.videoProduct) } : {}),
     messages: Array.isArray(s.messages)
@@ -246,13 +271,35 @@ function readDetail(raw: unknown): AgentSessionDetail {
  * `available` 缺失（老服务端）时按可用处理：少一个字段不该把整个功能锁死，真不可用时
  * 服务端仍然会在提交时回 503。
  */
-export async function fetchAgentSkills(): Promise<{ skills: AgentSkill[]; available: boolean }> {
+function readChatModel(raw: unknown): AgentChatModel | null {
+  if (!raw || typeof raw !== "object") return null;
+  const m = raw as Record<string, unknown>;
+  const id = str(m.id);
+  if (!id) return null;
+  return {
+    id,
+    name: str(m.name) || id,
+    turnCny: typeof m.turnCny === "number" && Number.isFinite(m.turnCny) ? m.turnCny : 0,
+  };
+}
+
+export async function fetchAgentSkills(): Promise<{
+  skills: AgentSkill[];
+  available: boolean;
+  chat: { models: AgentChatModel[]; default?: string };
+}> {
   const res = await fetch("/api/agent/skills", { cache: "no-store" });
-  const data = await parseAuthed<{ skills?: unknown; available?: unknown }>(res, "无法读取技能列表");
+  const data = await parseAuthed<{ skills?: unknown; available?: unknown; chat?: unknown }>(res, "无法读取技能列表");
   const raw = Array.isArray(data.skills) ? data.skills : [];
+  const chat = data.chat && typeof data.chat === "object" ? (data.chat as Record<string, unknown>) : {};
+  const models = Array.isArray(chat.models)
+    ? chat.models.map(readChatModel).filter((m): m is AgentChatModel => m !== null)
+    : [];
+  const def = optStr(chat.default);
   return {
     skills: raw.map(readSkill).filter((s): s is AgentSkill => s !== null),
     available: typeof data.available === "boolean" ? data.available : true,
+    chat: { models, ...(def && models.some((m) => m.id === def) ? { default: def } : {}) },
   };
 }
 

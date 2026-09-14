@@ -11,19 +11,22 @@ export const agent = {
   /** 这台实例没配对话提供方（`GET /api/agent/skills` 的 `available: false`）。 */
   "agent.unavailable": "智能体暂未开放",
 
-  /* 三档文本模型（映射温度与输出上限，不是模型名） */
-  "agent.tier.fast": "自动 · 极速",
-  "agent.tier.balanced": "自动 · 均衡",
-  "agent.tier.quality": "自动 · 精创",
+  /* 对话模型芯片的弹层：第一组是白名单模型，第二组「创意档」只调温度与篇幅 */
+  "agent.chatModelGroup": "对话模型",
+  "agent.tierGroup": "创意档",
+  "agent.tierHint": "创意档只调节发散度与篇幅，不改变模型",
+  "agent.turnCredits": "{n} 积分/轮",
+  "agent.tier.fast": "极速",
+  "agent.tier.balanced": "均衡",
+  "agent.tier.quality": "精创",
 
   /* 产品下拉 */
   "agent.imageChip": "图片: {name}",
   "agent.videoChip": "视频: {name}",
   "agent.auto": "自动",
-  "agent.autoDesc": "智能体将为此请求选择最佳模型",
+  "agent.autoDesc": "智能体在 {n} 个可用产品中挑选，提案会标明产品与价格",
   "agent.creditsEach": "约 {n} 积分",
   "agent.skill": "技能",
-  "agent.skillNone": "不使用技能",
   "agent.manageSkills": "管理工具",
 
   /* 历史抽屉 */

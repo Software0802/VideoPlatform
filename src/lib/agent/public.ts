@@ -1,6 +1,7 @@
 import type { JobPublic } from "@/lib/jobs/schema";
 import { readJobForUser, toPublic } from "@/lib/jobs/store";
 import type { AgentMessage, AgentSession, AgentTurn } from "@/lib/agent/schema";
+import { productById } from "@/lib/products/catalog";
 
 /**
  * 会话的对外投影。
@@ -17,6 +18,7 @@ export type AgentSessionPublic = {
   title: string;
   skillId?: string;
   tier?: AgentSession["tier"];
+  chatModel?: string;
   imageProduct?: string;
   videoProduct?: string;
   messages: AgentMessage[];
@@ -33,15 +35,30 @@ export async function toPublicSession(session: AgentSession): Promise<AgentSessi
   const records = await Promise.all(
     session.jobIds.map((id) => readJobForUser(id, session.ownerId).catch(() => null)),
   );
+  const turns = (session.turns ?? []).map((turn) =>
+    turn.proposal
+      ? {
+          ...turn,
+          proposal: {
+            ...turn.proposal,
+            actions: turn.proposal.actions.map((action) => ({
+              ...action,
+              productName: action.product ? productById(action.product)?.name : undefined,
+            })),
+          },
+        }
+      : turn,
+  );
   return {
     id: session.id,
     title: session.title,
     ...(session.skillId ? { skillId: session.skillId } : {}),
     ...(session.tier ? { tier: session.tier } : {}),
+    ...(session.chatModel ? { chatModel: session.chatModel } : {}),
     ...(session.imageProduct ? { imageProduct: session.imageProduct } : {}),
     ...(session.videoProduct ? { videoProduct: session.videoProduct } : {}),
     messages: session.messages,
-    turns: session.turns ?? [],
+    turns,
     ...(session.budget ? { budget: session.budget } : {}),
     jobs: records.filter((r) => r !== null).map((r) => toPublic(r)),
     createdAt: session.createdAt,

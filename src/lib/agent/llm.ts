@@ -4,11 +4,13 @@ import {
   agentApiKey,
   agentBase,
   agentChatModel,
+  agentChatModelsRaw,
   grokApiKey,
   isMockMode,
   upstreamTimeoutMs,
   xaiBase,
 } from "@/lib/env";
+import { agentTurnPriceCny } from "@/lib/billing/prices";
 import { log } from "@/lib/log";
 import { ProviderHttpError } from "@/lib/providers/types";
 import {
@@ -82,6 +84,69 @@ export function requireAgentLlmConfig(): AgentLlmConfig {
   return config;
 }
 
+/* ── 对话模型白名单（AGENT_CHAT_MODELS）──────────────────────────────────── */
+
+export type AgentChatModelOption = {
+  /** 发给上游的模型名，也是客户端点选时传回来的值。 */
+  id: string;
+  /** 用户看到的展示名；缺省 = id。 */
+  name: string;
+  /** 这一轮对话的售价（元）；缺省 = 全局 `agent.turn` 档。 */
+  turnCny: number;
+};
+
+/**
+ * 用户可以点的对话模型清单。
+ *
+ * `AGENT_CHAT_MODELS` 两种写法：JSON 数组 `[{"id":"…","name":"…","turnCny":0.08}]`，
+ * 或逗号分隔的 id（`a,b`）。以 `[` 开头却解析不出 JSON 记 warn 后当作没配。
+ * 没配 → 单条「当前生效的那个模型」，名字就是 id——界面仍然说真话。实例不可用
+ * （一家提供方都没有）→ 空表。
+ *
+ * `default`：`AGENT_CHAT_MODEL` 在表里取它（这是它本来的语义），否则表的第一条。
+ * 每条的 `turnCny` 非法（负数 / NaN）回落 `agentTurnPriceCny()`，与价表同口径。
+ */
+export function agentChatModels(): { models: AgentChatModelOption[]; default?: string } {
+  const raw = agentChatModelsRaw();
+  const fallbackTurn = agentTurnPriceCny();
+  let entries: unknown[] | null = null;
+  if (raw) {
+    if (raw.startsWith("[")) {
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) entries = parsed;
+        else log("warn", "AGENT_CHAT_MODELS 不是数组，按未配置处理");
+      } catch {
+        log("warn", "AGENT_CHAT_MODELS 无法解析，按未配置处理", { length: raw.length });
+      }
+    } else {
+      entries = raw
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean)
+        .map((id) => ({ id }));
+    }
+  }
+  const models: AgentChatModelOption[] = [];
+  if (entries) {
+    for (const entry of entries) {
+      const e = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
+      const id = typeof e?.id === "string" ? e.id.trim() : "";
+      if (!id || models.some((m) => m.id === id)) continue;
+      const name = typeof e?.name === "string" && e.name.trim() ? e.name.trim() : id;
+      const turn = typeof e?.turnCny === "number" ? e.turnCny : NaN;
+      models.push({ id, name, turnCny: Number.isFinite(turn) && turn >= 0 ? turn : fallbackTurn });
+    }
+  } else {
+    const config = agentLlmConfig();
+    if (!config) return { models: [] };
+    models.push({ id: config.model, name: config.model, turnCny: fallbackTurn });
+  }
+  const override = agentChatModel();
+  const def = override && models.some((m) => m.id === override) ? override : models[0]?.id;
+  return { models, default: def };
+}
+
 export type AgentChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 export type AgentCompletionRequest = {
@@ -115,6 +180,8 @@ export async function completeAgentTurn(opts: {
   tier: AgentTier;
   complete?: AgentCompleter;
   config?: AgentLlmConfig;
+  /** 本轮点名的对话模型（白名单校验在 `runTurn`）：覆盖 config.model。 */
+  model?: string;
 }): Promise<AgentReply> {
   // 注入了 completer 就不需要真实凭据（测试与替身路径）；否则必须有一家可用的提供方，
   // 没有就在这里抛 503——但正常路径上 `runTurn` 已经在扣款之前判过一次了。
@@ -123,12 +190,13 @@ export async function completeAgentTurn(opts: {
     (opts.complete ? { provider: "mock" as const, model: agentChatModel() ?? "mock-agent" } : requireAgentLlmConfig());
   const complete = opts.complete ?? (config.provider === "mock" ? mockCompleter : completerFor(config));
   const settings = TIER_SETTINGS[opts.tier];
+  const model = opts.model ?? config.model;
   let messages = opts.messages;
   let lastError: unknown;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     const raw = await complete({
-      model: config.model,
+      model,
       messages,
       temperature: settings.temperature,
       maxTokens: settings.maxTokens,

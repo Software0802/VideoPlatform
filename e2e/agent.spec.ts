@@ -116,6 +116,58 @@ test("智能体：一句想法 → 真实会话 + 助手回复 + 生成任务 + 
   expect(((await detail.json()) as { mode: string }).mode).toBe("text_to_image");
 });
 
+test("智能体：对话模型可换、提案标产品、消息落款写明模型与档位", async ({ page }) => {
+  // 白名单由 webServer env 注入；复用的 dev server 可能没配，那时只有一个模型可选。
+  const skills = await page.request.get("/api/agent/skills");
+  const chat = ((await skills.json()) as { chat?: { models: { id: string; name: string }[] } }).chat;
+  test.skip((chat?.models.length ?? 0) < 2, "需要 AGENT_CHAT_MODELS 注入的双模型白名单");
+
+  // 首页芯片显示默认模型的真名（不再是「自动 · 均衡」）。
+  const chip = page.locator(".agent-ask .agent-chip").first();
+  await expect(chip).toContainText("Mock 甲");
+  await chip.click();
+  // 弹层第一组是模型（name + id + 每轮积分），第二组是创意档。
+  await page.locator('.agent-pop__item[data-chat-model="mock-agent-b"]').click();
+  await expect(chip).toContainText("Mock 乙");
+
+  await idea(page).fill(IDEA);
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(view(page)).toHaveAttribute("data-screen", "chat");
+
+  const answer = page.locator(".agent-chat__answer").last();
+  await expect(answer).toBeVisible({ timeout: 60_000 });
+  await expect(answer).not.toHaveAttribute("data-thinking", "true");
+
+  // 落款：模型名 + 档位（zh-CN）。
+  const meta = answer.locator(".agent-chat__meta");
+  await expect(meta).toHaveAttribute("data-model", "mock-agent-b");
+  await expect(meta).toContainText("Mock 乙");
+  await expect(meta).toContainText("均衡");
+
+  // 即使没点名，服务端也按实际路由解析并标明最终产品，不再显示「自动」。
+  const proposal = answer.locator(".agent-chat__proposal");
+  await expect(proposal).toBeVisible();
+  await expect(proposal.locator(".agent-chat__proposal-product").first()).not.toHaveText("自动");
+
+  // 对话页芯片可交互：换图片产品，下一轮生效。
+  const imgChip = page.locator(".agent-chat__composer .agent-chip").nth(1);
+  await imgChip.click();
+  const pick = page.locator(".agent-pop--img .agent-pop__item[data-product-id]").first();
+  const pickedName = (await pick.locator(".agent-pop__name").textContent())?.trim();
+  await pick.click();
+  await expect(imgChip).toContainText(pickedName ?? " ");
+
+  const input = page.getByRole("textbox", { name: "会话输入" });
+  await input.fill("再来一张图");
+  await page.locator(".agent-chat__send").click();
+  const second = page.locator(".agent-chat__answer").last();
+  await expect(second).toBeVisible({ timeout: 60_000 });
+  await expect(second).not.toHaveAttribute("data-thinking", "true");
+  // 第二轮沿会话头记住的 mock-agent-b，提案写明用户点名的产品。
+  await expect(second.locator(".agent-chat__meta")).toHaveAttribute("data-model", "mock-agent-b");
+  await expect(second.locator(".agent-chat__proposal-product").first()).toHaveText(pickedName ?? "");
+});
+
 test("智能体：历史抽屉列出真实会话，点进去能读回对话", async ({ page }) => {
   await idea(page).fill(IDEA);
   await page.getByRole("button", { name: "发送", exact: true }).click();

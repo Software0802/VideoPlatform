@@ -1,7 +1,7 @@
 import { jsonError } from "@/lib/http";
 import { withRequestContext } from "@/lib/request-context";
 import { requireUser } from "@/lib/users/session";
-import { agentAvailable } from "@/lib/agent/llm";
+import { agentAvailable, agentChatModels } from "@/lib/agent/llm";
 import { publicSkills } from "@/lib/agent/skills";
 
 export const runtime = "nodejs";
@@ -19,7 +19,7 @@ export const runtime = "nodejs";
 async function list(request: Request): Promise<Response> {
   try {
     await requireUser(request);
-    return Response.json({ skills: publicSkills(), available: agentAvailable() });
+    return Response.json({ skills: publicSkills(), available: agentAvailable(), chat: agentChatModels() });
   } catch (e) {
     return jsonError(e);
   }

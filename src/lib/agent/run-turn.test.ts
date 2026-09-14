@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentCompleter } from "./llm";
 
 /**
@@ -37,6 +37,7 @@ const PROVIDER_ENV = [
   "AGENT_API_KEY",
   "AGENT_BASE_URL",
   "AGENT_CHAT_MODEL",
+  "AGENT_CHAT_MODELS",
   "XAI_API_KEY",
   "SUB2API_API_KEY",
   "OPENAI_API_KEY",
@@ -192,6 +193,70 @@ describe("agentLlmConfig", () => {
   });
 });
 
+describe("agentChatModels", () => {
+  let saved: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    saved = snapshotProviderEnv();
+    process.env.LUMEN_FORCE_MOCK = "1";
+  });
+
+  afterEach(() => {
+    restoreProviderEnv(saved);
+  });
+
+  it("未配置时回落单条「当前生效模型」，mock 实例上就是 mock-agent", async () => {
+    delete process.env.AGENT_CHAT_MODELS;
+    delete process.env.AGENT_CHAT_MODEL;
+    const { agentChatModels } = await import("./llm");
+    const chat = agentChatModels();
+    expect(chat.models).toEqual([{ id: "mock-agent", name: "mock-agent", turnCny: 0.05 }]);
+    expect(chat.default).toBe("mock-agent");
+  });
+
+  it("JSON 数组：name 缺省回落 id，turnCny 缺省 / 非法回落全局轮次价", async () => {
+    process.env.AGENT_CHAT_MODELS = JSON.stringify([
+      { id: "a-model", name: "模型甲", turnCny: 0.08 },
+      { id: "b-model", turnCny: -1 },
+      { id: "a-model", name: "重复 id 丢弃" },
+    ]);
+    const { agentChatModels } = await import("./llm");
+    const chat = agentChatModels();
+    expect(chat.models).toEqual([
+      { id: "a-model", name: "模型甲", turnCny: 0.08 },
+      { id: "b-model", name: "b-model", turnCny: 0.05 },
+    ]);
+    expect(chat.default).toBe("a-model");
+    // AGENT_CHAT_MODEL 在表里取它，不在表里落第一条。
+    process.env.AGENT_CHAT_MODEL = "b-model";
+    expect(agentChatModels().default).toBe("b-model");
+    process.env.AGENT_CHAT_MODEL = "not-in-list";
+    expect(agentChatModels().default).toBe("a-model");
+  });
+
+  it("逗号分隔的 id 列表", async () => {
+    process.env.AGENT_CHAT_MODELS = "m-a, m-b";
+    const { agentChatModels } = await import("./llm");
+    expect(agentChatModels().models.map((m) => m.id)).toEqual(["m-a", "m-b"]);
+  });
+
+  it("坏 JSON 记 warn 后按未配置处理", async () => {
+    process.env.AGENT_CHAT_MODELS = "[{bad json";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { agentChatModels } = await import("./llm");
+    expect(agentChatModels().models.map((m) => m.id)).toEqual(["mock-agent"]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("实例不可用且未配置白名单时返回空模型表", async () => {
+    clearProviderEnv();
+    const { agentChatModels } = await import("./llm");
+    expect(agentChatModels().models).toEqual([]);
+    expect(agentChatModels().default).toBeUndefined();
+  });
+});
+
 describe("runTurn", () => {
   it("charges the turn once under an idempotent ref; the job is only filed after approval", async () => {
     const owner = "usr_0000000000000101";
@@ -212,6 +277,9 @@ describe("runTurn", () => {
     // 默认批准制：actions 不再直接建任务——提案停在 awaiting_approval，消息带 pending 报价。
     expect(first.turn.status).toBe("awaiting_approval");
     expect(first.turn.proposal?.actions).toHaveLength(1);
+    const proposed = first.turn.proposal!.actions[0];
+    expect(proposed.product).toBeTruthy();
+    expect(proposed.productName).toBeTruthy();
     expect(first.turn.proposal!.totalCny).toBeGreaterThan(0);
     expect(first.assistant?.approval).toBe("pending");
     expect(first.assistant?.jobs?.[0].jobId).toBeUndefined();
@@ -229,6 +297,10 @@ describe("runTurn", () => {
     expect(next.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
     expect(next.jobIds).toEqual([assistant?.jobs?.[0].jobId]);
     expect(next.turns?.find((x) => x.id === first.turn.id)?.status).toBe("succeeded");
+    const { readJob } = await import("@/lib/jobs/store");
+    const created = await readJob(assistant!.jobs![0].jobId!);
+    expect(created?.product).toBe(proposed.product);
+    expect(created?.productName).toBe(proposed.productName);
 
     const ref = `agent:${first.turn.id}`;
     await expect(hasEntryFor(owner, "charge", ref)).resolves.toBe(true);
@@ -805,5 +877,113 @@ describe("runTurn", () => {
     expect(found?.turn.status).toBe("failed");
     expect(found?.turn.refundRef).toBe(`agent:${turnId}:refund`);
     expect((await readUser(owner))?.balanceCny).toBe(10);
+  });
+});
+
+describe("runTurn chatModel", () => {
+  const MODELS = JSON.stringify([
+    { id: "mock-agent", name: "Mock 甲" },
+    { id: "mock-agent-b", name: "Mock 乙", turnCny: 0.08 },
+  ]);
+
+  let saved: Record<string, string | undefined>;
+  beforeEach(() => {
+    saved = snapshotProviderEnv();
+    process.env.LUMEN_FORCE_MOCK = "1";
+    process.env.AGENT_CHAT_MODELS = MODELS;
+  });
+  afterEach(() => {
+    restoreProviderEnv(saved);
+  });
+
+  it("白名单外的 chatModel 在扣款之前 400 agent_model_unknown", async () => {
+    const owner = "usr_0000000000000120";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "不认识的模型" });
+
+    await expect(
+      runTurn(
+        session,
+        { ownerId: owner, text: "你好", chatModel: "not-in-list" },
+        { complete: completerReturning({ reply: "不该走到", actions: [] }) },
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "agent_model_unknown" });
+    // 一分没扣、一个字没落盘。
+    expect((await readUser(owner))?.balanceCny).toBe(10);
+    const stored = await readSession(owner, session.id);
+    expect(stored?.messages).toHaveLength(0);
+    expect(stored?.turns ?? []).toHaveLength(0);
+  });
+
+  it("按点名的模型计价并落盘 model/tier，会话头记住 chatModel", async () => {
+    const owner = "usr_0000000000000121";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "选模型" });
+
+    const res = await runTurn(
+      session,
+      { ownerId: owner, text: "随便聊聊", chatModel: "mock-agent-b", tier: "fast" },
+      { complete: completerReturning({ reply: "好。", actions: [] }) },
+    );
+    expect(res.assistant?.priceCny).toBe(0.08);
+    expect(res.assistant?.model).toBe("mock-agent-b");
+    expect(res.assistant?.tier).toBe("fast");
+    expect(res.turn.model).toBe("mock-agent-b");
+    expect(res.session.chatModel).toBe("mock-agent-b");
+    expect((await readUser(owner))?.balanceCny).toBeCloseTo(10 - 0.08, 6);
+
+    // 下一轮不带 chatModel → 沿会话头那条（0.08），而不是全局默认。
+    const again = await runTurn(
+      res.session,
+      { ownerId: owner, text: "再聊一句" },
+      { complete: completerReturning({ reply: "嗯。", actions: [] }) },
+    );
+    expect(again.assistant?.model).toBe("mock-agent-b");
+    expect(again.assistant?.priceCny).toBe(0.08);
+  });
+
+  it("缺省模型用白名单第一条", async () => {
+    const owner = "usr_0000000000000122";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "默认" });
+    const res = await runTurn(
+      session,
+      { ownerId: owner, text: "你好" },
+      { complete: completerReturning({ reply: "好。", actions: [] }) },
+    );
+    expect(res.assistant?.model).toBe("mock-agent");
+    expect(res.assistant?.priceCny).toBe(0.05);
+  });
+
+  it("会话头模型已下架时回落白名单默认模型", async () => {
+    const owner = "usr_0000000000000124";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "旧模型", chatModel: "retired-agent" });
+    const res = await runTurn(
+      session,
+      { ownerId: owner, text: "继续聊" },
+      { complete: completerReturning({ reply: "可以。", actions: [] }) },
+    );
+    expect(res.assistant?.model).toBe("mock-agent");
+    expect(res.session.chatModel).toBe("mock-agent");
+  });
+
+  it("同 turnId 换 chatModel 是 409 重放冲突", async () => {
+    const owner = "usr_0000000000000123";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "换模型" });
+    const turnId = "msg_00ff00ff00ff00ff";
+    await runTurn(
+      session,
+      { ownerId: owner, text: "同一句话", turnId, chatModel: "mock-agent" },
+      { complete: completerReturning({ reply: "好。", actions: [] }) },
+    );
+    await expect(
+      runTurn(
+        session,
+        { ownerId: owner, text: "同一句话", turnId, chatModel: "mock-agent-b" },
+        { complete: completerReturning({ reply: "不该走到", actions: [] }) },
+      ),
+    ).rejects.toMatchObject({ status: 409, code: "idempotency_conflict" });
   });
 });
