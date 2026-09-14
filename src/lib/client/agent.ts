@@ -287,9 +287,15 @@ export async function fetchAgentSkills(): Promise<{
   skills: AgentSkill[];
   available: boolean;
   chat: { models: AgentChatModel[]; default?: string };
+  off: string[];
 }> {
   const res = await fetch("/api/agent/skills", { cache: "no-store" });
-  const data = await parseAuthed<{ skills?: unknown; available?: unknown; chat?: unknown }>(res, "无法读取技能列表");
+  const data = await parseAuthed<{
+    skills?: unknown;
+    available?: unknown;
+    chat?: unknown;
+    off?: unknown;
+  }>(res, "无法读取技能列表");
   const raw = Array.isArray(data.skills) ? data.skills : [];
   const chat = data.chat && typeof data.chat === "object" ? (data.chat as Record<string, unknown>) : {};
   const models = Array.isArray(chat.models)
@@ -300,7 +306,20 @@ export async function fetchAgentSkills(): Promise<{
     skills: raw.map(readSkill).filter((s): s is AgentSkill => s !== null),
     available: typeof data.available === "boolean" ? data.available : true,
     chat: { models, ...(def && models.some((m) => m.id === def) ? { default: def } : {}) },
+    off: Array.isArray(data.off)
+      ? [...new Set(data.off.map(str).filter(Boolean))].sort()
+      : [],
   };
+}
+
+export async function setAgentSkillOff(skillId: string, off: boolean): Promise<string[]> {
+  const res = await fetch("/api/agent/skills", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ skillId, off }),
+  });
+  const data = await parseAuthed<{ off?: unknown }>(res, "无法更新技能设置");
+  return Array.isArray(data.off) ? [...new Set(data.off.map(str).filter(Boolean))].sort() : [];
 }
 
 export async function fetchAgentSessions(): Promise<AgentSessionSummary[]> {

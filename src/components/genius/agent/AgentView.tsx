@@ -15,6 +15,7 @@ import {
   rejectAgentTurn,
   sendAgentMessage,
   setAgentSessionBudget,
+  setAgentSkillOff,
   type AgentChatModel,
   type AgentSessionDetail,
   type AgentSessionSummary,
@@ -32,29 +33,12 @@ import { IconPanelLeft, IconPencil, IconTrash } from "./icons";
 
 type Screen = "home" | "plaza" | "chat";
 
-/** 关掉的技能只存在这台浏览器里（是「我不想在下拉里看到它」，不是账号属性）。 */
-const OFF_KEY = "genius.agent.skillsOff";
+const LEGACY_OFF_KEY = "genius.agent.skillsOff";
 /** 会话里还有任务没跑完时，多久重拉一次详情。 */
 const POLL_MS = 3000;
 
-/**
- * 首次渲染就把「关掉的技能」读出来（`useState` 的惰性初始值），不放进 effect：
- * effect 里 setState 会多渲染一轮，而这份值本来就在首屏之前就能拿到。
- *
- * 服务端渲染时没有 `window`，返回空表——此刻技能列表本来就还没拉回来，两边渲染的
- * 都是空网格，不会有水合差异。
- */
-function readOff(): Record<string, boolean> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(OFF_KEY);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, boolean>)
-      : {};
-  } catch {
-    return {};
-  }
+function offRecord(ids: string[]): Record<string, boolean> {
+  return Object.fromEntries(ids.map((id) => [id, true]));
 }
 
 /**
@@ -88,7 +72,7 @@ export default function AgentView() {
   const [skillHover, setSkillHover] = useState(0);
   const [activeSkill, setActiveSkill] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [off, setOff] = useState<Record<string, boolean>>(readOff);
+  const [off, setOff] = useState<Record<string, boolean>>({});
   /**
    * 这台实例配了对话提供方吗（`GET /api/agent/skills` 的 `available`）。默认 `true`：
    * 技能表回来之前先按可用渲染，不然每次进页面都会闪一下「暂未开放」。
@@ -102,6 +86,7 @@ export default function AgentView() {
   // 卸载后到达的响应不该再 setState（切走视图、退出登录都会命中）。
   const alive = useRef(true);
   const openedDeepLink = useRef<string | null>(null);
+  const migrationAttempted = useRef(false);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -116,10 +101,43 @@ export default function AgentView() {
     [t],
   );
 
+  const migrateLegacyOff = useCallback(async (list: AgentSkill[], serverOff: string[]) => {
+    if (migrationAttempted.current) return;
+    let raw: string | null;
+    try {
+      raw = window.localStorage.getItem(LEGACY_OFF_KEY);
+    } catch {
+      return;
+    }
+    if (raw === null) return;
+    migrationAttempted.current = true;
+    try {
+      if (serverOff.length) {
+        window.localStorage.removeItem(LEGACY_OFF_KEY);
+        return;
+      }
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid legacy prefs");
+      const current = new Set(list.map((skill) => skill.id));
+      const ids = Object.entries(parsed as Record<string, unknown>)
+        .filter(([id, value]) => value === true && current.has(id))
+        .map(([id]) => id)
+        .sort();
+      let synced = serverOff;
+      for (const id of ids) synced = await setAgentSkillOff(id, true);
+      if (alive.current) setOff(offRecord(synced));
+      window.localStorage.removeItem(LEGACY_OFF_KEY);
+    } catch {
+      migrationAttempted.current = false;
+    }
+  }, []);
+
   useEffect(() => {
     fetchAgentSkills().then((res) => {
       if (!alive.current) return;
       setSkills(res.skills);
+      setOff(offRecord(res.off));
+      void migrateLegacyOff(res.skills, res.off);
       setAvailable(res.available);
       setChatModels(res.chat.models);
       setChatDefault(res.chat.default);
@@ -135,7 +153,7 @@ export default function AgentView() {
       },
       say,
     );
-  }, [say]);
+  }, [migrateLegacyOff, say]);
 
   /* 会话里还有任务没跑完、或有轮次停在 thinking/executing 时才轮询；
      全终态就停下来，别对着一个不会变的东西每 3 秒问一次。 */
@@ -324,17 +342,24 @@ export default function AgentView() {
     [say],
   );
 
-  const toggleSkill = useCallback((id: string) => {
-    setOff((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
-      try {
-        window.localStorage.setItem(OFF_KEY, JSON.stringify(next));
-      } catch {
-        /* 存不下就只在本次会话内生效 */
-      }
-      return next;
-    });
-  }, []);
+  const toggleSkill = useCallback(
+    (id: string) => {
+      const wasOff = Boolean(off[id]);
+      const nextOff = !wasOff;
+      setOff((current) => ({ ...current, [id]: nextOff }));
+      void setAgentSkillOff(id, nextOff).then(
+        (stored) => {
+          if (alive.current) setOff(offRecord(stored));
+        },
+        (error: unknown) => {
+          if (!alive.current) return;
+          setOff((current) => ({ ...current, [id]: wasOff }));
+          say(error);
+        },
+      );
+    },
+    [off, say],
+  );
 
   const enabled = skills.filter((s) => !off[s.id]);
 

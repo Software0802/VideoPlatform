@@ -69,6 +69,18 @@ async function dropJob(page: Page, jobId: string): Promise<void> {
 }
 
 /** 记下任务卡上的 job id，供收尾删除。 */
+async function openPlaza(page: Page): Promise<void> {
+  await page.locator(".agent-ask .agent-chip").last().click();
+  await page.locator(".agent-skillpop__manage").click();
+  await expect(view(page)).toHaveAttribute("data-screen", "plaza");
+}
+
+async function skillOff(page: Page): Promise<string[]> {
+  const response = await page.request.get("/api/agent/skills");
+  expect(response.ok()).toBeTruthy();
+  return ((await response.json()) as { off?: string[] }).off ?? [];
+}
+
 async function noteJob(page: Page): Promise<string> {
   const jobId = await page.locator(".agent-chat__job").first().getAttribute("data-job-id");
   expect(jobId, "任务卡应带上真实的 job id").toBeTruthy();
@@ -78,6 +90,7 @@ async function noteJob(page: Page): Promise<string> {
 
 test.afterEach(async ({ page }) => {
   for (const jobId of createdJobs.splice(0)) await dropJob(page, jobId);
+  await page.request.patch("/api/agent/skills", { data: { skillId: "car-ad", off: false } });
 });
 
 test("智能体：一句想法 → 真实会话 + 助手回复 + 生成任务 + 资产栏", async ({ page }) => {
@@ -202,4 +215,38 @@ test("智能体：历史抽屉列出真实会话，点进去能读回对话", as
   await expect(view(page)).toHaveAttribute("data-screen", "chat");
   await expect(page.locator(".agent-chat__bubble").first()).toContainText(IDEA);
   await expect(page.locator(".agent-chat__job").first()).toBeVisible();
+});
+
+test("智能体：技能开关按账号持久化并从首页下拉移除", async ({ page }) => {
+  await openPlaza(page);
+  const card = page.locator('.agent-plaza-card[data-skill-id="car-ad"]');
+  const toggle = card.locator('.agent-switch');
+  await expect(toggle).toHaveAttribute("data-on", "true");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("data-on", "false");
+  await expect.poll(() => skillOff(page)).toContain("car-ad");
+
+  await page.reload();
+  await expect(page.locator(".shell")).toHaveAttribute("data-ready", "true");
+  await openPlaza(page);
+  await expect(page.locator('.agent-plaza-card[data-skill-id="car-ad"] .agent-switch')).toHaveAttribute(
+    "data-on",
+    "false",
+  );
+
+  await page.locator(".agent-round").click();
+  await page.locator(".agent-ask .agent-chip").last().click();
+  await expect(page.locator('.agent-skillpop__item[data-skill-id="car-ad"]')).toHaveCount(0);
+});
+
+test("智能体：一次性迁移旧 localStorage 技能开关", async ({ page }) => {
+  await page.evaluate(() => {
+    window.localStorage.setItem("genius.agent.skillsOff", JSON.stringify({ "car-ad": true }));
+  });
+  await page.reload();
+  await expect(page.locator(".shell")).toHaveAttribute("data-ready", "true");
+  await expect.poll(() => skillOff(page)).toContain("car-ad");
+  await expect
+    .poll(() => page.evaluate(() => window.localStorage.getItem("genius.agent.skillsOff")))
+    .toBeNull();
 });

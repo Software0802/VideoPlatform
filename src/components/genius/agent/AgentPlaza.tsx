@@ -8,7 +8,7 @@ import { IconChevronDown, IconChevronLeft } from "./icons";
 
 type Props = {
   skills: AgentSkill[];
-  /** `true` = 这个技能被用户关掉了（只存在浏览器本地，见 `AgentView`）。 */
+  /** `true` = 这个技能被当前账号关掉了（服务端偏好持久化，见 `AgentView`）。 */
   off: Record<string, boolean>;
   onToggle: (id: string) => void;
   onBack: () => void;
