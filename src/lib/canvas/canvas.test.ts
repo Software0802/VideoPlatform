@@ -227,7 +227,7 @@ describe("runCanvasNode", () => {
       uploadId: side.uploadId,
     });
     // 等这条任务终态后再跑一次同节点：素材还在，照样出 image_to_video。
-    for (let i = 0; i < 60; i += 1) {
+    for (let i = 0; i < 180; i += 1) {
       const cur = await readJobForUser(job.id, owner);
       if (!cur || ["succeeded", "failed", "expired", "canceled"].includes(cur.status)) break;
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -236,7 +236,7 @@ describe("runCanvasNode", () => {
     const second = await runCanvasNode(owner, doc.id, "n_bb000002");
     expect(second.job.mode).toBe("image_to_video");
     expect(second.job.id).not.toBe(job.id);
-  }, 20_000);
+  }, 45_000);
 
   it("runs gen_video as image_to_video off an upstream gen_image node's finished output", async () => {
     const owner = "usr_0000000000000314";

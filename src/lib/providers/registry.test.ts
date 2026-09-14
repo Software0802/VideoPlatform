@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
 import "@/lib/providers/builtin";
 import {
   BUILTIN_PROVIDER_IDS,
@@ -24,6 +27,14 @@ function fakeProvider(id: string, hasKey?: () => boolean): VideoProvider {
     poll: async () => ({ status: "done", progress: 100 }),
   };
 }
+
+// builtin 在模块加载时装配 relay（会读真实 data/relays.json）：开发机上的文件
+// 条目会被注册进 provider 表，先把 DATA_DIR 指到空目录再 reconcile 一次隔离它。
+beforeAll(async () => {
+  process.env.DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lumen-registry-test-"));
+  const { reconcileRelays } = await import("@/lib/providers/relay/assemble");
+  reconcileRelays();
+});
 
 describe("provider registry", () => {
   it("registers all builtin providers at module load", () => {

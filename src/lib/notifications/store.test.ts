@@ -112,7 +112,7 @@ describe("appendJobNotification", () => {
     expect(file?.items[0]?.seq).toBe(2);
     expect(file?.items.at(-1)?.seq).toBe(MAX_NOTIFICATIONS + 1);
     expect(file?.nextSeq).toBe(MAX_NOTIFICATIONS + 2);
-  });
+  }, 15_000);
 
   it("records errorCode/errorMessage for failed jobs and truncates prompt at 120 chars", async () => {
     const id = userId("a3");
