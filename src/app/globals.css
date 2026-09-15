@@ -60,10 +60,10 @@
     等待光按状态分色——等模型是冷光，等人工审批是琥珀暖光（动效即反馈：光色 = 状态）。
     两个 hue 存的是裸通道值，用法是 `rgb(var(--wait-hue-model) / .35)`。
   */
-  --glow-peak: .16;
-  --glow-rest: .06;
-  --glow-period: 9s;
-  --glow-period-alt: 13s;
+  --glow-peak: .40;
+  --glow-rest: .14;
+  --glow-period: 6s;
+  --glow-period-alt: 10s;
   --glow-r: 42%;
   --wait-hue-model: 124 196 255;
   --wait-hue-approval: 240 217 168;
