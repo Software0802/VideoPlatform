@@ -32,9 +32,9 @@ easing:
   transform: ".2s"
   pop: "cubic-bezier(.22,1,.36,1)"
 glow:
-  peak: ".16"
-  rest: ".06"
-  period: "9s（呼吸增量层）/ 13s（常亮底光漂移层）"
+  peak: ".40"
+  rest: ".14"
+  period: "6s（呼吸增量层）/ 10s（常亮底光漂移层）"
 wait:
   hue-model: "124 196 255（冷光，等模型）"
   hue-approval: "240 217 168（琥珀，等人工审批）"
@@ -92,7 +92,7 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 
 圆角：面板 14–16、卡片 12、芯片/按钮 8–9、缩略 12、圆钮 50%。高度：顶栏 56、导航项 40、主芯片 30、面板内小芯片 28、主按钮 30（面板内）/40–42（订阅卡）。阴影：悬浮面板 `0 20px 56px rgba(0,0,0,.65)`；卡片仅 inset 描边，无外阴影。动效：过渡 `.16s ease`（颜色/背景）、`.2s`（变换）；进场 `fade-up .35s`、`pop-in .2–.3s cubic-bezier(.22,1,.36,1)`、抽屉 `slide-in .28s`；`prefers-reduced-motion` 时长归零。
 
-**背景呼吸灯**：`.shell`（`src/app/styles/shell.css`，登录页根节点、`.share`、`.canvas-view` 各有一份同款）用 `position:relative; isolation:isolate` 建层叠上下文，叠两个 `position:fixed; z-index:-1` 的伪元素——`::after` 是常亮底光（alpha=`--glow-rest`，`glow-drift` 只漂移，周期 `--glow-period-alt`=13s），`::before` 是呼吸增量（alpha=peak−rest，`glow-breathe` 令 opacity 0→1→0，周期 `--glow-period`=9s），叠加峰值恰为 `--glow-peak`；两层相位错开读起来才像呼吸而非闪烁。`fixed` 而非 `absolute` 是因为 `.auth`/`.share` 会滚动，要盖住整个视口。`.canvas-view` 自带点阵背景：点阵原为 `background-image`，现挪到 `::after`，`::before` 走同款呼吸色，靠 DOM 序保证点阵盖在呼吸色之上。硬约束不变：`.shell`/`.col`/`.top`/`.main` 上不做 transform（会改掉 `.pwd` 等 fixed 弹层的包含块）。
+**背景呼吸灯**：`.shell`（`src/app/styles/shell.css`，登录页根节点、`.share`、`.canvas-view` 各有一份同款）用 `position:relative; isolation:isolate` 建层叠上下文，叠两个 `position:fixed; z-index:-1` 的伪元素——`::after` 是常亮底光（alpha=`--glow-rest`，`glow-drift` 只漂移，周期 `--glow-period-alt`=10s），`::before` 是呼吸增量（alpha=peak−rest，`glow-breathe` 令 opacity 0→1→0，周期 `--glow-period`=6s），叠加峰值恰为 `--glow-peak`；两层相位错开读起来才像呼吸而非闪烁。`fixed` 而非 `absolute` 是因为 `.auth`/`.share` 会滚动，要盖住整个视口。`.canvas-view` 底色不透明、壳的呼吸灯照不进来，所以自带一份（伪元素是 `absolute` 而非 `fixed`）：点阵原为 `background-image`，现挪到 `::after`（`background-size:inherit` 继承宿主按 `scale` 算的点距），`::before` 只放 `--glow-rest` 的常亮底光走 `glow-drift`，没有呼吸增量层；靠 DOM 序保证点阵盖在呼吸色之上。硬约束不变：`.shell`/`.col`/`.top`/`.main` 上不做 transform（会改掉 `.pwd` 等 fixed 弹层的包含块）。
 
 **等待特效**：所有「等模型输出」的元素用统一的冷光语汇（`--wait-hue-model`=`124 196 255`），等人工审批用琥珀暖光（`--wait-hue-approval`=`240 217 168`），周期 `--wait-period`=2.4s；共享 keyframes（`globals.css`）：`wait-pulse`、`wait-breathe`、`wait-shimmer`、`wait-flow`、`wait-dot`、`wait-ripple`，都在装饰性伪元素/子节点上，不影响 `textContent`。落点：创作页 `.task[data-state="busy"]` 顶边流光细线+描边冷光，内部渲染 `.task__wait[aria-hidden="true"][data-pct]`（`.task` 是 `aria-live`，故等待层本身无文本），有分镜时 `.task__wait-shots > i[data-done]`；创作面板 `.composer__send[data-busy="true"]`、`.composer__slot[data-state="busy"]`、`.composer__ref[data-state="busy"]` 骨架扫光+冷光描边；智能体 `.agent-chat__answer[data-thinking="true"]` 冷光呼吸描边+三个 `.agent-chat__dot`，`.agent-chat__job[data-active="true"]` 任务卡下沿流光，`.agent-chat__send`/`AgentAsk` 发送钮 `[data-busy="true"]` 轻呼吸；画布节点根 `.canvas-node[data-wait="model"|"approval"]`（判据见 `NodeCard.tsx` 导出的 `waitStateOf()`：exec 为 `ready`/`running` 或本地 running 或 job 非终态 → `model`，`awaiting_approval` → `approval`）——`model` 双圈波纹+描边流光，`approval` 琥珀慢呼吸无波纹；`.canvas-wires path[data-wait="model"]` 流动虚线；`.canvas-view[data-running="true"]` 底光提亮+「取消运行」钮呼吸与流光细线。`prefers-reduced-motion` 归零动画后，所有 keyframes 基础样式即静止态（0%/100% 为静止，50% 为峰值），背景只剩 `--glow-rest` 的静止淡光。
 

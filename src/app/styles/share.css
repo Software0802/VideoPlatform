@@ -42,18 +42,18 @@
 .share::before {
   opacity: 0;
   background:
-    radial-gradient(var(--glow-r, 42%) var(--glow-r, 42%) at 16% 12%, rgb(255 138 61 / calc(var(--glow-peak, 0.16) - var(--glow-rest, 0.06))), transparent 70%),
-    radial-gradient(var(--glow-r, 42%) var(--glow-r, 42%) at 84% 88%, rgb(168 85 247 / calc(var(--glow-peak, 0.16) - var(--glow-rest, 0.06))), transparent 72%),
-    radial-gradient(calc(var(--glow-r, 42%) * 0.8) calc(var(--glow-r, 42%) * 0.8) at 66% 2%, rgb(255 77 141 / calc(var(--glow-peak, 0.16) - var(--glow-rest, 0.06))), transparent 70%);
-  animation: glow-breathe var(--glow-period, 9s) ease-in-out infinite;
+    radial-gradient(var(--glow-r, 42%) var(--glow-r, 42%) at 16% 12%, rgb(255 138 61 / calc(var(--glow-peak, 0.40) - var(--glow-rest, 0.14))), transparent 70%),
+    radial-gradient(var(--glow-r, 42%) var(--glow-r, 42%) at 84% 88%, rgb(168 85 247 / calc(var(--glow-peak, 0.40) - var(--glow-rest, 0.14))), transparent 72%),
+    radial-gradient(calc(var(--glow-r, 42%) * 0.8) calc(var(--glow-r, 42%) * 0.8) at 66% 2%, rgb(255 77 141 / calc(var(--glow-peak, 0.40) - var(--glow-rest, 0.14))), transparent 70%);
+  animation: glow-breathe var(--glow-period, 6s) ease-in-out infinite;
 }
 .share::after {
   background:
-    radial-gradient(calc(var(--glow-r, 42%) * 1.05) calc(var(--glow-r, 42%) * 1.05) at 12% 18%, rgb(255 138 61 / var(--glow-rest, 0.06)), transparent 72%),
-    radial-gradient(var(--glow-r, 42%) var(--glow-r, 42%) at 88% 82%, rgb(168 85 247 / var(--glow-rest, 0.06)), transparent 70%),
-    radial-gradient(calc(var(--glow-r, 42%) * 0.85) calc(var(--glow-r, 42%) * 0.85) at 62% 6%, rgb(255 77 141 / var(--glow-rest, 0.06)), transparent 72%);
-  animation: glow-drift var(--glow-period-alt, 13s) ease-in-out infinite;
-  animation-delay: calc(var(--glow-period-alt, 13s) / -3);
+    radial-gradient(calc(var(--glow-r, 42%) * 1.05) calc(var(--glow-r, 42%) * 1.05) at 12% 18%, rgb(255 138 61 / var(--glow-rest, 0.14)), transparent 72%),
+    radial-gradient(var(--glow-r, 42%) var(--glow-r, 42%) at 88% 82%, rgb(168 85 247 / var(--glow-rest, 0.14)), transparent 70%),
+    radial-gradient(calc(var(--glow-r, 42%) * 0.85) calc(var(--glow-r, 42%) * 0.85) at 62% 6%, rgb(255 77 141 / var(--glow-rest, 0.14)), transparent 72%);
+  animation: glow-drift var(--glow-period-alt, 10s) ease-in-out infinite;
+  animation-delay: calc(var(--glow-period-alt, 10s) / -3);
 }
 
 .share__brand {
