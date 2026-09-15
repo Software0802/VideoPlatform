@@ -6,6 +6,49 @@
   overflow: hidden;
   background: var(--page);
   color: var(--fg);
+  position: relative;
+  isolation: isolate;
+}
+
+/*
+  页面背景呼吸灯（登录页根节点也是 `.shell`，自动跟着来）。
+
+  `isolation: isolate` 把 `.shell` 变成层叠上下文，两层 `z-index: -1` 的装饰因此画在
+  `.shell` 自己的底色**之上**、所有内容**之下**；侧栏 `.side` 是不透明的，天然不受影响。
+
+  `position: fixed` 而不是 absolute：登录页（`.auth`）会滚动，absolute 的层只盖首屏。
+  fixed 的包含块是视口，`.shell` 的 `overflow: hidden` 也裁不到它（`.shell` 上没有
+  transform——**也永远不要加**，`.pwd` 是挂在 `.top` 里的 fixed 弹层，祖先一带 transform
+  就会改掉它的包含块）。动画只落在这两个伪元素上，壳本身一个 transform 都不碰。
+
+  分两层：`::after` 是常亮底光（alpha = `--glow-rest`，只缓慢漂移），`::before` 是呼吸
+  增量（alpha = peak − rest，opacity 0 → 1 → 0），叠加后峰值恰为 `--glow-peak`。两层周期
+  不同、相位错开，读起来才像呼吸而不是闪烁。
+*/
+.shell::before,
+.shell::after {
+  content: "";
+  position: fixed;
+  inset: -10%;
+  z-index: -1;
+  pointer-events: none;
+  will-change: opacity, transform;
+}
+.shell::before {
+  opacity: 0;
+  background:
+    radial-gradient(var(--glow-r) var(--glow-r) at 16% 12%, rgb(255 138 61 / calc(var(--glow-peak) - var(--glow-rest))), transparent 70%),
+    radial-gradient(var(--glow-r) var(--glow-r) at 84% 88%, rgb(168 85 247 / calc(var(--glow-peak) - var(--glow-rest))), transparent 72%),
+    radial-gradient(calc(var(--glow-r) * 0.8) calc(var(--glow-r) * 0.8) at 66% 2%, rgb(255 77 141 / calc(var(--glow-peak) - var(--glow-rest))), transparent 70%);
+  animation: glow-breathe var(--glow-period) ease-in-out infinite;
+}
+.shell::after {
+  background:
+    radial-gradient(calc(var(--glow-r) * 1.05) calc(var(--glow-r) * 1.05) at 12% 18%, rgb(255 138 61 / var(--glow-rest)), transparent 72%),
+    radial-gradient(var(--glow-r) var(--glow-r) at 88% 82%, rgb(168 85 247 / var(--glow-rest)), transparent 70%),
+    radial-gradient(calc(var(--glow-r) * 0.85) calc(var(--glow-r) * 0.85) at 62% 6%, rgb(255 77 141 / var(--glow-rest)), transparent 72%);
+  animation: glow-drift var(--glow-period-alt) ease-in-out infinite;
+  animation-delay: calc(var(--glow-period-alt) / -3);
 }
 
 .side {

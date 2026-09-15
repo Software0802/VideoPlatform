@@ -54,6 +54,20 @@
   --credit: #f0d9a8;
   --pink: #ff8fb0;
   --danger: #ff9b9b;
+  /*
+    呼吸灯（页面背景）与等待特效（「正在生成」）。调强弱只改这几行：
+    背景呼吸克制到峰值 `--glow-peak`、谷值 `--glow-rest`（画面是主角，chrome 退后）；
+    等待光按状态分色——等模型是冷光，等人工审批是琥珀暖光（动效即反馈：光色 = 状态）。
+    两个 hue 存的是裸通道值，用法是 `rgb(var(--wait-hue-model) / .35)`。
+  */
+  --glow-peak: .16;
+  --glow-rest: .06;
+  --glow-period: 9s;
+  --glow-period-alt: 13s;
+  --glow-r: 42%;
+  --wait-hue-model: 124 196 255;
+  --wait-hue-approval: 240 217 168;
+  --wait-period: 2.4s;
   /* 阴影 */
   --shadow-panel: 0 20px 56px rgba(0, 0, 0, 0.65);
   --shadow-pop: 0 18px 44px rgba(0, 0, 0, 0.55);
@@ -152,6 +166,107 @@ input::placeholder {
   }
 }
 
+/* ══ 呼吸灯 / 等待特效 ═════════════════════════════════════════════════
+
+  两条硬约束，改动这一段时都要守住：
+
+  1. **0% 与 100% 是静止态，50% 才是峰值**，并且每个装饰层的**基础样式也写成静止态**。
+     本文件末尾的 `prefers-reduced-motion` 把所有动画压成 `0.01ms × 1 次`；`fill-mode`
+     无论落在基础样式还是 100% 帧，拿到的都是安静的那一帧，而不是最亮的那一帧。
+  2. **只动 `opacity` / `transform` / `background-position` / `stroke-dashoffset`**。
+     描边呼吸一律「静态 box-shadow 画在伪元素上 + 只动画伪元素的 opacity」，不动画
+     box-shadow 本身，也不用大面积 `filter: blur()`（柔边交给 radial-gradient）。
+
+  因为 0%↔100% 同帧，扫光类是往返而不是单向循环；亮带两端都停在框外，静止态无亮带。
+*/
+
+/* 背景呼吸：叠在 `--glow-rest` 常亮底光之上的增量（peak − rest），谷值即隐去 */
+@keyframes glow-breathe {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+/* 常亮底光的缓慢漂移：只动 transform，幅度 ≤6% */
+@keyframes glow-drift {
+  0%,
+  100% {
+    transform: none;
+  }
+  50% {
+    transform: translate3d(2%, -1.6%, 0) scale(1.06);
+  }
+}
+/* 冷光描边 / 冷光层呼吸：静止态是淡的那一端 */
+@keyframes wait-pulse {
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+/* 实心控件的轻呼吸（不到全透明，忙碌态始终看得见） */
+@keyframes wait-breathe {
+  0%,
+  100% {
+    opacity: 0.86;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+/* 斜向扫光：亮带从框右外扫到框左外再扫回 */
+@keyframes wait-shimmer {
+  0%,
+  100% {
+    background-position: 130% 0;
+  }
+  50% {
+    background-position: -30% 0;
+  }
+}
+/* 首尾同色的渐变细线流动（`background-size: 200%`） */
+@keyframes wait-flow {
+  0%,
+  100% {
+    background-position: 0 0;
+  }
+  50% {
+    background-position: 100% 0;
+  }
+}
+/* 三个小点依次起伏（错相靠 animation-delay） */
+@keyframes wait-dot {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+/* 画布节点波纹：静止态完全隐去，由静态描边兜住「还在跑」的可读性 */
+@keyframes wait-ripple {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(1.12);
+  }
+}
+
 /* ══ 窄屏最低适配（不做手机端定稿，只保证不横向溢出） ══════════════════ */
 
 @media (max-width: 900px) {
@@ -220,6 +335,16 @@ input::placeholder {
   }
   .notice-toast {
     right: 14px;
+  }
+}
+
+@media (max-width: 560px) {
+  /*
+    手机上视口窄、色块按百分比铺开会糊成一整片。把呼吸灯的半径收小，让三团颜色仍然
+    是「三团」而不是一层雾。柔边本来就由 radial-gradient 自带，这里没有 blur 可以省。
+  */
+  :root {
+    --glow-r: 26%;
   }
 }
 

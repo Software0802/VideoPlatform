@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { formatCny } from "@/lib/billing/prices";
 // 六种模式的展示名用共享那份（存的是键名，取文案在这里做）
@@ -121,6 +121,32 @@ export function CreateView() {
 
         {!job ? <p className="task__idle">{t("create.idle")}</p> : null}
 
+        {/*
+          等待层：任务在跑时占住成片将要出现的那块位置（16:9），用冷光呼吸 + 扫光 + 一条
+          跟着百分比走的扫描线说明「模型正在出片」。`--pct` 走内联自定义属性，扫描线的位置
+          全交给 CSS，不在 React 里算像素。
+
+          **内部一个文字节点都不能有**：`.task` 是 `aria-live="polite"`，而进度每 500ms 刷一次，
+          再往里加文本等于让读屏每半秒重播一遍。属性与内联样式的变化不触发播报，所以这一层
+          连同分镜小条一起 `aria-hidden`，状态文字仍由上面的 `.task__stage` / `.task__pct` 承担。
+        */}
+        {state === "busy" ? (
+          <div
+            className="task__wait"
+            aria-hidden="true"
+            data-pct={pct}
+            style={{ "--pct": pct } as CSSProperties}
+          >
+            {job?.shots?.length ? (
+              <span className="task__wait-shots">
+                {job.shots.map((s, i) => (
+                  <i key={`${job.id}-${i}`} data-done={s.status === "succeeded" ? "true" : "false"} />
+                ))}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
         {done && job?.output && !purged ? (
           <div className="task__media">
             {job.output.kind === "video" ? (
@@ -191,7 +217,13 @@ export function CreateView() {
                     ? j.output.imageUrl
                     : j.output.posterUrl;
               return (
-                <li key={j.id} className="recent__item" data-status={j.status}>
+                <li
+                  key={j.id}
+                  className="recent__item"
+                  data-status={j.status}
+                  /* 非终态的那几条在标题前点一枚呼吸小圆点：列表里一眼看出哪条还在跑 */
+                  data-active={isActive(j.status) ? "true" : undefined}
+                >
                   <button
                     type="button"
                     className="recent__hit"

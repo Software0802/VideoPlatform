@@ -31,6 +31,14 @@ easing:
   fast: ".16s ease"
   transform: ".2s"
   pop: "cubic-bezier(.22,1,.36,1)"
+glow:
+  peak: ".16"
+  rest: ".06"
+  period: "9s（呼吸增量层）/ 13s（常亮底光漂移层）"
+wait:
+  hue-model: "124 196 255（冷光，等模型）"
+  hue-approval: "240 217 168（琥珀，等人工审批）"
+  period: "2.4s"
 ---
 
 # Design System: Genius App（2026-09-06 晚，前端整体换壳）
@@ -84,6 +92,10 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 
 圆角：面板 14–16、卡片 12、芯片/按钮 8–9、缩略 12、圆钮 50%。高度：顶栏 56、导航项 40、主芯片 30、面板内小芯片 28、主按钮 30（面板内）/40–42（订阅卡）。阴影：悬浮面板 `0 20px 56px rgba(0,0,0,.65)`；卡片仅 inset 描边，无外阴影。动效：过渡 `.16s ease`（颜色/背景）、`.2s`（变换）；进场 `fade-up .35s`、`pop-in .2–.3s cubic-bezier(.22,1,.36,1)`、抽屉 `slide-in .28s`；`prefers-reduced-motion` 时长归零。
 
+**背景呼吸灯**：`.shell`（`src/app/styles/shell.css`，登录页根节点、`.share`、`.canvas-view` 各有一份同款）用 `position:relative; isolation:isolate` 建层叠上下文，叠两个 `position:fixed; z-index:-1` 的伪元素——`::after` 是常亮底光（alpha=`--glow-rest`，`glow-drift` 只漂移，周期 `--glow-period-alt`=13s），`::before` 是呼吸增量（alpha=peak−rest，`glow-breathe` 令 opacity 0→1→0，周期 `--glow-period`=9s），叠加峰值恰为 `--glow-peak`；两层相位错开读起来才像呼吸而非闪烁。`fixed` 而非 `absolute` 是因为 `.auth`/`.share` 会滚动，要盖住整个视口。`.canvas-view` 自带点阵背景：点阵原为 `background-image`，现挪到 `::after`，`::before` 走同款呼吸色，靠 DOM 序保证点阵盖在呼吸色之上。硬约束不变：`.shell`/`.col`/`.top`/`.main` 上不做 transform（会改掉 `.pwd` 等 fixed 弹层的包含块）。
+
+**等待特效**：所有「等模型输出」的元素用统一的冷光语汇（`--wait-hue-model`=`124 196 255`），等人工审批用琥珀暖光（`--wait-hue-approval`=`240 217 168`），周期 `--wait-period`=2.4s；共享 keyframes（`globals.css`）：`wait-pulse`、`wait-breathe`、`wait-shimmer`、`wait-flow`、`wait-dot`、`wait-ripple`，都在装饰性伪元素/子节点上，不影响 `textContent`。落点：创作页 `.task[data-state="busy"]` 顶边流光细线+描边冷光，内部渲染 `.task__wait[aria-hidden="true"][data-pct]`（`.task` 是 `aria-live`，故等待层本身无文本），有分镜时 `.task__wait-shots > i[data-done]`；创作面板 `.composer__send[data-busy="true"]`、`.composer__slot[data-state="busy"]`、`.composer__ref[data-state="busy"]` 骨架扫光+冷光描边；智能体 `.agent-chat__answer[data-thinking="true"]` 冷光呼吸描边+三个 `.agent-chat__dot`，`.agent-chat__job[data-active="true"]` 任务卡下沿流光，`.agent-chat__send`/`AgentAsk` 发送钮 `[data-busy="true"]` 轻呼吸；画布节点根 `.canvas-node[data-wait="model"|"approval"]`（判据见 `NodeCard.tsx` 导出的 `waitStateOf()`：exec 为 `ready`/`running` 或本地 running 或 job 非终态 → `model`，`awaiting_approval` → `approval`）——`model` 双圈波纹+描边流光，`approval` 琥珀慢呼吸无波纹；`.canvas-wires path[data-wait="model"]` 流动虚线；`.canvas-view[data-running="true"]` 底光提亮+「取消运行」钮呼吸与流光细线。`prefers-reduced-motion` 归零动画后，所有 keyframes 基础样式即静止态（0%/100% 为静止，50% 为峰值），背景只剩 `--glow-rest` 的静止淡光。
+
 ## 状态映射
 
 客户端唯一状态所有者是 `src/components/genius/ShellContext.tsx`（`ShellProvider`/`useShell`），主页与创作页共用同一个 Provider 实例。关键字段：
@@ -113,7 +125,7 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 - 窄屏（≤900px）侧栏收成 56px 图标栏，导航文字用 `clip-path` 隐藏而非 `display:none`；移动端回归（`e2e/mobile.spec.ts`，375/390/768 三档）另修过：≤560px 规格弹层与画布报价层改为左右贴边全宽、智能体两列改单列横滑、≤400px 隐藏顶栏装饰性小头像；对话框类弹层统一支持 Esc 收层。
 - 头像菜单是 disclosure 语义（按钮+条件渲染的菜单容器），不是 `role="menu"`/`role="menuitem"`。
 - 进入技能广场 / 会话页（智能体视图的子状态）时顶栏标题仍固定显示「智能体」；画布视图顶栏标题固定「画布」——顶栏标题只跟五视图路由走，不感知视图内部 state（未做「视图内子页上报标题」的接口）。
-- 画布的工具箱工具名与节点标签沿用原型英文占位文案（中文态也是英文）。
+- 右键菜单的节点类型名与节点标签走 `t("canvas.kind.*")`，中文态显示中文（非原型的英文占位）；原型的 `CanvasToolbox.tsx`（左侧工具箱抽屉）未被任何组件引用，未接入实际画布。
 - 画布视图沿用原型的本地交互细节：工具箱搜索是本地过滤；右键弹出节点类型菜单。
 - 中转管理页的排序用「上移/下移」按钮交换相邻 `priority`（两次 PATCH），不用计划书 §4b 的拖动排序——移动端与可访问性优先（键盘可达、无 pointer 捕获复杂性）。
 - 模型下拉按供应商分组并显示 `providerName` / `upstreamModel` / `costHint`（R2.3 起），不再沿用「只显示产品名」——DTO 白名单本就下发这三个字段，敏感面在接口不在弹层。
@@ -142,13 +154,14 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 | 创作按钮 | `button.composer__send` 名 `创作`，`data-busy`，含 `.composer__credits` |
 | 错误行 | `.composer__error[role="alert"]` |
 | 图片槽 | `.composer__slot` + `input[type=file]`（`aria-label="上传图片"`），有图 `data-state="ready"` |
-| 创作页当前任务 | `.task[data-job-id][data-state][data-status]`，`.task__pct/.task__stage/.task__err`，按钮 `取消/重新生成`，`link` `下载` |
+| 创作页当前任务 | `.task[data-job-id][data-state][data-status]`，`.task__pct/.task__stage/.task__err`，按钮 `取消/重新生成`，`link` `下载`；`data-state="busy"` 时内部另渲染等待层 `.task__wait[aria-hidden="true"][data-pct]`（不带文本，终态不渲染） |
 | 重试阻断 | `.task__blocked[role="alert"]`，出现时无「重新生成」按钮 |
 | 主页瀑布流卡片 | `.masonry__item[data-kind="video|image"][data-purged]`；标签页 `role="tab"` 名 `视频/图片/模板/挑战` |
 | 作品详情浮层 | `.work[role="dialog"]`，按钮 `用这条提示词再生成`、`关闭` |
 | 画布整图运行 | 顶栏按钮名 `运行整图`，运行中为 `取消运行` |
 | 画布报价弹层 | `.canvas-quote[role="dialog"]`，行内勾选 `重跑`/`执行前需我批准`，按钮 `确认运行`/`取消` |
 | 画布节点执行态 | `.canvas-node__exec[data-exec]`；`awaiting_approval` 时 `.canvas-node__approve` 按钮名 `批准`/`驳回` |
+| 画布等待态 | `.canvas-node[data-wait="model"\|"approval"]`（`NodeCard.tsx` 导出 `waitStateOf()`）；连线 `.canvas-wires path[data-wait="model"]`；运行中 `.canvas-view[data-running="true"]` |
 | 头像菜单 | 按钮 `.top__avatar`，菜单内按钮 `账户`/`修改密码`/`退出` |
 | 账户页 | `/account` 三卡 `.account__card`（账号/余额/安全）；「退出全部设备」为 `role="alertdialog"` 页内二次确认 |
 

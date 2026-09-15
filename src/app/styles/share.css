@@ -19,6 +19,41 @@
   align-items: center;
   padding: 32px 20px 40px;
   box-sizing: border-box;
+  position: relative;
+  isolation: isolate;
+}
+
+/*
+  与壳同名的背景呼吸灯（`glow-breathe` / `glow-drift` 由 `globals.css` 定义，根 layout
+  一定会加载它）。沿用本文件「颜色写死」的取舍：`var()` 全带 fallback，令牌万一没到
+  这一页，呼吸灯也还是对的淡光而不是全黑或全亮。
+
+  这一页自己是滚动容器，所以装饰层用 `position: fixed` 盖住整个可视区，不会滚走。
+*/
+.share::before,
+.share::after {
+  content: "";
+  position: fixed;
+  inset: -10%;
+  z-index: -1;
+  pointer-events: none;
+  will-change: opacity, transform;
+}
+.share::before {
+  opacity: 0;
+  background:
+    radial-gradient(var(--glow-r, 42%) var(--glow-r, 42%) at 16% 12%, rgb(255 138 61 / calc(var(--glow-peak, 0.16) - var(--glow-rest, 0.06))), transparent 70%),
+    radial-gradient(var(--glow-r, 42%) var(--glow-r, 42%) at 84% 88%, rgb(168 85 247 / calc(var(--glow-peak, 0.16) - var(--glow-rest, 0.06))), transparent 72%),
+    radial-gradient(calc(var(--glow-r, 42%) * 0.8) calc(var(--glow-r, 42%) * 0.8) at 66% 2%, rgb(255 77 141 / calc(var(--glow-peak, 0.16) - var(--glow-rest, 0.06))), transparent 70%);
+  animation: glow-breathe var(--glow-period, 9s) ease-in-out infinite;
+}
+.share::after {
+  background:
+    radial-gradient(calc(var(--glow-r, 42%) * 1.05) calc(var(--glow-r, 42%) * 1.05) at 12% 18%, rgb(255 138 61 / var(--glow-rest, 0.06)), transparent 72%),
+    radial-gradient(var(--glow-r, 42%) var(--glow-r, 42%) at 88% 82%, rgb(168 85 247 / var(--glow-rest, 0.06)), transparent 70%),
+    radial-gradient(calc(var(--glow-r, 42%) * 0.85) calc(var(--glow-r, 42%) * 0.85) at 62% 6%, rgb(255 77 141 / var(--glow-rest, 0.06)), transparent 72%);
+  animation: glow-drift var(--glow-period-alt, 13s) ease-in-out infinite;
+  animation-delay: calc(var(--glow-period-alt, 13s) / -3);
 }
 
 .share__brand {

@@ -57,6 +57,112 @@
   font-size: 13px;
   color: var(--weak);
 }
+
+/* ── 等待中（`data-state="busy"`）─────────────────────────────────────
+   冷光 = 等模型。卡片本身只加**静态**的冷光描边与外光（不动画 box-shadow），
+   动起来的是顶边的流光细线、进度条上的高光、以及下面那块 `.task__wait`。
+   减少动效时静态那份仍在，「正在生成」照样一眼可读。 */
+
+.task[data-state="busy"] {
+  box-shadow:
+    var(--ring-soft),
+    0 0 0 1px rgb(var(--wait-hue-model) / 0.14),
+    0 14px 44px rgb(var(--wait-hue-model) / 0.07);
+}
+.task[data-state="busy"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, #ff8a3d, #ff4d8d, #a855f7, #ff8a3d);
+  background-size: 200% 100%;
+  animation: wait-flow calc(var(--wait-period) * 2) ease-in-out infinite;
+}
+.task[data-state="busy"] .task__bar {
+  overflow: hidden;
+}
+.task[data-state="busy"] .task__bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 38%, rgba(255, 255, 255, 0.85) 50%, transparent 62%);
+  background-size: 260% 100%;
+  background-position: 130% 0;
+  animation: wait-shimmer calc(var(--wait-period) * 1.5) ease-in-out infinite;
+}
+
+/*
+  成片将要出现的那块位置（16:9）在等待期间不是空的：底色 + 斜向扫光（元素自己的
+  `background-position`）、冷光呼吸（`::before`）、跟着百分比走的扫描线（`::after`，
+  位置取内联的 `--pct`）。有分镜时底部再压一排小条。
+*/
+.task__wait {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 320px;
+  border-radius: 12px;
+  overflow: hidden;
+  background-color: #0e0e11;
+  background-image: linear-gradient(
+    108deg,
+    transparent 34%,
+    rgb(var(--wait-hue-model) / 0.16) 50%,
+    transparent 66%
+  );
+  background-repeat: no-repeat;
+  background-size: 260% 100%;
+  background-position: 130% 0;
+  box-shadow: inset 0 0 0 1px rgb(var(--wait-hue-model) / 0.12);
+  animation: wait-shimmer calc(var(--wait-period) * 2.5) ease-in-out infinite;
+}
+.task__wait::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.28;
+  background:
+    radial-gradient(52% 62% at 50% 52%, rgb(var(--wait-hue-model) / 0.22), transparent 72%),
+    radial-gradient(38% 46% at 78% 26%, rgb(255 143 176 / 0.12), transparent 70%);
+  animation: wait-pulse calc(var(--wait-period) * 2) ease-in-out infinite;
+}
+/* 扫描线：`--pct` 是 0–100 的纯数字，乘 1% 得到位置 */
+.task__wait::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--pct, 0) * 1%);
+  width: 2px;
+  margin-left: -1px;
+  opacity: 0.35;
+  background: linear-gradient(180deg, transparent, rgb(var(--wait-hue-model) / 0.9) 22%, rgb(var(--wait-hue-model) / 0.9) 78%, transparent);
+  animation: wait-pulse var(--wait-period) ease-in-out infinite;
+}
+.task__wait-shots {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 4px;
+}
+.task__wait-shots i {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgb(var(--wait-hue-model) / 0.18);
+}
+.task__wait-shots i[data-done="true"] {
+  background: rgb(var(--wait-hue-model) / 0.85);
+}
+.task__wait-shots i[data-done="false"] {
+  opacity: 0.35;
+  animation: wait-pulse calc(var(--wait-period) * 1.25) ease-in-out infinite;
+}
 .task__media {
   border-radius: 12px;
   overflow: hidden;
@@ -183,6 +289,22 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/*
+  还在跑的那几条：标题前一枚呼吸的冷光小圆点。挂在 `.recent__prompt` 而不是 `li` 上——
+  `li` 里只有一个 `display:flex; width:100%` 的按钮，伪元素挂在外面会在行上挤出一道空白。
+*/
+.recent__item[data-active="true"] .recent__prompt::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  border-radius: 50%;
+  background: rgb(var(--wait-hue-model) / 0.9);
+  opacity: 0.3;
+  animation: wait-pulse var(--wait-period) ease-in-out infinite;
 }
 .recent__meta {
   font-size: 11.5px;

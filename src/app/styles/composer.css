@@ -228,8 +228,36 @@
 .composer__slot[data-state="soon"] .composer__slot-btn {
   color: var(--off);
 }
+/*
+  上传/认领中：骨架扫光 + 冷光呼吸描边。扫光挂在**内层**的 `.composer__slot-btn`
+  （它已经 overflow:hidden），不挂 `.composer__slot`——外层伪元素会盖住右上角那颗
+  `.composer__slot-x` 删除钮。
+*/
 .composer__slot[data-state="busy"] .composer__slot-btn {
-  opacity: 0.6;
+  position: relative;
+  opacity: 0.85;
+}
+.composer__slot[data-state="busy"] .composer__slot-btn::after,
+.composer__ref[data-state="busy"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px rgb(var(--wait-hue-model) / 0.45);
+  background: linear-gradient(
+    108deg,
+    transparent 34%,
+    rgb(var(--wait-hue-model) / 0.28) 50%,
+    transparent 66%
+  );
+  background-repeat: no-repeat;
+  background-size: 260% 100%;
+  background-position: 130% 0;
+  opacity: 0.5;
+  animation:
+    wait-shimmer calc(var(--wait-period) * 1.5) ease-in-out infinite,
+    wait-pulse calc(var(--wait-period) * 1.5) ease-in-out infinite;
 }
 .composer__slot[data-state="error"] .composer__slot-btn {
   box-shadow: inset 0 0 0 1px rgba(255, 155, 155, 0.5);
@@ -454,6 +482,30 @@
 .composer__send:disabled {
   filter: grayscale(0.7);
   opacity: 0.55;
+}
+/*
+  提交中：按钮是 disabled 的，但不能看着像死了——`:disabled` 那条灰化在忙碌态要收回，
+  换成渐变上滑过的一道扫光 + 轻呼吸，读作「请求已经在路上」。
+*/
+.composer__send[data-busy="true"] {
+  position: relative;
+  overflow: hidden;
+  animation: wait-breathe calc(var(--wait-period) * 1.5) ease-in-out infinite;
+}
+.composer__send[data-busy="true"]:disabled {
+  filter: none;
+  opacity: 0.86;
+}
+.composer__send[data-busy="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(104deg, transparent 36%, rgba(255, 255, 255, 0.5) 50%, transparent 64%);
+  background-repeat: no-repeat;
+  background-size: 240% 100%;
+  background-position: 130% 0;
+  animation: wait-shimmer calc(var(--wait-period) * 1.5) ease-in-out infinite;
 }
 .composer__credits {
   display: inline-flex;
@@ -1129,6 +1181,11 @@
 }
 .composer__ref[data-state="busy"] .composer__ref-img {
   opacity: 0.6;
+}
+/* 参考图里没有可挂伪元素的内层（`<img>` 不生成伪元素），扫光只能挂在 `.composer__ref`
+   自己身上，所以删除钮要抬一层，别被盖住点不到。 */
+.composer__ref .composer__slot-x {
+  z-index: 1;
 }
 .composer__ref[data-state="error"] .composer__ref-img {
   box-shadow: inset 0 0 0 1px rgba(255, 155, 155, 0.5);

@@ -78,6 +78,7 @@ export default function AgentAsk(props: Props) {
           type="button"
           className="agent-send"
           aria-label={t("agent.send")}
+          data-busy={busy ? "true" : "false"}
           disabled={busy || !available || !prompt.trim()}
           onClick={onSend}
         >

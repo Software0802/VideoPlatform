@@ -15,7 +15,7 @@
 | 本机 | Windows / PowerShell，Node v24.16.0，pnpm 10.33.0，Next 16.3.3，React 19.2.8 |
 | 生产只读核查 | 阿里云 8.209.212.178，`/opt/genius`；Node v22.22.2，pnpm 10.33.0，Caddy v2.11.4；genius.service active，`User=genius`，MemoryMax 700 MiB；部署后 available 内存 831 MiB、根盘可用 14G；`.env` 640、`data/relays.json` 600，均 genius:genius |
 | 入口 | `https://genius.homeaistack.online`；本地 `pnpm dev` 后访问 `http://localhost:3000`，不用 127.0.0.1（Next dev 可能 403） |
-| 整合门禁 | 2026-09-14 `deploy.sh` 实测：typegen+tsc 0 错、eslint 0、Vitest 117 文件 / 1329 通过 / 1 既有跳过、生产 build 通过、服务器 health 200、公网 `/login` 200。隔离 mock+harness E2E 最近一次为 41/41；deploy.sh 不运行 E2E。仅四个慢用例有局部等待上限调整，未放宽全局或业务超时 |
+| 整合门禁 | 2026-09-14 `deploy.sh` 实测：typegen+tsc 0 错、eslint 0、Vitest 117 文件 / 1329 通过 / 1 既有跳过、生产 build 通过、服务器 health 200、公网 `/login` 200。隔离 mock+harness E2E 最近一次为 45/45（2026-09-15，Linux 本机，含 `e2e/motion.spec.ts` 两条）；deploy.sh 不运行 E2E。仅四个慢用例有局部等待上限调整，未放宽全局或业务超时 |
 | 测试环境 | E2E 使用独立 DATA_DIR、E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1 与独立端口，不读生产密钥、不调用真实上游 |
 | 备份 | root cron 每日 03:17 跑 backup.sh（白名单含 `relays.json`+`assets/`）；2026-09-13 包 `backups/genius-data-20260913-211416.tgz` 已做首次真实恢复核对并一致，未做完整切换恢复；生产 OSS 变量与完整恢复演练仍待执行 |
 
@@ -53,6 +53,7 @@ Windows 本机的 mock 视频/ffmpeg、通知原子写入与 relay 首次动态�
 - **画布**：四类节点、连线输入、拖拽与保存冲突二选一；单节点或整图运行复用 createJob。总价冻结、逐节点转移份额、人工审批、内容寻址复用；审批 24h/排队 1h 超时收敛，已清产物不暗中重生成。
 - **R0 素材修复**：保存素材时复制为独立 assetId，首次认领起 30 天，保存/重放不续期；刷新仍可预览，到期或缺失提示重新上传。启动在 tmp 清理前保护旧素材，缺原件标 missing；活动 run 的冻结图、报价与资金台账不被迁移改写。
 - **归档留存**：`ARCHIVE_INACTIVE_DAYS`（默认 90，0 关闭）由 runner 每小时维护执行：不活跃且无活动轮次的会话与非最新、无 running run 的画布写 `archivedAt`（列表默认排除，已归档会话发新一轮自动恢复）；终态 run 移入 `canvas-runs/<user>/archive/`（详情可读，泵/资金扫描/幂等查找不再读它）。永不删文件、不动资金字段。backup.sh 白名单已加 `prefs/`；`canvas-runs/` 递归含 archive。
+- **呼吸灯与等待特效**：`.shell`（含登录页、分享页、画布）叠两层 fixed 伪元素做整站背景呼吸灯，令牌与 keyframes 集中在 `src/app/globals.css`（`--glow-*`/`--wait-*`）；创作页任务卡、创作面板发送钮/图片槽、智能体思考态与任务卡、画布节点/连线/运行中态统一用冷光表示「等模型」、琥珀表示「等人工审批」，`prefers-reduced-motion` 时全部收敛为静止态，规格见 `DESIGN.md`「圆角 / 高度 / 阴影 / 动效」。
 - **R0 工程修复**：CI/部署 typecheck 前补 next typegen；备份加入 relay 配置与素材；画布 e2e 每段独立文档、断言真实 409；AGENTS 瘦身并保留 Next 受管理块，文档索引与大小有自动回归检查。收口时额外修复 relay probe 的付费 POST 默认重试风险：显式 maxAttempts:1；billed:false 只表示平台不记账，上游仍可能收费，本轮未运行真实探针。
 
 模板种子在 `data-seed/templates`；新 DATA_DIR 首次使用需复制到 `data/templates`，部署脚本在目标不存在时落种，不覆盖既有模板。资金迁移基线与备份仍在服务器 `/opt/genius/migrate-baselines/`、`/opt/genius/data.bak.20260912-150535`，不得未经确认清理。

@@ -29,7 +29,7 @@ import { errorText } from "@/lib/i18n/errorText";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { ConflictDialog } from "./ConflictDialog";
 import { FIT_PAD_X, FIT_PAD_Y, LABEL_H, NODE_W, SCENE_H, SCENE_W } from "./data";
-import { NodeCard } from "./NodeCard";
+import { NodeCard, waitStateOf } from "./NodeCard";
 import { QuoteDialog, RunBar } from "./QuoteDialog";
 import { useCanvasPolling } from "./useCanvasPolling";
 import {
@@ -539,6 +539,15 @@ export default function CanvasView() {
   const materialMissing = (node: CanvasNode) => node.assetState === "missing" || node.assetState === "expired" ||
     missingMaterials.has(node.assetId ?? node.uploadId ?? "");
   const nodeById = (id: string) => doc?.nodes.find((n) => n.id === id);
+  /*
+    D 包 overlay：节点显示最近一次 run 的执行产物，没有 run 记录时回退手动运行的
+    `node.jobId`。节点卡与连线都要按它算「在不在等模型」，所以提到这里共用一份。
+  */
+  const jobOfNode = (node: CanvasNode) => {
+    const jid = execOf(node.id)?.jobId ?? node.jobId;
+    return jid ? jobs[jid] : undefined;
+  };
+  const waitOfNode = (node: CanvasNode) => waitStateOf(execOf(node.id), jobOfNode(node), running.has(node.id));
   const inputOf = (nodeId: string) => doc?.edges.find((e) => e.to === nodeId)?.from ?? "";
   const candidatesFor = (node: CanvasNode) =>
     (doc?.nodes ?? []).filter(
@@ -550,6 +559,7 @@ export default function CanvasView() {
       className="canvas-view"
       ref={rootRef}
       tabIndex={-1}
+      data-running={latestRun?.status === "running" ? "true" : undefined}
       onContextMenu={onContextMenu}
       style={{ backgroundSize: `${Math.round(22 * scale)}px ${Math.round(22 * scale)}px` }}
     >
@@ -582,7 +592,12 @@ export default function CanvasView() {
                   const x2 = to.x;
                   const y2 = to.y + LABEL_H + 40;
                   return (
-                    <path key={e.id} d={`M${x1} ${y1} C ${x1 + 50} ${y1} ${x2 - 50} ${y2} ${x2} ${y2}`} />
+                    <path
+                      key={e.id}
+                      /* 目标节点在等模型时，这根线走流动虚线：一眼看出「哪一段正在跑」 */
+                      data-wait={waitOfNode(to) === "model" ? "model" : undefined}
+                      d={`M${x1} ${y1} C ${x1 + 50} ${y1} ${x2 - 50} ${y2} ${x2} ${y2}`}
+                    />
                   );
                 })}
               </g>
@@ -605,13 +620,7 @@ export default function CanvasView() {
                   fileRef.current?.click();
                 }}
                 onImageError={() => setMissingMaterials((current) => new Set(current).add(node.assetId ?? node.uploadId!))}
-                job={(() => {
-                  // D 包 overlay：节点显示最近一次 run 的执行产物，没有 run
-                  // 记录时回退手动运行的 node.jobId。
-                  const exec = execOf(node.id);
-                  const jid = exec?.jobId ?? node.jobId;
-                  return jid ? jobs[jid] : undefined;
-                })()}
+                job={jobOfNode(node)}
                 exec={execOf(node.id)}
                 running={running.has(node.id)}
                 inputOf={inputOf(node.id)}

@@ -29,8 +29,38 @@
   height: 100%;
   overflow: hidden;
   background-color: var(--cv-ground);
-  background-image: radial-gradient(rgba(255, 255, 255, 0.075) 1px, transparent 1px);
+  isolation: isolate;
   animation: canvas-fade-up 0.35s ease both;
+}
+
+/*
+  画布的底不是壳的底（`--cv-ground` 不透明），壳的呼吸灯照不进来，所以这一层自己长一份。
+
+  点阵原本是 `.canvas-view` 的 `background-image`，现在挪到 `::after`：宿主的背景永远画在
+  伪元素**之下**，不搬的话呼吸色会盖在点阵上面。`background-size: inherit` 继承宿主那条
+  内联样式（`CanvasView.tsx` 按 `scale` 实时算的点距），所以组件一行都不用改，缩放时点阵
+  照样跟着变。两层都 `z-index: -1`，靠 DOM 序保证 `::after`（点阵）压在 `::before`（呼吸色）上。
+*/
+.canvas-view::before,
+.canvas-view::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+.canvas-view::before {
+  inset: -10%;
+  background:
+    radial-gradient(var(--glow-r) var(--glow-r) at 14% 14%, rgb(255 138 61 / var(--glow-rest)), transparent 72%),
+    radial-gradient(var(--glow-r) var(--glow-r) at 86% 84%, rgb(168 85 247 / var(--glow-rest)), transparent 70%),
+    radial-gradient(calc(var(--glow-r) * 0.85) calc(var(--glow-r) * 0.85) at 64% 4%, rgb(255 77 141 / var(--glow-rest)), transparent 72%);
+  animation: glow-drift var(--glow-period-alt) ease-in-out infinite;
+  will-change: transform;
+}
+.canvas-view::after {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.075) 1px, transparent 1px);
+  background-size: inherit;
 }
 
 /* 归零控件的 UA 样式；:where() 保证权重为 0，不会盖掉下面单类名规则里的 background。 */
@@ -1083,6 +1113,93 @@
 .canvas-node__exec[data-exec="blocked"] { color: #a1a1aa; }
 .canvas-node__exec[data-exec="awaiting_approval"] { color: #fbbf24; }
 .canvas-node__exec[data-exec="reused"] { color: #34d399; }
+
+/* ---------- 等待特效：等模型 = 冷光波纹，等人批准 = 琥珀慢呼吸 ---------- */
+
+/*
+  两种等待要一眼分得开，所以只有「模型在跑」才有波纹——「等我批准」是静态的暖光描边 +
+  很慢的呼吸，因为它等的是人，不是机器。
+
+  波纹从 `top: 22px` 起（标签条 16px + 6px 间距），正好圈住 `.canvas-node__body`；
+  `pointer-events: none` 必须留着，否则会吃掉拖拽与 textarea 的点击。
+  描边是**静态**的，减少动效时「这个节点在跑」照样看得见。
+*/
+.canvas-node[data-wait="model"] .canvas-node__body {
+  box-shadow: inset 0 0 0 1px rgb(var(--wait-hue-model) / 0.45);
+}
+.canvas-node[data-wait="model"]::before,
+.canvas-node[data-wait="model"]::after {
+  content: "";
+  position: absolute;
+  inset: 22px 0 0;
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 0;
+  animation: wait-ripple calc(var(--wait-period) * 2) ease-in-out infinite;
+}
+.canvas-node[data-wait="model"]::before {
+  box-shadow: 0 0 0 1px rgb(var(--wait-hue-model) / 0.75);
+}
+/* 第二圈错相半个周期，并换成粉：冷光 → 粉，和创作页的流光同一套配色 */
+.canvas-node[data-wait="model"]::after {
+  box-shadow: 0 0 0 1px rgb(255 143 176 / 0.6);
+  animation-delay: calc(var(--wait-period) * -1);
+}
+
+.canvas-node[data-wait="approval"] .canvas-node__body {
+  box-shadow: inset 0 0 0 1px rgb(var(--wait-hue-approval) / 0.5);
+}
+.canvas-node[data-wait="approval"]::before {
+  content: "";
+  position: absolute;
+  inset: 22px 0 0;
+  border-radius: 10px;
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgb(var(--wait-hue-approval) / 0.55), 0 0 22px rgb(var(--wait-hue-approval) / 0.12);
+  opacity: 0.28;
+  animation: wait-pulse 4s ease-in-out infinite;
+}
+
+/* 目标节点在等模型的那几根连线：虚线朝目标方向流动（往返，两端同帧） */
+.canvas-wires path[data-wait="model"] {
+  stroke: rgb(var(--wait-hue-model) / 0.8);
+  stroke-dasharray: 6 10;
+  animation: wires-flow calc(var(--wait-period) * 1.5) ease-in-out infinite;
+}
+@keyframes wires-flow {
+  0%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dashoffset: -16;
+  }
+}
+
+/* 整图运行中：底光提亮 + 运行钮所在的浮层下沿一条流光细线 + 「取消运行」轻呼吸 */
+.canvas-view[data-running="true"]::before {
+  background:
+    radial-gradient(var(--glow-r) var(--glow-r) at 14% 14%, rgb(255 138 61 / calc(var(--glow-rest) * 1.6)), transparent 72%),
+    radial-gradient(var(--glow-r) var(--glow-r) at 86% 84%, rgb(var(--wait-hue-model) / calc(var(--glow-rest) * 2)), transparent 70%),
+    radial-gradient(calc(var(--glow-r) * 0.85) calc(var(--glow-r) * 0.85) at 64% 4%, rgb(255 77 141 / calc(var(--glow-rest) * 1.6)), transparent 72%);
+}
+.canvas-view[data-running="true"] .canvas-topright::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -6px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, #ff8a3d, #ff4d8d, #a855f7, #ff8a3d);
+  background-size: 200% 100%;
+  animation: wait-flow calc(var(--wait-period) * 2) ease-in-out infinite;
+}
+.canvas-view[data-running="true"] .canvas-topright__btn {
+  color: var(--cv-fg);
+  box-shadow: inset 0 0 0 1px rgb(var(--wait-hue-model) / 0.35);
+  animation: wait-breathe calc(var(--wait-period) * 1.5) ease-in-out infinite;
+}
 
 /* D 切片二：审批门按钮 + 报价弹层勾选 */
 .canvas-node__approverow { display: flex; gap: 6px; margin-top: 6px; }

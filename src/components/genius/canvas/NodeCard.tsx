@@ -28,6 +28,30 @@ const EXEC_ERR_KEYS = new Set([
 ]);
 
 /**
+ * 这个节点此刻在等谁：`model` 等上游出片（冷光波纹），`approval` 等人批准（琥珀慢呼吸）。
+ *
+ * 判据分三处取，因为每处各只看得见一段：
+ * - `exec`：整图 run 的执行位。`ready` 是「已排进这次 run、等着提交」，`running` 是
+ *   「已提交、上游在跑」——两者都算在等模型。run 轮询 3 秒一次而 mock 3.5 秒出片，
+ *   实测客户端多数时候看到的就是 `ready`，只认 `running` 等于绝大部分时间什么都不显示。
+ *   `waiting_dependencies` 不算：它等的是上游那个节点，而上游自己会亮，连线也会指过来。
+ * - `job`：真正的任务记录，非终态即在跑。手动单跑的节点只有它。
+ * - `running`：本地刚点下「运行」、任务号还没回来的那一小段。
+ *
+ * 连线（`CanvasView` 里的 `.canvas-wires path`）要和节点用同一份判据，所以导出。
+ */
+export function waitStateOf(
+  exec: CanvasNodeExecution | undefined,
+  job: JobPublic | undefined,
+  running: boolean,
+): "model" | "approval" | undefined {
+  if (exec?.status === "awaiting_approval") return "approval";
+  if (exec?.status === "ready" || exec?.status === "running" || running) return "model";
+  if (job && !TERMINAL.has(job.status)) return "model";
+  return undefined;
+}
+
+/**
  * 单个画布节点卡（R5.3 自 CanvasView 拆出）：标签条 + 三类正文
  * （便签 / 素材 / 生成）。回调全部经 props，不读 ShellContext 以外的状态。
  */
@@ -72,6 +96,7 @@ export function NodeCard({
     <div
       className="canvas-node"
       data-kind={node.kind}
+      data-wait={waitStateOf(exec, job, running)}
       style={{ left: node.x, top: node.y, width: NODE_W }}
     >
       <span

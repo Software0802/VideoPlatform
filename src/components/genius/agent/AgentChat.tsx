@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n, useT } from "@/components/genius/i18n/I18nProvider";
 import { creditsOf } from "@/components/genius/ShellContext";
 import type { AgentChatModel, AgentSessionDetail, AgentSkill, AgentTier } from "@/lib/client/agent";
+import { isActive } from "@/lib/client/labels";
 import type { Product } from "@/lib/client/models";
 import type { JobPublic } from "@/lib/jobs/schema";
 import AgentPickers, { type PickerPop } from "./AgentPickers";
@@ -53,6 +54,22 @@ type Props = {
   /** 设 / 解除会话预算（元）；`null` 解除。 */
   onBudget: (cny: number | null) => void;
 };
+
+/**
+ * 「还在等模型」的三个小点（依次起伏，纯 CSS）。
+ *
+ * 放在文字**里面**而不是气泡里：`.agent-chat__text` 的 `textContent` 不变（这三个 `<i>`
+ * 一个字符都不带），e2e 现有的 `.not.toBeEmpty()` 断言与读屏播报都不受影响。
+ */
+function WaitDots() {
+  return (
+    <>
+      <i className="agent-chat__dot" aria-hidden="true" />
+      <i className="agent-chat__dot" aria-hidden="true" />
+      <i className="agent-chat__dot" aria-hidden="true" />
+    </>
+  );
+}
 
 const TABS = ["all", "image", "video"] as const;
 type Tab = (typeof TABS)[number];
@@ -193,7 +210,10 @@ export default function AgentChat(props: Props) {
                       </span>
                     ) : null}
                     {session?.turns.find((x) => x.id === m.id)?.status === "executing" ? (
-                      <span className="agent-chat__proposal-state">{t("agent.approved")}</span>
+                      <span className="agent-chat__proposal-state" data-executing="true">
+                        <WaitDots />
+                        {t("agent.approved")}
+                      </span>
                     ) : (
                       <span className="agent-chat__proposal-actions">
                         <button
@@ -229,6 +249,8 @@ export default function AgentChat(props: Props) {
                           className="agent-chat__job"
                           data-job-id={ref.jobId}
                           data-kind={ref.kind}
+                          /* 这条任务还没到终态：卡片下沿走一道流光，和创作页同一套语言 */
+                          data-active={job && isActive(job.status) ? "true" : undefined}
                           disabled={!job}
                           onClick={() => (job ? setPicked(job.id) : undefined)}
                         >
@@ -277,7 +299,10 @@ export default function AgentChat(props: Props) {
             <>
               <span className="agent-chat__bubble">{pendingText}</span>
               <div className="agent-chat__answer" data-thinking="true">
-                <span className="agent-chat__text">{t("agent.thinking")}</span>
+                <span className="agent-chat__text">
+                  <WaitDots />
+                  {t("agent.thinking")}
+                </span>
               </div>
             </>
           ) : null}
@@ -371,6 +396,7 @@ export default function AgentChat(props: Props) {
               type="button"
               className="agent-chat__send"
               aria-label={t("agent.send")}
+              data-busy={busy ? "true" : "false"}
               disabled={busy || !available || !draft.trim()}
               onClick={send}
             >
