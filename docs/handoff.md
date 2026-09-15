@@ -8,14 +8,14 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 代码基线 | `main`/`origin/main` = `0359830`（已推送）：`3daf565` 通知覆盖画布 run 与智能体轮次、`031c7c2` 技能开关账号级持久化（`data/prefs/`）、`315818c` 会话/画布/终态 run 归档（`ARCHIVE_INACTIVE_DAYS`）、`8b5282f`+`0359830` 发布目录化 deploy 脚本（R1.4）、`3942ae3` 文档。精确 SHA 用 `git rev-parse HEAD origin/main` 核对 |
-| 生产版本依据 | 生产 = `0359830` 构建，`current -> releases/0359830-20260914-234013`，`PREVIOUS=legacy-13fb9ee`（2026-09-15 部署 + 双向回滚演练通过，runbook「部署」节含事故记录）。以下为上一版 `13fb9ee` 的部署记录：2026-09-14 `deploy.sh` 单次全流程通过：本地门禁、build、上传、服务器 `pnpm install --prod --frozen-lockfile`、Turbopack 原生包别名、重启与 health 轮询均成功；`/opt/genius/BUILD_INFO.json` 为 `shortSha:13fb9ee`、`dirty:false`，公网匿名 health 200 `{"ok":true}`。登录态 `GET /api/health` 的 `build.sha` 本轮无生产会话，未核对 |
+| 代码基线 | `main`/`origin/main` = `83065c7`（已推送）：`315818c` 会话/画布/终态 run 归档（`ARCHIVE_INACTIVE_DAYS`）、`8b5282f`+`0359830` 发布目录化 deploy 脚本（R1.4）、`6cc1611` 全仓审查报告（`docs/review-2026-09-15.md`）、`d8d326c`+`5087706` 整站背景呼吸灯与等待特效、`83065c7` 令牌文档对齐。精确 SHA 用 `git rev-parse HEAD origin/main` 核对 |
+| 生产版本依据 | 生产 = `83065c7` 构建，`current -> releases/83065c7-20260915-134029`，`PREVIOUS=0359830-20260914-234013`；`releases/` 保留三份（另有 `legacy-13fb9ee`）。2026-09-15 `deploy.sh` 单次全流程通过：本地门禁、build（包 22M）、上传、服务器 `pnpm install --prod --frozen-lockfile`（84 包，2.6s）、Turbopack 原生包别名（sharp / ffmpeg-static）、`mv -T` 原子切链、重启与 health 轮询均成功，服务 active、本机 health 200 `ok=true`，公网 `/login` 200。浏览器实测公网登录页呼吸灯生效（`glow-breathe` 6s / `glow-drift` 10s，`--glow-peak=.4`、`--glow-rest=.14`）。登录态 `GET /api/health` 的 `build.sha` 本轮无生产会话，未核对；`/opt/genius/BUILD_INFO.json` 的内容未在服务器上回读，本地生成值为 `shortSha:83065c7`、`dirty:false` |
 | 生产配置 | `/opt/genius/.env` 已配置 7 条 `AGENT_CHAT_MODELS`，默认 `gpt-5.6-luna`；`YMAN_T2V_MODEL=minimax_h3`。更新前状态备份为 `.env.bak.20260914-220732`，当前与备份均为 genius:genius 640 |
 | 生产 relay | `data/relays.json` 于 2026-09-14 首次创建，仅含 `yman` 文件条目：`catalog.source=models-endpoint`，24 个模型配置（15 视频：13 定价 + 2 hidden；9 图片已定价），默认 t2v=`minimax_h3`、i2v/r2v=`minimax-h3-933-图文`、image=`gpt-image-2`。`data/relay-catalog/yman.json` 已自动生成 24 模型快照 |
 | 本机 | Windows / PowerShell，Node v24.16.0，pnpm 10.33.0，Next 16.3.3，React 19.2.8 |
 | 生产只读核查 | 阿里云 8.209.212.178，`/opt/genius`；Node v22.22.2，pnpm 10.33.0，Caddy v2.11.4；genius.service active，`User=genius`，MemoryMax 700 MiB；部署后 available 内存 831 MiB、根盘可用 14G；`.env` 640、`data/relays.json` 600，均 genius:genius |
 | 入口 | `https://genius.homeaistack.online`；本地 `pnpm dev` 后访问 `http://localhost:3000`，不用 127.0.0.1（Next dev 可能 403） |
-| 整合门禁 | 2026-09-14 `deploy.sh` 实测：typegen+tsc 0 错、eslint 0、Vitest 117 文件 / 1329 通过 / 1 既有跳过、生产 build 通过、服务器 health 200、公网 `/login` 200。隔离 mock+harness E2E 最近一次为 45/45（2026-09-15，Linux 本机，含 `e2e/motion.spec.ts` 两条）；deploy.sh 不运行 E2E。仅四个慢用例有局部等待上限调整，未放宽全局或业务超时 |
+| 整合门禁 | 2026-09-15 `deploy.sh` 实测（`83065c7`）：typegen+tsc 0 错、eslint 0、Vitest 120 文件全通过、生产 build 通过、服务器 health 200、公网 `/login` 200。隔离 mock+harness E2E 同日 45/45（Windows 本机，`E2E_PORT=3100`，含 `e2e/motion.spec.ts` 两条，4.0 分钟）；deploy.sh 不运行 E2E。同日另有两次偶发假红需注意：`tsc` 会被过期的 `.next/dev/types` 打红（review B-01，处方未落地，清掉该目录即绿），`run-graph.test.ts` 的 `beforeAll` 在机器忙时 10s 超时、单跑 35/35 绿（与 B-03 的 `relay.test.ts` 是两个不同的偶发源）。仅四个慢用例有局部等待上限调整，未放宽全局或业务超时 |
 | 测试环境 | E2E 使用独立 DATA_DIR、E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1 与独立端口，不读生产密钥、不调用真实上游 |
 | 备份 | root cron 每日 03:17 跑 backup.sh（白名单含 `relays.json`+`assets/`）；2026-09-13 包 `backups/genius-data-20260913-211416.tgz` 已做首次真实恢复核对并一致，未做完整切换恢复；生产 OSS 变量与完整恢复演练仍待执行 |
 

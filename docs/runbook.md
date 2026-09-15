@@ -42,7 +42,7 @@ cd /opt/genius && sudo -u genius node scripts/mint-invites.mjs 1
 bash scripts/deploy.sh
 ```
 
-`deploy.sh` 的行为（本地段 R1.3 起，远端段 R1.4 于 `8b5282f`/`0359830` 改为 release 目录；**生产已于 2026-09-15 完成布局迁移与一次双向回滚演练**，现状：`current -> releases/0359830-20260914-234013`，`PREVIOUS=legacy-13fb9ee`）：
+`deploy.sh` 的行为（本地段 R1.3 起，远端段 R1.4 于 `8b5282f`/`0359830` 改为 release 目录；**生产已于 2026-09-15 完成布局迁移与一次双向回滚演练**，现状：`current -> releases/83065c7-20260915-134029`，`PREVIOUS=0359830-20260914-234013`，`releases/` 另存 `legacy-13fb9ee`）：
 
 - **门禁不可跳过**：上传前依次跑 `pnpm exec next typegen && pnpm exec tsc --noEmit`、`pnpm exec eslint src e2e scripts`、`pnpm test`，任一非零即中止。`--no-build` 只跳过 `pnpm build`，不跳过门禁；不再有 `--skip-check`。
 - **脏工作树默认拒绝**：`git status --porcelain` 非空则打印 diffstat 并以退出码 2 中止；确需发布未提交改动用 `--allow-dirty`（release id 以 `-dirty` 结尾）。
