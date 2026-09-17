@@ -1,5 +1,5 @@
 import type { JobPublic } from "@/lib/jobs/schema";
-import { ApiError, parseAuthed, redirectToLogin } from "@/lib/client/http";
+import { ApiError, parseAuthed, pollTimeoutSignal, redirectToLogin } from "@/lib/client/http";
 
 /**
  * Browser-side wrappers over /api/*. A 401 now means the session expired, so
@@ -47,7 +47,8 @@ export async function createJob(body: Record<string, unknown>): Promise<JobPubli
 }
 
 export async function fetchJob(id: string): Promise<JobPublic | null> {
-  const res = await fetch(`/api/jobs/${id}`, { cache: "no-store" });
+  // 带超时：这是轮询链上的一环，一次永不 settle 的请求会把整条链掐断（见 http.ts）。
+  const res = await fetch(`/api/jobs/${id}`, { cache: "no-store", signal: pollTimeoutSignal() });
   if (res.status === 401) {
     redirectToLogin();
     throw new ApiError("会话已过期，请重新登录", 401, "unauthorized");

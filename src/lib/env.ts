@@ -594,6 +594,22 @@ export function upstreamTimeoutMs(): number {
 }
 
 /**
+ * 响应**体**的静默上限：两个数据块之间最多允许多久没有动静。
+ *
+ * `UPSTREAM_TIMEOUT_MS` 只管到响应头到达为止——成片下载（几十 MB 的 mp4）真正耗时的是
+ * 之后的流式读取，而 Node 的 fetch 对已经建立的连接没有空闲超时。上游中途不发数据又不
+ * 断开时，`persist` 会永远停在那一行：任务卡在 `persisting` 这个非终态，界面上的节点/
+ * 任务卡就一直转圈，刷新也没用（服务端记录本来就是非终态）。
+ *
+ * 判据是「静默」而不是总时长：慢但一直在传的大文件不该被打断，完全不动的连接必须放弃。
+ * 默认 60 秒，上限 10 分钟。
+ */
+export function upstreamBodyIdleMs(): number {
+  const n = Number(process.env.UPSTREAM_BODY_IDLE_MS ?? 60_000);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 10 * 60_000) : 60_000;
+}
+
+/**
  * Harness 的 LLM 调用（Director 规划 / 视觉 QC）独立超时：Director 要一次产出整份
  * 长片计划，实测 gpt-5.6-luna 经常超过通用 `UPSTREAM_TIMEOUT_MS` 的 30s 默认值。
  * 默认 120s，上限 5 分钟。

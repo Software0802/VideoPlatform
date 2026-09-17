@@ -36,6 +36,25 @@ export function redirectToLogin(): void {
   window.location.assign("/login");
 }
 
+/**
+ * 轮询类请求的超时信号。
+ *
+ * 浏览器这边一次 `fetch` 没有默认时限：弱网或中间代理吞包时它既不 resolve 也不 reject。
+ * 任务页的轮询是「上一拍回来才排下一拍」的链，一次永不 settle 的请求会把整条链静悄悄
+ * 掐断——成片早就好了，界面还在转圈，只有刷新才恢复。给这类请求一个上限，超时按普通
+ * 失败处理（下一拍照常继续）。
+ *
+ * `AbortSignal.timeout` 在老浏览器上可能没有；拿不到就返回 undefined，行为与从前一致，
+ * 绝不能因为探测失败把轮询本身弄崩。
+ */
+export function pollTimeoutSignal(ms = 20_000): AbortSignal | undefined {
+  try {
+    return AbortSignal.timeout?.(ms);
+  } catch {
+    return undefined;
+  }
+}
+
 type ErrorEnvelope = { error?: { code?: string; message?: string } };
 
 /** `{error:{code,message}}` in, `ApiError` out. Leaves 401 to the caller. */

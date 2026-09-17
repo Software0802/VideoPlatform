@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { grokApiKey, upstreamRetryBaseMs, upstreamTimeoutMs, xaiBase } from "@/lib/env";
+import { grokApiKey, upstreamBodyIdleMs, upstreamRetryBaseMs, upstreamTimeoutMs, xaiBase } from "@/lib/env";
 import { ProviderHttpError } from "@/lib/providers/types";
 
 export function xaiHeaders(json = true): Record<string, string> {
@@ -47,7 +47,54 @@ const MAX_ATTEMPTS = 3;
  * `maxAttempts: 1` disables the transient-status retry, for upstreams that bill per accepted
  * request: a retried POST there is a second charge, not a free second chance.
  */
-export type FetchUpstreamOptions = { timeoutMs?: number; maxAttempts?: number };
+export type FetchUpstreamOptions = {
+  timeoutMs?: number;
+  maxAttempts?: number;
+  /** 响应体两块数据之间允许的最长静默；默认 `UPSTREAM_BODY_IDLE_MS`。 */
+  bodyIdleMs?: number;
+};
+
+/**
+ * 给响应体装一个静默看门狗。
+ *
+ * `timeoutMs` 那只定时器在响应头到达时就被 `finally` 清掉了，此后读取响应体没有任何
+ * 时限——上游发完头就不再发数据、也不断开时，调用方会永远停在 `await`：JSON 轮询停在
+ * `res.json()`、成片下载停在 `pipeline()`，任务于是永远停在 `pending` / `persisting`
+ * 这类非终态上，界面一直转圈且刷新无效（服务端记录本来就没到终态）。
+ *
+ * 判据是「两块数据之间的间隔」而不是总时长：慢而持续的大文件不该被打断，完全不动的
+ * 连接必须放弃。超时即 abort 原始请求，调用方拿到的是流上的错误，与「读超时」同类。
+ */
+function watchBodyIdle(res: Response, abort: () => void, idleMs: number): Response {
+  if (!res.body) return res;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(abort, idleMs);
+    timer.unref?.();
+  };
+  const disarm = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+  };
+  arm();
+  const monitored = res.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        arm();
+        controller.enqueue(chunk);
+      },
+      // 正常读完即撤防。读到一半被取消 / 出错时定时器仍会到点，但那时请求早已结束，
+      // `abort()` 是空操作；定时器 unref 过，也不会拖住进程。
+      flush: disarm,
+    }),
+  );
+  return new Response(monitored, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
+}
 
 export async function fetchUpstream(
   url: string,
@@ -55,6 +102,7 @@ export async function fetchUpstream(
   opts?: FetchUpstreamOptions,
 ): Promise<Response> {
   const timeoutMs = opts?.timeoutMs ?? upstreamTimeoutMs();
+  const bodyIdleMs = opts?.bodyIdleMs ?? upstreamBodyIdleMs();
   const maxAttempts = Math.max(1, Math.floor(opts?.maxAttempts ?? MAX_ATTEMPTS));
   let lastError: unknown;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -63,7 +111,8 @@ export async function fetchUpstream(
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
       if (!RETRYABLE_STATUS.has(response.status) || attempt === maxAttempts - 1) {
-        return response;
+        // 交出去之前把看门狗接到响应体上：头到了不等于数据会来。
+        return watchBodyIdle(response, () => controller.abort(), bodyIdleMs);
       }
       try {
         await response.body?.cancel();

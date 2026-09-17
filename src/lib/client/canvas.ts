@@ -1,5 +1,5 @@
 import type { JobPublic } from "@/lib/jobs/schema";
-import { parseAuthed } from "@/lib/client/http";
+import { parseAuthed, pollTimeoutSignal } from "@/lib/client/http";
 
 /**
  * `/api/canvases/*` 的浏览器侧入口（C 包）。与服务端 schema 同形的镜像类型，
@@ -221,7 +221,10 @@ export async function createCanvasRunApi(input: {
 }
 
 export async function fetchCanvasRun(runId: string): Promise<CanvasRun | null> {
-  const res = await fetch(`/api/canvas-runs/${runId}`, { cache: "no-store" });
+  const res = await fetch(`/api/canvas-runs/${runId}`, {
+    cache: "no-store",
+    signal: pollTimeoutSignal(),
+  });
   if (res.status === 404) return null;
   const data = await parseAuthed<{ run?: CanvasRun }>(res, "无法读取运行状态");
   return data.run ?? null;

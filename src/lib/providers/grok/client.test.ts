@@ -7,6 +7,7 @@ const ENV_KEYS = [
   "XAI_BASE_URL",
   "UPSTREAM_TIMEOUT_MS",
   "UPSTREAM_RETRY_BASE_MS",
+  "UPSTREAM_BODY_IDLE_MS",
 ] as const;
 
 afterEach(() => {
@@ -119,4 +120,81 @@ describe("Grok REST client", () => {
     );
     await expect(Promise.race([deleteXaiFile("file-hung"), testTimeout])).resolves.toBeUndefined();
   });
+});
+
+describe("响应体的静默看门狗", () => {
+  /*
+    真实事故形状（2026-09-17）：上游把响应头发过来、然后不再发数据也不断开。
+    `UPSTREAM_TIMEOUT_MS` 那只定时器在响应头到达时就被清掉了，此后读响应体没有任何时限，
+    于是成片下载永远停在 `pipeline()`、任务永远停在 `persisting`——界面上的画布节点 /
+    任务卡一直转圈，刷新也没用，因为服务端记录本来就没到终态。
+  */
+
+  /** 一个「发了头、然后装死」的响应；只有 abort 能把它叫醒（与 undici 的行为一致）。 */
+  function stalledFetch(firstChunk?: string) {
+    return vi.fn(async (_url: string, init: RequestInit) => {
+      const signal = init.signal as AbortSignal | undefined;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (firstChunk) controller.enqueue(new TextEncoder().encode(firstChunk));
+          signal?.addEventListener("abort", () => {
+            controller.error(new DOMException("The operation was aborted.", "AbortError"));
+          });
+          // 之后既不 enqueue 也不 close：这就是「卡住」。
+        },
+      });
+      return new Response(body, { status: 200 });
+    });
+  }
+
+  it("读到一半不再来数据 → 按静默上限放弃，而不是永远挂着", async () => {
+    process.env.SUB2API_API_KEY = "sk-test";
+    process.env.XAI_BASE_URL = "http://127.0.0.1:8080/v1";
+    process.env.UPSTREAM_BODY_IDLE_MS = "60";
+    vi.stubGlobal("fetch", stalledFetch('{"partial":'));
+
+    const { fetchUpstream } = await import("./client");
+    const res = await fetchUpstream("http://127.0.0.1:8080/v1/files/f1/content", {});
+    // 头已经到了——原来的超时到此为止，问题全在下面这一步。
+    expect(res.status).toBe(200);
+    await expect(res.text()).rejects.toThrow();
+  }, 10_000);
+
+  it("一个字节都不来时，轮询调用会在静默上限内返回而不是永远挂着", async () => {
+    process.env.SUB2API_API_KEY = "sk-test";
+    process.env.XAI_BASE_URL = "http://127.0.0.1:8080/v1";
+    process.env.UPSTREAM_BODY_IDLE_MS = "60";
+    vi.stubGlobal("fetch", stalledFetch());
+
+    // `grokGet` 对读体失败是 `.catch(() => ({}))`——空对象等于「这拍没读到状态」，
+    // 轮询下一拍再来，`pollUntilDone` 的总时限也才有机会生效。要点是它**返回了**：
+    // 修复前这一行会永远停在这里，任务于是永远停在 pending / persisting。
+    const started = Date.now();
+    await expect(grokGet("/videos/xyz")).resolves.toEqual({});
+    expect(Date.now() - started).toBeLessThan(5_000);
+  }, 10_000);
+
+  it("一直在传的慢响应不受影响（每次数据都续上看门狗）", async () => {
+    process.env.SUB2API_API_KEY = "sk-test";
+    process.env.XAI_BASE_URL = "http://127.0.0.1:8080/v1";
+    process.env.UPSTREAM_BODY_IDLE_MS = "120";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const parts = ['{"status"', ':"succeeded"', "}"];
+        const body = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            for (const part of parts) {
+              await new Promise((r) => setTimeout(r, 60));
+              controller.enqueue(new TextEncoder().encode(part));
+            }
+            controller.close();
+          },
+        });
+        return new Response(body, { status: 200 });
+      }),
+    );
+
+    await expect(grokGet("/videos/xyz")).resolves.toMatchObject({ status: "succeeded" });
+  }, 10_000);
 });
