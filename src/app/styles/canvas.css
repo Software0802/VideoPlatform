@@ -1401,11 +1401,66 @@
 .canvas-node__deadline { font-size: 11px; color: var(--cv-fg-3); }
 
 /*
+  节点标签条是拖拽手柄：触屏上必须自己吃掉手势，否则一划就变成滚动画布，节点纹丝不动
+  （review 2026-09-15 U-02 / C-22）。删除钮在它里面，得把手势还回去。
+*/
+.canvas-node__label {
+  touch-action: none;
+}
+:where(.canvas-node__label) :where(button) {
+  touch-action: auto;
+}
+
+/*
+  没有 hover 的设备（触屏）：删除钮原来只在 `.canvas-node:hover` 时才显形，手机上等于
+  没有删除入口；同时把几个最小的控件抬到能点的尺寸（review 2026-09-15 U-02）。
+  视觉尺寸只在这一档变，桌面保持交接包原样。
+*/
+@media (hover: none) {
+  .canvas-node__del {
+    opacity: 1;
+    padding: 6px;
+    margin-left: auto;
+  }
+  .canvas-node__select {
+    padding: 9px 8px;
+    font-size: 12.5px;
+  }
+  .canvas-node__run {
+    padding: 9px 16px;
+  }
+  .canvas-node__approve,
+  .canvas-node__reject {
+    padding: 9px 14px;
+  }
+}
+
+/*
   ≤560：报价/冲突弹层贴视图左右边，不再固定宽度——375 视口下画布视图本身只剩约
   319px，固定宽度的弹层左缘会被 `overflow:hidden` 的视图裁掉（H4）。
   冲突弹层两栏改纵向堆叠。
+
+  另外这一档的场景层按 1:1 显示（`data.ts` 的窄屏档），所以左侧不再给没渲染的工具栏
+  留 100px，运行钮改成整行大目标（review 2026-09-15 U-02）。
 */
 @media (max-width: 560px) {
+  /* 顶部留出整行运行钮（top 8 + 高 40 + 间隙 8）的位置，场景层不被它压住。 */
+  .canvas-scroll {
+    padding: 56px 8px 8px;
+  }
+  .canvas-topright {
+    left: 8px;
+    right: 8px;
+    top: 8px;
+  }
+  .canvas-topright__btn {
+    flex: 1;
+    height: 40px;
+    justify-content: center;
+    font-size: 13px;
+    background: var(--cv-bar);
+    box-shadow: var(--cv-ring);
+  }
   .canvas-quote {
     left: 12px;
     right: 12px;

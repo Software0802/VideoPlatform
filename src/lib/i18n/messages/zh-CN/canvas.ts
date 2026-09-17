@@ -5,7 +5,8 @@
  */
 export const canvas = {
   /* 空态 */
-  "canvas.empty.rightClick": "右键",
+  /* 触屏没有右键：长按空白处开同一个菜单（review 2026-09-15 U-02），文案两种都写。 */
+  "canvas.empty.rightClick": "右键 / 长按",
   "canvas.empty.title": "在画布上放下第一个节点",
   "canvas.empty.sub": "从这里开始搭建你的镜头流程",
   "canvas.entry.image": "生图",

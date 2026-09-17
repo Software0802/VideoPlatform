@@ -47,6 +47,16 @@ export const NODE_W = 260;
 export const FIT_PAD_X = 108;
 export const FIT_PAD_Y = 16;
 
+/**
+ * 窄屏档（review 2026-09-15 U-02）。`NARROW_W` 与 `canvas.css` 的 `@media (max-width:560px)`
+ * 是同一个数；这一档不给左侧工具栏留位（它本来就没渲染），并且**不按 fit 缩小**——
+ * 375 宽下 fit 会算到 0.23，节点缩成指甲盖、删除钮 6×4px，视图实际不可操作。保持 1:1、
+ * 靠 `.canvas-scroll` 滚动平移。
+ */
+export const NARROW_W = 560;
+export const FIT_PAD_X_NARROW = 16;
+export const MIN_SCALE_NARROW = 1;
+
 /** 分类 id 是 ASCII（筛选判据不能跟着语言变），显示名在字典里。 */
 export type ToolCat = "image" | "video" | "audio" | "util";
 

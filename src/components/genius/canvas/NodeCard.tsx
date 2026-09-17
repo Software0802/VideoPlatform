@@ -1,6 +1,6 @@
 "use client";
 
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { CANVAS_APPROVAL_TIMEOUT_MS, type CanvasNode, type CanvasNodeExecution } from "@/lib/client/canvas";
 import type { JobPublic } from "@/lib/jobs/schema";
@@ -76,7 +76,7 @@ export function NodeCard({
   node: CanvasNode;
   /** 素材缺失/过期（`materialMissing` 的判定结果，含本地 img onError 补记）。 */
   missing: boolean;
-  onDragStart: (e: ReactMouseEvent<HTMLElement>) => void;
+  onDragStart: (e: ReactPointerEvent<HTMLElement>) => void;
   onDelete: () => void;
   onTextChange: (v: string) => void;
   onUploadClick: () => void;
@@ -101,7 +101,7 @@ export function NodeCard({
     >
       <span
         className="canvas-node__label"
-        onMouseDown={onDragStart}
+        onPointerDown={onDragStart}
         style={{ cursor: "grab" }}
       >
         {node.kind === "text" ? (

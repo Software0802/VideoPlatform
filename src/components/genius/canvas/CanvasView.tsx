@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { useNotices, useSession } from "@/components/genius/ShellContext";
 import {
@@ -28,7 +35,17 @@ import { newIdempotencyKey, uploadFile } from "@/lib/client/jobs";
 import { errorText } from "@/lib/i18n/errorText";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { ConflictDialog } from "./ConflictDialog";
-import { FIT_PAD_X, FIT_PAD_Y, LABEL_H, NODE_W, SCENE_H, SCENE_W } from "./data";
+import {
+  FIT_PAD_X,
+  FIT_PAD_X_NARROW,
+  FIT_PAD_Y,
+  LABEL_H,
+  MIN_SCALE_NARROW,
+  NARROW_W,
+  NODE_W,
+  SCENE_H,
+  SCENE_W,
+} from "./data";
 import { NodeCard, waitStateOf } from "./NodeCard";
 import { QuoteDialog, RunBar } from "./QuoteDialog";
 import { useCanvasPolling } from "./useCanvasPolling";
@@ -40,11 +57,21 @@ import {
 } from "./icons";
 import { clamp } from "./util";
 
-type MenuPos = { x: number; y: number };
+/**
+ * 右键 / 长按菜单的位置。作者坐标（`x`/`y`）给「在这里建节点」用，视图像素坐标
+ * （`left`/`top`）给浮层自己定位用——菜单是 `.canvas-view` 的绝对定位子节点，不随
+ * `.canvas-scroll` 一起滚，所以不能用「作者坐标 × scale」摆它（滚动后会偏掉一整屏，
+ * 而窄屏现在是会滚的，见 review 2026-09-15 U-02）。
+ */
+type MenuPos = { x: number; y: number; left: number; top: number };
 
 const MENU_W = 158;
 const MENU_H = 202;
 const SAVE_DEBOUNCE_MS = 600;
+/** 长按建节点：按住多久算长按、手指抖动多少像素以内还算按住、开菜单后多久不接受点击。 */
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP = 8;
+const LONG_PRESS_GUARD_MS = 400;
 
 /** 点击浮层之外或按 Esc 时关闭。 */
 function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, close: () => void) {
@@ -200,14 +227,16 @@ export default function CanvasView() {
     };
   }, []);
 
-  /* fit：作者坐标 900×620 缩放进视口。 */
+  /* fit：作者坐标 900×620 缩放进视口；窄屏不缩小，改成可平移（见 data.ts 的窄屏档）。 */
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
     const measure = () => {
-      const w = el.clientWidth - FIT_PAD_X;
+      const narrow = el.clientWidth <= NARROW_W;
+      const w = el.clientWidth - (narrow ? FIT_PAD_X_NARROW : FIT_PAD_X);
       const h = el.clientHeight - FIT_PAD_Y;
-      const next = clamp(0.4, Math.min(w / SCENE_W, h / SCENE_H), 1.4);
+      const raw = Math.min(w / SCENE_W, h / SCENE_H);
+      const next = clamp(narrow ? MIN_SCALE_NARROW : 0.4, raw, 1.4);
       setFit((prev) => (Math.abs(prev - next) > 0.005 ? next : prev));
     };
     measure();
@@ -293,23 +322,100 @@ export default function CanvasView() {
 
   const scale = fit;
 
-  const openMenuAt = (pos: MenuPos) => setMenu(pos);
+  /** 由一次右键 / 长按的视口坐标开菜单：作者坐标给建节点，视图像素坐标给浮层定位。 */
+  const openMenuAtClient = useCallback(
+    (clientX: number, clientY: number) => {
+      const scene = sceneRef.current;
+      const root = rootRef.current;
+      if (!scene || !root) {
+        setMenu({ x: 300, y: 224, left: 24, top: 24 });
+        return;
+      }
+      const s = scene.getBoundingClientRect();
+      const r = root.getBoundingClientRect();
+      setMenu({
+        x: clamp(0, (clientX - s.left) / scale, SCENE_W - MENU_W),
+        y: clamp(0, (clientY - s.top) / scale, SCENE_H - MENU_H),
+        left: clamp(0, clientX - r.left, Math.max(0, r.width - MENU_W)),
+        top: clamp(0, clientY - r.top, Math.max(0, r.height - MENU_H)),
+      });
+    },
+    [scale],
+  );
+
+  /*
+    触屏建节点（review 2026-09-15 U-02）：原来唯一的入口是右键，手机上等于没有入口，
+    空态还写着「右键新建」。长按 500ms 开同一个菜单；手指移出 8px 或抬起即作废。
+    Android 浏览器长按时自己也会发 contextmenu——那条路径先到就取消这里的计时器，
+    两边不会开两次。
+  */
+  const longPress = useRef<{ timer: number; x: number; y: number } | null>(null);
+  /*
+    长按开出菜单后的一小段静默期。手指抬起时浏览器会在「手指下方」补一次 click，而那时
+    菜单刚好就在手指下方——不挡的话「长按」等于「长按并立刻建了一个节点」。挡板由定时器
+    自己撤掉（而不是等某次事件），所以没有「补发的 click 没来 → 用户第一次点被吞掉」。
+  */
+  const menuGuard = useRef<{ on: boolean; timer: number | null }>({ on: false, timer: null });
+  const armMenuGuard = useCallback(() => {
+    if (menuGuard.current.timer !== null) window.clearTimeout(menuGuard.current.timer);
+    menuGuard.current.on = true;
+    menuGuard.current.timer = window.setTimeout(() => {
+      menuGuard.current = { on: false, timer: null };
+    }, LONG_PRESS_GUARD_MS);
+  }, []);
+  const cancelLongPress = useCallback(() => {
+    if (!longPress.current) return;
+    window.clearTimeout(longPress.current.timer);
+    longPress.current = null;
+  }, []);
+  useEffect(
+    () => () => {
+      cancelLongPress();
+      if (menuGuard.current.timer !== null) window.clearTimeout(menuGuard.current.timer);
+    },
+    [cancelLongPress],
+  );
+
+  const onViewPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== "touch") return;
+    const target = e.target as HTMLElement;
+    // 节点与各浮层上的长按归它们自己（拖拽、选字、点按钮），只有空白处才建节点。
+    if (target.closest(".canvas-node,.canvas-menu,.canvas-quote,.canvas-conflict,.canvas-topright")) {
+      return;
+    }
+    cancelLongPress();
+    const { clientX, clientY } = e;
+    longPress.current = {
+      x: clientX,
+      y: clientY,
+      timer: window.setTimeout(() => {
+        longPress.current = null;
+        armMenuGuard();
+        openMenuAtClient(clientX, clientY);
+      }, LONG_PRESS_MS),
+    };
+  };
+
+  const onViewPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const held = longPress.current;
+    if (!held) return;
+    if (
+      Math.abs(e.clientX - held.x) > LONG_PRESS_SLOP ||
+      Math.abs(e.clientY - held.y) > LONG_PRESS_SLOP
+    ) {
+      cancelLongPress();
+    }
+  };
 
   const onContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault();
-    const el = sceneRef.current;
-    if (!el) {
-      openMenuAt({ x: 300, y: 224 });
-      return;
-    }
-    const r = el.getBoundingClientRect();
-    openMenuAt({
-      x: clamp(0, (e.clientX - r.left) / scale, SCENE_W - MENU_W),
-      y: clamp(0, (e.clientY - r.top) / scale, SCENE_H - MENU_H),
-    });
+    cancelLongPress();
+    openMenuAtClient(e.clientX, e.clientY);
   };
 
   const addNode = (kind: CanvasNode["kind"], pos: MenuPos) => {
+    // 长按刚开出菜单的那一下补发 click 不算选择（见 menuGuard）。
+    if (menuGuard.current.on) return;
     setMenu(null);
     const node: CanvasNode = { id: newCanvasNodeId(), kind, x: pos.x, y: pos.y };
     mutate((d) => ({ nodes: [...d.nodes, node] }));
@@ -495,8 +601,12 @@ export default function CanvasView() {
     }
   };
 
-  const onNodePointerDown = (e: ReactMouseEvent<HTMLElement>, node: CanvasNode) => {
-    if (e.button !== 0) return;
+  const onNodePointerDown = (e: ReactPointerEvent<HTMLElement>, node: CanvasNode) => {
+    if (e.button !== 0 || !e.isPrimary) return;
+    // 触屏上的拖拽由 pointerdown 起头（原来绑的是 mousedown，手机上要等手指抬起才补发
+    // 一次，`drag.current` 于是停在那里，之后随便一划都会把上一个节点拖走 —— review
+    // 2026-09-15 C-22）。
+    cancelLongPress();
     const target = e.target as HTMLElement;
     if (target.closest("textarea,input,select,button")) return;
     drag.current = { id: node.id, dx: (e.clientX - 0) / scale - node.x, dy: (e.clientY - 0) / scale - node.y };
@@ -530,9 +640,14 @@ export default function CanvasView() {
     };
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
+    // pointercancel：系统把这次指针收走了（触屏上被滚动 / 手势接管、来电切前台…）。
+    // 不收它的话 `drag.current` 会一直留着，下一次划动就接着拖上一个节点。收尾与抬手
+    // 一致：落盘当前位置，不回滚——用户看见的就是这个位置。
+    document.addEventListener("pointercancel", onUp);
     return () => {
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
     };
   }, [scale, persist]);
 
@@ -561,6 +676,10 @@ export default function CanvasView() {
       tabIndex={-1}
       data-running={latestRun?.status === "running" ? "true" : undefined}
       onContextMenu={onContextMenu}
+      onPointerDown={onViewPointerDown}
+      onPointerMove={onViewPointerMove}
+      onPointerUp={cancelLongPress}
+      onPointerCancel={cancelLongPress}
       style={{ backgroundSize: `${Math.round(22 * scale)}px ${Math.round(22 * scale)}px` }}
     >
       {!doc ? (
@@ -640,7 +759,7 @@ export default function CanvasView() {
       )}
 
       {menu ? (
-        <div className="canvas-menu" ref={menuRef} style={{ left: menu.x * scale, top: menu.y * scale }}>
+        <div className="canvas-menu" ref={menuRef} style={{ left: menu.left, top: menu.top }}>
           {(["text", "material", "gen_image", "gen_video"] as const).map((kind) => (
             <button
               type="button"

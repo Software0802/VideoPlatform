@@ -2,7 +2,7 @@ import type { canvas as zh } from "../zh-CN/canvas";
 
 /** English strings for `canvas`; the type forces every zh-CN key to exist here. */
 export const canvas: Record<keyof typeof zh, string> = {
-  "canvas.empty.rightClick": "Right-click",
+  "canvas.empty.rightClick": "Right-click / long-press",
   "canvas.empty.title": "Drop your first node on the canvas",
   "canvas.empty.sub": "Start building your shot flow here",
   "canvas.entry.image": "Image",
