@@ -574,3 +574,33 @@ describe("manage 写锁（withRelayLock）", () => {
     reconcileRelays();
   });
 });
+
+describe("readRelayCatalogSnapshot 的缓存键", () => {
+  /*
+    review 2026-09-15 B-03：缓存键原来只有 `mtimeMs`，而背靠背两次写盘绝大多数落在同一
+    毫秒——文件已经换了内容、键却没变，读者拿到上一版目录。这里把「同一 mtime、不同内容」
+    直接构造出来（`utimesSync` 把两次写的修改时刻钉成同一个值），断言第二次读拿到新表。
+  */
+  it("同一 mtime 下内容变了也要重新读盘", async () => {
+    const { readRelayCatalogSnapshot, relayCatalogSnapshotPath } = await import("./discover");
+    const { mkdirSync, utimesSync } = await import("node:fs");
+
+    const file = relayCatalogSnapshotPath("fixture-memo");
+    mkdirSync(path.dirname(file), { recursive: true });
+    // 钉死的修改时刻（秒）：两次写都用它，模拟同一毫秒内的两次写盘。
+    const pinned = 1_700_000_000;
+    const snapshotOf = (models: Record<string, unknown>) =>
+      JSON.stringify({ fetchedAt: new Date(pinned * 1000).toISOString(), models });
+
+    writeFileSync(file, snapshotOf({ "model-a": { kind: "video" } }), "utf8");
+    utimesSync(file, pinned, pinned);
+    expect(Object.keys(readRelayCatalogSnapshot("fixture-memo"))).toEqual(["model-a"]);
+
+    writeFileSync(file, snapshotOf({ "model-a": { kind: "video" }, "model-b": { kind: "video" } }), "utf8");
+    utimesSync(file, pinned, pinned);
+    expect(Object.keys(readRelayCatalogSnapshot("fixture-memo")).sort()).toEqual([
+      "model-a",
+      "model-b",
+    ]);
+  });
+});

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { dataDir } from "@/lib/env";
 import { log } from "@/lib/log";
@@ -27,23 +27,45 @@ export function relayCatalogSnapshotPath(id: string): string {
   return path.join(dataDir(), "relay-catalog", `${id}.json`);
 }
 
-// 快照读取按 mtime 记一行缓存：产品目录的缓存键每次都要拿表键集合，不能让它
-// 每个请求都重新 parse 一遍文件。
-const snapshotMemo = new Map<string, { mtime: number | null; models: Record<string, RelayModelSpec> }>();
+/*
+  快照读取记一行缓存：产品目录的缓存键每次都要拿表键集合，不能让它每个请求都重新
+  parse 一遍文件。
+
+  缓存键不能只用 `mtimeMs`（review 2026-09-15 B-03）：背靠背两次写盘里绝大多数落在
+  同一毫秒，文件已经换了内容而键没变，读者就拿到上一版目录——管理页点了「发现」下拉
+  却不变，或已下架的模型仍被声明。键改成 `mtimeNs:size:ino`，并且只在「文件的修改时刻
+  严格早于我们这次读」时才信缓存：写与读撞进同一纳秒刻度时宁可多 parse 一次。
+*/
+type SnapshotMemoEntry = {
+  /** `mtimeNs:size:ino`；文件不存在时为 null。 */
+  key: string | null;
+  /** 读这次缓存的时刻（ns，与 `mtimeNs` 同一把尺）。 */
+  readAtNs: bigint;
+  /** 文件的修改时刻（ns）；不存在时为 null。 */
+  mtimeNs: bigint | null;
+  models: Record<string, RelayModelSpec>;
+};
+
+const snapshotMemo = new Map<string, SnapshotMemoEntry>();
 
 /** 快照 → 目录表；文件不存在 / 坏掉都返回空表（不致命，目录退回纯配置）。 */
 export function readRelayCatalogSnapshot(id: string): Record<string, RelayModelSpec> {
   const file = relayCatalogSnapshotPath(id);
-  let mtime: number | null = null;
+  let key: string | null = null;
+  let mtimeNs: bigint | null = null;
   try {
-    mtime = statSync(file).mtimeMs;
+    const st = statSync(file, { bigint: true });
+    mtimeNs = st.mtimeNs;
+    key = `${st.mtimeNs}:${st.size}:${st.ino}`;
   } catch {
-    mtime = null;
+    key = null;
+    mtimeNs = null;
   }
   const hit = snapshotMemo.get(file);
-  if (hit && hit.mtime === mtime) return hit.models;
+  // 缓存只在「同一个 key」且「上次读发生在该文件最后一次修改之后」时成立。
+  if (hit && hit.key === key && (mtimeNs === null || hit.readAtNs > mtimeNs)) return hit.models;
   let models: Record<string, RelayModelSpec> = {};
-  if (mtime !== null) {
+  if (key !== null) {
     try {
       const parsed = JSON.parse(readFileSync(file, "utf8")) as {
         models?: Record<string, RelayModelSpec>;
@@ -53,8 +75,15 @@ export function readRelayCatalogSnapshot(id: string): Record<string, RelayModelS
       models = {};
     }
   }
-  snapshotMemo.set(file, { mtime, models });
+  snapshotMemo.set(file, { key, mtimeNs, readAtNs: nowNs(), models });
   return models;
+}
+
+/** 与 `statSync(..., {bigint:true}).mtimeNs` 同一把尺的「现在」（Unix 纪元纳秒）。 */
+const NS_PER_MS = BigInt(1_000_000);
+
+function nowNs(): bigint {
+  return BigInt(Date.now()) * NS_PER_MS;
 }
 
 export function relayCatalogSnapshotFetchedAt(id: string): string | undefined {
@@ -106,12 +135,9 @@ export async function fetchRelayModels(
     models: specs,
   };
   try {
-    mkdirSync(path.dirname(relayCatalogSnapshotPath(view.id)), { recursive: true });
-    writeFileSync(
-      relayCatalogSnapshotPath(view.id),
-      JSON.stringify(snapshot, null, 2),
-      "utf8",
-    );
+    // 原子写（临时文件 + rename）：裸 writeFileSync 会让并发的读者读到半截 JSON，
+    // 而这个文件的读者是每一次产品目录装配（review 2026-09-15 B-03）。
+    await writeRelayCatalogSnapshot(view.id, snapshot);
   } catch (error) {
     log("warn", "relay 目录快照写盘失败（本次结果仍返回）", {
       relay: view.id,
