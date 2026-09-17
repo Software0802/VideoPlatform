@@ -18,8 +18,25 @@ describe("repository operating contracts", () => {
     for (const file of files) expect(index, `missing docs/${file.name}`).toContain(file.name);
   });
 
-  it("generates route types before the clean-checkout CI typecheck", async () => {
-    const workflow = await readFile(".github/workflows/ci.yml", "utf8");
-    expect(workflow).toContain("pnpm exec next typegen && pnpm exec tsc --noEmit");
+  it("runs one typecheck definition everywhere: dev types cleared, then typegen, then tsc", async () => {
+    /*
+      三个调用点（本机 / CI / deploy.sh）必须是同一条命令，否则「CI 绿、本地红」会再来
+      一次（review 2026-09-15 B-01）：`.next/dev/types/**` 是 Next 托管的 tsconfig include，
+      切分支或删路由后旧 dev 产物会引用已不存在的路由文件，让裸 `tsc --noEmit` 必红，而
+      干净检出的 CI 什么都看不到。脚本先删它，再 typegen（F-01：类型必须在 tsc 之前生成）。
+    */
+    const pkg = JSON.parse(await readFile("package.json", "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    const typecheck = pkg.scripts?.typecheck ?? "";
+    expect(typecheck).toContain(".next/dev/types");
+    expect(typecheck.indexOf("next typegen")).toBeGreaterThan(typecheck.indexOf(".next/dev/types"));
+    expect(typecheck.indexOf("tsc --noEmit")).toBeGreaterThan(typecheck.indexOf("next typegen"));
+
+    for (const file of [".github/workflows/ci.yml", "scripts/deploy.sh"]) {
+      const text = await readFile(file, "utf8");
+      expect(text, `${file} 应调用 pnpm typecheck`).toContain("pnpm typecheck");
+      expect(text, `${file} 不应再各写一份 tsc 调用`).not.toContain("pnpm exec tsc --noEmit");
+    }
   });
 });

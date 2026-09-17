@@ -36,8 +36,10 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # pnpm typecheck = 清 .next/dev/types + next typegen + tsc --noEmit，与本机、
+      # deploy.sh 同一条定义；干净检出下那次删除是空操作。
       - name: Typecheck
-        run: pnpm exec next typegen && pnpm exec tsc --noEmit
+        run: pnpm typecheck
 
       - name: Lint
         run: pnpm exec eslint src e2e scripts

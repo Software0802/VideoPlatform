@@ -93,8 +93,9 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 echo "== 1/5 本地门禁（typecheck / eslint / vitest，不可跳过）"
-pnpm exec next typegen
-pnpm exec tsc --noEmit
+# typecheck 脚本自己先删 .next/dev/types：那是 Next 托管的 include，切分支 / 删路由后
+# 旧 dev 产物会引用已不存在的路由文件，让裸 tsc 必红（CI 干净检出则是绿的）。
+pnpm typecheck
 pnpm exec eslint src e2e scripts
 pnpm test
 

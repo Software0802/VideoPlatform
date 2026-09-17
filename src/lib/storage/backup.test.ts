@@ -72,27 +72,38 @@ describe("backup facts whitelist", () => {
 });
 
 describe("backup --stop-service / offsite", () => {
-  it("--stop-service 在非 root 或无 systemctl 环境下明确报错并以退出码 2 拒绝", async () => {
-    // 本机（Windows Git Bash / CI runner）都不是 root，第一道路径即触发；
-    // 若在 root 容器里跑则落在「无 systemctl」分支，同样退出 2。
+  it("--stop-service 非 root 时明确报错并以退出码 2 拒绝", async () => {
+    /*
+      判据是 `id -u` 不为 0。本机（Windows Git Bash）与 CI runner 本来就不是 root，但
+      root 容器（比如带 systemd 的开发沙箱）两道守卫都不触发，脚本会真的去 `systemctl
+      stop genius` 并以退出码 1 失败——那时这条用例测的就不是它要测的东西了。所以这里
+      用一个只回 1000 的 `id` 垫片钉死非 root 这一支，任何机器上结果都一样。
+    */
     const root = await mkdtemp(path.join(os.tmpdir(), "lumen-backup-stop-"));
     roots.push(root);
     const data = path.join(root, "data");
     await mkdir(data, { recursive: true });
     await writeFile(path.join(data, "relays.json"), "{}");
+    const shimDir = path.join(root, "bin");
+    await mkdir(shimDir, { recursive: true });
+    const shim = path.join(shimDir, "id");
+    await writeFile(shim, "#!/bin/sh\necho 1000\n", { mode: 0o755 });
 
-    const error = await exec([
-      portable(path.resolve("scripts/backup.sh")),
-      "--data-dir", portable(data),
-      "--backup-dir", portable(path.join(root, "backups")),
-      "--stop-service",
-    ]).then(
+    const error = await exec(
+      [
+        portable(path.resolve("scripts/backup.sh")),
+        "--data-dir", portable(data),
+        "--backup-dir", portable(path.join(root, "backups")),
+        "--stop-service",
+      ],
+      { PATH: `${shimDir}${path.delimiter}${process.env.PATH ?? ""}` },
+    ).then(
       () => null,
       (e) => e as { code?: number; stderr?: string },
     );
     expect(error).not.toBeNull();
     expect(error?.code).toBe(2);
-    expect(error?.stderr).toMatch(/backup fail: --stop-service 需要/);
+    expect(error?.stderr).toMatch(/backup fail: --stop-service 需要 root/);
   }, 45_000);
 
   it("BACKUP_OSS_BUCKET 未配置时不产生 .enc，本地备份照常成功", async () => {
