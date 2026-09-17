@@ -66,10 +66,10 @@ wait:
 
 ## 五个视图
 
-1. **主页 `/`**：活动横幅占位槽 → 标签页 视频 / 图片 / 模板 / 挑战（本轮为给文生图作品加入口新增「图片」，模板/挑战 `aria-disabled`）→ 分类芯片（仅样式）→ 瀑布流 `columns:220px 5` 展示用户真实作品（`jobs` 中 `status==="succeeded"`，按 `output.kind` 分视频/图片），卡片标题胶囊 + hover 上浮，点击开详情浮层（播放器/图片 + 元信息 +「用这条提示词再生成」+「下载」）；`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡；无作品用样片占位并提示「还没有作品」。底部收起态输入条点击展开创作面板。
+1. **主页 `/`**：活动横幅占位槽 → 标签页 视频 / 图片 / 模板 / 挑战（本轮为给文生图作品加入口新增「图片」，模板/挑战 `aria-disabled`）→ 分类芯片（仅样式）→ 瀑布流 `columns:220px 5` 展示用户真实作品（`jobs` 中 `status==="succeeded"`，按 `output.kind` 分视频/图片），卡片标题胶囊 + hover 上浮，点击开详情浮层（播放器/图片 + 元信息 +「用这条提示词再生成」+「下载」）；`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡；未清理但 `artifactsExpireAt` 剩 ≤7 天的卡片加 `.masonry__expiring` 角标（积分金），详情浮层常驻一行 `.work__expire` 写明保留到哪天、还剩几天、到期前请下载（倒计时只在挂载后算，首屏 SSR 不渲染）；无作品用样片占位并提示「还没有作品」。底部收起态输入条点击展开创作面板。
 2. **创作页 `/create`**：上部「当前任务」区（阶段行 / 百分比 / 分镜 n/m / 成片 / 失败原因 / 取消 / 重新生成；`retryBlocked` 非空时显示阻断说明并隐藏「重新生成」；`artifactsPurgedAt` 非空同样禁止重试）+ 下方「最近任务」列表；创作面板默认展开。内容块底部留白 236px（`main` 本身不留，避免主页等其它视图也被顶开）。
 3. **智能体 `/agent`**（见 `docs/design.md` §2h）：首屏渐变标题 + 输入卡 + 技能卡片网格（20 个技能来自 `GET /api/agent/skills`），首页与会话输入行共用 `AgentPickers` 四枚芯片：对话模型（弹层内分「对话模型」与只调发散度/篇幅的「创意档」）、图片产品、视频产品、技能；切换只影响下一轮。技能广场开关是账号级偏好（`PATCH /api/agent/skills`，多设备一致），历史抽屉读真实会话并可展开「已归档」。会话页每条待批 action 用 `.agent-chat__proposal-product` 标明实际产品与报价，助手用 `.agent-chat__meta[data-model]` 落款实际模型和创意档；右侧资产栏跟进任务并可预览。服务端没配对话 provider/白名单时整个视图置灰显示「智能体暂未开放」。
-4. **画布 `/canvas`**（2026-09-11/12 起接真数据，见 `docs/design.md` §2j）：空态 → 900×620 作者坐标场景层（`fit×zoom` 缩放）→ 右键建四类节点（文本/素材/文生图/生成视频）、拖拽定位、文本与提示词防抖 600ms 落盘（`PATCH` 带 `expectedRevision`，409 保留本地并弹二选一，不静默覆盖）；素材节点保存独立 `assetId`，明示 30 天期限、刷新可预览，过期/缺失显示重新上传；富文本条/提示词面板/模型列表/工具箱抽屉沿用原型本地交互。顶栏「运行整图」→ `.canvas-quote` 报价弹层（逐节点价 + 复用行「重跑」勾选 + 可执行行「执行前需我批准」勾选——生成视频节点默认勾 + 合计）→ 确认建 run；节点徽标 `.canvas-node__exec[data-exec]` 显示执行态（待批准/已复用/已跳过等），`awaiting_approval` 节点带「批准/驳回」按钮，产物以真实 `<img>` / `<video controls>` 展示；3s 轮询 run，运行中可「取消运行」。
+4. **画布 `/canvas`**（2026-09-11/12 起接真数据，见 `docs/design.md` §2j）：空态 → 900×620 作者坐标场景层（`fit×zoom` 缩放）→ 右键建四类节点（文本/素材/文生图/生成视频）、拖拽定位、文本与提示词防抖 600ms 落盘（`PATCH` 带 `expectedRevision`，409 保留本地并弹二选一，不静默覆盖）；素材节点保存独立 `assetId`，明示 30 天期限、刷新可预览，过期/缺失显示重新上传；富文本条/提示词面板/模型列表/工具箱抽屉沿用原型本地交互。窄屏（≤560px）不按 fit 缩小场景层（375 下会缩到 0.23、节点小到不可点），固定 1:1 靠 `.canvas-scroll` 滚动平移，左侧不给未渲染的工具箱留位，`.canvas-topright__btn` 铺成整行 40px；建节点除右键外支持长按 500ms（开菜单后 400ms 内不接受点击），节点拖拽走 `pointerdown` + `pointercancel`、手柄 `touch-action:none`，`@media (hover:none)` 下删除钮常显并加大热区。顶栏「运行整图」→ `.canvas-quote` 报价弹层（逐节点价 + 复用行「重跑」勾选 + 可执行行「执行前需我批准」勾选——生成视频节点默认勾 + 合计）→ 确认建 run；节点徽标 `.canvas-node__exec[data-exec]` 显示执行态（待批准/已复用/已跳过等），`awaiting_approval` 节点带「批准/驳回」按钮，产物以真实 `<img>` / `<video controls>` 展示；3s 轮询 run，运行中可「取消运行」。
 5. **订阅 `/subscription`**（2026-09-07 凌晨起接真数据，见 `docs/design.md` §2i）：我的方案卡显示当前档位/到期日/会员积分/今日已发日积分/已购余额，兑换礼品码与流水抽屉；四档卡片是真实人民币价格（`costRatio` 成本 ÷ (1−15%毛利率) 推得，非占位值），年/月切换，「订阅」按钮真的调用 `POST /api/subscription` 从已购余额扣款，成功后刷新顶栏并 toast，余额不足提示「余额不足，请先兑换礼品码」。
 
 ### 管理页 `/admin/relays`（N3.5，2026-09-13 落地）
@@ -122,11 +122,11 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 - 创作页内容块底部留白 236px，`main` 本身不留（避免其它视图也被顶开）。
 - 图片页图片槽置灰显示「即将上线」（后端图片路径不支持首帧）。
 - 创作面板关闭态仍留在 DOM（`hidden` + `data-open="false"`），不是条件渲染，便于状态保留与 e2e 断言。
-- 窄屏（≤900px）侧栏收成 56px 图标栏，导航文字用 `clip-path` 隐藏而非 `display:none`；移动端回归（`e2e/mobile.spec.ts`，375/390/768 三档）另修过：≤560px 规格弹层与画布报价层改为左右贴边全宽、智能体两列改单列横滑、≤400px 隐藏顶栏装饰性小头像；对话框类弹层统一支持 Esc 收层。
+- 窄屏（≤900px）侧栏收成 56px 图标栏，导航文字用 `clip-path` 隐藏而非 `display:none`；移动端回归（`e2e/mobile.spec.ts`，375/390/768 三档）另修过：≤560px 规格弹层与画布报价层改为左右贴边全宽、智能体两列改单列横滑、≤400px 隐藏顶栏装饰性小头像；对话框类弹层统一支持 Esc 收层；画布在这一档改为 1:1 + 平移（见上）。
 - 头像菜单是 disclosure 语义（按钮+条件渲染的菜单容器），不是 `role="menu"`/`role="menuitem"`。
 - 进入技能广场 / 会话页（智能体视图的子状态）时顶栏标题仍固定显示「智能体」；画布视图顶栏标题固定「画布」——顶栏标题只跟五视图路由走，不感知视图内部 state（未做「视图内子页上报标题」的接口）。
 - 右键菜单的节点类型名与节点标签走 `t("canvas.kind.*")`，中文态显示中文（非原型的英文占位）；原型的 `CanvasToolbox.tsx`（左侧工具箱抽屉）未被任何组件引用，未接入实际画布。
-- 画布视图沿用原型的本地交互细节：工具箱搜索是本地过滤；右键弹出节点类型菜单。
+- 画布视图沿用原型的本地交互细节：工具箱搜索是本地过滤；右键（触屏长按）弹出节点类型菜单。
 - 中转管理页的排序用「上移/下移」按钮交换相邻 `priority`（两次 PATCH），不用计划书 §4b 的拖动排序——移动端与可访问性优先（键盘可达、无 pointer 捕获复杂性）。
 - 模型下拉按供应商分组并显示 `providerName` / `upstreamModel` / `costHint`（R2.3 起），不再沿用「只显示产品名」——DTO 白名单本就下发这三个字段，敏感面在接口不在弹层。
 
@@ -156,8 +156,8 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 | 图片槽 | `.composer__slot` + `input[type=file]`（`aria-label="上传图片"`），有图 `data-state="ready"` |
 | 创作页当前任务 | `.task[data-job-id][data-state][data-status]`，`.task__pct/.task__stage/.task__err`，按钮 `取消/重新生成`，`link` `下载`；`data-state="busy"` 时内部另渲染等待层 `.task__wait[aria-hidden="true"][data-pct]`（不带文本，终态不渲染） |
 | 重试阻断 | `.task__blocked[role="alert"]`，出现时无「重新生成」按钮 |
-| 主页瀑布流卡片 | `.masonry__item[data-kind="video|image"][data-purged]`；标签页 `role="tab"` 名 `视频/图片/模板/挑战` |
-| 作品详情浮层 | `.work[role="dialog"]`，按钮 `用这条提示词再生成`、`关闭` |
+| 主页瀑布流卡片 | `.masonry__item[data-kind="video|image"][data-purged]`；临期角标 `.masonry__expiring[data-days]`；标签页 `role="tab"` 名 `视频/图片/模板/挑战` |
+| 作品详情浮层 | `.work[role="dialog"]`，按钮 `用这条提示词再生成`、`关闭`；到期说明 `.work__expire[data-days][data-soon]` |
 | 画布整图运行 | 顶栏按钮名 `运行整图`，运行中为 `取消运行` |
 | 画布报价弹层 | `.canvas-quote[role="dialog"]`，行内勾选 `重跑`/`执行前需我批准`，按钮 `确认运行`/`取消` |
 | 画布节点执行态 | `.canvas-node__exec[data-exec]`；`awaiting_approval` 时 `.canvas-node__approve` 按钮名 `批准`/`驳回` |

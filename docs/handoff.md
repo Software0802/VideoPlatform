@@ -4,18 +4,18 @@
 
 ## 0. 当前状态
 
-核对日期：2026-09-15。代码、部署记录与实测分开记，不从本地状态推断生产版本。
+核对日期：2026-09-17（代码与本机门禁）；生产仍是 2026-09-15 那次部署，本轮**未部署**。代码、部署记录与实测分开记，不从本地状态推断生产版本。
 
 | 项 | 状态 |
 | --- | --- |
-| 代码基线 | 精确 SHA 一律用 `git rev-parse HEAD origin/main` 核对，本文件不记自身所在的提交号；`origin/main` 比生产多出的只有本文件这类纯文档提交。代码内容截至 `83065c7`（= 当前生产）：`315818c` 会话/画布/终态 run 归档（`ARCHIVE_INACTIVE_DAYS`）、`8b5282f`+`0359830` 发布目录化 deploy 脚本（R1.4）、`6cc1611` 全仓审查报告（`docs/review-2026-09-15.md`）、`d8d326c`+`5087706` 整站背景呼吸灯与等待特效、`83065c7` 令牌文档对齐 |
+| 代码基线 | 精确 SHA 一律用 `git rev-parse HEAD origin/main` 核对，本文件不记自身所在的提交号。截至 `83065c7` 的内容 = 当前生产：`315818c` 会话/画布/终态 run 归档（`ARCHIVE_INACTIVE_DAYS`）、`8b5282f`+`0359830` 发布目录化 deploy 脚本（R1.4）、`6cc1611` 全仓审查报告（`docs/review-2026-09-15.md`）、`d8d326c`+`5087706` 整站背景呼吸灯与等待特效、`83065c7` 令牌文档对齐。此后新增 **`review-2026-09-15` 的五条 P1 修复**（U-01 上传失败可见 / U-02 画布移动端 / B-01 门禁假红 / B-03 relay 快照缓存 / B-05 产物到期预告，见 §3'），这部分**尚未部署**，生产不含它 |
 | 生产版本依据 | 生产 = `83065c7` 构建，`current -> releases/83065c7-20260915-134029`，`PREVIOUS=0359830-20260914-234013`；`releases/` 保留三份（另有 `legacy-13fb9ee`）。2026-09-15 `deploy.sh` 单次全流程通过：本地门禁、build（包 22M）、上传、服务器 `pnpm install --prod --frozen-lockfile`（84 包，2.6s）、Turbopack 原生包别名（sharp / ffmpeg-static）、`mv -T` 原子切链、重启与 health 轮询均成功，服务 active、本机 health 200 `ok=true`，公网 `/login` 200。浏览器实测公网登录页呼吸灯生效（`glow-breathe` 6s / `glow-drift` 10s，`--glow-peak=.4`、`--glow-rest=.14`）。登录态 `GET /api/health` 的 `build.sha` 本轮无生产会话，未核对；`/opt/genius/BUILD_INFO.json` 的内容未在服务器上回读，本地生成值为 `shortSha:83065c7`、`dirty:false` |
 | 生产配置 | `/opt/genius/.env` 已配置 7 条 `AGENT_CHAT_MODELS`，默认 `gpt-5.6-luna`；`YMAN_T2V_MODEL=minimax_h3`。更新前状态备份为 `.env.bak.20260914-220732`，当前与备份均为 genius:genius 640 |
 | 生产 relay | `data/relays.json` 于 2026-09-14 首次创建，仅含 `yman` 文件条目：`catalog.source=models-endpoint`，24 个模型配置（15 视频：13 定价 + 2 hidden；9 图片已定价），默认 t2v=`minimax_h3`、i2v/r2v=`minimax-h3-933-图文`、image=`gpt-image-2`。`data/relay-catalog/yman.json` 已自动生成 24 模型快照 |
-| 本机 | Windows / PowerShell，Node v24.16.0，pnpm 10.33.0，Next 16.3.3，React 19.2.8 |
+| 本机 | 主开发机为 Windows / PowerShell（Node v24.16.0）；2026-09-17 这轮在 Linux 远程容器（Node v22.22.2）上完成，pnpm 10.33.0，Next 16.3.3，React 19.2.8 |
 | 生产只读核查 | 阿里云 8.209.212.178，`/opt/genius`；Node v22.22.2，pnpm 10.33.0，Caddy v2.11.4；genius.service active，`User=genius`，MemoryMax 700 MiB；部署后 available 内存 831 MiB、根盘可用 14G；`.env` 640、`data/relays.json` 600，均 genius:genius |
 | 入口 | `https://genius.homeaistack.online`；本地 `pnpm dev` 后访问 `http://localhost:3000`，不用 127.0.0.1（Next dev 可能 403） |
-| 整合门禁 | 2026-09-15 `deploy.sh` 实测（`83065c7`）：typegen+tsc 0 错、eslint 0、Vitest 120 文件全通过、生产 build 通过、服务器 health 200、公网 `/login` 200。隔离 mock+harness E2E 同日 45/45（Windows 本机，`E2E_PORT=3100`，含 `e2e/motion.spec.ts` 两条，4.0 分钟）；deploy.sh 不运行 E2E。同日另有两次偶发假红需注意：`tsc` 会被过期的 `.next/dev/types` 打红（review B-01，处方未落地，清掉该目录即绿），`run-graph.test.ts` 的 `beforeAll` 在机器忙时 10s 超时、单跑 35/35 绿（与 B-03 的 `relay.test.ts` 是两个不同的偶发源）。仅四个慢用例有局部等待上限调整，未放宽全局或业务超时 |
+| 整合门禁 | 2026-09-17 本机（Linux 容器，Node v22.22.2，pnpm 10.33.0）：`pnpm typecheck` 0 错、`eslint src e2e scripts` 0、`pnpm test` 120 文件 / 1353 通过 / 1 跳过、隔离 mock+harness E2E **47/47**（`E2E_PORT=3100`，独立 DATA_DIR，4.8 分钟；含本轮新增的「临期作品」「上传坏文件」两条）。本轮未跑 `pnpm build`、未部署。B-01 与 B-03 两个偶发假红已修（见 §3'），`run-graph.test.ts` 的 `beforeAll` 在机器忙时 10s 超时仍是已知的第三个偶发源，单跑 35/35 绿。E2E 曾有一次 `i18n.spec.ts`「登录页也能切换语言」因 `goto` 与 401 跳转竞争 ERR_ABORTED（用例注释已登记这个竞争），同配置重跑即绿——它不在本轮修复范围内。仅四个慢用例有局部等待上限调整，未放宽全局或业务超时 |
 | 测试环境 | E2E 使用独立 DATA_DIR、E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1 与独立端口，不读生产密钥、不调用真实上游 |
 | 备份 | root cron 每日 03:17 跑 backup.sh（白名单含 `relays.json`+`assets/`）；2026-09-13 包 `backups/genius-data-20260913-211416.tgz` 已做首次真实恢复核对并一致，未做完整切换恢复；生产 OSS 变量与完整恢复演练仍待执行 |
 
@@ -54,6 +54,8 @@ Windows 本机的 mock 视频/ffmpeg、通知原子写入与 relay 首次动态�
 - **R0 素材修复**：保存素材时复制为独立 assetId，首次认领起 30 天，保存/重放不续期；刷新仍可预览，到期或缺失提示重新上传。启动在 tmp 清理前保护旧素材，缺原件标 missing；活动 run 的冻结图、报价与资金台账不被迁移改写。
 - **归档留存**：`ARCHIVE_INACTIVE_DAYS`（默认 90，0 关闭）由 runner 每小时维护执行：不活跃且无活动轮次的会话与非最新、无 running run 的画布写 `archivedAt`（列表默认排除，已归档会话发新一轮自动恢复）；终态 run 移入 `canvas-runs/<user>/archive/`（详情可读，泵/资金扫描/幂等查找不再读它）。永不删文件、不动资金字段。backup.sh 白名单已加 `prefs/`；`canvas-runs/` 递归含 archive。
 - **呼吸灯与等待特效**：`.shell`（含登录页、分享页、画布）叠两层 fixed 伪元素做整站背景呼吸灯，令牌与 keyframes 集中在 `src/app/globals.css`（`--glow-*`/`--wait-*`）；创作页任务卡、创作面板发送钮/图片槽、智能体思考态与任务卡、画布节点/连线/运行中态统一用冷光表示「等模型」、琥珀表示「等人工审批」，`prefers-reduced-motion` 时全部收敛为静止态，规格见 `DESIGN.md`「圆角 / 高度 / 阴影 / 动效」。
+- **到期与上传的反馈**（2026-09-17，review 2026-09-15 P1）：作品公开 DTO 多一个派生字段 `artifactsExpireAt`（`completedAt ?? updatedAt` + `DATA_RETENTION_DAYS`，与清理判据同源、不落盘），瀑布流卡片剩 ≤7 天出临期角标、详情浮层常驻到期说明并保留下载入口——留存逻辑本身没动。上传坏文件当场出错：浏览器按 `file.type`/`file.size` 先拦，服务端把 sharp 的解码失败统一成 400 中文文案（不再由 `jsonError` 的 500 把英文原文透出去），失败的首帧不再把模式顶成图生视频。
+- **画布移动端**（2026-09-17，review 2026-09-15 U-02）：窄屏（≤560px）场景层不再按 fit 缩到 0.23，固定 1:1 靠滚动平移，运行钮铺整行；长按 500ms 等价于右键建节点，节点拖拽走 pointer 事件并收 `pointercancel`，无 hover 的设备上删除钮常显、小控件加大热区。
 - **R0 工程修复**：CI/部署 typecheck 前补 next typegen；备份加入 relay 配置与素材；画布 e2e 每段独立文档、断言真实 409；AGENTS 瘦身并保留 Next 受管理块，文档索引与大小有自动回归检查。收口时额外修复 relay probe 的付费 POST 默认重试风险：显式 maxAttempts:1；billed:false 只表示平台不记账，上游仍可能收费，本轮未运行真实探针。
 
 模板种子在 `data-seed/templates`；新 DATA_DIR 首次使用需复制到 `data/templates`，部署脚本在目标不存在时落种，不覆盖既有模板。资金迁移基线与备份仍在服务器 `/opt/genius/migrate-baselines/`、`/opt/genius/data.bak.20260912-150535`，不得未经确认清理。
@@ -85,6 +87,20 @@ Windows 本机的 mock 视频/ffmpeg、通知原子写入与 relay 首次动态�
 | F-19 | Caddy 2.11.4 配置无 forwarded/trusted-proxy 覆盖，与官方默认行为交叉核对；未做公网伪造头实验 |
 | F-20 | 保留双缺头放行。现有 smoke 与管理客户端使用 Cookie，直接收紧会破坏兼容，不能采纳报告中的相反前提 |
 | F-21 | 保留现有对话 SDK，尚无需要替换的事实依据 |
+
+## 3'. 2026-09-15 全仓审查（UI / 易用性 / 健壮性）
+
+原报告 `docs/review-2026-09-15.md` 保留 `046f59f` 时的证据，顶部有同样的状态表。**五条 P1 已全部实施**（2026-09-17）：
+
+| Finding | 当前状态 |
+| --- | --- |
+| U-01 上传失败不可见 | 已修：前端预检 + 错误行显示原因；`preprocess.ts` 把「解不开的输入」包成 400 `invalid_argument` 中文；错误帧不再改 `nativeMode`。回归在 `preprocess.test.ts` 与 `genius.spec.ts`「上传坏文件」 |
+| U-02 画布 375 宽不可操作 | 已修：窄屏 1:1 + 平移、菜单按视图坐标定位、长按建节点、pointer 拖拽 + `pointercancel`、`touch-action`、粗指针下的热区与常显删除钮。回归走 `mobile.spec.ts` 三档视口 |
+| B-03 relay 快照偶发失败 | 已修：缓存键 `mtimeNs:size:ino` + 「读晚于写」判据，写侧原子写；新增用例把「同一 mtime、不同内容」钉死，换回旧键即红 |
+| B-01 `tsc` 假红 | 已修：`pnpm typecheck` 先删 `.next/dev/types` 再 typegen 再 tsc，本机 / CI / deploy.sh 三处同源，`project-contracts.test.ts` 钉住 |
+| B-05 产物无声清空 | 已修：`artifactsExpireAt` 派生下发 + 临期角标 + 详情浮层到期说明（不改留存逻辑） |
+
+P2（13 条）与 P3（18 条）尚未处理，按原报告正文排队；下一批的挑选权在用户。
 
 ## 4. 未完成与边界
 
@@ -118,11 +134,14 @@ R5.2 已落地（`b1c71d0`）：`ShellContext` 拆为 `shell/{Session,Notices,Jo
 
 ## 6. 下一步与权限
 
-代码侧 R0–R2、R4.0/R4.1（管理令牌 + `admission_ms` 埋点）、R5、R7（告警适配）均已落地；剩余全部是**需要用户动作或生产窗口**的项，本地可验证部分已无未决工程。
+代码侧 R0–R2、R4.0/R4.1（管理令牌 + `admission_ms` 埋点）、R5、R7（告警适配）均已落地；`review-2026-09-15` 的五条 P1 已于 2026-09-17 实施（§3'），**尚未部署**。
+
+本地可继续推进的代码工作（不需要生产窗口，按原报告优先级）：`review-2026-09-15` 的 13 条 P2（连接中断提示与请求超时 U-05、弹层焦点管理 U-07、限流 `retryAfterSec` 落到文案 B-04、`executing` 轮次无人回收 B-07/B-09、重试价上涨无预检 B-10、启动全扫 B-11、多镜头假开关 C-02、分类芯片与产品名的英文态 U-08 等）与 18 条 P3；挑哪一批由用户定。
 
 待用户/生产窗口动作：
 
-1. **登录态核对**：生产 `/api/health` 的 `build.sha` 应为 `0359830…`；`/api/models`、`/api/agent/skills`（7 个模型 + `off`）、铃铛与历史抽屉「已归档」在真实账号下过一眼。归档 sweep 首次将在部署后 1 小时的维护 tick 执行，默认 90 天阈值，生产目前不会有对象。
+0. **部署本轮 P1 修复**（未做，须用户确认窗口）：`deploy.sh` 的门禁步骤已改成 `pnpm typecheck`，部署前值得留意这一处脚本变更。
+1. **登录态核对**：生产 `/api/health` 的 `build.sha` 应为 `83065c7…`；`/api/models`、`/api/agent/skills`（7 个模型 + `off`）、铃铛与历史抽屉「已归档」在真实账号下过一眼。归档 sweep 首次将在部署后 1 小时的维护 tick 执行，默认 90 天阈值，生产目前不会有对象。
 2. **告警渠道**：`LUMEN_ADMIN_TOKEN` 已配置并实测生效（loopback→200 `{sent:false}`、公网→401，见 runbook「管理 CLI」节）；`.env` 仍待填 `ALERT_WEBHOOK_URL` + `ALERT_WEBHOOK_FORMAT`（feishu/dingtalk/wecom/generic）+ `ALERT_WEBHOOK_SECRET`（飞书/钉钉签名密钥），配后跑 `sudo -u genius node scripts/alert-test.mjs` 做真实触发验证（钉钉自定义机器人关键词填 `Lumen`）。
 3. **备份异地副本**：`.env` 配 `BACKUP_OSS_BUCKET`/`BACKUP_OSS_PREFIX`/`BACKUP_ENC_PASSPHRASE`/`OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET`/`OSS_REGION`（或 `OSS_ENDPOINT`），安装 ossutil 2.x（见 runbook 备份节）；首次 `--compare` 核对已做，完整恢复演练（解包→切换→验证）待执行。
 4. **R3 预算拍板**：scene-only ≈¥117–145 / 全 8 条 ≈¥350–425（报价见 plan R3 节）；全量评测还需**两张授权人物照**（`evals/README.md` 登记要求）。
