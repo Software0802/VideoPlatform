@@ -85,6 +85,8 @@ export const composer = {
   "composer.send.balance": "余额可能不够",
   "composer.quotaExhausted": "今日额度已用完，北京时间 0 点重置",
   "composer.balanceShort": "当前配置，余额可能不够，请充值",
+  "composer.err.notImage": "只能上传图片文件（JPG / PNG / WebP）",
+  "composer.err.imageTooLarge": "图片文件超过 {limit}，请换一张更小的图",
   "composer.err.uploading": "图片还在上传，请稍候",
   "composer.err.uploadFailed": "图片上传失败，请重试",
   "composer.err.needRef": "参考模式至少需要一张参考图",

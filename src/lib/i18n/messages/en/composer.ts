@@ -81,6 +81,8 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.send.balance": "Balance may not be enough",
   "composer.quotaExhausted": "Today's quota is used up; it resets at 00:00 Beijing time",
   "composer.balanceShort": "With these settings your balance may not be enough — please top up",
+  "composer.err.notImage": "Only image files are accepted (JPG / PNG / WebP)",
+  "composer.err.imageTooLarge": "That image is larger than {limit} — pick a smaller one",
   "composer.err.uploading": "The image is still uploading, hold on",
   "composer.err.uploadFailed": "Image upload failed, please try again",
   "composer.err.needRef": "Reference mode needs at least one reference image",

@@ -29,15 +29,7 @@ export async function preprocessImage(input: Buffer): Promise<{
   width: number;
   height: number;
 }> {
-  let best = await encode(
-    sharp(input, DECODE_OPTIONS).rotate().resize({
-      width: MAX_EDGE,
-      height: MAX_EDGE,
-      fit: "inside",
-      withoutEnlargement: true,
-    }),
-    QUALITY_STEPS[0],
-  );
+  let best = await encode(inputPipeline(input), QUALITY_STEPS[0]);
   const intermediate = best.data;
 
   for (const quality of QUALITY_STEPS.slice(1)) {
@@ -47,7 +39,13 @@ export async function preprocessImage(input: Buffer): Promise<{
   }
 
   if (best.data.length > MAX_BYTES) {
-    throw new Error("图片压缩后仍超过 256KB，请换一张更小的图");
+    // 400 而不是裸 Error：这是「这张图不行」，不是服务端坏了。`jsonError` 对未知异常
+    // 一律 500 + `internal`，那个状态码会让前端按「稍后重试」处理一个永远不会好的输入。
+    throw new ProviderHttpError(
+      400,
+      "invalid_argument",
+      "图片压缩后仍超过 256KB，请换一张更小的图",
+    );
   }
 
   return {
@@ -59,19 +57,47 @@ export async function preprocessImage(input: Buffer): Promise<{
   };
 }
 
+/**
+ * 解码管线的构造。单独一层是因为 sharp 对**明显不是图**的输入（空 buffer 之类）在构造
+ * 时就抛，而不是等到 `toBuffer()`——两处都要落到同一条 400 映射上（review 2026-09-15 U-01）。
+ */
+function inputPipeline(input: Buffer): Sharp {
+  try {
+    return sharp(input, DECODE_OPTIONS).rotate().resize({
+      width: MAX_EDGE,
+      height: MAX_EDGE,
+      fit: "inside",
+      withoutEnlargement: true,
+    });
+  } catch (error) {
+    throw asInputError(error);
+  }
+}
+
 async function encode(pipeline: Sharp, quality: number) {
   try {
     return await pipeline.jpeg({ quality, mozjpeg: true }).toBuffer({ resolveWithObject: true });
   } catch (error) {
-    if (isPixelLimitError(error)) {
-      throw new ProviderHttpError(
-        400,
-        "invalid_argument",
-        "图片像素过大（上限 4000 万像素）",
-      );
-    }
-    throw error;
+    throw asInputError(error);
   }
+}
+
+/**
+ * sharp 的异常 → 对外错误。像素超限与「解不开」都是用户输入的问题（400），其余原样
+ * 抛出去按 500 处理——那才是解码器真的坏了。
+ */
+function asInputError(error: unknown): unknown {
+  if (isPixelLimitError(error)) {
+    return new ProviderHttpError(400, "invalid_argument", "图片像素过大（上限 4000 万像素）");
+  }
+  if (isUndecodableError(error)) {
+    return new ProviderHttpError(
+      400,
+      "invalid_argument",
+      "无法识别这个图片文件，请换一张 JPG / PNG / WebP 图片",
+    );
+  }
+  return error;
 }
 
 /**
@@ -83,6 +109,23 @@ async function encode(pipeline: Sharp, quality: number) {
 function isPixelLimitError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /pixel limit|exceeds pixel/i.test(message);
+}
+
+/**
+ * 「这根本不是一张能解码的图」——选了 `.txt`、改了扩展名、或文件只传了一半。
+ *
+ * 与像素上限同理，sharp 只给文案不给错误码，所以只能匹配措辞（`Input buffer contains
+ * unsupported image format` / `Input buffer has corrupt header` / `Input buffer is empty`
+ * 及其 `Input file` 变体）。匹配不上的继续按 500 抛：那才是解码器真的坏了。
+ *
+ * 不这样包的话（review 2026-09-15 U-01），`jsonError` 会把 sharp 的英文原文当成 500
+ * `internal` 的 message 原样下发给浏览器。
+ */
+function isUndecodableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /unsupported image format|corrupt header|(buffer|file) (is|contains) empty|Input (buffer|file) is empty|premature end|VipsJpeg|VipsPng/i.test(
+    message,
+  );
 }
 
 export function hashHue(s: string): number {

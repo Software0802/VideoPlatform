@@ -8,6 +8,12 @@ import { probeDurationSec } from "@/lib/ffmpeg";
 import { tmpDir } from "@/lib/jobs/store";
 import { preprocessImage } from "@/lib/media/preprocess";
 import {
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_LABEL,
+  MAX_VIDEO_BYTES,
+  MAX_VIDEO_LABEL,
+} from "@/lib/media/upload-limits";
+import {
   UPLOAD_ID_RE,
   uploadRoleSchema,
   type UploadRole,
@@ -16,16 +22,11 @@ import {
 import { ProviderHttpError } from "@/lib/providers/types";
 
 /**
- * Sized for the production box (2 cores / 1.8G, `MemoryMax=700M`) rather than for
- * generosity (plan §3.3, P1): an image is buffered whole in memory before sharp gets
- * it, and two concurrent uploads at the old 12MB/48MB were already enough to matter.
- * `preprocessImage` re-encodes everything to ≤256KB anyway, so the ceiling only ever
- * refuses inputs whose extra bytes would have been thrown away.
+ * 上限的定义在 `media/upload-limits.ts`（客户端也 import 它，界面上说的 6MB 与这里拒收的
+ * 是同一个数）；取值理由见那个文件。
  */
-const MAX_IMAGE = 6 * 1024 * 1024;
-const MAX_VIDEO = 24 * 1024 * 1024;
-const MAX_IMAGE_LABEL = "6MB";
-const MAX_VIDEO_LABEL = "24MB";
+const MAX_IMAGE = MAX_IMAGE_BYTES;
+const MAX_VIDEO = MAX_VIDEO_BYTES;
 
 /** `ownerId` is the session user; it is stamped into the sidecar so only that
  * user can later claim the file into a job (plan §5.3). */

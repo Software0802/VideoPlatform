@@ -696,6 +696,55 @@ test("临期作品：卡片出现临期角标，详情浮层预告到期日与�
 });
 
 /**
+ * 上传失败必须当场可见（review 2026-09-15 U-01）：原来选 `.txt` 或坏图只会在槽位里
+ * 留一个裂图，`.composer__error` 不出现，要等点「创作」才第一次看到一句「上传失败」；
+ * 非图片还会走到 sharp 抛错 → 500 把英文原文下发给浏览器。
+ */
+test("上传坏文件：非图片本地拦下、坏图按 400 出中文原因，模式不被顶成图生视频", async ({ page }) => {
+  await ensureComposerOpen(page);
+  const err = page.locator(".composer__error");
+  const slot = page.locator('.composer__slot[data-slot="start"]');
+
+  let uploadCalls = 0;
+  page.on("request", (r) => {
+    if (r.url().endsWith("/api/uploads") && r.method() === "POST") uploadCalls += 1;
+  });
+
+  // 一：`.txt` 连传都不该传——本地按 file.type 就拦得住。
+  await page.getByLabel("上传图片").setInputFiles({
+    name: "note.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("这不是图片", "utf8"),
+  });
+  await expect(err).toBeVisible();
+  await expect(err).toContainText("只能上传图片文件");
+  expect(uploadCalls, "非图片不该发出上传请求").toBe(0);
+  await expect(composer(page)).toHaveAttribute("data-mode", "text_to_video");
+
+  // 二：MIME 是 image/png、字节是垃圾 → 服务端 400 + 中文原因，错误行照样出，
+  //     错误帧不算「有图」，所以模式仍是文生视频。
+  const upload = page.waitForResponse(
+    (r) => r.url().endsWith("/api/uploads") && r.request().method() === "POST",
+  );
+  await page.getByLabel("上传图片").setInputFiles({
+    name: "fake.png",
+    mimeType: "image/png",
+    buffer: Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from("garbage".repeat(64), "utf8"),
+    ]),
+  });
+  const res = await upload;
+  expect(res.status(), "坏图是 400，不是 500").toBe(400);
+  expect((await res.json()) as { error: { code: string } }).toMatchObject({
+    error: { code: "invalid_argument" },
+  });
+  await expect(err).toContainText("无法识别这个图片文件");
+  await expect(slot).toHaveAttribute("data-state", "error");
+  await expect(composer(page)).toHaveAttribute("data-mode", "text_to_video");
+});
+
+/**
  * uncertain_submit 只由崩溃恢复路径写入（src/lib/jobs/recover.ts /
  * src/lib/harness/shot-recover.ts）：进程在 provider.submit 返回、remoteId 落盘之间
  * 崩溃。mock provider 没有对应的提示词触发标记（只有 MOCK_FAIL_MARKER = "[fail]"，

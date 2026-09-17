@@ -125,6 +125,8 @@ function Slot({
             className="composer__slot-img"
             src={frame.preview}
             alt={last ? t("composer.slot.altLast") : t("composer.slot.altStart")}
+            /* 失败原因同时写进错误行（ComposerProvider）；这里留一份给鼠标悬停。 */
+            title={frame.message}
           />
         ) : last ? (
           <IconPlay size={20} />

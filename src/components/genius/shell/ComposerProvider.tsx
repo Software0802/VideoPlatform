@@ -11,6 +11,7 @@ import { fetchProducts, supportsMode, type Product } from "@/lib/client/models";
 import type { Template } from "@/lib/client/templates";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { errorText } from "@/lib/i18n/errorText";
+import { MAX_IMAGE_BYTES, MAX_IMAGE_LABEL } from "@/lib/media/upload-limits";
 import {
   MAX_COUNT,
   creditsOf,
@@ -227,7 +228,9 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       ? "reference_to_video"
       : mode === "firstLast"
         ? "image_to_video"
-        : image
+        : // 上传失败的首帧不算「有图」（review 2026-09-15 U-01）：否则一次失败的上传会把
+          // 这次提交顶成 image_to_video，产品、价格、校验全跟着换，而槽位里根本没有图。
+          image && image.state !== "error"
           ? "image_to_video"
           : "text_to_video";
 
@@ -527,6 +530,19 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     (target: SlotTarget, file: File) => {
       setError(null);
       dropKey();
+      /*
+        先在本地拦掉两类必然被服务端拒掉的输入（review 2026-09-15 U-01）：原来这两种都是
+        「槽位里出现一个裂图、错误行不出现」，用户既不知道为什么没上去，也不知道上限是
+        6MB。`file.type` 为空（认不出扩展名）时不拦，交给服务端按真实字节判。
+      */
+      if (file.type && !file.type.startsWith("image/")) {
+        setError(t("composer.err.notImage"));
+        return;
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        setError(t("composer.err.imageTooLarge", { limit: MAX_IMAGE_LABEL }));
+        return;
+      }
       const preview = URL.createObjectURL(file);
       const role = target === "start" ? "start" : target === "last" ? "last" : "reference";
       const busyFrame: Frame = { preview, uploadId: null, state: "busy" };
@@ -550,13 +566,13 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       }
       void uploadFile(file, role).then(
         (up) => settle({ preview, uploadId: up.uploadId, state: "ready" }),
-        (e: unknown) =>
-          settle({
-            preview,
-            uploadId: null,
-            state: "error",
-            message: errorText(t, e),
-          }),
+        (e: unknown) => {
+          const message = errorText(t, e);
+          settle({ preview, uploadId: null, state: "error", message });
+          // 原因必须出现在 `.composer__error`：只写进帧里的话，界面上就只有一个裂图
+          // 加一个 ×，要等用户点了「创作」才第一次看到一句「图片上传失败」。
+          setError(message);
+        },
       );
     },
     [dropKey, setError, t],
@@ -634,13 +650,11 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       }
       void uploadFromJob(job.id, role).then(
         (up) => settle({ preview, uploadId: up.uploadId, state: "ready" }),
-        (e: unknown) =>
-          settle({
-            preview,
-            uploadId: null,
-            state: "error",
-            message: errorText(t, e),
-          }),
+        (e: unknown) => {
+          const message = errorText(t, e);
+          settle({ preview, uploadId: null, state: "error", message });
+          setError(message);
+        },
       );
     },
     [dropKey, maxRefs, refs.length, setError, showToast, slotTarget, t],
