@@ -96,6 +96,26 @@ describe("JobPublic", () => {
     expect(pub.status).toBe("succeeded");
   });
 
+  it("derives artifactsExpireAt from the same instant the purge rule uses", () => {
+    // review 2026-09-15 B-05：清理是静默发生的，界面要能提前说「N 天后过期」，
+    // 而这个时刻必须与 `shouldPurgeArtifacts` 的判据同源（completedAt ?? updatedAt + N 天）。
+    const days = Number(process.env.DATA_RETENTION_DAYS ?? 30);
+    const done = rec({ completedAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-02T00:00:00.000Z" });
+    expect(toPublic(done).artifactsExpireAt).toBe(
+      new Date(Date.parse("2026-09-01T00:00:00.000Z") + days * 86_400_000).toISOString(),
+    );
+
+    // 没有 completedAt 的老记录按 updatedAt 起算（与配额同一口径）。
+    const legacy = rec({ completedAt: undefined, updatedAt: "2026-09-02T00:00:00.000Z" });
+    expect(toPublic(legacy).artifactsExpireAt).toBe(
+      new Date(Date.parse("2026-09-02T00:00:00.000Z") + days * 86_400_000).toISOString(),
+    );
+
+    // 已清：到期已经过去，不再报；非终态：还没开始计时。
+    expect(toPublic(rec({ artifactsPurgedAt: "2026-09-06T04:00:00.000Z" })).artifactsExpireAt).toBeNull();
+    expect(toPublic(rec({ status: "queued", output: null })).artifactsExpireAt).toBeNull();
+  });
+
   it("accepts any non-empty provider id (relay ids register at runtime)", () => {
     expect(toPublic(rec({ provider: "fixture-relay" })).provider).toBe("fixture-relay");
     expect(() => toPublic(rec({ provider: "" as JobRecord["provider"] }))).toThrow();

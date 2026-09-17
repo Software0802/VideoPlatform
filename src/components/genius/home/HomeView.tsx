@@ -59,6 +59,8 @@ type Work = {
   purged: boolean;
   sample: boolean;
   tags: string[];
+  /** 产物到期时刻（`JobPublic.artifactsExpireAt`），留存关闭 / 已清 / 样片时为 null。 */
+  expireAt: string | null;
   /** 样片没有对应任务；真作品带着它做标签 / 删除 / 分享 */
   job: JobPublic | null;
 };
@@ -112,8 +114,47 @@ function workOf(j: JobPublic, t: Translate): Work | null {
     purged,
     sample: false,
     tags: tagsOf(j),
+    expireAt: j.artifactsExpireAt,
     job: j,
   };
+}
+
+/**
+ * 产物到期预告（review 2026-09-15 B-05）。付过钱的成片满 `DATA_RETENTION_DAYS` 就被清空
+ * 字节，在此之前界面一个字都没说过——这两个小工具把 `artifactsExpireAt` 变成「还剩几天」。
+ *
+ * `now` 允许为 null：首屏由服务端渲染，而「现在」在服务端与浏览器上不是同一刻，挂载前
+ * 一律不算、不渲染，省掉一次必然的水合失配（与 `CreateView` 的时间显示同一条理由）。
+ */
+const EXPIRY_WARN_DAYS = 7;
+
+function daysLeft(expireAt: string | null, now: number | null): number | null {
+  if (!expireAt || now === null) return null;
+  const ms = Date.parse(expireAt);
+  if (!Number.isFinite(ms)) return null;
+  return Math.max(0, Math.ceil((ms - now) / 86_400_000));
+}
+
+/** 本地日历日 `YYYY-MM-DD`；两种语言读法相同，不进字典也不走 toLocaleDateString。 */
+function calendarDay(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/**
+ * 挂载后的「现在」（ms），首屏渲染时是 null。
+ *
+ * 与 `CreateView` 的计时器同一个写法：`setTimeout(…, 0)` 而不是在 effect 体里直接
+ * setState——后者被 `react-hooks/set-state-in-effect` 拦下（级联渲染）。
+ */
+function useClientNow(): number | null {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setNow(Date.now()), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return now;
 }
 
 /** 标题胶囊只放前 12 字，完整提示词留在 title / 详情浮层里。 */
@@ -153,6 +194,8 @@ export function HomeView() {
   const [tab, setTab] = useState<TabId>("video");
   const [cat, setCat] = useState<string>(ALL);
   const [openKey, setOpenKey] = useState<string | null>(null);
+  // 挂载后才有「现在」，到期倒计时只在客户端算（见 daysLeft 的注释）。
+  const now = useClientNow();
 
   const works = useMemo(() => jobs.map((j) => workOf(j, t)).filter((w): w is Work => w !== null), [jobs, t]);
   const empty = works.length === 0;
@@ -168,6 +211,7 @@ export function HomeView() {
         purged: false,
         sample: true,
         tags: [],
+        expireAt: null,
         job: null,
       }))
     : works;
@@ -281,7 +325,11 @@ export function HomeView() {
                     <IconStar size={11} />
                     {short(w.prompt)}
                   </span>
-                  {w.purged ? <span className="masonry__purged">{t("home.purged.badge")}</span> : null}
+                  {w.purged ? (
+                    <span className="masonry__purged">{t("home.purged.badge")}</span>
+                  ) : (
+                    <ExpiryBadge expireAt={w.expireAt} now={now} />
+                  )}
                 </button>
               ))}
             </div>
@@ -337,6 +385,18 @@ export function HomeView() {
 }
 
 /* ── 模板页签 ───────────────────────────────────────────────────────── */
+
+/** 临期角标：只在剩余 ≤7 天时出现，平时不占视觉。 */
+function ExpiryBadge({ expireAt, now }: { expireAt: string | null; now: number | null }) {
+  const t = useT();
+  const left = daysLeft(expireAt, now);
+  if (left === null || left > EXPIRY_WARN_DAYS) return null;
+  return (
+    <span className="masonry__expiring" data-days={left}>
+      {left <= 0 ? t("home.expire.badgeToday") : t("home.expire.badge", { n: left })}
+    </span>
+  );
+}
 
 function TemplateGrid({ onPick }: { onPick: (t: Template) => void }) {
   const t = useT();
@@ -408,6 +468,7 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
   const [err, setErr] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [shared, setShared] = useState<{ url: string; copied: boolean } | null>(null);
+  const expiresIn = daysLeft(work.expireAt, useClientNow());
 
   /* Esc：删除二次确认开着时先收它，否则关整个详情层（H4）。 */
   useEffect(() => {
@@ -529,6 +590,14 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
         <div className="work__info">
           <span className="work__meta">{work.meta}</span>
           <p className="work__prompt">{work.prompt}</p>
+          {/* 到期预告（B-05）：留存是静默的，这里是用户唯一能提前看到的一句。 */}
+          {!work.purged && work.expireAt && expiresIn !== null ? (
+            <p className="work__expire" data-days={expiresIn} data-soon={expiresIn <= EXPIRY_WARN_DAYS}>
+              {expiresIn <= 0
+                ? t("home.expire.noteToday")
+                : t("home.expire.note", { date: calendarDay(work.expireAt), n: expiresIn })}
+            </p>
+          ) : null}
         </div>
 
         {job ? (

@@ -135,6 +135,22 @@
   padding: 3px 7px;
 }
 
+/*
+  临期角标（review 2026-09-15 B-05）：与「已清理」角标同一个位置、同一套底色，区别只在
+  字色——付过钱的成片在被清空前得先说一声。只在剩余 ≤7 天时渲染（组件里判），所以它不会
+  和 `.masonry__purged` 同时出现。
+*/
+.masonry__expiring {
+  position: absolute;
+  left: 9px;
+  bottom: 9px;
+  font-size: 11px;
+  color: var(--credit);
+  background: rgba(10, 10, 12, 0.62);
+  border-radius: 6px;
+  padding: 3px 7px;
+}
+
 /* 分页：哨兵负责触底自动续页，按钮是它的手动兜底（无 IntersectionObserver / 已滚到底） */
 .home__more-wrap {
   position: relative;
@@ -275,6 +291,16 @@
 .work__meta {
   font-size: 11.5px;
   color: var(--weak);
+}
+/* 详情浮层里的到期说明：平时是弱色一行，临期（≤7 天）转积分金提醒下载。 */
+.work__expire {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--weak);
+}
+.work__expire[data-soon="true"] {
+  color: var(--credit);
 }
 .work__prompt {
   margin: 0;

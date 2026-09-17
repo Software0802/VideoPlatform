@@ -5,6 +5,7 @@ import { isTerminalStatus, type JobRecord } from "@/lib/jobs/schema";
 import { readJob, tmpDir, updateJob } from "@/lib/jobs/store";
 import { mediaStore } from "@/lib/storage/local-fs";
 import { log } from "@/lib/log";
+import { DAY_MS, settledAtMs } from "@/lib/jobs/retention-window";
 
 /**
  * Artifact retention (plan §8).
@@ -20,8 +21,6 @@ import { log } from "@/lib/log";
  * mid-`persisting` and about to write the very file this would delete.
  */
 
-const DAY_MS = 86_400_000;
-
 /** The fields the rule needs — `JobRecord` satisfies it, tests can pass literals. */
 export type RetentionJob = Pick<JobRecord, "id" | "status" | "updatedAt"> & {
   completedAt?: string;
@@ -34,16 +33,6 @@ export type RetentionResult = {
   /** Records the sweep could not finish; each was logged and the round went on. */
   failed: number;
 };
-
-/**
- * Which instant decides the job's age. Identical to the quota's `settledAtMs`
- * (`completedAt ?? updatedAt`) on purpose: the two must agree on when a job
- * finished, or a record could be purged on one clock and billed on another.
- */
-function settledAtMs(job: RetentionJob): number | null {
-  const ms = Date.parse(job.completedAt ?? job.updatedAt);
-  return Number.isFinite(ms) ? ms : null;
-}
 
 /**
  * Pure decision, `nowMs` injected so the boundary is testable without waiting a

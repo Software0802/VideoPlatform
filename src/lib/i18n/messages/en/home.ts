@@ -24,6 +24,13 @@ export const home: Record<keyof typeof zh, string> = {
   "home.purged.note":
     "This creation has passed its retention window; the render and its assets were deleted. You can generate it again from this prompt.",
 
+  "home.expire.badge": "Expires in {n}d",
+  "home.expire.badgeToday": "Expires today",
+  "home.expire.note":
+    "The render and its assets are kept until {date} ({n} days left), then deleted automatically — download it before then.",
+  "home.expire.noteToday":
+    "The render and its assets expire today and cannot be recovered once deleted — download it now.",
+
   "home.dialog.aria": "Creation details",
   "home.tags.label": "Tags",
   "home.tags.custom": "Custom tag",

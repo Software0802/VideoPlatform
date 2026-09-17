@@ -21,6 +21,11 @@ export const home = {
   "home.purged.title": "{prompt}（作品已过期清理）",
   "home.purged.note": "作品已过期清理，超过留存期的成片与素材已删除，可用这条提示词重新生成。",
 
+  "home.expire.badge": "{n} 天后过期",
+  "home.expire.badgeToday": "今天到期",
+  "home.expire.note": "成片与素材保留到 {date}（还剩 {n} 天），到期后自动清理，请及时下载。",
+  "home.expire.noteToday": "成片与素材今天到期，清理后无法找回，请及时下载。",
+
   "home.dialog.aria": "作品详情",
   "home.tags.label": "标签",
   "home.tags.custom": "自定义标签",

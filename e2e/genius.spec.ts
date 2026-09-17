@@ -612,6 +612,90 @@ test("已清理作品：瀑布流占位卡、无成片请求、一键重试被�
 });
 
 /**
+ * 到期预告（review 2026-09-15 B-05）：付过钱的成片满 `DATA_RETENTION_DAYS`（默认 30 天）
+ * 就被清空字节，在此之前界面原来一个字都没说过——用户看到的第一个信号是一排占位卡。
+ *
+ * 与「已清理作品」用例同一手法：直接在服务器数据目录写一条终态记录，把 `completedAt`
+ * 放到 27 天前，于是 `artifactsExpireAt` 落在 3 天后（`toPublic` 纯计算，不落盘）。
+ */
+test("临期作品：卡片出现临期角标，详情浮层预告到期日与剩余天数", async ({ page }) => {
+  const me = await page.request.get("/api/me");
+  expect(me.ok(), "需要已登录会话").toBeTruthy();
+  const { userId } = (await me.json()) as { userId: string };
+
+  const jobId = `job_${randomBytes(6).toString("hex")}`;
+  const jobDir = path.join(await serverDataDir(), "jobs", jobId);
+  const settled = new Date(Date.now() - 27 * 86_400_000).toISOString();
+  await mkdir(jobDir, { recursive: true });
+  await writeFile(
+    path.join(jobDir, "job.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      id: jobId,
+      ownerId: userId,
+      status: "succeeded",
+      progress: 100,
+      mode: "text_to_image",
+      model: "grok-imagine-image-2.0",
+      provider: "mock",
+      prompt: "快到期的旧作品，雾中的渡口",
+      durationSec: 0,
+      aspectRatio: "16:9",
+      resolution: null,
+      imageResolution: "1k",
+      generateAudio: false,
+      lastFrameStored: false,
+      lastFrameLocksOutput: false,
+      harness: { enabled: false },
+      priceCny: 2,
+      costUsdEstimate: 0.02,
+      costUsdActual: 0.02,
+      error: null,
+      output: { kind: "image", imageUrl: `/api/media/${jobId}/image.jpg` },
+      createdAt: settled,
+      updatedAt: settled,
+      completedAt: settled,
+      bible: null,
+      shots: null,
+      assets: {},
+    }),
+  );
+
+  try {
+    // 到期时刻是派生字段，先确认它真的下发了（30 天留存 → 结算后 30 天）。
+    const detail = await page.request.get(`/api/jobs/${jobId}`);
+    expect(detail.ok()).toBeTruthy();
+    const { artifactsExpireAt } = (await detail.json()) as { artifactsExpireAt: string | null };
+    expect(artifactsExpireAt, "终态且未清理的任务必须带到期时刻").toBeTruthy();
+    expect(Date.parse(artifactsExpireAt!)).toBe(Date.parse(settled) + 30 * 86_400_000);
+
+    await page.reload();
+    await expect(page.locator(".shell")).toHaveAttribute("data-ready", "true", { timeout: 60_000 });
+    await page.getByRole("main").getByRole("tab", { name: "图片" }).click();
+
+    const tile = page.locator(`.masonry__item[data-job-id="${jobId}"]`);
+    await expect(tile).toHaveCount(1);
+    // 剩 3 天（27 天前结算 + 30 天留存）→ 落在 ≤7 天的临期窗口里。
+    const badge = tile.locator(".masonry__expiring");
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveAttribute("data-days", "3");
+    await expect(badge).toContainText("3 天后过期");
+
+    await tile.click();
+    const dialog = page.locator('.work[role="dialog"]');
+    await expect(dialog).toBeVisible();
+    const note = dialog.locator(".work__expire");
+    await expect(note).toBeVisible();
+    await expect(note).toHaveAttribute("data-soon", "true");
+    await expect(note).toContainText("还剩 3 天");
+    // 到期前要能拿走字节：下载入口必须在（未清理）。
+    await expect(dialog.getByRole("link", { name: "下载" })).toHaveCount(1);
+  } finally {
+    await rm(jobDir, { recursive: true, force: true });
+  }
+});
+
+/**
  * uncertain_submit 只由崩溃恢复路径写入（src/lib/jobs/recover.ts /
  * src/lib/harness/shot-recover.ts）：进程在 provider.submit 返回、remoteId 落盘之间
  * 崩溃。mock provider 没有对应的提示词触发标记（只有 MOCK_FAIL_MARKER = "[fail]"，

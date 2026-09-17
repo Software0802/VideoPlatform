@@ -1,7 +1,8 @@
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { applyBalanceChange, latestMemberDebitAt } from "@/lib/billing/ledger";
-import { dataDir } from "@/lib/env";
+import { dataDir, dataRetentionDays } from "@/lib/env";
+import { artifactsExpireAtMs } from "@/lib/jobs/retention-window";
 import { log } from "@/lib/log";
 import { upsertJobIndex } from "@/lib/jobs/index";
 import { writeJsonAtomic } from "@/lib/storage/atomic-json";
@@ -85,11 +86,22 @@ export function toPublic(rec: JobRecord): JobPublic {
     createdAt: rec.createdAt,
     updatedAt: rec.updatedAt,
     artifactsPurgedAt: rec.artifactsPurgedAt ?? null,
+    // 到期时刻是算出来的，不是存出来的：`DATA_RETENTION_DAYS` 随时可改，落盘的值第二天
+    // 就可能是错的。已清的记录不再报到期（它已经过去了），非终态也不报（还没开始计时）。
+    artifactsExpireAt:
+      rec.artifactsPurgedAt || !isTerminalStatus(rec.status)
+        ? null
+        : isoOrNull(artifactsExpireAtMs(rec, dataRetentionDays())),
     bible: null,
     retryBlocked: retryBlock(rec),
     shots: publicShots(rec),
   };
   return jobPublicSchema.parse(pub);
+}
+
+/** ms → ISO；null 原样透传（留存关闭、结算时刻不可解析时就是它）。 */
+function isoOrNull(ms: number | null): string | null {
+  return ms === null ? null : new Date(ms).toISOString();
 }
 
 function publicShots(rec: JobRecord): JobPublic["shots"] {

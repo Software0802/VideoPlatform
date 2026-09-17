@@ -137,6 +137,12 @@ export const jobPublicSchema = z.object({
    * bytes that are no longer on disk.
    */
   artifactsPurgedAt: z.string().nullable(),
+  /**
+   * 产物「够 N 天可清」的那一刻（ISO），纯派生、不落盘（review 2026-09-15 B-05）。
+   * 留存关闭（`DATA_RETENTION_DAYS<=0`）、尚未终态、已清或结算时刻不可解析时为 null。
+   * 界面靠它提前说「N 天后过期」——在这之前用户唯一的信号是有一天打开主页全是占位卡。
+   */
+  artifactsExpireAt: z.string().nullable(),
   bible: z.null(),
   /** Set when a shot may already have been paid for upstream: one-click Retry is refused
    * server-side (409 `retry_blocked`) and the UI shows `message` instead of the button. */
@@ -301,7 +307,7 @@ export type JobAssetVideo = JobAssetImage & {
  */
 export type JobRecord = Omit<
   JobPublic,
-  "retryBlocked" | "artifactsPurgedAt" | "error" | "tags"
+  "retryBlocked" | "artifactsPurgedAt" | "artifactsExpireAt" | "error" | "tags"
 > & {
   schemaVersion: 1;
   /**
