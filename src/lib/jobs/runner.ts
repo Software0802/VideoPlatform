@@ -1,4 +1,5 @@
 import { sweepArchive } from "@/lib/archive/sweep";
+import { sweepAgentTurns } from "@/lib/agent/settle";
 import { jobConcurrency } from "@/lib/env";
 import { isHarnessDuration } from "@/lib/harness/durations";
 import { HarnessFailure, harnessOrchestrator } from "@/lib/harness/orchestrator";
@@ -81,7 +82,7 @@ async function refillTodo(): Promise<void> {
  * runner from starting.
  */
 async function maintenance() {
-  for (const step of [sweepTmp, sweepIdempotency, sweepRetention, sweepArchive, refillTodo]) {
+  for (const step of [sweepTmp, sweepIdempotency, sweepRetention, sweepAgentTurns, sweepArchive, refillTodo]) {
     try {
       await step();
     } catch (error) {

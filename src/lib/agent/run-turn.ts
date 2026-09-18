@@ -32,6 +32,7 @@ import {
 } from "@/lib/agent/schema";
 import { agentSkillById } from "@/lib/agent/skills";
 import { newMessageId, readSession, updateSession } from "@/lib/agent/store";
+import { refundTurn, settleStaleTurns } from "@/lib/agent/settle";
 import type { Locale } from "@/lib/i18n/locales";
 
 /**
@@ -71,12 +72,6 @@ const ALLOWED_DURATIONS = new Set([5, 10]);
 
 /** 提案报价的有效期：过期即「价格变了请重新发」，批准接口拒绝执行。 */
 const PROPOSAL_TTL_MS = 30 * 60 * 1000;
-
-/**
- * 「还在 thinking」超过这个时长 = 发起它的那次请求已经死了（进程重启 / 连接断），
- * 读会话时惰性结算：退款 + turn 标 failed——不让一笔永远停在「思考中」的账挂着。
- */
-const STALE_THINKING_MS = 2 * 60 * 1000;
 
 export type RunTurnOptions = {
   /** 测试接缝：不传就按「哪家有 key」选提供方（都没有则 mock）。 */
@@ -524,47 +519,9 @@ export async function rejectTurn(ownerId: string, sessionId: string, turnId: str
 }
 
 /**
- * 惰性结算「死掉的」thinking 轮次：发起它的那次请求超过 2 分钟没把提案写回来，
- * 就是进程重启 / 连接断了——先退款（`ref` 幂等），再标 failed。会话详情的每次
- * 读取都会走这里，所以一笔卡住的账最迟在下一次打开页面时了结。
- */
-export async function settleStaleTurns(ownerId: string, session: AgentSession): Promise<AgentSession> {
-  const stale = session.turns?.filter(
-    (t) => t.status === "thinking" && Date.now() - Date.parse(t.updatedAt) > STALE_THINKING_MS,
-  );
-  if (!stale?.length) return session;
-  for (const t of stale) {
-    await refundTurn(ownerId, t.priceCny, t.chargeRef);
-  }
-  const refs = new Set(stale.map((t) => `${t.chargeRef}:refund`));
-  const settled = await updateSession(ownerId, session.id, (s) => ({
-    ...s,
-    turns: s.turns!.map((t) =>
-      refs.has(`${t.chargeRef}:refund`) && t.status === "thinking"
-        ? {
-            ...t,
-            status: "failed" as const,
-            refundRef: `${t.chargeRef}:refund`,
-            error: { code: "stale", message: "请求中断，本轮费用已退回" },
-            updatedAt: new Date().toISOString(),
-          }
-        : t,
-    ),
-    ...(s.budget
-      ? {
-          budget: {
-            ...s.budget,
-            spentCny: Math.max(0, round2(s.budget.spentCny - stale.reduce((sum, t) => sum + t.priceCny, 0))),
-          },
-        }
-      : {}),
-  }));
-  return settled ?? session;
-}
-
-/**
  * 读单轮（刷新恢复用）：把 `thinking` / `executing` 的中途态交还给界面。
- * 顺带做惰性结算：`thinking` 挂太久的轮次 = 发起请求死了，退款并标 failed。
+ * 顺带做惰性结算（`agent/settle.ts`）：`thinking` 挂太久 = 发起请求死了，退款并标 failed；
+ * `executing` 挂太久 = 批准后的建单循环死在半路，改回待批准让用户重新批准（续建幂等）。
  */
 export async function readTurn(ownerId: string, sessionId: string, turnId: string): Promise<{ turn: AgentTurn; session: AgentSession } | null> {
   const raw = await readSession(ownerId, sessionId);
@@ -572,20 +529,6 @@ export async function readTurn(ownerId: string, sessionId: string, turnId: strin
   const session = await settleStaleTurns(ownerId, raw);
   const turn = session.turns?.find((t) => t.id === turnId);
   return turn ? { turn, session } : null;
-}
-
-async function refundTurn(ownerId: string, priceCny: number, ref: string): Promise<void> {
-  try {
-    await applyBalanceChange(ownerId, priceCny, {
-      kind: "adjust",
-      amountCny: priceCny,
-      ref: `${ref}:refund`,
-      note: "智能体对话失败退回",
-    }, { refundOf: ref });
-  } catch (error) {
-    // 退款失败不该盖掉「智能体挂了」这个真正的原因；记一条 warn 供人工对账。
-    log("warn", "智能体退款失败", { ownerId, ref, error: String(error) });
-  }
 }
 
 function productForAction(action: AgentAction, picked: string | undefined): Product | undefined {

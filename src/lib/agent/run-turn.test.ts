@@ -895,6 +895,152 @@ describe("runTurn", () => {
     expect(found?.turn.refundRef).toBe(`agent:${turnId}:refund`);
     expect((await readUser(owner))?.balanceCny).toBe(10);
   });
+
+  /*
+    review 2026-09-15 B-07：批准之后、逐条建单之间进程死掉，轮次永远停在 `executing`——
+    界面只有一个「已批准，生成中」的转圈占位，没有重试也没有报错，¥0.05 挂着不退，
+    会话因为有活动轮次还永不归档。唯一出路是重发一轮再付一次钱。
+  */
+  it("B：卡住的 executing 轮次改回待批准，不退款也不标失败", async () => {
+    const owner = "usr_0000000000000141";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "卡住的批准" });
+    const turnId = "msg_00112233445566bb";
+
+    const { updateSession } = await import("./store");
+    const { hashTurnRequest } = await import("./run-turn");
+    const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const proposal = {
+      actions: [
+        {
+          type: "image" as const,
+          prompt: "一张海边灯塔",
+          priceCny: 1,
+          product: "mock-image",
+          productName: "模拟生图",
+        },
+      ],
+      totalCny: 1,
+      // 已经过期的窗口：复活要顺带续期，否则用户点批准只会拿到 proposal_expired。
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    };
+    await updateSession(owner, session.id, (s) => ({
+      ...s,
+      turns: [
+        ...(s.turns ?? []),
+        {
+          id: turnId,
+          requestHash: hashTurnRequest({ text: "画一张图" }),
+          status: "executing" as const,
+          priceCny: TURN_PRICE,
+          chargeRef: `agent:${turnId}`,
+          jobIds: [],
+          proposal,
+          createdAt: old,
+          updatedAt: old,
+        },
+      ],
+    }));
+    const { applyBalanceChange } = await import("@/lib/billing/ledger");
+    await applyBalanceChange(owner, -TURN_PRICE, {
+      kind: "charge",
+      amountCny: -TURN_PRICE,
+      ref: `agent:${turnId}`,
+      note: "智能体对话",
+    });
+
+    const found = await readTurn(owner, session.id, turnId);
+    expect(found?.turn.status).toBe("awaiting_approval");
+    // 对话已经交付，轮次费不退（与「驳回不退」同口径）；余额仍是扣过之后的数。
+    expect(found?.turn.refundRef).toBeUndefined();
+    expect((await readUser(owner))?.balanceCny).toBeCloseTo(10 - TURN_PRICE, 5);
+    // 提案要续一个新窗口，否则复活出来的按钮点下去必然 proposal_expired。
+    expect(Date.parse(found!.turn.proposal!.expiresAt)).toBeGreaterThan(Date.now());
+  });
+
+  it("B：还在正常推进的 executing 轮次不动它", async () => {
+    const owner = "usr_0000000000000142";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "正在建单" });
+    const turnId = "msg_00112233445566cc";
+
+    const { updateSession } = await import("./store");
+    const { hashTurnRequest } = await import("./run-turn");
+    const now = new Date().toISOString();
+    await updateSession(owner, session.id, (s) => ({
+      ...s,
+      turns: [
+        ...(s.turns ?? []),
+        {
+          id: turnId,
+          requestHash: hashTurnRequest({ text: "画一张图" }),
+          status: "executing" as const,
+          priceCny: TURN_PRICE,
+          chargeRef: `agent:${turnId}`,
+          jobIds: [],
+          proposal: {
+            actions: [
+              { type: "image" as const, prompt: "海边灯塔", priceCny: 1, product: "mock-image", productName: "模拟生图" },
+            ],
+            totalCny: 1,
+            expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+          },
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    }));
+
+    const found = await readTurn(owner, session.id, turnId);
+    expect(found?.turn.status).toBe("executing");
+  });
+
+  /*
+    review 2026-09-15 B-09：惰性结算只在「有人打开这个会话」时发生，而钱一直挂着的地方
+    恰恰是再也不会被打开的那个会话。扫描挂在 runner 的每小时维护里。
+  */
+  it("B：扫描把没人打开的会话里的 thinking 轮次也结掉", async () => {
+    const owner = "usr_0000000000000143";
+    await seedUser(owner, 10);
+    const session = await createSession(owner, { title: "没人再打开" });
+    const turnId = "msg_00112233445566dd";
+
+    const { updateSession } = await import("./store");
+    const { hashTurnRequest } = await import("./run-turn");
+    const old = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    await updateSession(owner, session.id, (s) => ({
+      ...s,
+      turns: [
+        ...(s.turns ?? []),
+        {
+          id: turnId,
+          requestHash: hashTurnRequest({ text: "画一张图" }),
+          status: "thinking" as const,
+          priceCny: TURN_PRICE,
+          chargeRef: `agent:${turnId}`,
+          jobIds: [],
+          createdAt: old,
+          updatedAt: old,
+        },
+      ],
+    }));
+    const { applyBalanceChange } = await import("@/lib/billing/ledger");
+    await applyBalanceChange(owner, -TURN_PRICE, {
+      kind: "charge",
+      amountCny: -TURN_PRICE,
+      ref: `agent:${turnId}`,
+      note: "智能体对话",
+    });
+
+    const { sweepAgentTurns } = await import("./settle");
+    const swept = await sweepAgentTurns();
+    expect(swept.settled).toBeGreaterThanOrEqual(1);
+
+    // 没有经过任何一次「打开会话」，钱就已经退回来了。
+    expect((await readUser(owner))?.balanceCny).toBe(10);
+    const after = await readSession(owner, session.id);
+    expect(after?.turns?.find((t) => t.id === turnId)?.status).toBe("failed");
+  });
 });
 
 describe("runTurn chatModel", () => {

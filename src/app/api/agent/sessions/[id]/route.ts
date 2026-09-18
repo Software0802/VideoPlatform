@@ -2,7 +2,7 @@ import { jsonError } from "@/lib/http";
 import { withRequestContext } from "@/lib/request-context";
 import { requireUser } from "@/lib/users/session";
 import { toPublicSession } from "@/lib/agent/public";
-import { settleStaleTurns } from "@/lib/agent/run-turn";
+import { settleStaleTurns } from "@/lib/agent/settle";
 import { agentPatchBodySchema } from "@/lib/agent/schema";
 import { deleteSession, patchSession, readSession } from "@/lib/agent/store";
 
