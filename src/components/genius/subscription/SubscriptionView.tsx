@@ -551,7 +551,12 @@ export default function SubscriptionView({ credits }: { credits: number }) {
               value={code}
               autoFocus
               maxLength={64}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={(e) => {
+                setCode(e.target.value);
+                // 输入一变就清掉上一次的错误（review 2026-09-15 U-19）：清空输入后红字还钉在
+                // 灰按钮旁边，读起来像「这次又错了」。
+                if (redeemErr) setRedeemErr(null);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();

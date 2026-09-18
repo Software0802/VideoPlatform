@@ -41,7 +41,7 @@ export type JobsShell = {
   working: boolean;
   cancel: () => void;
   retry: () => void;
-  /** 核验上游（恢复中心）：仅 `retryBlocked.code === "uncertain_submit"` 时出现 */
+  /** 核验上游（恢复中心）：仅 job 级 `uncertain_submit`（status=failed）时才有通道 */
   reconcile: () => void;
 
   /* 作品列表分页（`GET /api/jobs?before=&limit=&kind=`） */
@@ -360,7 +360,20 @@ export function JobsProvider({ children }: { children: ReactNode }) {
    */
   const reconcile = useCallback(() => {
     const job = currentJob;
-    if (!job || busy || job.retryBlocked?.code !== "uncertain_submit") return;
+    /*
+      与服务端谓词同判据（`jobs/recovery.ts`：status 必须是 failed 且 error.code 是
+      uncertain_submit），别留一条「按钮已经不显示、动作却仍可触发」的路径——分镜级标记的
+      任务走这条只会拿到 409（review 2026-09-15 U-06）。
+    */
+    if (
+      !job ||
+      busy ||
+      job.retryBlocked?.code !== "uncertain_submit" ||
+      job.status !== "failed" ||
+      job.error?.code !== "uncertain_submit"
+    ) {
+      return;
+    }
     setError(null);
     setBusy(true);
     void reconcileJob(job.id).then(

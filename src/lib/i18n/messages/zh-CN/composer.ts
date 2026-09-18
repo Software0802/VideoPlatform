@@ -85,12 +85,18 @@ export const composer = {
   "composer.send.balance": "余额可能不够",
   "composer.quotaExhausted": "今日额度已用完，北京时间 0 点重置",
   "composer.balanceShort": "当前配置，余额可能不够，请充值",
+  /* 按钮为什么灰着：上一条还在跑。不是错误，配 data-tone="info"（review 2026-09-15 U-14）。 */
+  "composer.jobRunning": "上一条还在生成中，完成后可以继续创作",
   "composer.err.notImage": "只能上传图片文件（JPG / PNG / WebP）",
   "composer.err.imageTooLarge": "图片文件超过 {limit}，请换一张更小的图",
   "composer.err.uploading": "图片还在上传，请稍候",
   "composer.err.uploadFailed": "图片上传失败，请重试",
   "composer.err.needRef": "参考模式至少需要一张参考图",
   "composer.err.needBothFrames": "首尾帧模式需要首帧和尾帧两张图",
+  /* 批量创建中途失败（review 2026-09-15 C-24）：不说清建成了几条，用户会改提示词再点，
+     而任何改动都会作废整组幂等 key，同一次创作意图于是变成两组任务、多付已建成的那几条。 */
+  "composer.err.partial":
+    "已创建 {n}/{total} 条，剩下的没建成：{reason}。已建成的不会重复计费——只要不改提示词和任何设置（包括数量），再点一次「创作」就接着建剩下的。",
   "composer.err.needPrompt": "这条路径需要提示词",
 
   /* 创作搭子 */

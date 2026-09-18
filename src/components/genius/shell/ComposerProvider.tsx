@@ -103,8 +103,10 @@ export type ComposerShell = {
   sendCredits: number;
   balanceShort: boolean;
   quotaExhausted: boolean;
-  /** 面板错误行的实际文案：`error`，或「按钮为什么是灰的」（余额 / 额度）。 */
+  /** 面板提示行的实际文案：`error`，或「按钮为什么是灰的」（在途任务 / 额度 / 余额）。 */
   notice: string | null;
+  /** 这一行是错误还是状态说明——决定颜色与读屏播报级别。 */
+  noticeTone: "error" | "info";
   submit: () => void;
   /** 「用这条提示词再生成」：回填面板并展开 */
   reuse: (prompt: string, kind: "video" | "image") => void;
@@ -345,12 +347,24 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
   const sendCredits = tab === "audio" ? 0 : creditsOf(batchPrice);
   const balanceShort = !!balance && batchPrice > balance.availableCny && tab !== "audio";
   /*
-    错误行（契约 §7 `.composer__error[role=alert]`）：真提交失败时显示服务端那句话；
-    没提交过但按钮本来就按不下去时，把原因常驻显示——否则用户只看见一个灰按钮，
-    不知道是余额不够还是今天的额度用完了（方案 §4「余额不足按钮禁用 + 错误行」）。
+    提示行（契约 §7 `.composer__error`）：真提交失败时显示服务端那句话；没提交过但按钮本来
+    就按不下去时，把原因常驻显示——否则用户只看见一个灰按钮，不知道是上一条还在跑、今天的
+    额度用完了，还是余额不够（方案 §4「余额不足按钮禁用 + 错误行」，review 2026-09-15 U-14）。
+
+    `error` 必须排在最前：提交失败后可能仍有活任务（部分失败那条路径就是），顺序反了会把
+    402/429 盖成一句「上一条还在生成中」。working 排在额度与余额之前，与发送钮 title 的
+    三元同序。忙碌不是错误，所以另给一个 tone，让颜色与播报级别跟着变。
   */
   const notice =
-    error ?? (quotaExhausted ? t("composer.quotaExhausted") : balanceShort ? t("composer.balanceShort") : null);
+    error ??
+    (working
+      ? t("composer.jobRunning")
+      : quotaExhausted
+        ? t("composer.quotaExhausted")
+        : balanceShort
+          ? t("composer.balanceShort")
+          : null);
+  const noticeTone: "error" | "info" = !error && working ? "info" : "error";
 
   /* ── 面板动作（任何一次改动都作废幂等 key） ── */
   const setPrompt = useCallback(
@@ -768,8 +782,19 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
         // 402 insufficient_balance / 429 quota_exceeded / failure_limit_reached：按错误码出当前语言文案（H2）。
         // 已经建成的那几条留在列表里，幂等 key 也留着——再点一次「创作」不会重复计费。
         setBusy(false);
-        setError(errorText(t, e));
-        if (made.length) setCurrentJob(made[made.length - 1]);
+        const reason = errorText(t, e);
+        /*
+          部分成功必须说清「已建成几条」（review 2026-09-15 C-24）：不说的话用户会改提示词
+          再点，而改动会 `dropKey()` 作废整组 key，同一次创作意图变成两组任务、为已建成的
+          那几条多付一次。已建成的也只有 /create 的「最近任务」看得见——主页瀑布流只收
+          succeeded——所以这时候要把人带过去。
+        */
+        setError(made.length ? t("composer.err.partial", { n: made.length, total: n, reason }) : reason);
+        if (made.length) {
+          setCurrentJob(made[made.length - 1]);
+          setOpen(true);
+          router.push("/create");
+        }
         refreshMe();
       }
     })();
@@ -900,6 +925,7 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       balanceShort,
       quotaExhausted,
       notice,
+      noticeTone,
       submit,
       reuse,
       applyTemplate,
@@ -961,6 +987,7 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       balanceShort,
       quotaExhausted,
       notice,
+      noticeTone,
       submit,
       reuse,
       applyTemplate,

@@ -822,7 +822,17 @@ test("retryBlocked：uncertain_submit 阻断一键重试", async ({ page }) => {
     const task = taskById(page, jobId);
     await expect(task).toHaveAttribute("data-state", "failed");
     await expect(task.locator(".task__blocked")).toHaveAttribute("role", "alert");
-    await expect(task.locator(".task__blocked")).toContainText("上游可能已接单");
+    /*
+      阻断栏说的是用户自己的那份钱与下一步动作（review 2026-09-15 U-06）。服务端那句
+      「上游可能已接单」讲的是**我们的**上游账户，是运维口径，不该端到创作者面前——
+      普通人看到会以为自己被扣了钱，而失败终态根本不扣款（`pendingCharge` 只在 succeeded 走）。
+      这条 fixture 是 job 级 uncertain_submit（status=failed + error.code 同码），
+      核验通道成立，所以应该出「先核验再决定」那一句 + 「核验上游」按钮。
+    */
+    await expect(task.locator(".task__blocked")).toContainText("本次尚未扣费");
+    await expect(task.locator(".task__blocked")).not.toContainText("上游可能已接单");
+    await expect(task.locator(".task__blocked")).not.toContainText("xAI");
+    await expect(task.getByRole("button", { name: "核验上游" })).toHaveCount(1);
     await expect(task.getByRole("button", { name: "重新生成" })).toHaveCount(0);
   } finally {
     await rm(jobDir, { recursive: true, force: true });
@@ -961,6 +971,9 @@ test("礼品码：兑换到账、重复兑换被拒、账单记录能看到这�
   await again.getByLabel("礼品码", { exact: true }).fill(code);
   await again.getByRole("button", { name: "兑换", exact: true }).click();
   await expect(again.locator(".redeem__err")).toContainText("已被使用");
+  // U-19：输入一变就该清掉上一次的错误，不能把红字钉在灰按钮旁边
+  await again.getByLabel("礼品码", { exact: true }).fill("");
+  await expect(again.locator(".redeem__err")).toHaveCount(0);
   await again.getByRole("button", { name: "取消" }).click();
   await expect(again).toBeHidden();
 

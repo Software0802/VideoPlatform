@@ -302,6 +302,33 @@ export default function AgentView() {
     void open(requestedSession);
   }, [open, requestedSession, sessionsLoaded]);
 
+  /*
+    停在某条会话上就把它钉进地址栏（review 2026-09-15 U-10）：原来首屏发完一句后 URL 仍是
+    `/agent`，手滑刷新就回到「一切，始于一个想法」，20 条气泡只能去历史抽屉里找回来。
+    离开会话（返回首页、进技能广场、删除、新对话）要清掉，否则 URL 还指着 X，`requestedSession`
+    不变、上面那条深链 effect 不重跑，点同一条会话的通知会毫无反应。
+
+    先写 ref 再改地址栏：顺序反了，深链 effect 会把自己刚写的 `?session=` 当成新链接再跑一次
+    `open()`，而 open 的第一步是清空会话，界面会闪一下空屏并多发一次请求。
+    用 history.replaceState 而不是 router.replace：这里只换地址栏，不需要重新渲染路由树
+    （与 `SubscriptionView` 处理 `#ledger` 同一写法）。
+  */
+  useEffect(() => {
+    if (screen === "chat" && !sessionId) return; // 创建 / 读取在途，地址栏先别动
+    const pinned = screen === "chat" ? sessionId : null;
+    if (openedDeepLink.current === pinned) return;
+    openedDeepLink.current = pinned;
+    try {
+      window.history.replaceState(
+        null,
+        "",
+        pinned ? `/agent?session=${encodeURIComponent(pinned)}` : "/agent",
+      );
+    } catch {
+      // 地址栏没同步不该让会话打不开。
+    }
+  }, [screen, sessionId]);
+
   /** 批准提案：批准那一刻才真的创建任务（B 包默认批准制）。 */
   const approve = useCallback(
     async (turnId: string) => {

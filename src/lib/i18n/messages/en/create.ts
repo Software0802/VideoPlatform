@@ -10,6 +10,12 @@ export const create: Record<keyof typeof zh, string> = {
   "create.retry": "Generate again",
   "create.retryShots": "Redo failed shots",
   "create.verify": "Verify upstream",
+  "create.blocked.running":
+    "This shot was interrupted after it was submitted and will not be retried automatically; the other shots are still running.",
+  "create.blocked.verify":
+    "The service was interrupted and this submission returned no result. You have not been charged — use \u201cVerify upstream\u201d to check whether it is already generating before creating again.",
+  "create.blocked.done":
+    "The service was interrupted and this creation did not finish. You were not charged and the reserved credits are back in your balance — you can create again.",
   "create.imageAlt": "Generated image",
   "create.recent": "Recent jobs",
   "create.recentEmpty": "No jobs yet.",

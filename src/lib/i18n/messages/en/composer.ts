@@ -81,12 +81,15 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.send.balance": "Balance may not be enough",
   "composer.quotaExhausted": "Today's quota is used up; it resets at 00:00 Beijing time",
   "composer.balanceShort": "With these settings your balance may not be enough — please top up",
+  "composer.jobRunning": "Your previous creation is still running.",
   "composer.err.notImage": "Only image files are accepted (JPG / PNG / WebP)",
   "composer.err.imageTooLarge": "That image is larger than {limit} — pick a smaller one",
   "composer.err.uploading": "The image is still uploading, hold on",
   "composer.err.uploadFailed": "Image upload failed, please try again",
   "composer.err.needRef": "Reference mode needs at least one reference image",
   "composer.err.needBothFrames": "First & last frame mode needs both a first and a last frame",
+  "composer.err.partial":
+    "Created {n} of {total}; the rest stopped: {reason}. What's already created won't be charged twice — leave the prompt and every setting (including the count) as they are and press Create again to finish the rest.",
   "composer.err.needPrompt": "This path needs a prompt",
 
   "composer.buddy.title": "Prompt buddy",

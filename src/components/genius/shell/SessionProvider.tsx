@@ -18,7 +18,12 @@ export type SessionShell = {
   email: string;
   credits: number | null;
   refreshMe: () => void;
-  signOut: () => void;
+  /**
+   * 退出。失败原因交调用方展示（review 2026-09-15 C-23）：头像菜单在每个视图都有，
+   * 而写 `error` 的那条错误行只挂在创作面板上（`Dock.tsx` 只在主页 / 创作页挂载），
+   * 在订阅 / 智能体 / 画布页点退出出错时用户什么都看不到。
+   */
+  signOut: (onError: (message: string) => void) => void;
   signingOut: boolean;
   error: string | null;
   setError: (value: string | null) => void;
@@ -69,21 +74,24 @@ export function SessionProvider({ caps, children }: { caps: ShellCaps; children:
   const balance = me?.balance;
   const credits = balance ? creditsOf(balance.availableCny) : null;
 
-  const signOut = useCallback(() => {
-    if (signingOut) return;
-    setSigningOut(true);
-    void logout().then(
-      () => {
-        // 整页跳转：会话没了，客户端缓存里的任务数据也该一起丢掉
-        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-        window.location.assign("/login");
-      },
-      (e: unknown) => {
-        setSigningOut(false);
-        setError(errorText(t, e));
-      },
-    );
-  }, [signingOut, t]);
+  const signOut = useCallback(
+    (onError: (message: string) => void) => {
+      if (signingOut) return;
+      setSigningOut(true);
+      void logout().then(
+        () => {
+          // 整页跳转：会话没了，客户端缓存里的任务数据也该一起丢掉
+          // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+          window.location.assign("/login");
+        },
+        (e: unknown) => {
+          setSigningOut(false);
+          onError(errorText(t, e));
+        },
+      );
+    },
+    [signingOut, t],
+  );
 
   const value = useMemo<SessionShell>(
     () => ({

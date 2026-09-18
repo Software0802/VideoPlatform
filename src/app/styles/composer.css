@@ -519,6 +519,10 @@
   font-size: 12.5px;
   color: var(--danger);
 }
+/* 「上一条还在生成中」这类状态说明与真错误共用同一个节点，只有颜色不同（review U-14）。 */
+.composer__error[data-tone="info"] {
+  color: var(--fg-3);
+}
 /* 音频页整页置灰：能看见结构，但一切都不可提交 */
 .composer[data-soon="true"] .composer__panel {
   opacity: 0.72;

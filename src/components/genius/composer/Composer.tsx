@@ -598,8 +598,13 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
           </div>
         </div>
 
+        {/* 忙碌说明不是错误：role 与颜色跟着 tone 走，别让读屏把「上一条还在生成中」当 alert 播。 */}
         {s.notice ? (
-          <p className="composer__error" role="alert">
+          <p
+            className="composer__error"
+            role={s.noticeTone === "error" ? "alert" : "status"}
+            data-tone={s.noticeTone}
+          >
             {s.notice}
           </p>
         ) : null}

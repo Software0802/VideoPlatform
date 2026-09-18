@@ -8,6 +8,16 @@ export const create = {
   "create.retry": "重新生成",
   "create.retryShots": "重做失败分镜",
   "create.verify": "核验上游",
+  /*
+    阻断栏（review 2026-09-15 U-06）。服务端那句 `retryBlocked.message` 是给运维看的
+    （「上游可能已接单计费」说的是**我们的**上游账户），普通创作者看到会以为自己被扣了钱。
+    用户侧的事实：扣款只在 succeeded 发生（`jobs/store.ts` 的 pendingCharge），非成功的
+    终态由 settleRelease 释放预留。所以按两件事分叉——任务是不是已经终态、还有没有核验通道，
+    三条都只讲用户自己那份钱与下一步动作，不替上游结论。
+  */
+  "create.blocked.running": "这一镜在提交后中断了，不会自动重做；其余镜头仍在继续，完成的部分照常出片。",
+  "create.blocked.verify": "服务中断，这次提交没有拿到结果。本次尚未扣费——点「核验上游」确认它是不是已经在生成，再决定要不要重新创作。",
+  "create.blocked.done": "服务中断，这次创作没有完成。本次没有扣费，预留的积分已经退回，可以直接重新创作。",
   "create.imageAlt": "生成图像",
   "create.recent": "最近任务",
   "create.recentEmpty": "还没有任务记录。",

@@ -9,9 +9,19 @@ import { PasswordDialog } from "@/components/genius/PasswordDialog";
 import { MAX_NOTICES, useJobs, useNotices, useSession } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { VIEW_TITLE, type ShellView } from "@/components/genius/views";
+import type { MessageKey } from "@/lib/i18n/messages";
+
+/** 档位 id → 显示名的 i18n 键（与 `AccountView` / `SubscriptionView` 的同名表一致）。 */
+const PLAN_NAME_KEYS: Record<string, MessageKey> = {
+  standard: "subscription.plan.standard",
+  pro: "subscription.plan.pro",
+  premium: "subscription.plan.premium",
+  ultimate: "subscription.plan.ultimate",
+};
 
 /*
-  顶栏 56px（交接包 §2）。右侧簇：订阅胶囊 → 账户芯片（头像首字 · 账号名 · ⚡积分 · 基础版）
+  顶栏 56px（交接包 §2）。右侧簇：订阅胶囊 → 账户芯片（头像首字 · 账号名 · ⚡积分 · 档位徽标，
+  没有订阅时显示「基础版」）
   → 语言（真的，切换即时生效）/ 通知（真的）→ 头像（点开小菜单：邮箱 + 修改密码 + 退出）。
   全部 nowrap + flex:none，簇本身不加 overflow:hidden（交接包 §9.2）。
 
@@ -55,11 +65,14 @@ function useDismiss(open: boolean, close: () => void) {
 }
 
 export function TopBar({ view }: { view: ShellView }) {
-  const { caps, email, credits, signOut, signingOut } = useSession();
+  const { caps, me, email, credits, signOut, signingOut } = useSession();
   const { showToast, notices, unread, markNoticesRead } = useNotices();
   const { openNotice } = useJobs();
   const t = useT();
   const router = useRouter();
+  const plan = me?.subscription ?? null;
+  const planKey = plan ? PLAN_NAME_KEYS[plan.planId] : undefined;
+  const planLabel = plan ? (planKey ? t(planKey) : plan.planId) : t("shell.top.plan.basic");
   const [menu, setMenu] = useState(false);
   const [bell, setBell] = useState(false);
   const [pwd, setPwd] = useState(false);
@@ -89,7 +102,15 @@ export function TopBar({ view }: { view: ShellView }) {
             <IconBolt size={12} />
             {credits ?? "—"}
           </span>
-          <span className="top__plan">{t("shell.top.plan.basic")}</span>
+          {/*
+            徽标跟着订阅走（review 2026-09-15 U-09）：刚付过钱的人抬头看到「基础版」会以为没生效。
+            没订阅、或 `/api/me` 还没回来时才是「基础版」；服务端加了新档而字典没跟上就原样显示
+            id，不假装成基础版。不取 SSR 下发的那份档位：它未经 settleSubscription，已过期的订阅
+            会让徽标先断言一次「标准版」，比闪一下「基础版」更糟。
+          */}
+          <span className="top__plan" data-plan={plan?.planId ?? "none"}>
+            {planLabel}
+          </span>
         </div>
         {/* 语言是真功能，窄屏上也留着（旧版只是占位，才让位给别的芯片） */}
         <LanguageSwitch className="lang--top" />
@@ -199,7 +220,7 @@ export function TopBar({ view }: { view: ShellView }) {
                 <IconKey size={14} />
                 {t("shell.top.changePassword")}
               </button>
-              <button type="button" className="top__menu-item" disabled={signingOut} onClick={signOut}>
+              <button type="button" className="top__menu-item" disabled={signingOut} onClick={() => signOut(showToast)}>
                 <IconLogout size={14} />
                 {signingOut ? t("shell.top.signingOut") : t("shell.top.signOut")}
               </button>

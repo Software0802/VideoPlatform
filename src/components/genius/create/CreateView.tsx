@@ -94,6 +94,26 @@ export function CreateView() {
       : t(STAGE_LABEL[job.status]);
   const elapsed = job ? formatElapsed(job.createdAt, isTerminal(job.status) ? new Date(job.updatedAt).getTime() : now) : "00:00";
   const purged = !!job?.artifactsPurgedAt;
+  /*
+    「核验上游」只有一条真通道：`reconcileJob` 判的是 `status === "failed" && error.code ===
+    "uncertain_submit"`（`jobs/recovery.ts`），别的情形点下去必然 409。分镜级标记的任务
+    job.error.code 是 `needs_review`，也走不了这条路（review 2026-09-15 U-06）。
+  */
+  const canVerify =
+    !!job && job.retryBlocked?.code === "uncertain_submit" && job.status === "failed" &&
+    job.error?.code === "uncertain_submit";
+  /*
+    阻断栏说哪一句：任务还在跑（分镜级标记，其它镜头继续）→ 只讲这一镜；已终态且有核验通道
+    → 讲「尚未扣费 + 先核验」；已终态没有通道 → 讲「没扣费、已退回、可以重来」。
+    服务端原文不进 DOM：它是运维口径，而这个节点是 `role="alert"`，title 会被读屏当可访问名播。
+  */
+  const blockedLabel: MessageKey | null = !job?.retryBlocked
+    ? null
+    : !isTerminal(job.status)
+      ? "create.blocked.running"
+      : canVerify
+        ? "create.blocked.verify"
+        : "create.blocked.done";
   const canRetry = !!job && (job.status === "failed" || job.status === "expired") && !job.retryBlocked && !purged;
   const retryLabel = job?.shots?.length ? t("create.retryShots") : t("create.retry");
 
@@ -163,9 +183,9 @@ export function CreateView() {
             {job.error.message}
           </p>
         ) : null}
-        {job?.retryBlocked ? (
+        {blockedLabel ? (
           <p className="task__blocked" role="alert">
-            {job.retryBlocked.message}
+            {t(blockedLabel)}
           </p>
         ) : null}
         {purged ? <p className="task__purged">{t("create.purged")}</p> : null}
@@ -183,7 +203,7 @@ export function CreateView() {
                 {retryLabel}
               </button>
             ) : null}
-            {job.retryBlocked?.code === "uncertain_submit" ? (
+            {canVerify ? (
               <button type="button" className="task__btn" disabled={busy} onClick={reconcile}>
                 {t("create.verify")}
               </button>
