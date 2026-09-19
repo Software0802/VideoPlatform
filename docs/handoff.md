@@ -113,7 +113,7 @@ Windows 本机的 mock 视频/ffmpeg、通知原子写入与 relay 首次动态�
 - 生产没有可用的管理员登录会话，本轮未核对登录态 `/api/health` 的 `build.sha`、生产 `/api/models` 与 `/api/agent/skills`；版本以 `BUILD_INFO.json`、匿名内外网 health 与服务状态交叉确认。
 - YMan 目录售价按文档积分成本约 ×2 配置；默认「快速」的成本 ¥0.5/¥1，目录模型的 price/credits 尚未经上游真实账单核实，真实付费前仍需对账。
 - 无支付网关，订阅收入仍是内部记账；2026-09-13 用户确认无商户主体 → R6 停止条件成立、不开工，继续礼品码；重开条件：取得可开通微信/支付宝商户号的主体。
-- R3 首轮校准报价已冻结（plan R3 节，2026-09-13）：仅 scene 用例 ≈¥117–¥145，全 8 条（需授权人物照）≈¥350–¥425；状态「已报价，未开跑，等用户批预算」。授权人物素材仍缺，现有场景用例只覆盖 h45-t2v-zh/en-scene。YMan 长片的 r2v 档 B、minimax-h3 真账单价格仍待验证（R2.4 待用户提供账单实付积分）。
+- R3 首轮校准报价已冻结（plan R3 节，2026-09-13）：仅 scene 用例 ≈¥117–¥145，全 8 条（需授权人物照）≈¥350–¥425。已批额度 **¥20 总额**，低于最小的 scene 子集约一个数量级，所以**未开跑、实际花费 ¥0**，`evals/runs/` 仍只有 `.gitkeep`，生产 `HARNESS_QC_VISUAL_THRESHOLD` 仍未设（= 跳过视觉打分）。授权人物素材仍缺，`pnpm evals:check` 退出 1 并挡住 11 条用例；不引素材的长片用例是 `h30-t2v-zh/en-person`、`h45-t2v-zh/en-scene`、`h60-t2v-zh-person` 五条。阈值取值口径、逐任务计量步骤与完整阻塞表在 `evals/README.md`「预算与阻塞」，`.env.example` 的 `HARNESS_QC_VISUAL_THRESHOLD` 注释块给了未校准时的保守起点 0.5 与它的付费后果。YMan 长片的 r2v 档 B、minimax-h3 真账单价格仍待验证（R2.4 待用户提供账单实付积分）。
 - 常规管理变更（充值/重置密码/停用/铸码）已改走应用内唯一写者（管理令牌 + HTTP）；`--offline` 直写保留但须先探测服务未运行。migrate-billing 与备份仍要求停服窗口；备份不能只停创作准入就声称一致性。
 - SQLite 只在多写者/准入 p95/备份约束实际触发时选型。生产 Node 22.22.2 可支持内置模块，但 Node 22 文档仍标 1.1 Active development，不据此迁资金。
 - 归档只是列表轴与目录位移，不是删除：会话/画布/run 文件与资金字段都保留；同 idempotency key 在 run 归档后重放会新建 run（有意取舍）。生产 `ARCHIVE_INACTIVE_DAYS` 未显式配置，部署新版后按默认 90 天生效。
@@ -151,8 +151,8 @@ R5.2 已落地（`b1c71d0`）：`ShellContext` 拆为 `shell/{Session,Notices,Jo
 1. **登录态核对**：生产 `/api/health` 的 `build.sha` 应为 `83065c7…`；`/api/models`、`/api/agent/skills`（7 个模型 + `off`）、铃铛与历史抽屉「已归档」在真实账号下过一眼。归档 sweep 首次将在部署后 1 小时的维护 tick 执行，默认 90 天阈值，生产目前不会有对象。
 2. **告警渠道**：`LUMEN_ADMIN_TOKEN` 已配置并实测生效（loopback→200 `{sent:false}`、公网→401，见 runbook「管理 CLI」节）；`.env` 仍待填 `ALERT_WEBHOOK_URL` + `ALERT_WEBHOOK_FORMAT`（feishu/dingtalk/wecom/generic）+ `ALERT_WEBHOOK_SECRET`（飞书/钉钉签名密钥），配后跑 `sudo -u genius node scripts/alert-test.mjs` 做真实触发验证（钉钉自定义机器人关键词填 `Lumen`）。
 3. **备份异地副本**：`.env` 配 `BACKUP_OSS_BUCKET`/`BACKUP_OSS_PREFIX`/`BACKUP_ENC_PASSPHRASE`/`OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET`/`OSS_REGION`（或 `OSS_ENDPOINT`），安装 ossutil 2.x（见 runbook 备份节）；首次 `--compare` 核对已做，完整恢复演练（解包→切换→验证）待执行。
-4. **R3 预算拍板**：scene-only ≈¥117–145 / 全 8 条 ≈¥350–425（报价见 plan R3 节）；全量评测还需**两张授权人物照**（`evals/README.md` 登记要求）。
+4. **R3 预算加档**：已批 ¥20 总额，不够任何一档——scene-only ≈¥117–145 / 全 8 条 ≈¥350–425（报价见 plan R3 节），本轮 ¥0 支出、未开跑。要出阈值得批到 scene-only 那一档；全量评测还另需**两张授权人物照**（`evals/README.md` 登记要求）。真开跑时按 `evals/README.md`「预算与阻塞」逐任务手工累加，`budgetCap` 只守单条任务不守总额。
 5. **R2.4**：提供 YMan 账单实付积分以核对 `minimax-h3` 真实成本（`costUsdActual` 现为兜底估价）。
 6. R4 后续（非生产窗口）：索引增量写；SQLite 仅在 §3.2 触发条件（多写者 / `admission_ms` p95 超阈 / 备份约束）成立时选型——health 已有 `admission.wait/hold` 分位数可观测。
 
-约束：用户已定移除 Tailwind、e2e 定时+手动、CLI 走应用管理入口、素材 30 天明示、真实评测先报价；尚未授权任何实际评测花费。生产变更、停服、改归属、覆盖/删除数据都须展示具体动作并确认；不自动部署。
+约束：用户已定移除 Tailwind、e2e 定时+手动、CLI 走应用管理入口、素材 30 天明示、真实评测先报价；付费评测额度为 ¥20 总额，尚未动用（不够最小的 scene 子集）。生产变更、停服、改归属、覆盖/删除数据都须展示具体动作并确认；不自动部署。
