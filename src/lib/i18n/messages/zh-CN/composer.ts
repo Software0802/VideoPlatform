@@ -49,6 +49,8 @@ export const composer = {
 
   /* 工具与开关 */
   "composer.tool.buddy": "创作搭子",
+  /* 死入口的可访问名（review 2026-09-15 C-15）：点开只有占位内容，名字里就说清楚。 */
+  "composer.tool.buddySoon": "创作搭子（即将上线）",
   "composer.tool.clear": "清空",
   "composer.tool.expand": "展开面板",
   "composer.tool.collapse": "收起面板",

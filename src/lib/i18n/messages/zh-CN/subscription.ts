@@ -9,8 +9,8 @@ export const subscription = {
   "subscription.mine.cycleMonthly": "月付",
   "subscription.mine.cycleYearly": "年付",
   "subscription.mine.daily": "每日积分",
-  "subscription.mine.dailyGranted": "今日已发",
-  "subscription.mine.dailyPending": "今日待发",
+  "subscription.mine.dailyGranted": "今日已发 {n}",
+  "subscription.mine.dailyPending": "今日待发 {n}",
   "subscription.mine.member": "会员积分",
   "subscription.mine.purchased": "已购积分",
   "subscription.mine.redeem": "兑换礼品码",
@@ -37,6 +37,8 @@ export const subscription = {
   "subscription.card.yearlyNote": "年付总额 ¥{total}，折合每月 ¥{monthly}",
   "subscription.card.subscribe": "订阅",
   "subscription.card.current": "当前方案",
+  /* 有生效订阅时其它档不可点（review 2026-09-15 U-20）：服务端不给中途换档。 */
+  "subscription.card.locked": "已有生效订阅",
   "subscription.card.busy": "处理中…",
 
   /* 功能行（服务端下发键名，数字在这里填） */

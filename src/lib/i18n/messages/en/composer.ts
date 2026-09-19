@@ -48,6 +48,7 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.lastFrame.switched": "Switched to {name} (supports first & last frame)",
 
   "composer.tool.buddy": "Prompt buddy",
+  "composer.tool.buddySoon": "Creative buddy (coming soon)",
   "composer.tool.clear": "Clear",
   "composer.tool.expand": "Expand panel",
   "composer.tool.collapse": "Collapse panel",

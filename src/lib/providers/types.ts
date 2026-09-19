@@ -166,7 +166,19 @@ export class ProviderHttpError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
-    opts?: { upstreamRejected?: boolean; retryAfterMs?: number; phase?: "connect" | "read" },
+    opts?: {
+      upstreamRejected?: boolean;
+      retryAfterMs?: number;
+      phase?: "connect" | "read";
+      /**
+       * 随错误信封一起下发给浏览器的额外字段（`{error:{code,message,...fields}}`）。
+       *
+       * 有些错误光有一句话不够用：界面要按里面的数做事——重试涨价要把新价原样带回来
+       * 确认（B-10），限流要知道还剩几秒（B-04）。只放能公开的标量，不放上游原文、
+       * 不放任何内部标识。
+       */
+      publicFields?: Record<string, string | number | boolean>;
+    },
   ) {
     super(message);
     this.name = "ProviderHttpError";
@@ -184,8 +196,10 @@ export class ProviderHttpError extends Error {
      * 断连不算确定拒绝，保持「可能已受理」的模糊语义。
      */
     this.phase = opts?.phase;
+    this.publicFields = opts?.publicFields;
   }
   public readonly upstreamRejected: boolean;
   public readonly retryAfterMs?: number;
   public readonly phase?: "connect" | "read";
+  public readonly publicFields?: Record<string, string | number | boolean>;
 }

@@ -65,7 +65,7 @@ function clockTime(iso: string): string {
 }
 
 export function CreateView() {
-  const { jobs, currentJob, setCurrentJob, busy, cancel, retry, reconcile } = useJobs();
+  const { jobs, currentJob, setCurrentJob, busy, cancel, retry, retryPriceCny, reconcile } = useJobs();
   const t = useT();
   const [now, setNow] = useState<number | null>(null);
 
@@ -115,7 +115,16 @@ export function CreateView() {
         ? "create.blocked.verify"
         : "create.blocked.done";
   const canRetry = !!job && (job.status === "failed" || job.status === "expired") && !job.retryBlocked && !purged;
-  const retryLabel = job?.shots?.length ? t("create.retryShots") : t("create.retry");
+  /*
+    重试涨价确认（review 2026-09-15 B-10）：重试按当下参数重新定价，时长向上归一、换家、
+    价表变动都可能让它比原来贵——原来是直接扣，或者被 402 顶回来，全程没有提示。
+    服务端第一次拦下 409 并回传新价，按钮就改成「确认重试（¥x）」，再点一次才真的扣。
+  */
+  const retryLabel = retryPriceCny !== null
+    ? t("create.retryConfirm", { price: formatCny(retryPriceCny) })
+    : job?.shots?.length
+      ? t("create.retryShots")
+      : t("create.retry");
 
   const recent = jobs.slice(0, 12);
 

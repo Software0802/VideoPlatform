@@ -9,6 +9,8 @@
 @import "./styles/home.css";
 @import "./styles/create.css";
 @import "./styles/login.css";
+/* notfound 必须排在 shell.css 之后：`.nf shell` 的布局由后写的 `.nf` 接管（见该文件顶部）。 */
+@import "./styles/notfound.css";
 
 /*
   Genius App — 侧栏 + 五视图 + 悬浮创作面板。
@@ -323,9 +325,6 @@ input::placeholder {
   }
   .composer__cluster {
     margin-left: 0;
-  }
-  .specs-pop {
-    width: min(330px, calc(100vw - 40px));
   }
   .masonry {
     columns: 150px 2;

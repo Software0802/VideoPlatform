@@ -299,6 +299,12 @@ export default function SubscriptionView({ credits }: { credits: number }) {
     return key ? t(key) : plan.name;
   };
   const minePlan = state?.plans.find((p) => p.id === mine?.planId);
+  /*
+    有生效中的订阅时其它档一律不可点（review 2026-09-15 U-20）：服务端 409
+    `subscription_active` 不给中途换档，而原来点开确认层会白纸黑字写出扣款金额——
+    用户点了「确认订阅」才被拒，等于先骗一次。没有换档路径就别把入口画成能走。
+  */
+  const locked = mine !== null;
 
   return (
     <div className="sub-view">
@@ -351,12 +357,21 @@ export default function SubscriptionView({ credits }: { credits: number }) {
               <div className="sub-mine__breakdown">
                 <span>
                   {t("subscription.mine.daily")}{" "}
-                  <span className="sub-mine__num">
+                  {/*
+                    「今日已发 / 待发」要带上这一档每天发多少（review 2026-09-15 U-29）：
+                    只有两个字的话，购买当天看到「会员积分 1260」（方案写每 30 天 1200）
+                    却说不清那 60 是不是今天的日积分，读起来像发重了。
+                  */}
+                  <span
+                    className="sub-mine__num"
+                    data-daily-granted={mine ? String(mine.dailyGrantedToday) : undefined}
+                  >
                     {mine
                       ? t(
                           mine.dailyGrantedToday
                             ? "subscription.mine.dailyGranted"
                             : "subscription.mine.dailyPending",
+                          { n: minePlan?.dailyCredits ?? 0 },
                         )
                       : 0}
                   </span>
@@ -416,6 +431,7 @@ export default function SubscriptionView({ credits }: { credits: number }) {
           <div className="sub-grid">
             {state.plans.map((plan, i) => {
               const current = mine?.planId === plan.id;
+              const blocked = locked && !current;
               return (
                 <div
                   className="sub-card"
@@ -453,14 +469,17 @@ export default function SubscriptionView({ credits }: { credits: number }) {
                   <button
                     type="button"
                     className="sub-card__cta"
-                    disabled={buying || current}
+                    disabled={buying || current || blocked}
+                    data-state={blocked ? "locked" : undefined}
                     onClick={() => setPending(plan)}
                   >
                     {current
                       ? t("subscription.card.current")
-                      : buying
-                        ? t("subscription.card.busy")
-                        : t("subscription.card.subscribe")}
+                      : blocked
+                        ? t("subscription.card.locked")
+                        : buying
+                          ? t("subscription.card.busy")
+                          : t("subscription.card.subscribe")}
                   </button>
                   <div className="sub-card__features">
                     {plan.features.map((key) => (

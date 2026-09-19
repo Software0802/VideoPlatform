@@ -10,8 +10,8 @@ export const subscription: Record<keyof typeof zh, string> = {
   "subscription.mine.cycleMonthly": "Monthly",
   "subscription.mine.cycleYearly": "Yearly",
   "subscription.mine.daily": "Daily credits",
-  "subscription.mine.dailyGranted": "Granted today",
-  "subscription.mine.dailyPending": "Pending today",
+  "subscription.mine.dailyGranted": "{n} granted today",
+  "subscription.mine.dailyPending": "{n} due today",
   "subscription.mine.member": "Member credits",
   "subscription.mine.purchased": "Purchased credits",
   "subscription.mine.redeem": "Redeem gift code",
@@ -35,6 +35,7 @@ export const subscription: Record<keyof typeof zh, string> = {
   "subscription.card.yearlyNote": "¥{total} per year, ¥{monthly} per month",
   "subscription.card.subscribe": "Subscribe",
   "subscription.card.current": "Current plan",
+  "subscription.card.locked": "Subscription active",
   "subscription.card.busy": "Working…",
 
   "subscription.featureCredits": "{credits} credits every 30 days (no rollover)",

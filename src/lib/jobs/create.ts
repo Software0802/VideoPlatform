@@ -3,7 +3,7 @@ import { access, cp, mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { estimateCostUsd, type ImagePricingHint } from "@/lib/cost";
 import { reserveJobFunds } from "@/lib/billing/admission";
-import { priceCny, priceTable, priceTableFor } from "@/lib/billing/prices";
+import { formatCny, priceCny, priceTable, priceTableFor } from "@/lib/billing/prices";
 import { packHarnessDuration } from "@/lib/harness/pack-duration";
 import { harnessEnabled, maxQueuedJobs, maxQueuedJobsPerUser } from "@/lib/env";
 import {
@@ -380,11 +380,41 @@ async function createJobUnlocked(
  * differ is the administrator retrying an ownerless legacy job — which should
  * then belong to the administrator rather than stay ownerless.
  */
-export async function retryJob(source: JobRecord, ownerId: string): Promise<JobPublic> {
-  return withAdmissionLock(() => retryJobUnlocked(source, ownerId));
+export async function retryJob(
+  source: JobRecord,
+  ownerId: string,
+  opts?: RetryOptions,
+): Promise<JobPublic> {
+  return withAdmissionLock(() => retryJobUnlocked(source, ownerId, opts));
 }
 
-async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<JobPublic> {
+/** `acceptPriceCny` = 用户在界面上确认过的那个价（见下面的涨价闸门）。 */
+export type RetryOptions = { acceptPriceCny?: number };
+
+/**
+ * 重试比源任务贵时抛它。两个数要带到界面上，所以不用裸的 `ProviderHttpError`——
+ * 界面据此把按钮改成「确认重试（¥x）」，第二次点击带上 `acceptPriceCny` 才真的扣钱。
+ */
+export class RetryPriceChangedError extends ProviderHttpError {
+  constructor(
+    readonly priceCny: number,
+    readonly previousPriceCny: number,
+  ) {
+    super(
+      409,
+      "retry_price_changed",
+      `这次重试按当前规格计价 ${formatCny(priceCny)}（原 ${formatCny(previousPriceCny)}），确认后才会扣款`,
+      // 界面要把这个数原样带回来确认，所以它必须上 wire，不能只藏在这句话里。
+      { publicFields: { priceCny, previousPriceCny } },
+    );
+  }
+}
+
+async function retryJobUnlocked(
+  source: JobRecord,
+  ownerId: string,
+  opts?: RetryOptions,
+): Promise<JobPublic> {
   // Before the status check: a purged job is usually `succeeded`, and answering
   // "仅失败或过期任务可重试" would send the caller looking for a status problem
   // when the real reason is that its inputs were deleted (plan §8).
@@ -513,6 +543,24 @@ async function retryJobUnlocked(source: JobRecord, ownerId: string): Promise<Job
     assets: {},
     voiceIds: source.voiceIds,
   };
+
+  /*
+    涨价闸门（review 2026-09-15 B-10）。重试按**当下**参数重新定价（见上面 :457 的说明），
+    而时长归一是向上取档、换家会改档位、价表也会变——一条 ¥2 的失败任务点「重新生成」
+    可能直接扣 ¥4，或者被 402 顶回来，中间没有任何提示。
+
+    只在「确实比原来贵」时拦一次，并把两个价带给界面；用户确认后第二次请求带
+    `acceptPriceCny` 放行。`source.priceCny > 0` 是必须的：计费模型之前落盘的任务读回来
+    都是 0（schema 的 default），不加这条会把那批存量任务的每一次重试都拦下来，还要
+    告诉用户「原 ¥0.00」。降价不拦——那是「只降不升」的既定方向。
+  */
+  if (
+    source.priceCny > 0 &&
+    rec.priceCny > source.priceCny &&
+    opts?.acceptPriceCny !== rec.priceCny
+  ) {
+    throw new RetryPriceChangedError(rec.priceCny, source.priceCny);
+  }
 
   // 同一个判官、同一把锁（方案 §3.2）：重试和首次提交花的是一样的钱——
   // 也一样在准入这一刻冻结自己的分池预留。

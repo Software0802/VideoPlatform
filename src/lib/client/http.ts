@@ -15,6 +15,11 @@ export class ApiError extends Error {
     readonly code?: string,
     /** `x-request-id` response header, for reporting a failure back to us. */
     readonly requestId?: string,
+    /**
+     * 服务端在错误信封里显式声明可下发的那几个标量（`ProviderHttpError` 的
+     * `publicFields`）：重试涨价的新价、限流剩余秒数之类。界面要按里面的数做事。
+     */
+    readonly fields?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
@@ -55,17 +60,22 @@ export function pollTimeoutSignal(ms = 20_000): AbortSignal | undefined {
   }
 }
 
-type ErrorEnvelope = { error?: { code?: string; message?: string } };
+type ErrorEnvelope = { error?: { code?: string; message?: string } & Record<string, unknown> };
 
 /** `{error:{code,message}}` in, `ApiError` out. Leaves 401 to the caller. */
 export async function parseJson<T>(res: Response, fallback: string): Promise<T> {
   const data = (await res.json().catch(() => null)) as (T & ErrorEnvelope) | null;
   if (!res.ok) {
+    const envelope = data?.error;
+    const fields = envelope
+      ? Object.fromEntries(Object.entries(envelope).filter(([k]) => k !== "code" && k !== "message"))
+      : undefined;
     throw new ApiError(
-      data?.error?.message ?? fallback,
+      envelope?.message ?? fallback,
       res.status,
-      data?.error?.code,
+      envelope?.code,
       res.headers.get("x-request-id") ?? undefined,
+      fields && Object.keys(fields).length ? fields : undefined,
     );
   }
   return data as T;

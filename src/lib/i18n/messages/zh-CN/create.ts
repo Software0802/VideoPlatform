@@ -7,6 +7,8 @@ export const create = {
   "create.purged": "作品已过期清理，无法重新生成这一条，请重新提交。",
   "create.retry": "重新生成",
   "create.retryShots": "重做失败分镜",
+  /* 重试比原来贵时的确认态（review 2026-09-15 B-10）：再点一次才扣这个价。 */
+  "create.retryConfirm": "确认重试（{price}）",
   "create.verify": "核验上游",
   /*
     阻断栏（review 2026-09-15 U-06）。服务端那句 `retryBlocked.message` 是给运维看的

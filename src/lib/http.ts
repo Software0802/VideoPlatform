@@ -3,8 +3,10 @@ import { ProviderHttpError } from "@/lib/providers/types";
 
 export function jsonError(e: unknown) {
   if (e instanceof ProviderHttpError) {
+    // `publicFields` 是显式声明可以下发的那几个标量（重试新价、限流剩余秒数…）；
+    // 没声明就还是老形状 `{code,message}`。
     return Response.json(
-      { error: { code: e.code, message: e.message } },
+      { error: { code: e.code, message: e.message, ...(e.publicFields ?? {}) } },
       { status: e.status },
     );
   }

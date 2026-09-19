@@ -165,7 +165,14 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
   const [resChoice, setResChoice] = useState<Resolution | null>(null);
   const [imageResChoice, setImageResChoice] = useState<ImageResolution | null>(null);
   const [audio, setAudio] = useState(true);
-  const [multi, setMulti] = useState(true);
+  /*
+    「多镜头」是占位开关（review 2026-09-15 C-02）：`createJobBodySchema` 是 strict，
+    压根没有这个字段——全仓找不到一处把它写进请求体。原来它默认**开着**且看起来生效，
+    用户以为自己开了多镜头、拿到单镜头成片还不知道为什么。真·分镜走的是时长档
+    30/45/60 + HARNESS_ENABLED（见 job.shots），与它无关。恒为关，按其它占位控件的口径
+    置灰 + 提示。
+  */
+  const multi = false;
   const [count, setCountState] = useState(1);
   const [image, setImage] = useState<Frame | null>(null);
   const [lastImage, setLastImage] = useState<Frame | null>(null);
@@ -495,7 +502,8 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     setAudio((a) => !a);
     dropKey();
   }, [audioAvailable, dropKey, showToast, t]);
-  const toggleMulti = useCallback(() => setMulti((m) => !m), []);
+  /** 占位开关：点了只说一句「即将上线」，不改任何状态（见 `multi` 的说明）。 */
+  const toggleMulti = useCallback(() => showToast(t("common.comingSoon")), [showToast, t]);
   const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => !c);
     setPop(null);

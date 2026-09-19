@@ -8,7 +8,7 @@ import { recoverDecision } from "@/lib/jobs/recover";
 import { JOB_UNCERTAIN_SUBMIT_MESSAGE, UNCERTAIN_SUBMIT_CODE } from "@/lib/jobs/retry-guard";
 import { sweepRetention } from "@/lib/jobs/retention";
 import { isTerminalStatus, type JobRecord } from "@/lib/jobs/schema";
-import { listJobRecords, readJob, updateJob } from "@/lib/jobs/store";
+import { readJob, readJobsByIds, updateJob } from "@/lib/jobs/store";
 import { sweepIdempotency, sweepTmp } from "@/lib/jobs/sweep";
 import { enterLogContext, log } from "@/lib/log";
 import { ProviderHttpError } from "@/lib/providers/types";
@@ -104,7 +104,14 @@ export function enqueue(jobId: string) {
 const RECOVER_STALE_MARGIN_MS = 5 * 60 * 1000;
 
 async function recover() {
-  const jobs = await listJobRecords();
+  /*
+    只回读**非终态**那几条（review 2026-09-15 B-11）。原来是 `listJobRecords()` 全量扫：
+    启动时 `ensureJobIndex()` 已经按目录读过一遍全部 job.json，这里再读第二遍，作品累积
+    之后每次重启 / 部署的白屏窗口就线性变长——而 recover 关心的只有还没到终态的那几条。
+    遍历顺序与结果无关：每条任务各判各的，没有跨任务状态。
+  */
+  const entries = await listJobIndex({ nonTerminal: true });
+  const jobs = await readJobsByIds(entries.map((e) => e.id));
   const now = Date.now();
   for (const job of jobs) {
     const age = now - new Date(job.updatedAt).getTime();

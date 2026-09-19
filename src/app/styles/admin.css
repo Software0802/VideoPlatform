@@ -1,3 +1,5 @@
+/* 管理页不再自造 `:focus{outline:none}`：那条特异性压过全局 `:focus-visible`，
+   Tab 到输入框时只剩 22% 白的 1px 内描边（review 2026-09-15 C-18）。焦点环交回 globals.css。 */
 /*
   中转管理页（/admin/relays）— N3.5，方案 docs/plan-relay-provider-2026-09-13.md §4b。
   块名 `relay-admin` / `relay-row`；卡片与按钮沿用 account.css 的样式类
@@ -268,10 +270,6 @@
   background: rgba(255, 255, 255, 0.05);
   box-shadow: inset 0 0 0 1px var(--ra-line);
 }
-.relay-admin__input:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
-}
 .relay-admin__checks {
   display: flex;
   gap: 12px;
@@ -347,11 +345,6 @@
 }
 .relay-models__num {
   width: 46px;
-}
-.relay-models__input:focus,
-.relay-models__num:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
 }
 .relay-models__input:disabled,
 .relay-models__num:disabled,

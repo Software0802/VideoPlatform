@@ -30,6 +30,7 @@ import {
   type SlotTarget,
 } from "@/components/genius/ShellContext";
 import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
+import { PROMPT_MAX_LEN, PROMPT_WARN_LEN } from "@/lib/jobs/prompt-limits";
 import type { MessageKey } from "@/lib/i18n/messages";
 import { ModelPop } from "@/components/genius/composer/ModelPop";
 import { SpecsPop } from "@/components/genius/composer/SpecsPop";
@@ -361,8 +362,9 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
               <button
                 type="button"
                 className="composer__tool"
-                aria-label={t("composer.tool.buddy")}
-                title={t("composer.tool.buddy")}
+                /* 浮层里是占位内容（打不了字），名字就别装成能用（review 2026-09-15 C-15）。 */
+                aria-label={t("composer.tool.buddySoon")}
+                title={t("composer.tool.buddySoon")}
                 data-on={s.pop === "buddy"}
                 onClick={() => s.setPop(s.pop === "buddy" ? null : "buddy")}
               >
@@ -397,7 +399,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
             <input
               className="composer__input"
               value={s.prompt}
-              maxLength={2000}
+              maxLength={PROMPT_MAX_LEN}
               aria-label={t("composer.prompt")}
               placeholder={placeholder}
               onChange={(e) => s.setPrompt(e.target.value)}
@@ -428,10 +430,11 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
                 className="composer__text"
                 rows={3}
                 value={s.prompt}
-                maxLength={2000}
+                maxLength={PROMPT_MAX_LEN}
                 aria-label={t("composer.prompt")}
                 placeholder={placeholder}
                 onChange={(e) => s.setPrompt(e.target.value)}
+                aria-describedby="composer-prompt-count"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                     e.preventDefault();
@@ -439,7 +442,19 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
                   }
                 }}
               />
-              {isAudio ? <span className="composer__count">{s.prompt.length}/10000</span> : null}
+              {/*
+                计数器常驻（review 2026-09-15 U-11）：原来只在音频页出现，分母还写成 10000，
+                与服务端 schema 的 2000 矛盾——粘长提示词进来后半段被静默截掉，用户不知道。
+                现在两边共用 `PROMPT_MAX_LEN`，临近上限变色；`aria-describedby` 指向它，
+                描述落在可见文本「1799/2000」上（span 是 generic，不该再挂 aria-label）。
+              */}
+              <span
+                className="composer__count"
+                id="composer-prompt-count"
+                data-warn={s.prompt.length >= PROMPT_WARN_LEN ? "true" : undefined}
+              >
+                {s.prompt.length}/{PROMPT_MAX_LEN}
+              </span>
             </div>
           </div>
         )}
@@ -491,7 +506,16 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
           ) : null}
 
           {isVideo && !firstLast ? (
-            <button type="button" className="composer__multi" role="switch" aria-checked={s.multi} onClick={s.toggleMulti}>
+            <button
+              type="button"
+              className="composer__multi"
+              role="switch"
+              aria-checked={s.multi}
+              /* 占位控件的统一口径（同「配置面板」「创作搭子」）：置灰 + data-soon + toast。 */
+              aria-disabled="true"
+              data-soon="true"
+              onClick={s.toggleMulti}
+            >
               {t("composer.multi")}
               <span className="composer__track" data-on={s.multi} aria-hidden="true">
                 <span className="composer__knob" />
@@ -500,7 +524,14 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
           ) : null}
 
           {isImage ? null : (
-            <button type="button" className="composer__panelbtn" onClick={() => showToast(soonText)}>
+            <button
+              type="button"
+              className="composer__panelbtn"
+              /* 与其它占位控件同口径：置灰 + data-soon + toast（review 2026-09-15 C-15）。 */
+              aria-disabled="true"
+              data-soon="true"
+              onClick={() => showToast(soonText)}
+            >
               <IconSliders size={13} />
               {t("composer.panelBtn")}
               <span className="composer__pink" aria-hidden="true" />

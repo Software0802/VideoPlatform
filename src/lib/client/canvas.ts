@@ -98,11 +98,18 @@ export class RevisionConflictError extends Error {
 export async function patchCanvas(
   id: string,
   body: { expectedRevision: number; title?: string; nodes?: CanvasNode[]; edges?: CanvasEdge[] },
+  /**
+   * `keepalive` 只给「页面正在离开时补发最后一笔编辑」用（review 2026-09-15 C-09）：
+   * 它让请求在文档卸载后仍然送达。代价是请求体有 64KB 上限，超了 fetch 直接 reject——
+   * 那时的行为与今天一样（这一笔丢掉），不会更糟。
+   */
+  opts?: { keepalive?: boolean },
 ): Promise<CanvasDocument> {
   const res = await fetch(`/api/canvases/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    keepalive: opts?.keepalive,
   });
   if (res.status === 409) throw new RevisionConflictError("画布已被别处修改");
   const data = await parseAuthed<{ canvas?: unknown }>(res, "保存画布失败");

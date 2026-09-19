@@ -174,8 +174,16 @@ export async function cancelJob(id: string): Promise<JobPublic> {
   return parseAuthed<JobPublic>(res, "取消失败");
 }
 
-export async function retryJob(id: string): Promise<JobPublic> {
-  const res = await fetch(`/api/jobs/${id}/retry`, { method: "POST" });
+/**
+ * 重试。`acceptPriceCny` 只在「服务端说这次更贵、用户点了确认」时带上——
+ * 不带的第一次请求会被 409 `retry_price_changed` 拦下并回传两个价（B-10）。
+ */
+export async function retryJob(id: string, acceptPriceCny?: number): Promise<JobPublic> {
+  const res = await fetch(`/api/jobs/${id}/retry`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(acceptPriceCny === undefined ? {} : { acceptPriceCny }),
+  });
   return parseAuthed<JobPublic>(res, "重试失败");
 }
 

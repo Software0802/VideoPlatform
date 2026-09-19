@@ -13,6 +13,7 @@ import {
   retryJob,
   type JobKind,
 } from "@/lib/client/jobs";
+import { ApiError } from "@/lib/client/http";
 import { useEvents } from "@/lib/client/useEvents";
 import { useJobLive } from "@/lib/client/useJobLive";
 import { isActive, isTerminal } from "@/lib/client/labels";
@@ -41,6 +42,11 @@ export type JobsShell = {
   working: boolean;
   cancel: () => void;
   retry: () => void;
+  /**
+   * 重试比原来贵时服务端回的那个新价（¥）。非空 = 按钮进「确认重试」态，
+   * 再点一次才带着这个价真的扣款（review 2026-09-15 B-10）。
+   */
+  retryPriceCny: number | null;
   /** 核验上游（恢复中心）：仅 job 级 `uncertain_submit`（status=failed）时才有通道 */
   reconcile: () => void;
 
@@ -112,9 +118,22 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   const [pickedJob, setPickedJob] = useState<JobPublic | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const currentJob: JobPublic | null = pickedJob ?? (dismissed ? null : (jobs[0] ?? null));
+  /*
+    重试涨价确认态（review 2026-09-15 B-10）：服务端 409 回传的新价。
+    渲染要它（按钮改成「确认重试（¥x）」），`retry` 回调也要读它，但不能进依赖表——
+    进了会让这个 useCallback 每次确认态变化都重建。与本文件的 `jobsRef` 同一手法：
+    state 供渲染、ref 供回调，在 effect 里同步。
+  */
+  const [retryPriceCny, setRetryPriceCny] = useState<number | null>(null);
+  const retryPriceRef = useRef<number | null>(null);
+  useEffect(() => {
+    retryPriceRef.current = retryPriceCny;
+  }, [retryPriceCny]);
   const setCurrentJob = useCallback((job: JobPublic | null) => {
     setPickedJob(job);
     setDismissed(job === null);
+    // 换一条任务就清掉确认态：那个价是上一条任务的。
+    setRetryPriceCny(null);
   }, []);
   const [busy, setBusy] = useState(false);
 
@@ -338,15 +357,27 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     if (job.artifactsPurgedAt) return;
     setError(null);
     setBusy(true);
-    void retryJob(job.id).then(
+    // 第二次点击（确认态）才把价带回去；服务端按「等于它才放行」判，不接受别的数。
+    void retryJob(job.id, retryPriceRef.current ?? undefined).then(
       (next) => {
         setBusy(false);
+        setRetryPriceCny(null);
         // 重试建的是一条**新任务**，与提交同理要先记一笔，它出片时才会有通知
         noteJob(next);
         onLive(next);
       },
       (e: unknown) => {
         setBusy(false);
+        /*
+          涨价拦一次：把服务端算出来的新价记下来，按钮改成「确认重试（¥x）」，
+          错误行同时显示两个价。再点一次才真的扣钱（B-10）。
+        */
+        if (e instanceof ApiError && e.code === "retry_price_changed") {
+          const next = e.fields?.priceCny;
+          setRetryPriceCny(typeof next === "number" ? next : null);
+        } else {
+          setRetryPriceCny(null);
+        }
         setError(errorText(t, e));
         refreshMe();
       },
@@ -397,6 +428,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
       working,
       cancel,
       retry,
+      retryPriceCny,
       reconcile,
       hasMoreJobs,
       loadMoreJobs,
@@ -416,6 +448,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
       working,
       cancel,
       retry,
+      retryPriceCny,
       reconcile,
       hasMoreJobs,
       loadMoreJobs,

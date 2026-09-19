@@ -46,7 +46,6 @@ export function AssetPicker({ onUpload }: { onUpload: () => void }) {
           </button>
         </div>
         <div className="picker__tabs">
-          <span className="picker__filter">{t("common.all")}</span>
           <button type="button" className="picker__tab" data-on={tab === "made"} onClick={() => setTab("made")}>
             {t("composer.picker.tab.made")}
           </button>

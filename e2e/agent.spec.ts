@@ -241,14 +241,27 @@ test("智能体：技能开关按账号持久化并从首页下拉移除", async
   await expect(page.locator('.agent-skillpop__item[data-skill-id="car-ad"]')).toHaveCount(0);
 });
 
-test("智能体：一次性迁移旧 localStorage 技能开关", async ({ page }) => {
+/*
+  旧 localStorage 键只清不迁（review 2026-09-15 C-20）：键名不含 userId，同一台浏览器上
+  A 用过旧版、B 登录且服务端偏好为空时，迁移会把 A 关掉的技能写进 B 的账号。
+*/
+test("智能体：旧 localStorage 技能开关只清不迁", async ({ page }) => {
+  const patched: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "PATCH" && r.url().includes("/api/agent/skills")) patched.push(r.url());
+  });
+  // 绝对值会被上一轮的残留污染（非隔离模式复用 DATA_DIR），比前后快照。
+  const before = await skillOff(page);
   await page.evaluate(() => {
     window.localStorage.setItem("genius.agent.skillsOff", JSON.stringify({ "car-ad": true }));
   });
   await page.reload();
   await expect(page.locator(".shell")).toHaveAttribute("data-ready", "true");
-  await expect.poll(() => skillOff(page)).toContain("car-ad");
+  // 键被清掉
   await expect
     .poll(() => page.evaluate(() => window.localStorage.getItem("genius.agent.skillsOff")))
     .toBeNull();
+  // 但没有因此写过账号偏好
+  expect(patched, "旧键不该触发任何账号级写入").toEqual([]);
+  expect((await skillOff(page)).sort()).toEqual([...before].sort());
 });

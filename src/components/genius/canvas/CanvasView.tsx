@@ -121,6 +121,12 @@ export default function CanvasView() {
   // revision 作 expectedRevision。doc.revision 要等响应回来才经 setDoc 更新，
   // 不串行的话，在途期间的第二次保存会带着旧 revision 撞 409。
   const saveTail = useRef<Promise<CanvasDocument | null>>(Promise.resolve(null));
+  /*
+    防抖窗口里那一笔还没发出去的改动（review 2026-09-15 C-09）。原来卸载 / 刷新只
+    `clearTimeout`，于是「在节点里打完最后一句就切走」这句话直接没了，回来看到的是
+    600ms 之前的版本，而且没有任何提示。记在这里，离开时补发。
+  */
+  const pendingSave = useRef<{ base: CanvasDocument; nodes: CanvasNode[]; edges: CanvasDocument["edges"] } | null>(null);
   const materialFor = useRef<string | null>(null);
   const drag = useRef<{ id: string; dx: number; dy: number } | null>(null);
 
@@ -251,7 +257,12 @@ export default function CanvasView() {
    * 冲突未决期间不再发 PATCH（反复 409 没有意义），本地 mutate 照常进行。
    */
   const persist = useCallback(
-    (base: CanvasDocument, nodes: CanvasNode[], edges = base.edges): Promise<void> => {
+    (
+      base: CanvasDocument,
+      nodes: CanvasNode[],
+      edges = base.edges,
+      opts?: { keepalive?: boolean },
+    ): Promise<void> => {
       if (conflictState.current) return Promise.resolve();
       const task = saveTail.current.then(async (prev) => {
         if (conflictState.current) return prev;
@@ -259,7 +270,7 @@ export default function CanvasView() {
         // 画布、上一次失败）才退回 schedule 时捕获的 base.revision。
         const expectedRevision = prev && prev.id === base.id ? prev.revision : base.revision;
         try {
-          const next = await patchCanvas(base.id, { expectedRevision, nodes, edges });
+          const next = await patchCanvas(base.id, { expectedRevision, nodes, edges }, opts);
           setDoc((cur) => (cur && cur.id === next.id ? next : cur));
           return next;
         } catch (e) {
@@ -286,12 +297,48 @@ export default function CanvasView() {
         const { nodes, edges } = fn(cur);
         const next = { ...cur, nodes, edges: edges ?? cur.edges };
         if (saveTimer.current) clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(() => void persist(next, nodes, next.edges), SAVE_DEBOUNCE_MS);
+        pendingSave.current = { base: next, nodes, edges: next.edges };
+        saveTimer.current = setTimeout(() => {
+          pendingSave.current = null;
+          void persist(next, nodes, next.edges);
+        }, SAVE_DEBOUNCE_MS);
         return next;
       });
     },
     [persist],
   );
+
+  /**
+   * 把防抖窗口里那一笔立刻发出去（离开页面 / 卸载时用）。
+   *
+   * `runNode` / `runAll` 早就有同样的「先落盘再运行」写法，缺的只是「用户直接走了」
+   * 这条路径。`keepalive` 让请求在文档卸载后仍能送达（review 2026-09-15 C-09）。
+   */
+  const flushSave = useCallback(
+    (keepalive = false) => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      const held = pendingSave.current;
+      pendingSave.current = null;
+      if (held) void persist(held.base, held.nodes, held.edges, { keepalive });
+    },
+    [persist],
+  );
+  const flushRef = useRef(flushSave);
+  useEffect(() => {
+    flushRef.current = flushSave;
+  }, [flushSave]);
+  useEffect(() => {
+    // pagehide 覆盖刷新、关标签与移动端切走；卸载（切视图）走 cleanup。
+    const onHide = () => flushRef.current(true);
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      window.removeEventListener("pagehide", onHide);
+      flushRef.current(false);
+    };
+  }, []);
 
   /* 轮询/补拉簇（R5.3）：run 状态、执行位签名触发的余额刷新、jobId 轮询与首次补拉。 */
   useCanvasPolling({ doc, latestRun, setLatestRun, jobs, setJobs, refreshMe });

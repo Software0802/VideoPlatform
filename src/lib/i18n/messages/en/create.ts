@@ -9,6 +9,7 @@ export const create: Record<keyof typeof zh, string> = {
   "create.purged": "This creation was cleared after expiry and cannot be regenerated — submit it again.",
   "create.retry": "Generate again",
   "create.retryShots": "Redo failed shots",
+  "create.retryConfirm": "Confirm retry ({price})",
   "create.verify": "Verify upstream",
   "create.blocked.running":
     "This shot was interrupted after it was submitted and will not be retried automatically; the other shots are still running.",

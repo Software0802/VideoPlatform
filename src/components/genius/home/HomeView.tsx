@@ -234,6 +234,12 @@ export function HomeView() {
   }, [loadMoreJobs]);
   useEffect(() => {
     const node = sentinel.current;
+    /*
+      选了分类时不自动翻页（review 2026-09-15 C-10）：`GET /api/jobs` 不带 tag，筛选只在
+      已加载的那几页里做，冷门分类筛出空列表 → 哨兵一直在视口里 → 一路翻到底，屏幕上
+      什么都没多出来，流量和发热却是真的。这一档留「加载更多」按钮手动翻。
+    */
+    if (cat !== ALL) return;
     if (!node || !more || typeof IntersectionObserver === "undefined") return;
     const io = new IntersectionObserver(
       (entries) => {
@@ -244,7 +250,7 @@ export function HomeView() {
     );
     io.observe(node);
     return () => io.disconnect();
-  }, [more, kind, jobsLoading]);
+  }, [more, kind, jobsLoading, cat]);
 
   return (
     <>
@@ -317,10 +323,15 @@ export function HomeView() {
                   data-tags={w.tags.join(",")}
                   /* 样片没有任务；真作品带上 id，分页 / 标签 / 删除三条用例才好指名道姓 */
                   data-job-id={w.job?.id}
-                  style={{ aspectRatio: aspect(w.ratio), backgroundImage: `url(${w.still})` }}
+                  style={{ aspectRatio: aspect(w.ratio) }}
                   title={w.purged ? t("home.purged.title", { prompt: w.prompt }) : w.prompt}
                   onClick={() => setOpenKey(w.key)}
                 >
+                  {/* 懒加载封面（C-10）：只有滚到视口附近才真的去拉这张图。 */}
+                  {w.still ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img className="masonry__cover" src={w.still} alt="" loading="lazy" decoding="async" />
+                  ) : null}
                   <span className="masonry__title">
                     <IconStar size={11} />
                     {short(w.prompt)}

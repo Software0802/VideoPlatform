@@ -173,7 +173,10 @@ describe("quotaBlock", () => {
     // … yet new submissions stop.
     const block = quotaBlock(state);
     expect(block?.code).toBe("failure_limit_reached");
-    expect(block?.message).toContain("联系管理员");
+    expect(block?.message).toContain("失败与取消");
+    expect(block?.message).toContain("北京时间 0 点重置");
+    // 止损阀是日窗口、0 点自动重置，不该把用户支去找管理员（review 2026-09-15 B-06）
+    expect(block?.message).not.toContain("管理员");
   });
 
   it("never leaks a user id into a message", () => {

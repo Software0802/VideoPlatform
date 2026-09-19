@@ -33,6 +33,11 @@ import { IconPanelLeft, IconPencil, IconTrash } from "./icons";
 
 type Screen = "home" | "plaza" | "chat";
 
+/**
+ * 旧版把技能开关存在这个 localStorage 键里。现在它是**账号级**服务端偏好，这个键只清不迁
+ * （review 2026-09-15 C-20）：键名不含 userId，同一台浏览器上 A 用过旧版、B 登录且服务端
+ * 偏好为空时，迁移会把 A 关掉的技能写进 B 的账号。
+ */
 const LEGACY_OFF_KEY = "genius.agent.skillsOff";
 /** 会话里还有任务没跑完时，多久重拉一次详情。 */
 const POLL_MS = 3000;
@@ -89,7 +94,6 @@ export default function AgentView() {
   // 卸载后到达的响应不该再 setState（切走视图、退出登录都会命中）。
   const alive = useRef(true);
   const openedDeepLink = useRef<string | null>(null);
-  const migrationAttempted = useRef(false);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -104,34 +108,12 @@ export default function AgentView() {
     [t],
   );
 
-  const migrateLegacyOff = useCallback(async (list: AgentSkill[], serverOff: string[]) => {
-    if (migrationAttempted.current) return;
-    let raw: string | null;
+  /* 旧键只清不迁（见 LEGACY_OFF_KEY 的说明）：留着它没有任何用处，迁移则会串账号。 */
+  useEffect(() => {
     try {
-      raw = window.localStorage.getItem(LEGACY_OFF_KEY);
-    } catch {
-      return;
-    }
-    if (raw === null) return;
-    migrationAttempted.current = true;
-    try {
-      if (serverOff.length) {
-        window.localStorage.removeItem(LEGACY_OFF_KEY);
-        return;
-      }
-      const parsed = JSON.parse(raw) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid legacy prefs");
-      const current = new Set(list.map((skill) => skill.id));
-      const ids = Object.entries(parsed as Record<string, unknown>)
-        .filter(([id, value]) => value === true && current.has(id))
-        .map(([id]) => id)
-        .sort();
-      let synced = serverOff;
-      for (const id of ids) synced = await setAgentSkillOff(id, true);
-      if (alive.current) setOff(offRecord(synced));
       window.localStorage.removeItem(LEGACY_OFF_KEY);
     } catch {
-      migrationAttempted.current = false;
+      // 隐私模式下读写 localStorage 会抛；清不掉不影响任何功能。
     }
   }, []);
 
@@ -140,7 +122,6 @@ export default function AgentView() {
       if (!alive.current) return;
       setSkills(res.skills);
       setOff(offRecord(res.off));
-      void migrateLegacyOff(res.skills, res.off);
       setAvailable(res.available);
       setChatModels(res.chat.models);
       setChatDefault(res.chat.default);
@@ -156,7 +137,7 @@ export default function AgentView() {
       },
       say,
     );
-  }, [migrateLegacyOff, say]);
+  }, [say]);
 
   const toggleArchived = useCallback(() => {
     const opening = !archivedOpen;

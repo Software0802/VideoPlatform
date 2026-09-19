@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PROMPT_MAX_LEN } from "@/lib/jobs/prompt-limits";
 import type { HarnessShotRecord } from "@/lib/harness/shot-state";
 import type { HarnessPlan } from "@/lib/harness/types";
 import { tagsSchema } from "@/lib/jobs/tags";
@@ -228,7 +229,7 @@ export const createJobBodySchema = z.object({
    * 与 `prompt` 的 2000 同一个理由（它会被原样带进错误信息与日志）。
    */
   model: z.string().max(64).optional(),
-  prompt: z.string().max(2000).default(""),
+  prompt: z.string().max(PROMPT_MAX_LEN).default(""),
   durationSec: z.number().optional(),
   aspectRatio: aspectRatioSchema.optional(),
   resolution: resolutionSchema.optional(),

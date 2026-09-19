@@ -91,10 +91,8 @@
   overflow: hidden;
   position: relative;
   break-inside: avoid;
+  /* 底色当占位；封面改成懒加载的 <img>（review 2026-09-15 C-10），不再是背景图。 */
   background-color: #141417;
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
   transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -103,8 +101,28 @@
   transform: translateY(-3px);
 }
 .masonry__item[data-purged="true"] {
-  background-size: 46px;
   background-color: #0f0f12;
+}
+/*
+  封面（review 2026-09-15 C-10）：原来是 CSS `background-image`，浏览器不给它懒加载，
+  选一个冷门分类筛出空列表时，哨兵一直在视口里、自动翻页到底，同时并发拉几百张封面
+  （`/api/media/...` 每张都要过一次 owner 校验）。改成 `<img loading="lazy">`。
+  `object-fit: cover` 等价于原来的 `background-size: cover + background-position: center`。
+*/
+.masonry__cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+/* 已清理占位图是 1024×576 的 svg：46px 居中，复刻原来的 `background-size: 46px`。 */
+.masonry__item[data-purged="true"] .masonry__cover {
+  width: 46px;
+  height: 46px;
+  margin: auto;
+  object-fit: contain;
 }
 .masonry__title {
   position: absolute;

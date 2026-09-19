@@ -219,7 +219,7 @@ export function quotaBlock(usage: QuotaUsage): QuotaBlock | null {
   if (usage.failures >= usage.failureLimit) {
     return {
       code: "failure_limit_reached",
-      message: `今日失败与取消已达 ${usage.failureLimit} 次，暂停新提交，请联系管理员`,
+      message: `今日失败与取消已达 ${usage.failureLimit} 次，暂停新提交，北京时间 0 点重置`,
     };
   }
   const consumed = usage.used + usage.inFlight;

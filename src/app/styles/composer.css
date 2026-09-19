@@ -312,6 +312,10 @@
   color: var(--ph);
   font-variant-numeric: tabular-nums;
 }
+/* 临近上限（PROMPT_WARN_LEN）变色：截断是静默的，颜色是唯一的预告（review U-11）。 */
+.composer__count[data-warn="true"] {
+  color: var(--credit);
+}
 .composer__line {
   padding: 12px 0 10px;
 }
@@ -796,18 +800,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-}
-.picker__filter {
-  display: inline-flex;
-  align-items: center;
-  height: 34px;
-  padding: 0 14px;
-  border-radius: 9px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--fg-1);
-  background: rgba(255, 255, 255, 0.08);
-  min-width: 130px;
 }
 .picker__tab {
   height: 32px;

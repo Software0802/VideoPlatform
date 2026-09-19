@@ -255,7 +255,10 @@ describe("daily image quota admission", () => {
       await seed(id, 1, "canceled");
       const error = await createJob(image(), id).catch((e: unknown) => e);
       expect(error).toMatchObject({ status: 429, code: "failure_limit_reached" });
-      expect((error as { message: string }).message).toContain("联系管理员");
+      expect((error as { message: string }).message).toContain("失败与取消");
+    expect((error as { message: string }).message).toContain("北京时间 0 点重置");
+    // 止损阀是日窗口、0 点自动重置，不该把用户支去找管理员（review 2026-09-15 B-06）
+    expect((error as { message: string }).message).not.toContain("管理员");
       expect((error as { message: string }).message).not.toContain(id);
     } finally {
       delete process.env.FREE_DAILY_FAILURE_LIMIT;

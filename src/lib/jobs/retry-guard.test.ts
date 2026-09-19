@@ -257,6 +257,66 @@ describe("retryJob blocks retrying an uncertain_submit harness job", () => {
   });
 });
 
+/*
+  review 2026-09-15 B-10：重试按**当下**参数重新定价（时长向上归一、换家、价表变动都会
+  让它变），而原来没有任何预检——一条 ¥2 的失败任务点「重新生成」可能直接扣 ¥4，或者被
+  402 顶回来。现在贵了就先 409 回传两个价，界面把按钮改成「确认重试（¥x）」，带着这个价
+  再来一次才放行。
+*/
+describe("retryJob 涨价闸门", () => {
+  it("比原来贵就先拦一次，带上确认价再来才放行", async () => {
+    const source = baseRecord({
+      id: "job_src_reprice",
+      ownerId: TEST_OWNER,
+      durationSec: 5,
+      harness: { enabled: false },
+      // 源任务只花了 ¥0.5，而当前价表下这条 5 秒片是 ¥2——重试必然更贵。
+      priceCny: 0.5,
+    });
+    await writeJob(source);
+
+    const blocked = await retryJob(source, TEST_OWNER).catch((e: unknown) => e);
+    expect(blocked).toBeInstanceOf(ProviderHttpError);
+    const err = blocked as ProviderHttpError & { priceCny: number; previousPriceCny: number };
+    expect(err.status).toBe(409);
+    expect(err.code).toBe("retry_price_changed");
+    expect(err.previousPriceCny).toBe(0.5);
+    expect(err.priceCny).toBeGreaterThan(0.5);
+    // 两个价要上 wire：界面得把新价原样带回来确认。
+    expect(jsonError(err).status).toBe(409);
+
+    const next = await retryJob(source, TEST_OWNER, { acceptPriceCny: err.priceCny });
+    expect(next.status).toBe("queued");
+    expect(next.priceCny).toBe(err.priceCny);
+  });
+
+  it("确认价对不上就不放行（别拿一个旧报价去换新价）", async () => {
+    const source = baseRecord({
+      id: "job_src_reprice_wrong",
+      ownerId: TEST_OWNER,
+      durationSec: 5,
+      harness: { enabled: false },
+      priceCny: 0.5,
+    });
+    await writeJob(source);
+    const blocked = await retryJob(source, TEST_OWNER, { acceptPriceCny: 0.6 }).catch((e: unknown) => e);
+    expect((blocked as ProviderHttpError).code).toBe("retry_price_changed");
+  });
+
+  it("源任务价为 0 的存量记录不拦——计费模型之前落盘的都是 0", async () => {
+    const source = baseRecord({
+      id: "job_src_legacy_price",
+      ownerId: TEST_OWNER,
+      durationSec: 5,
+      harness: { enabled: false },
+      priceCny: 0,
+    });
+    await writeJob(source);
+    const next = await retryJob(source, TEST_OWNER);
+    expect(next.status).toBe("queued");
+  });
+});
+
 describe("toPublic exposes retryBlocked", () => {
   it("is null for a native job", () => {
     const rec = baseRecord({ id: "job_pub_native" });
