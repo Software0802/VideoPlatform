@@ -9,6 +9,7 @@ export const canvas: Record<keyof typeof zh, string> = {
   "canvas.model.auto": "Automatic",
   "canvas.model.autoDesc": "No named product — the server routes by capability and availability",
   "canvas.model.unfit": "\"{name}\" cannot serve this node's path any more — switched back to Automatic",
+  "canvas.model.gone": "Pinned model unavailable",
 
   /* Persisted canvas (C slice): four node kinds + run / conflict copy */
   "canvas.kind.text": "Text",

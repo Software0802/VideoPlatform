@@ -112,7 +112,8 @@ export function NodeCard({
     节点上的模型选择（`node.product`）。这个字段一直在 schema 里、报价与运行也一直认它
     （`canvas/graph.ts` 的 `requestedId` / `run.ts` 的 `model`），只是从来没有界面能写它——
     整张画布只能吃默认路由。`products` 由 `CanvasView` 按这个节点这次会跑的 mode 筛过，
-    这里直接列，「自动」= 不点名，交回服务端按能力选。
+    这里直接列，「自动」= 不点名，交回服务端按能力选。钉着的产品不在这张表里（产品下线、
+    或这条路径它接不下）就照实说，不能借「自动」把一个必然 400 的钉子盖过去。
 
     这一行放在正文**外面**：`.canvas-node__body` 是 `overflow:hidden`，浮层开在里面会被裁掉。
   */
@@ -185,7 +186,7 @@ export function NodeCard({
             onClick={() => setModelOpen((open) => !open)}
           >
             <span className="canvas-model__dot" aria-hidden="true" />
-            {current?.name ?? t("canvas.model.auto")}
+            {current?.name ?? t(node.product ? "canvas.model.gone" : "canvas.model.auto")}
           </button>
           {modelOpen ? (
             <div className="canvas-modelpop">

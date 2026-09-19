@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { TOOL_CATS, TOOL_CAT_ALL, TOOL_CAT_KEY, type ToolCat, type ToolCatFilter } from "./data";
 import { IconClose, IconSearch } from "./icons";
 import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
-import { fetchTemplates } from "@/lib/client/templates";
+import { useComposer } from "@/components/genius/ShellContext";
 import { fetchJobsPage } from "@/lib/client/jobs";
 import type { MessageKey } from "@/lib/i18n/messages";
 
@@ -12,7 +12,8 @@ import type { MessageKey } from "@/lib/i18n/messages";
  * 工具箱抽屉（原型图 30）：左侧工具栏点开，把一段现成的提示词放进画布。
  *
  * 两个页签都是真数据，不是原型那份写死的 TOOLS：
- * - 「模板」= `GET /api/templates`（运维维护的预置提示词，与主页模板页签同源）；
+ * - 「模板」= 创作面板域那一份清单（`GET /api/templates` 全站只拉一次，与面板的「模板」
+ *   按钮、主页模板页签同源），抽屉开合不再各拉一趟，也不会与它们说的不一样；
  * - 「我的」= `GET /api/jobs` 里成功作品的提示词，按提示词去重、新的在前。
  *
  * 搜索与分类是**本地过滤**（两份清单都已经在手里，没必要为一次筛选再跑一趟服务端）。
@@ -65,45 +66,32 @@ export default function CanvasToolbox({
   onApply: (pick: ToolboxPick) => void;
 }) {
   const t = useT();
+  const { templates: templateList, templatesLoaded, templatesError } = useComposer();
   const [tab, setTab] = useState<TabId>("template");
   const [cat, setCat] = useState<ToolCatFilter>(TOOL_CAT_ALL);
   const [query, setQuery] = useState("");
-  const [templates, setTemplates] = useState<Row[] | null>(null);
   const [mine, setMine] = useState<Row[] | null>(null);
-  const [templatesFailed, setTemplatesFailed] = useState(false);
   const [mineFailed, setMineFailed] = useState(false);
 
-  /*
-    两份清单各拉一次并留在内存里：切页签、改分类、打字都只是本地过滤。读失败只记一个
-    标记、文案在渲染时取，切语言时这行字跟着换，effect 也不必挂 `t` 重跑。
-  */
-  useEffect(() => {
-    let alive = true;
-    void fetchTemplates().then(
-      (list) => {
-        if (!alive) return;
-        setTemplates(
-          list.map((item) => ({
+  const templates: Row[] | null = useMemo(
+    () =>
+      templatesLoaded
+        ? templateList.map((item) => ({
             key: `tpl:${item.id}`,
             name: item.name,
             meta: item.category,
             prompt: item.prompt,
-            kind: item.mode === "text_to_image" ? "image" : "video",
+            kind: item.mode === "text_to_image" ? "image" : ("video" as ToolCat),
             ...(item.cover ? { cover: item.cover } : {}),
-          })),
-        );
-      },
-      () => {
-        if (!alive) return;
-        setTemplates([]);
-        setTemplatesFailed(true);
-      },
-    );
-    return () => {
-      alive = false;
-    };
-  }, []);
+          }))
+        : null,
+    [templateList, templatesLoaded],
+  );
 
+  /*
+    作品那一份拉一次就留在内存里：切页签、改分类、打字都只是本地过滤。读失败只记一个
+    标记、文案在渲染时取，切语言时这行字跟着换，effect 也不必挂 `t` 重跑。
+  */
   useEffect(() => {
     if (tab !== "mine" || mine) return;
     let alive = true;
@@ -239,7 +227,7 @@ export default function CanvasToolbox({
           <p className="canvas-toolbox__empty">
             {tab === "mine"
               ? t(mineFailed ? "canvas.toolbox.mineError" : "canvas.toolbox.emptyMine")
-              : t(templatesFailed ? "canvas.toolbox.templateError" : "canvas.toolbox.empty")}
+              : t(templatesError ? "canvas.toolbox.templateError" : "canvas.toolbox.empty")}
           </p>
         ) : null}
       </div>

@@ -17,6 +17,8 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.mode.block.firstLast": "No model here supports first & last frame",
   "composer.mode.block.template": "No templates configured on this instance",
   "composer.mode.block.templateError": "Cannot load the template list right now",
+  "composer.mode.block.productsLoading": "Still loading the model list",
+  "composer.mode.block.productsError": "Cannot load the model list right now — try refreshing",
   "composer.mode.block.voice": "No model here can produce sound (audio comes from the model itself)",
   "composer.mode.block.noSource": "No way to pick an existing clip to keep editing yet",
   "composer.mode.block.unsupported": "This creation path is not supported yet",
@@ -67,6 +69,7 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.audioPage.lead": "Audio is not generated on its own: sound comes with the video, from models with a native audio track.",
   "composer.audioPage.use": "Create with it",
   "composer.audioPage.none": "No model here has a native audio track, so no clip can come out with sound.",
+  "composer.audioPage.error": "Cannot load the model list right now, so no audio-capable products can be listed",
   "composer.audioPage.switched": "Switched to video with {name}; audio track on",
 
   "composer.specs.resolution": "Resolution",

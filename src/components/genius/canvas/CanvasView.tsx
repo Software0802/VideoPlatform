@@ -546,11 +546,43 @@ export default function CanvasView() {
     });
   };
 
-  const removeNode = (id: string) => {
-    mutate((d) => ({
-      nodes: d.nodes.filter((n) => n.id !== id),
-      edges: d.edges.filter((e) => e.from !== id && e.to !== id),
+  /*
+    一个 gen_video 节点按哪种 mode 下单，只看它的入边是不是「出图的」——与服务端
+    `canvas/graph.ts` 的 `nodeMode()` 同一条判据。`graph.ts` 自己进不了浏览器包（要读盘、
+    要 node:crypto），所以这条规则在客户端只写这一份，改连线与列产品都用它。
+  */
+  const videoModeOf = (source: CanvasNode | undefined): NativeMode =>
+    source?.kind === "material" || source?.kind === "gen_image" ? "image_to_video" : "text_to_video";
+
+  /**
+   * 改了图之后落盘：先把「钉的产品接不下新路径」的那些退回「自动」再写。
+   *
+   * 连线、换连线、删上游节点都会改下游节点的 mode，钉在上面的产品可能就此接不住；
+   * 留着它等于把报价与运行锁死在一个必然 400（所选模型不支持这种生成方式）上，而那
+   * 句报错不指名是哪个节点。所有改图入口都走这里，判据只有这一份。
+   */
+  const commitGraph = (nodes: CanvasNode[], edges: CanvasDocument["edges"]) => {
+    const unfit = nodes.flatMap((n) => {
+      if (n.kind !== "gen_video" || !n.product) return [];
+      const pinned = products.find((p) => p.id === n.product);
+      if (!pinned) return [];
+      const source = nodes.find((s) => s.id === edges.find((e) => e.to === n.id)?.from);
+      return supportsMode(pinned, videoModeOf(source)) ? [] : [{ nodeId: n.id, name: pinned.name }];
+    });
+    const dropped = new Set(unfit.map((u) => u.nodeId));
+    mutate(() => ({
+      nodes: dropped.size ? nodes.map((n) => (dropped.has(n.id) ? { ...n, product: undefined } : n)) : nodes,
+      edges,
     }));
+    for (const u of unfit) showToast(t("canvas.model.unfit", { name: u.name }));
+  };
+
+  const removeNode = (id: string) => {
+    if (!doc) return;
+    commitGraph(
+      doc.nodes.filter((n) => n.id !== id),
+      doc.edges.filter((e) => e.from !== id && e.to !== id),
+    );
   };
 
   const onUpload = async (file: File | undefined) => {
@@ -569,35 +601,12 @@ export default function CanvasView() {
     }
   };
 
-  /*
-    一个 gen_video 节点按哪种 mode 下单，只看它的入边是不是「出图的」——与服务端
-    `canvas/graph.ts` 的 `nodeMode()` 同一条判据。`graph.ts` 自己进不了浏览器包（要读盘、
-    要 node:crypto），所以这条规则在客户端只写这一份，改连线与列产品都用它。
-  */
-  const videoModeOf = (source: CanvasNode | undefined): NativeMode =>
-    source?.kind === "material" || source?.kind === "gen_image" ? "image_to_video" : "text_to_video";
-
   /** 上游选择：一条 gen 节点最多一条入边；换选即换边，「无」即删掉入边。 */
   const setInput = (nodeId: string, fromId: string | null) => {
-    /*
-      改连线会改这个节点的 mode：原来钉的产品如果接不下新的那条路径，留着它等于把
-      报价与运行锁死在一个必然 400 上。退回「自动」并说一声——比让用户在报价弹层里
-      对着一句不指名节点的 400 猜是哪一枚芯片强。
-    */
-    const node = doc?.nodes.find((n) => n.id === nodeId);
-    const nextMode = videoModeOf(fromId ? doc?.nodes.find((n) => n.id === fromId) : undefined);
-    const pinned =
-      node?.kind === "gen_video" && node.product ? products.find((p) => p.id === node.product) : undefined;
-    const unfit = pinned && !supportsMode(pinned, nextMode) ? pinned : null;
-    mutate((d) => {
-      const edges = d.edges.filter((e) => e.to !== nodeId);
-      if (fromId) edges.push({ id: newCanvasEdgeId(), from: fromId, to: nodeId });
-      const nodes = unfit
-        ? d.nodes.map((n) => (n.id === nodeId ? { ...n, product: undefined } : n))
-        : d.nodes;
-      return { nodes, edges };
-    });
-    if (unfit) showToast(t("canvas.model.unfit", { name: unfit.name }));
+    if (!doc) return;
+    const edges = doc.edges.filter((e) => e.to !== nodeId);
+    if (fromId) edges.push({ id: newCanvasEdgeId(), from: fromId, to: nodeId });
+    commitGraph(doc.nodes, edges);
   };
 
   const runNode = async (nodeId: string) => {

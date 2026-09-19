@@ -37,6 +37,10 @@ import { useJobsBridge } from "./JobsProvider";
 export type ComposerShell = {
   /* 产品（`/api/models`） */
   products: Product[];
+  /** 产品表拉完了没有（成功或失败都算完）：拉到之前不能替这台实例断言「没有这种模型」。 */
+  productsLoaded: boolean;
+  /** 读产品表时的那个错误——「读不到」与「读到了但没有」是两回事。 */
+  productsError: unknown;
   /** 当前标签页下可选的产品（视频页只列 video、图片页只列 image） */
   productChoices: Product[];
   /** 当前生效的产品；`/api/models` 还没回来或这台实例没有该类产品时为 null */
@@ -169,6 +173,8 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
   const { working, upsert, setBusy, setCurrentJob } = useJobsBridge();
 
   const [products, setProducts] = useState<Product[]>([]);
+  const [productsLoaded, setProductsLoaded] = useState(false);
+  const [productsError, setProductsError] = useState<unknown>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [templatesError, setTemplatesError] = useState<unknown>(null);
@@ -207,10 +213,16 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     let alive = true;
     void fetchProducts().then(
       (list) => {
-        if (alive) setProducts(list);
+        if (!alive) return;
+        setProducts(list);
+        setProductsLoaded(true);
       },
-      () => {
-        // 老服务端没有这个路由、或一次网络抖动：面板回落 caps 下发的枚举，不打断使用
+      (e: unknown) => {
+        // 老服务端没有这个路由、或一次网络抖动：面板回落 caps 下发的枚举，不打断使用。
+        // 但「读不到」要记下来：置灰理由不能拿它当「这台实例没有这种模型」讲。
+        if (!alive) return;
+        setProductsError(e);
+        setProductsLoaded(true);
       },
     );
     return () => {
@@ -437,6 +449,16 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     [dropKey, setError],
   );
 
+  /*
+    产品表还没读到时，凭什么替这台实例说「没有支持首尾帧的模型」？没读到就说没读到：
+    参考 / 首尾帧 / 有声三条判据全看产品表，表不在手里就先报这一句，读到了再按真能力讲。
+  */
+  const productUnknown: MessageKey | null = !productsLoaded
+    ? "composer.mode.block.productsLoading"
+    : productsError
+      ? "composer.mode.block.productsError"
+      : null;
+
   /**
    * 这个模式此刻为什么不能用——能用就是 `null`。
    *
@@ -450,15 +472,24 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
         case "prompt":
           return null;
         case "reference":
-          return maxRefs > 0 && !!product && supportsMode(product, "reference_to_video")
-            ? null
-            : "composer.mode.block.reference";
+          return (
+            productUnknown ??
+            (maxRefs > 0 && !!product && supportsMode(product, "reference_to_video")
+              ? null
+              : "composer.mode.block.reference")
+          );
         case "firstLast":
-          return productChoices.some((p) => p.supportsLastFrame) ? null : "composer.mode.block.firstLast";
+          return (
+            productUnknown ??
+            (productChoices.some((p) => p.supportsLastFrame) ? null : "composer.mode.block.firstLast")
+          );
         case "voice":
           // 「人声」= 出带声音的成片。平台唯一能保证有声的路径是原生音轨产品
           // （`product.audio === "native"`，与音轨开关同一判据）。
-          return productChoices.some((p) => p.audio === "native") ? null : "composer.mode.block.voice";
+          return (
+            productUnknown ??
+            (productChoices.some((p) => p.audio === "native") ? null : "composer.mode.block.voice")
+          );
         case "edit":
         case "extend":
           // 后端保留了 `edit_video` / `extend_video`，但没有「拿哪条成片来改」的入口，
@@ -468,7 +499,7 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
           return "composer.mode.block.unsupported";
       }
     },
-    [maxRefs, product, productChoices],
+    [maxRefs, product, productChoices, productUnknown],
   );
 
   /** 置灰项的具体理由（已翻译）；能用就是 `null`。 */
@@ -1077,12 +1108,16 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       templates,
       templatesLoaded,
       templatesError,
+      productsLoaded,
+      productsError,
       useAudioProduct,
     }),
     [
       templates,
       templatesLoaded,
       templatesError,
+      productsLoaded,
+      productsError,
       useAudioProduct,
       products,
       productChoices,

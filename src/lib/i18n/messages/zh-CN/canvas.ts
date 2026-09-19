@@ -14,6 +14,7 @@ export const canvas = {
   "canvas.model.auto": "自动",
   "canvas.model.autoDesc": "不点名产品，由服务端按能力与可用性选",
   "canvas.model.unfit": "「{name}」接不下这个节点这次要跑的路径，已改回自动",
+  "canvas.model.gone": "钉的模型已不可选",
 
   /* 持久化画布（C 包）：四类节点 + 运行 / 冲突提示 */
   "canvas.kind.text": "文本",

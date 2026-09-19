@@ -637,7 +637,8 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
  * 不了的空壳（两个恒灰的模式 + 点了只说「即将上线」的按钮），而是把真能力摆出来：
  * 列出当前能出声的产品，点一个就切到视频页、选中它并打开音轨，接着正常创作。
  *
- * 一个都没有时说清楚是「这台实例没有能出声的产品」，不写「即将上线」——那是两回事。
+ * 一个都没有时说清楚是「这台实例没有能出声的产品」，不写「即将上线」——那是两回事；
+ * 产品表还没读到 / 读不到也各说各的，不拿它冒充「没有」。
  */
 function AudioPanel() {
   const s = useComposer();
@@ -662,7 +663,13 @@ function AudioPanel() {
           ))}
         </div>
       ) : (
-        <p className="composer__audio-empty">{t("composer.audioPage.none")}</p>
+        <p className="composer__audio-empty">
+          {!s.productsLoaded
+            ? t("common.loading")
+            : s.productsError
+              ? t("composer.audioPage.error")
+              : t("composer.audioPage.none")}
+        </p>
       )}
     </div>
   );
