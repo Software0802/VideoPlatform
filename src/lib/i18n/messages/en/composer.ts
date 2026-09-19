@@ -19,7 +19,7 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.mode.block.templateError": "Cannot load the template list right now",
   "composer.mode.block.productsLoading": "Still loading the model list",
   "composer.mode.block.productsError": "Cannot load the model list right now — try refreshing",
-  "composer.mode.block.voice": "No model here can produce sound (audio comes from the model itself)",
+  "composer.mode.block.voice": "No model here has a controllable audio track, so sound cannot be guaranteed",
   "composer.mode.block.noSource": "No way to pick an existing clip to keep editing yet",
   "composer.mode.block.unsupported": "This creation path is not supported yet",
   "composer.voice.switched": "Switched to {name} with the audio track on",
@@ -66,10 +66,10 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.multi": "Multi-shot",
   "composer.multi.unavailable": "30/45/60s long-form is off on this instance — single shot only",
 
-  "composer.audioPage.lead": "Audio is not generated on its own: sound comes with the video, from models with a native audio track.",
+  "composer.audioPage.lead": "Audio is not generated on its own: sound comes with the video. The models below have a controllable audio track — you can switch it on, and it is priced as such.",
   "composer.audioPage.use": "Create with it",
-  "composer.audioPage.none": "No model here has a native audio track, so no clip can come out with sound.",
-  "composer.audioPage.error": "Cannot load the model list right now, so no audio-capable products can be listed",
+  "composer.audioPage.none": "No model here has a controllable audio track, so the audio switch and audio pricing are unavailable. Other models may still come out with sound — that is decided upstream, so we neither guarantee nor charge for it.",
+  "composer.audioPage.error": "Cannot load the model list right now, so products with a controllable audio track cannot be listed",
   "composer.audioPage.switched": "Switched to video with {name}; audio track on",
 
   "composer.specs.resolution": "Resolution",

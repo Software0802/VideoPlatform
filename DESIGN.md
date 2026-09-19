@@ -146,7 +146,7 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 | 顶栏积分 | `.top__credits`，`aria-label="积分 n"` |
 | 收起态输入条（主页） | `button.bar`，名 `描述你想创作的内容` |
 | 创作面板 | `.composer[data-open][data-tab][data-mode]`（`data-mode` 报后端模式名，放首帧后 `text_to_video`→`image_to_video`） |
-| 面板标签页 | `role="tab"` 名 `视频/图片/音频` + `aria-selected`；音频页渲染 `.composer__audio-page`（能出声的产品列表 + 说明），`.composer__opts` 整行 `hidden`——这一页没有提交路径 |
+| 面板标签页 | `role="tab"` 名 `视频/图片/音频` + `aria-selected`；音频页渲染 `.composer__audio-page`（音轨可控的产品列表 + 说明），`.composer__opts` 整行 `hidden`——这一页没有提交路径 |
 | 模式行 | `role="radio"` 名 `图文/参考/...` + `aria-checked`，不可用项 `aria-disabled="true"` 且 `title` 是具体理由；`模板` 不在单选组里，是 `.composer__mode--tpl` 按钮（`aria-haspopup="dialog"`）开 `.tpl-pop` |
 | 提示词 | `textarea` `aria-label="提示词"`，计数器 `#composer-prompt-count`（`.composer__count[data-warn]`，由 `aria-describedby` 指向） |
 | 规格芯片/弹层 | `.composer__specs` 文本如 `720P \| 16:9 \| 5s`；`.specs-pop` 内 `button[data-res]/[data-ratio]/[data-dur]`，选中 `aria-pressed="true"` |

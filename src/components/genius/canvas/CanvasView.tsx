@@ -37,6 +37,7 @@ import { errorText } from "@/lib/i18n/errorText";
 import { useDialogFocus } from "@/components/genius/useDialogFocus";
 import type { JobPublic } from "@/lib/jobs/schema";
 import type { NativeMode } from "@/lib/providers/types";
+import { CANVAS_VIDEO_DURATION_SEC } from "@/lib/canvas/defaults";
 import CanvasToolbox, { type ToolboxPick } from "./CanvasToolbox";
 import { ConflictDialog } from "./ConflictDialog";
 import {
@@ -554,6 +555,18 @@ export default function CanvasView() {
   const videoModeOf = (source: CanvasNode | undefined): NativeMode =>
     source?.kind === "material" || source?.kind === "gen_image" ? "image_to_video" : "text_to_video";
 
+  /*
+    这个产品能不能接下「这个节点这次要下的单」——与服务端 `assertProductFits` 同口径：
+    类型、mode，以及画布固定的那档时长（`CANVAS_VIDEO_DURATION_SEC`；时长档收不下 8 秒的
+    产品报价那一刻就是 400）。芯片列谁、已钉的还算不算数，都问这一条。
+  */
+  const productFits = (p: Product, mode: NativeMode) =>
+    p.kind === (mode === "text_to_image" ? "image" : "video") &&
+    supportsMode(p, mode) &&
+    (mode === "text_to_image" ||
+      !p.durations?.length ||
+      Math.max(...p.durations) >= CANVAS_VIDEO_DURATION_SEC);
+
   /**
    * 改了图之后落盘：先把「钉的产品接不下新路径」的那些退回「自动」再写。
    *
@@ -567,7 +580,7 @@ export default function CanvasView() {
       const pinned = products.find((p) => p.id === n.product);
       if (!pinned) return [];
       const source = nodes.find((s) => s.id === edges.find((e) => e.to === n.id)?.from);
-      return supportsMode(pinned, videoModeOf(source)) ? [] : [{ nodeId: n.id, name: pinned.name }];
+      return productFits(pinned, videoModeOf(source)) ? [] : [{ nodeId: n.id, name: pinned.name }];
     });
     const dropped = new Set(unfit.map((u) => u.nodeId));
     mutate(() => ({
@@ -817,9 +830,8 @@ export default function CanvasView() {
   const waitOfNode = (node: CanvasNode) => waitStateOf(execOf(node.id), jobOfNode(node), running.has(node.id));
   const inputOf = (nodeId: string) => doc?.edges.find((e) => e.to === nodeId)?.from ?? "";
   /*
-    模型芯片只列「这个节点真跑得起来」的产品：只按 kind 过滤会把只声明 text_to_video 的
-    中转产品摆进一个有图输入的节点，报价那一刻整张画布连同它一起 400（所选模型不支持
-    这种生成方式），而且报错不指名是哪个节点。
+    模型芯片只列「这个节点真跑得起来」的产品：只按 kind 过滤会把接不下这条路径的产品
+    摆上去，报价那一刻整张画布连同它一起 400，而且报错不指名是哪个节点。
   */
   const productsFor = (node: CanvasNode) => {
     if (node.kind !== "gen_image" && node.kind !== "gen_video") return [];
@@ -827,8 +839,7 @@ export default function CanvasView() {
       node.kind === "gen_image"
         ? "text_to_image"
         : videoModeOf(doc?.nodes.find((n) => n.id === inputOf(node.id)));
-    const kind = node.kind === "gen_image" ? "image" : "video";
-    return products.filter((p) => p.kind === kind && supportsMode(p, mode));
+    return products.filter((p) => productFits(p, mode));
   };
   const candidatesFor = (node: CanvasNode) =>
     (doc?.nodes ?? []).filter(

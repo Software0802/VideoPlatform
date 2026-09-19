@@ -47,6 +47,17 @@ type TabId = (typeof TABS)[number]["id"];
 const MINE_LIMIT = 50;
 
 /**
+ * 行标题用的短标签。作品行的「名字」就是任务的提示词（最长 2000 字），原样传出去会被
+ * 「已放进画布」那条轻提示整段铺在画布上——提示没有行数上限。完整提示词仍在行的
+ * `title` 与新建的节点里，这里只管显示与提示。
+ */
+const LABEL_MAX = 40;
+function shortLabel(text: string): string {
+  const one = text.replace(/\s+/g, " ").trim();
+  return one.length > LABEL_MAX ? `${one.slice(0, LABEL_MAX)}…` : one;
+}
+
+/**
  * `YYYY-MM-DD`，与 `HomeView` 的 `calendarDay` 同一个写法：`toLocale*` 认的是浏览器
  * 语言，不是 `lumen_locale`，英文界面上会冒出中文日期。
  */
@@ -106,7 +117,7 @@ export default function CanvasToolbox({
           seen.add(prompt);
           rows.push({
             key: `job:${job.id}`,
-            name: prompt,
+            name: shortLabel(prompt),
             meta: shortDate(job.createdAt, t),
             prompt,
             kind: job.mode === "text_to_image" ? "image" : "video",

@@ -7,6 +7,7 @@ import {
 } from "@/lib/jobs/provider-settings";
 import { chooseProduct, labelProduct } from "@/lib/jobs/product-choice";
 import { readCanvasMaterial } from "@/lib/assets/store";
+import { CANVAS_VIDEO_DURATION_SEC } from "@/lib/canvas/defaults";
 import type { CreateJobBody } from "@/lib/jobs/schema";
 import { ProviderHttpError } from "@/lib/providers/types";
 import type { NativeMode } from "@/lib/providers/types";
@@ -173,7 +174,7 @@ export function planNodeJob(
   const body: Pick<CreateJobBody, "prompt" | "aspectRatio" | "resolution" | "generateAudio"> = {
     prompt,
   };
-  const durationSec = image ? 0 : 8;
+  const durationSec = image ? 0 : CANVAS_VIDEO_DURATION_SEC;
   const choice = chooseProduct({
     mode,
     requestedId: node.product,

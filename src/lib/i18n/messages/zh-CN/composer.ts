@@ -19,7 +19,7 @@ export const composer = {
   "composer.mode.block.templateError": "模板清单暂时读不到",
   "composer.mode.block.productsLoading": "模型清单还在读，稍等一下",
   "composer.mode.block.productsError": "模型清单暂时读不到，刷新再试",
-  "composer.mode.block.voice": "当前没有能出声的模型（音轨由模型原生输出）",
+  "composer.mode.block.voice": "当前没有音轨可控的模型，保证不了有声",
   "composer.mode.block.noSource": "还没有开放「拿一条成片继续改」的入口",
   "composer.mode.block.unsupported": "平台暂不支持这条创作路径",
   "composer.voice.switched": "已切换到 {name} 并打开音轨",
@@ -69,10 +69,10 @@ export const composer = {
   "composer.multi.unavailable": "这台实例没有开放 30/45/60 秒长片，暂时只有单镜头",
 
   /* 音频页：平台不生成独立音频，能出声的是原生音轨的视频模型 */
-  "composer.audioPage.lead": "平台不单独生成音频：声音随视频一起出，由支持原生音轨的模型产出。",
+  "composer.audioPage.lead": "平台不单独生成音频：声音随视频一起出。下面这些模型的音轨可控——能开关，也按有声计价。",
   "composer.audioPage.use": "用它创作",
-  "composer.audioPage.none": "当前没有支持原生音轨的模型，出不了有声成片。",
-  "composer.audioPage.error": "模型清单暂时读不到，列不出能出声的产品",
+  "composer.audioPage.none": "当前没有音轨可控的模型：音轨开关与有声计价都用不了。其它模型出不出声由上游决定，我们不保证、也不按有声收费。",
+  "composer.audioPage.error": "模型清单暂时读不到，列不出音轨可控的产品",
   "composer.audioPage.switched": "已切到视频页：{name}，音轨已打开",
 
   /* 规格 / 模型 / 数量 */
