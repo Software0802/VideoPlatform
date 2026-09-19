@@ -1234,6 +1234,11 @@
 .tpl-pop__close:hover {
   color: var(--fg);
 }
+.tpl-pop__note {
+  padding: 6px 2px;
+  font-size: 12px;
+  color: var(--fg-3);
+}
 .tpl-pop__item {
   display: flex;
   align-items: baseline;

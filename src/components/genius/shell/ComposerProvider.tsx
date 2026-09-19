@@ -480,7 +480,13 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     [modeBlock, t],
   );
   /** 「模板」不在模式行里（见 `shared.ts`），理由单独给一份。 */
-  const templateReason = templates.length ? null : t("composer.mode.block.template");
+  const templateReason = !templatesLoaded
+    ? null
+    : templatesError
+      ? t("composer.mode.block.templateError")
+      : templates.length
+        ? null
+        : t("composer.mode.block.template");
 
   const pickMode = useCallback(
     (next: VideoMode) => {

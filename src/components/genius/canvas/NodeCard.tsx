@@ -111,15 +111,14 @@ export function NodeCard({
   /*
     节点上的模型选择（`node.product`）。这个字段一直在 schema 里、报价与运行也一直认它
     （`canvas/graph.ts` 的 `requestedId` / `run.ts` 的 `model`），只是从来没有界面能写它——
-    整张画布只能吃默认路由。芯片列的是当前节点类型对得上的产品，「自动」= 不点名，
-    交回服务端按能力选。
+    整张画布只能吃默认路由。`products` 由 `CanvasView` 按这个节点这次会跑的 mode 筛过，
+    这里直接列，「自动」= 不点名，交回服务端按能力选。
 
     这一行放在正文**外面**：`.canvas-node__body` 是 `overflow:hidden`，浮层开在里面会被裁掉。
   */
   const isGen = node.kind === "gen_image" || node.kind === "gen_video";
   const [modelOpen, setModelOpen] = useState(false);
-  const choices = products.filter((p) => p.kind === (node.kind === "gen_image" ? "image" : "video"));
-  const current = choices.find((p) => p.id === node.product);
+  const current = products.find((p) => p.id === node.product);
   const pickProduct = (productId: string | null) => {
     setModelOpen(false);
     onProduct(productId);
@@ -174,7 +173,7 @@ export function NodeCard({
         </div>
       ) : null}
 
-      {isGen && choices.length ? (
+      {isGen && products.length ? (
         <div className="canvas-node__modelrow">
           <button
             type="button"
@@ -202,7 +201,7 @@ export function NodeCard({
                   <span className="canvas-modelpop__desc">{t("canvas.model.autoDesc")}</span>
                 </span>
               </button>
-              {choices.map((product) => (
+              {products.map((product) => (
                 <button
                   type="button"
                   key={product.id}

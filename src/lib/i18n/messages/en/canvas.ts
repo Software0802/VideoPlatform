@@ -8,6 +8,7 @@ export const canvas: Record<keyof typeof zh, string> = {
   "canvas.model.pick": "Pick a model",
   "canvas.model.auto": "Automatic",
   "canvas.model.autoDesc": "No named product — the server routes by capability and availability",
+  "canvas.model.unfit": "\"{name}\" cannot serve this node's path any more — switched back to Automatic",
 
   /* Persisted canvas (C slice): four node kinds + run / conflict copy */
   "canvas.kind.text": "Text",
@@ -108,6 +109,7 @@ export const canvas: Record<keyof typeof zh, string> = {
   "canvas.toolbox.empty": "No matching templates.",
   "canvas.toolbox.emptyMine": "No successful works to reuse yet.",
   "canvas.toolbox.mineError": "Cannot load your works right now.",
+  "canvas.toolbox.templateError": "Cannot load the template list right now.",
   "canvas.toolbox.meta.mine": "My works",
   "canvas.cat.all": "All",
   "canvas.cat.image": "Image generation",

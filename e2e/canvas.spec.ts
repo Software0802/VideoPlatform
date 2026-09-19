@@ -4,6 +4,7 @@ import path from "node:path";
 import sharp from "sharp";
 import { expect, test, type Page } from "@playwright/test";
 import { DATA_DIR_HINT } from "./paths";
+import { serverDataDir } from "./invites";
 
 /**
  * 画布保存 409 冲突二选一（2026-09-13）：双标签页各改一笔，后到的一方不再被
@@ -15,11 +16,6 @@ import { DATA_DIR_HINT } from "./paths";
 
 type Health = { ok: boolean; mockMode: boolean };
 const REQUIRE_MOCK = Boolean(process.env.CI || process.env.E2E_REQUIRE_MOCK);
-
-/** 服务端实际在读的 DATA_DIR（`auth.setup.ts` 落的提示文件）——模板要播进那里才看得见。 */
-async function serverDataDir(): Promise<string> {
-  return (await readFile(DATA_DIR_HINT, "utf8")).trim();
-}
 
 async function freshCanvas(page: Page) {
   const created = await page.request.post("/api/canvases", { data: { title: "e2e 独立画布" } });

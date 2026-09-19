@@ -16,6 +16,7 @@ export const composer = {
   "composer.mode.block.reference": "当前模型不支持参考生视频，换个模型试试",
   "composer.mode.block.firstLast": "当前没有支持首尾帧的模型",
   "composer.mode.block.template": "这台实例还没有配置模板",
+  "composer.mode.block.templateError": "模板清单暂时读不到",
   "composer.mode.block.voice": "当前没有能出声的模型（音轨由模型原生输出）",
   "composer.mode.block.noSource": "还没有开放「拿一条成片继续改」的入口",
   "composer.mode.block.unsupported": "平台暂不支持这条创作路径",

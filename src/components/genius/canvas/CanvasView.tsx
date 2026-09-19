@@ -32,10 +32,11 @@ import {
 } from "@/lib/client/canvas";
 import { ApiError } from "@/lib/client/http";
 import { newIdempotencyKey, uploadFile } from "@/lib/client/jobs";
-import { fetchProducts, type Product } from "@/lib/client/models";
+import { fetchProducts, supportsMode, type Product } from "@/lib/client/models";
 import { errorText } from "@/lib/i18n/errorText";
 import { useDialogFocus } from "@/components/genius/useDialogFocus";
 import type { JobPublic } from "@/lib/jobs/schema";
+import type { NativeMode } from "@/lib/providers/types";
 import CanvasToolbox, { type ToolboxPick } from "./CanvasToolbox";
 import { ConflictDialog } from "./ConflictDialog";
 import {
@@ -459,7 +460,11 @@ export default function CanvasView() {
     if (e.pointerType !== "touch") return;
     const target = e.target as HTMLElement;
     // 节点与各浮层上的长按归它们自己（拖拽、选字、点按钮），只有空白处才建节点。
-    if (target.closest(".canvas-node,.canvas-menu,.canvas-quote,.canvas-conflict,.canvas-topright")) {
+    if (
+      target.closest(
+        ".canvas-node,.canvas-menu,.canvas-quote,.canvas-conflict,.canvas-topright,.canvas-toolbox,.canvas-tools,.canvas-bottom",
+      )
+    ) {
       return;
     }
     cancelLongPress();
@@ -564,13 +569,35 @@ export default function CanvasView() {
     }
   };
 
+  /*
+    一个 gen_video 节点按哪种 mode 下单，只看它的入边是不是「出图的」——与服务端
+    `canvas/graph.ts` 的 `nodeMode()` 同一条判据。`graph.ts` 自己进不了浏览器包（要读盘、
+    要 node:crypto），所以这条规则在客户端只写这一份，改连线与列产品都用它。
+  */
+  const videoModeOf = (source: CanvasNode | undefined): NativeMode =>
+    source?.kind === "material" || source?.kind === "gen_image" ? "image_to_video" : "text_to_video";
+
   /** 上游选择：一条 gen 节点最多一条入边；换选即换边，「无」即删掉入边。 */
   const setInput = (nodeId: string, fromId: string | null) => {
+    /*
+      改连线会改这个节点的 mode：原来钉的产品如果接不下新的那条路径，留着它等于把
+      报价与运行锁死在一个必然 400 上。退回「自动」并说一声——比让用户在报价弹层里
+      对着一句不指名节点的 400 猜是哪一枚芯片强。
+    */
+    const node = doc?.nodes.find((n) => n.id === nodeId);
+    const nextMode = videoModeOf(fromId ? doc?.nodes.find((n) => n.id === fromId) : undefined);
+    const pinned =
+      node?.kind === "gen_video" && node.product ? products.find((p) => p.id === node.product) : undefined;
+    const unfit = pinned && !supportsMode(pinned, nextMode) ? pinned : null;
     mutate((d) => {
       const edges = d.edges.filter((e) => e.to !== nodeId);
       if (fromId) edges.push({ id: newCanvasEdgeId(), from: fromId, to: nodeId });
-      return { nodes: d.nodes, edges };
+      const nodes = unfit
+        ? d.nodes.map((n) => (n.id === nodeId ? { ...n, product: undefined } : n))
+        : d.nodes;
+      return { nodes, edges };
     });
+    if (unfit) showToast(t("canvas.model.unfit", { name: unfit.name }));
   };
 
   const runNode = async (nodeId: string) => {
@@ -780,6 +807,20 @@ export default function CanvasView() {
   };
   const waitOfNode = (node: CanvasNode) => waitStateOf(execOf(node.id), jobOfNode(node), running.has(node.id));
   const inputOf = (nodeId: string) => doc?.edges.find((e) => e.to === nodeId)?.from ?? "";
+  /*
+    模型芯片只列「这个节点真跑得起来」的产品：只按 kind 过滤会把只声明 text_to_video 的
+    中转产品摆进一个有图输入的节点，报价那一刻整张画布连同它一起 400（所选模型不支持
+    这种生成方式），而且报错不指名是哪个节点。
+  */
+  const productsFor = (node: CanvasNode) => {
+    if (node.kind !== "gen_image" && node.kind !== "gen_video") return [];
+    const mode: NativeMode =
+      node.kind === "gen_image"
+        ? "text_to_image"
+        : videoModeOf(doc?.nodes.find((n) => n.id === inputOf(node.id)));
+    const kind = node.kind === "gen_image" ? "image" : "video";
+    return products.filter((p) => p.kind === kind && supportsMode(p, mode));
+  };
   const candidatesFor = (node: CanvasNode) =>
     (doc?.nodes ?? []).filter(
       (n) => n.id !== node.id && (n.kind === "text" || n.kind === "material" || n.kind === "gen_image"),
@@ -866,7 +907,7 @@ export default function CanvasView() {
                   }))
                 }
                 onInput={(fromId) => setInput(node.id, fromId)}
-                products={products}
+                products={productsFor(node)}
                 onProduct={(productId) =>
                   mutate((d) => ({
                     nodes: d.nodes.map((n) =>

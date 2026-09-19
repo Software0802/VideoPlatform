@@ -9,10 +9,11 @@ import { useT } from "@/components/genius/i18n/I18nProvider";
  * （与主页「模板」页签同源）。点一张把提示词、通道与规格回填进面板——走的是主页
  * 那张卡一样的 `applyTemplate`，不是另一套逻辑。
  *
- * 清单为空时这枚按钮本来就是灰的（`modeBlock("template")`），所以这里不做空态。
+ * 清单确实为空、或读不到时，这枚按钮本来就是灰的（`templateReason`），所以这里只剩
+ * 「还在读」这一种空场景。
  */
 export function TemplatePop() {
-  const { templates, applyTemplate, setPop } = useComposer();
+  const { templates, templatesLoaded, applyTemplate, setPop } = useComposer();
   const t = useT();
   return (
     <div className="tpl-pop" role="dialog" aria-label={t("composer.mode.template")}>
@@ -22,6 +23,7 @@ export function TemplatePop() {
           <IconClose size={12} />
         </button>
       </div>
+      {!templatesLoaded ? <span className="tpl-pop__note">{t("common.loading")}</span> : null}
       {templates.map((item) => (
         <button
           key={item.id}

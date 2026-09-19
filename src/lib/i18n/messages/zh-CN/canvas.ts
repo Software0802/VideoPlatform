@@ -13,6 +13,7 @@ export const canvas = {
   "canvas.model.pick": "选择模型",
   "canvas.model.auto": "自动",
   "canvas.model.autoDesc": "不点名产品，由服务端按能力与可用性选",
+  "canvas.model.unfit": "「{name}」接不下这个节点这次要跑的路径，已改回自动",
 
   /* 持久化画布（C 包）：四类节点 + 运行 / 冲突提示 */
   "canvas.kind.text": "文本",
@@ -115,6 +116,7 @@ export const canvas = {
   "canvas.toolbox.empty": "没有匹配的模板。",
   "canvas.toolbox.emptyMine": "还没有成功的作品可以复用。",
   "canvas.toolbox.mineError": "暂时读不到作品列表。",
+  "canvas.toolbox.templateError": "暂时读不到模板列表。",
   "canvas.toolbox.meta.mine": "我的作品",
   "canvas.cat.all": "全部",
   "canvas.cat.image": "图像生成",

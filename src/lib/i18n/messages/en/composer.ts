@@ -16,6 +16,7 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.mode.block.reference": "This model has no reference-to-video — try another model",
   "composer.mode.block.firstLast": "No model here supports first & last frame",
   "composer.mode.block.template": "No templates configured on this instance",
+  "composer.mode.block.templateError": "Cannot load the template list right now",
   "composer.mode.block.voice": "No model here can produce sound (audio comes from the model itself)",
   "composer.mode.block.noSource": "No way to pick an existing clip to keep editing yet",
   "composer.mode.block.unsupported": "This creation path is not supported yet",

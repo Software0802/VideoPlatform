@@ -70,11 +70,12 @@ export default function CanvasToolbox({
   const [query, setQuery] = useState("");
   const [templates, setTemplates] = useState<Row[] | null>(null);
   const [mine, setMine] = useState<Row[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [templatesFailed, setTemplatesFailed] = useState(false);
+  const [mineFailed, setMineFailed] = useState(false);
 
   /*
-    两份清单各拉一次并留在内存里：切页签、改分类、打字都只是本地过滤。`t` 会随语言
-    切换换引用，所以错误文案在失败那一刻取，effect 本身只跑一次。
+    两份清单各拉一次并留在内存里：切页签、改分类、打字都只是本地过滤。读失败只记一个
+    标记、文案在渲染时取，切语言时这行字跟着换，effect 也不必挂 `t` 重跑。
   */
   useEffect(() => {
     let alive = true;
@@ -93,7 +94,9 @@ export default function CanvasToolbox({
         );
       },
       () => {
-        if (alive) setTemplates([]);
+        if (!alive) return;
+        setTemplates([]);
+        setTemplatesFailed(true);
       },
     );
     return () => {
@@ -131,7 +134,7 @@ export default function CanvasToolbox({
       () => {
         if (!alive) return;
         setMine([]);
-        setError(t("canvas.toolbox.mineError"));
+        setMineFailed(true);
       },
     );
     return () => {
@@ -234,7 +237,9 @@ export default function CanvasToolbox({
           <p className="canvas-toolbox__empty">{t("common.loading")}</p>
         ) : rows.length === 0 ? (
           <p className="canvas-toolbox__empty">
-            {tab === "mine" ? (error ?? t("canvas.toolbox.emptyMine")) : t("canvas.toolbox.empty")}
+            {tab === "mine"
+              ? t(mineFailed ? "canvas.toolbox.mineError" : "canvas.toolbox.emptyMine")
+              : t(templatesFailed ? "canvas.toolbox.templateError" : "canvas.toolbox.empty")}
           </p>
         ) : null}
       </div>
