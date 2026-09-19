@@ -355,21 +355,28 @@ test("生成节点的模型芯片：选中的产品落进 node.product", async (
   expect((await patched).status()).toBe(200);
 });
 
-test("报价弹层可以导出这次要跑的步骤与人审门", async ({ page }) => {
-  await addImageNode(page, "导出工作流用的提示词");
-  await waitPatch(page, "导出工作流用的提示词");
+test("工具箱「我的作品」页签真的拉得到作品列表", async ({ page }) => {
+  await page.getByRole("button", { name: "工具箱" }).click();
+  const toolbox = page.locator(".canvas-toolbox");
+  await expect(toolbox).toBeVisible();
 
-  await page.getByRole("button", { name: "运行整图" }).click();
-  const quote = page.locator('.canvas-quote[role="dialog"]');
-  await expect(quote).toBeVisible({ timeout: 30_000 });
+  // 页签一点就拉 `GET /api/jobs`；请求参数必须在服务端上限之内，否则 400、整页只剩一行错误。
+  const listed = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === "/api/jobs" && r.request().method() === "GET",
+    { timeout: 20_000 },
+  );
+  await toolbox.getByRole("button", { name: "我的作品" }).click();
+  expect((await listed).status()).toBe(200);
 
-  const download = page.waitForEvent("download");
-  await quote.getByRole("button", { name: "导出工作流" }).click();
-  const file = await download;
-  const saved = await file.path();
-  const graph = JSON.parse(await readFile(saved, "utf8")) as {
-    nodes: { kind: string; skillId?: string; label?: string }[];
-  };
-  expect(graph.nodes).toHaveLength(1);
-  expect(graph.nodes[0]).toMatchObject({ kind: "skill", skillId: "text_to_image", label: "导出工作流用的提示词" });
+  // 拉到就列作品，这个账号还没有成功作品就是这一页自己的空态。
+  const rows = toolbox.locator(".canvas-tool");
+  const empty = toolbox.locator(".canvas-toolbox__empty");
+  await expect
+    .poll(
+      async () => (await rows.count()) > 0 || (await empty.textContent())?.trim() === "还没有成功的作品可以复用。",
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  // 读失败那句话只属于这一页，任何情况下都不该出现在拉成功之后。
+  await expect(toolbox.locator(".canvas-toolbox__empty", { hasText: "暂时读不到作品列表。" })).toHaveCount(0);
 });

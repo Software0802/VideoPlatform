@@ -6,7 +6,7 @@ import { formatCny } from "@/lib/billing/prices";
 import { MAX_TAGS, MAX_TAG_LEN, PRESET_TAGS, shareJob, tagLength, tagsOf } from "@/lib/client/jobs";
 import { isActive } from "@/lib/client/labels";
 import { productNameOf } from "@/lib/client/models";
-import { fetchTemplates, type Template } from "@/lib/client/templates";
+import type { Template } from "@/lib/client/templates";
 import { IconCheck, IconClose, IconShare, IconStar, IconTrash } from "@/components/genius/icons";
 import { creditsOf, useComposer, useJobs, useNotices } from "@/components/genius/ShellContext";
 import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
@@ -447,8 +447,9 @@ function ExpiryBadge({ expireAt, now }: { expireAt: string | null; now: number |
 }
 
 /**
- * 模板 / 挑战网格。两个页签是同一份 `GET /api/templates`，只差一个 `challenge` 标记：
- * 挑战不是另一套内容，是运营从模板里挑出来的那几条（`src/lib/templates.ts`）。
+ * 模板 / 挑战网格。两个页签是同一份清单，只差一个 `challenge` 标记：挑战不是另一套
+ * 内容，是运营从模板里挑出来的那几条（`src/lib/templates.ts`）。清单本身读创作面板域
+ * 那一份（`GET /api/templates` 全站只拉一次），页签与横幅因此永远说的是同一件事。
  */
 function TemplateGrid({
   onPick,
@@ -458,29 +459,17 @@ function TemplateGrid({
   challengesOnly?: boolean;
 }) {
   const t = useT();
-  const [list, setList] = useState<Template[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const { templates, templatesLoaded, templatesError } = useComposer();
 
-  useEffect(() => {
-    let alive = true;
-    void fetchTemplates().then(
-      (next) => alive && setList(next),
-      (e: unknown) => alive && setErr(errorText(t, e)),
-    );
-    return () => {
-      alive = false;
-    };
-  }, [t]);
-
-  if (err) {
+  if (templatesError) {
     return (
       <p className="home__empty" role="alert">
-        {err}
+        {errorText(t, templatesError)}
       </p>
     );
   }
-  if (!list) return <p className="home__empty">{t("home.tpl.loading")}</p>;
-  const rows = challengesOnly ? list.filter((item) => item.challenge) : list;
+  if (!templatesLoaded) return <p className="home__empty">{t("home.tpl.loading")}</p>;
+  const rows = challengesOnly ? templates.filter((item) => item.challenge) : templates;
   if (!rows.length) {
     return <p className="home__empty">{challengesOnly ? t("home.challenge.empty") : t("home.tpl.empty")}</p>;
   }

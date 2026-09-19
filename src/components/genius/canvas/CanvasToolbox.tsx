@@ -38,13 +38,23 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-/** 作品一次拉这么多；工具箱是「最近用过的提示词」，不做分页。 */
-const MINE_LIMIT = 60;
+/**
+ * 作品一次拉这么多；工具箱是「最近用过的提示词」，不做分页。
+ * 这个数就是 `GET /api/jobs` 的上限（`MAX_PAGE_LIMIT = 50`，服务端模块不能进客户端包）：
+ * 再大一格整个请求会被 zod 判成 400，页签只剩一行错误。
+ */
+const MINE_LIMIT = 50;
 
+/**
+ * `YYYY-MM-DD`，与 `HomeView` 的 `calendarDay` 同一个写法：`toLocale*` 认的是浏览器
+ * 语言，不是 `lumen_locale`，英文界面上会冒出中文日期。
+ */
 function shortDate(iso: string, t: Translate): string {
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return t("canvas.toolbox.meta.mine");
-  return new Date(ms).toLocaleDateString();
+  const d = new Date(ms);
+  const p = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 export default function CanvasToolbox({
@@ -224,7 +234,7 @@ export default function CanvasToolbox({
           <p className="canvas-toolbox__empty">{t("common.loading")}</p>
         ) : rows.length === 0 ? (
           <p className="canvas-toolbox__empty">
-            {error ?? (tab === "mine" ? t("canvas.toolbox.emptyMine") : t("canvas.toolbox.empty"))}
+            {tab === "mine" ? (error ?? t("canvas.toolbox.emptyMine")) : t("canvas.toolbox.empty")}
           </p>
         ) : null}
       </div>

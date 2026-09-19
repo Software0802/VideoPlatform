@@ -123,6 +123,10 @@ export type ComposerShell = {
   applyTemplate: (template: Template) => void;
   /** `GET /api/templates` 的清单；模式行旁的「模板」按钮列它，空表示这台实例没配模板。 */
   templates: Template[];
+  /** 清单拉完了没有（成功或失败都算完）：主页模板页签靠它区分「还在读」与「没有」。 */
+  templatesLoaded: boolean;
+  /** 读清单时的那个错误，原样给出——由取用的视图按当前语言译。 */
+  templatesError: unknown;
   /** 音频页：选一个带原生音轨的视频产品，切到视频页并打开音轨。 */
   useAudioProduct: (productId: string) => void;
 };
@@ -166,6 +170,8 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
+  const [templatesError, setTemplatesError] = useState<unknown>(null);
   const [videoProductId, setVideoProductId] = useState<string | null>(null);
   const [imageProductId, setImageProductId] = useState<string | null>(null);
 
@@ -213,17 +219,22 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /*
-    模板清单（`GET /api/templates`）：模式行旁的「模板」按钮列它，与主页模板页签同源。
-    拉不到就是空表，按钮自己置灰并说「这台实例还没配模板」，不再是一句「即将上线」。
+    模板清单（`GET /api/templates`）：模式行旁的「模板」按钮、主页的模板 / 挑战页签与
+    活动横幅都读这一份，全站只拉一次。拉不到对面板来说就是空表，按钮自己置灰并说
+    「这台实例还没配模板」，不再是一句「即将上线」；主页那边把错误如实说出来。
   */
   useEffect(() => {
     let alive = true;
     void fetchTemplates().then(
       (list) => {
-        if (alive) setTemplates(list);
+        if (!alive) return;
+        setTemplates(list);
+        setTemplatesLoaded(true);
       },
-      () => {
-        // 模板是锦上添花：读不到就当没有，面板照常能创作
+      (e: unknown) => {
+        if (!alive) return;
+        setTemplatesError(e);
+        setTemplatesLoaded(true);
       },
     );
     return () => {
@@ -1058,10 +1069,14 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       reuse,
       applyTemplate,
       templates,
+      templatesLoaded,
+      templatesError,
       useAudioProduct,
     }),
     [
       templates,
+      templatesLoaded,
+      templatesError,
       useAudioProduct,
       products,
       productChoices,

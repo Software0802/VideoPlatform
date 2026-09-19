@@ -17,7 +17,6 @@ import {
   decideCanvasRunApprovalApi,
   fetchCanvas,
   fetchCanvasRuns,
-  fetchCanvasWorkflow,
   fetchCanvases,
   newCanvasEdgeId,
   newCanvasNodeId,
@@ -542,29 +541,6 @@ export default function CanvasView() {
     });
   };
 
-  /**
-   * 导出这次要跑的步骤与人审门（`GET /api/canvases/:id/workflow`）。只读，不建 run、
-   * 不报价；带上报价弹层里当下勾的那几道门，导出的就是「确认运行会执行的那张图」。
-   */
-  const exportWorkflow = async () => {
-    if (!doc) return;
-    try {
-      const graph = await fetchCanvasWorkflow(doc.id, [...gates]);
-      const url = URL.createObjectURL(
-        new Blob([`${JSON.stringify(graph, null, 2)}\n`], { type: "application/json" }),
-      );
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${doc.id}.workflow.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
-    } catch (e) {
-      showToast(errorText(t, e));
-    }
-  };
-
   const removeNode = (id: string) => {
     mutate((d) => ({
       nodes: d.nodes.filter((n) => n.id !== id),
@@ -1029,7 +1005,6 @@ export default function CanvasView() {
           regen={regen}
           runBusy={runBusy}
           dialogRef={quoteRef}
-          onExport={() => void exportWorkflow()}
           onToggleGate={toggleGate}
           onToggleRegen={(nodeId, on) => void toggleRegen(nodeId, on)}
           onConfirm={() => void confirmRun()}

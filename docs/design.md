@@ -493,7 +493,7 @@ data/
 architecture.md 那套设计已经落到实处,不再是空目录 + 类型:
 
 - **文件化技能**:`src/lib/skills/{types,loader}.ts`。运维把 `<DATA_DIR>/skills/<id>/SKILL.md` 写好即生效(不必发版),frontmatter 认 `name` / `nameEn` / `description` / `descriptionEn` / `version` / `kinds`,正文就是拼进 system prompt 的那段约束;id 取目录名。读法与 `templates.ts` 同口径(mtime+大小签名缓存、坏文件只跳过自己、目录缺失 = 没有文件技能)。上限:单文件 64KB、正文 4000 字、目录 200 条。`agent/skills.ts` 的 `listAgentSkills()` 把它与内建 20 条合并(**同 id 以内建为准**),`listPublicSkills()` / `findAgentSkill()` 都走这张合表,所以 `GET /api/agent/skills`、技能广场开关与 `run-turn` 的 system prompt 三处自动一致。加载器抛错时退回内建表——技能表空掉会让整个智能体视图置灰。内容是运维资产(与 `data/templates` 同级信任),已进 `backup.sh` 白名单。
-- **工作流图**:`src/lib/workflows/{types,from-canvas}.ts`。`WorkflowGraph` 描述的就是画布跑一次:生成节点是 `SkillNode`(`skillId` = `nodeMode()` 算出的原生模式,`inputs` 是所连文本/素材节点条数),报价弹层里勾了「执行前需我批准」的那些在自己前面多一道 `GateNode`(对应运行时 `awaiting_approval`),上游的边改连到门上。顺序与模式判据复用 `canvas/graph.ts` 的 `topoOrder` / `nodeMode`,不另写一份。出口是 `GET /api/canvases/:id/workflow`(只读,不建 run、不报价、不碰钱;非本人与不存在同 404),报价弹层的「导出工作流」把它存成 `<canvasId>.workflow.json`。
+- **工作流图**:`src/lib/workflows/{types,from-canvas}.ts`。`WorkflowGraph` 描述的就是画布跑一次:生成节点是 `SkillNode`(`skillId` = `nodeMode()` 算出的原生模式,`inputs` 是所连文本/素材节点条数),报价弹层里勾了「执行前需我批准」的那些在自己前面多一道 `GateNode`(对应运行时 `awaiting_approval`),上游的边改连到门上。顺序与模式判据复用 `canvas/graph.ts` 的 `topoOrder` / `nodeMode`,不另写一份。出口是 `GET /api/canvases/:id/workflow`(只读,不建 run、不报价、不碰钱;非本人与不存在同 404);界面上没有下载入口——这张图是给接口读的,不是一份对外承诺的文件格式。
 
 ## 9. 安全
 

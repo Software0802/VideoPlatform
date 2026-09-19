@@ -87,18 +87,6 @@ export async function fetchCanvas(id: string): Promise<CanvasDocument | null> {
   return readDoc(data.canvas);
 }
 
-/**
- * 这次要跑的步骤与人审门（`GET /api/canvases/:id/workflow`）。形状由服务端的
- * `src/lib/workflows/types.ts` 定义；浏览器只把它原样存成文件，不做展示，所以
- * 这里不重建镜像类型——多一层白名单只会在服务端加字段时把它们悄悄吃掉。
- */
-export async function fetchCanvasWorkflow(id: string, gates: readonly string[] = []): Promise<unknown> {
-  const query = gates.length ? `?gates=${encodeURIComponent(gates.join(","))}` : "";
-  const res = await fetch(`/api/canvases/${id}/workflow${query}`, { cache: "no-store" });
-  const data = await parseAuthed<{ workflow?: unknown }>(res, "无法导出工作流");
-  return data.workflow ?? null;
-}
-
 export class RevisionConflictError extends Error {
   readonly code = "revision_conflict";
 }

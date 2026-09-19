@@ -1045,21 +1045,6 @@
   cursor: pointer;
 }
 .canvas-quote__confirm:disabled { opacity: .5; cursor: default; }
-/* 次要动作：只读导出这次要跑的步骤与人审门，不花钱，所以不做成主按钮。 */
-.canvas-quote__export {
-  flex: none;
-  border: 0;
-  border-radius: 8px;
-  padding: 7px 12px;
-  font-size: 12px;
-  cursor: pointer;
-  color: var(--cv-fg-2);
-  background: rgba(255, 255, 255, 0.08);
-}
-.canvas-quote__export:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
 /* 保存冲突弹层（2026-09-13）：视觉照 .canvas-quote，居中放置、两栏对比。 */
 .canvas-conflict {
   position: absolute;

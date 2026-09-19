@@ -63,7 +63,6 @@ export const canvas = {
   "canvas.quote.note": "确认后按总价冻结预算，执行时逐节点划转",
   "canvas.quote.total": "合计",
   "canvas.quote.confirm": "确认运行",
-  "canvas.quote.export": "导出工作流",
   "canvas.quote.cancel": "取消",
   "canvas.quote.reused": "{n} 个节点复用上次产物",
   "canvas.quote.regen": "重跑",

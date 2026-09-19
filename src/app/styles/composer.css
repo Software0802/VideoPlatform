@@ -515,11 +515,6 @@
 .composer__error[data-tone="info"] {
   color: var(--fg-3);
 }
-/* 音频页整页置灰：能看见结构，但一切都不可提交 */
-.composer[data-soon="true"] .composer__panel {
-  opacity: 0.72;
-}
-
 /* ── 规格弹层 ── */
 
 .specs-pop {

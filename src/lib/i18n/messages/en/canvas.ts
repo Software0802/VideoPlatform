@@ -58,7 +58,6 @@ export const canvas: Record<keyof typeof zh, string> = {
   "canvas.quote.note": "The full amount is held up front and transferred per node as it runs",
   "canvas.quote.total": "Total",
   "canvas.quote.confirm": "Confirm & run",
-  "canvas.quote.export": "Export workflow",
   "canvas.quote.cancel": "Cancel",
   "canvas.quote.reused": "{n} node(s) reuse prior output",
   "canvas.quote.regen": "Regenerate",
