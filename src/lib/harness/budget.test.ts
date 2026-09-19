@@ -272,6 +272,17 @@ describe("R04 identity floor", () => {
     );
     expect(visualQcPasses(stable, 0.7)).toBe(true);
   });
+
+  // 自动闸比 rubric §五 的单条可交付判据严在总分这一轴上（evals/rubric.md §四）：
+  // 身份三维全部达标、只是光线 / 色调把均值拉到阈值以下的镜，同样判失败并付费重生成。
+  it("fails a shot whose identity clears the threshold but whose style mean does not", () => {
+    const styleDrift = parseVisualQcResponse(
+      JSON.stringify({ face: 0.7, hair: 0.7, wardrobe: 0.7, lighting: 0.2, palette: 0.2, notes: "" }),
+    );
+    expect(styleDrift.identity).toBe(0.7);
+    expect(styleDrift.overall).toBe(0.5);
+    expect(visualQcPasses(styleDrift, 0.6)).toBe(false);
+  });
 });
 
 describe("R08 whole-film duration", () => {

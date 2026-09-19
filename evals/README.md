@@ -21,9 +21,48 @@ pnpm run evals:check
 | --- | --- | --- |
 | `source-1s / 2s / 8.7s / 15s.mp4` | 本仓库用 ffmpeg-static `testsrc2` + 220Hz 正弦生成（`scripts/validate-evals.mjs` 同级说明），640×360 24fps | ✅ 已入库，仅验证 Edit / Extend 的时长边界与链路，不含人物 |
 | `palette-amber.jpg` | ffmpeg 纯色 `#C68A3A` 1024² | ✅ 已入库，作 R2V 色板参考 |
-| `character-zh.jpg` / `character-en.jpg` | **待补**：需要有肖像使用授权的真人或自绘角色正面照（≥1024px、单人、干净背景、无水印），并在此表记录来源、授权与拍摄 / 生成日期 | ❌ 缺失；缺它们时 I2V / R2V / 人物长片用例不能跑 |
+| `character-zh.jpg` / `character-en.jpg` | **待补**：需要有肖像使用授权的真人或自绘角色正面照（≥1024px、单人、干净背景、无水印），并在此表记录来源、授权与拍摄 / 生成日期 | ❌ 缺失；缺它们时 I2V / R2V / 图生视频的人物长片用例不能跑 |
 
 不要用网络图片或他人照片充数：身份一致评测会反复展示这张脸。
+
+缺这两张时 `pnpm evals:check` 退出 1，被挡住的是 11 条用例：原生 8 条（`i2v-zh/en-min|max`、`r2v-zh/en-min|max`）与长片 3 条（`h30-i2v-zh-person`、`h30-i2v-en-person`、`h60-i2v-zh-person-lastframe`）。剩下 5 条长片（`h30-t2v-zh/en-person`、`h45-t2v-zh/en-scene`、`h60-t2v-zh-person`）不引素材，素材到位与否都能跑。
+
+## 预算与阻塞
+
+当前批准额度：**¥20 总额**。报价（`docs/plan-repo-optimization-2026-09.md` R3 节，2026-09-13 冻结）：仅 scene 子集 ≈¥117–¥145，全 8 条长片 ≈¥350–¥425，1080p 再 +60%。¥20 低于最小的那一档约一个数量级，因此**本轮没有跑任何付费评测，实际花费 ¥0**，`evals/runs/` 仍然是空的。
+
+¥20 具体买不到什么，按 `src/lib/cost.ts` 与 `src/lib/jobs/provider-settings.ts` 的口径算：
+
+- 视频片段：可灵 `kling-2.6` 720p 无声 = 0.3 积分/秒 × `KLING_USD_PER_UNIT`（默认 $0.1）→ 10 秒 $0.30；30 秒长片装箱成 10+10+10，片段费 $0.90。
+- `costUsdEstimate` = 片段费 + Director 预留 $0.30 + `harnessImageAllowanceUsd()`（4 张 16:9/1k 图，按当前 `IMAGE_PROVIDER_ORDER` 首选 provider 的价目）。最后这一项取决于 `OPENAI_IMAGE_PRICE_TABLE` 与 provider shape，**从仓库里算不出来**，只能提交后从 job 记录读回。
+- 硬闸 `budgetCap` = `costUsdEstimate × 2`（软告警 `costOverTarget` 在 1.5×）。按 `USD_CNY_RATE` 默认 7.2，一条 30 秒任务光片段 + Director 就 ≈¥8.6，硬闸落在 ¥17 以上——**单条任务的上限本身就可能顶穿 ¥20**。
+- 就算勒到只跑一条，也定不出阈值：`rubric.md` 要求通过样本与失败样本一起定阈值、`harnessProtocol` 要求每条重复 2 次并与 `naive_concat` 盲评对照，单条冒烟不能定阈值。
+
+所以卡住的是（按 plan 的片号）：
+
+| 阻塞项 | 卡在哪 | 解除条件 |
+| --- | --- | --- |
+| R3.1 素材 | `character-zh/en.jpg` 缺失，`evals:check` 退出 1 | 拿到有肖像授权的正面照并在上表登记来源/授权/日期；不得用网图或占位图凑绿 |
+| R3.2 校准轮 | ¥20 不够 scene 子集（报价见上） | 批到 scene 子集那一档的预算 |
+| R3.3 报告轮 | 量级约等于再来一轮校准 | 同上，且校准轮先出阈值 |
+| 全 8 条 | 依赖 R3.1，且预算量级见上 | 素材 + 预算同时到位 |
+| 生产 `HARNESS_QC_VISUAL_THRESHOLD` | 没有 `evals/runs` 对照集，无从校准 | R3.2 出阈值后才写进生产 `.env` 并记依据 |
+
+拿到预算真要开跑时，两道闸各管一段，别指望其中一道替另一道守：
+
+- **账号余额准入闸（跨任务、按人民币）**：`createJob` 在 `withAdmissionLock` 临界区内调 `reserveJobFunds(ownerId, priceCny)`（`src/lib/jobs/create.ts`），`availableCny < priceCny` 时 `src/lib/billing/admission.ts` 直接抛 402 `insufficient_balance`，发生在任何上游调用之前，并且对整个账号跨任务生效。**跑评测前先把评测账号的已购池充到额度上限**。`prices.ts` 默认价表里 `longForm["30"] = 20`；提交时用 720p 并显式带 `generateAudio: false`，价钱就停在 ¥20。额度占满之后，第二条提交在上游调用之前被 402 顶回。
+  - 它按**售价** `priceCny` 计，不是上游美元成本（同一条 30 秒任务上游侧约 ¥8.6 再加生图额度）。
+  - **更要紧的限定：它不封上游总花费。** 只有 `succeeded` 才扣钱（`store.ts` 的 `pendingCharge`），失败 / 取消 / 过期一律不扣，预留随终态释放——`availableCny = balanceCny + effectiveMemberCny − reservedCny`，而 `reservedCny` 只算非终态任务。一条跑失败的长片在上游已经花掉了片段费、每镜最多 2 次付费重生成与每镜最多 3 次视觉 QC 调用（每次尝试各一次），平台侧却记 ¥0 并把额度全额放回，下一条照样能提交。所以这道闸限制的是**同时在跑的、以及成功计费的付费任务数**。
+  - 因此每次失败之后（当场取消同理），必须先从那条任务的 `costUsdActual` 手工核算剩余预算，再决定要不要重新提交。
+  - `availableCny` 还含会员积分，所以「把已购池充成 ¥20」只有在评测账号没有生效会员积分时才真的封在 ¥20。
+- **`budgetCap`（单任务、按美元）**：只守一条任务内部的重试与付费调用，不守账号总额。
+
+计量步骤：
+
+1. 提交后先从 job 记录读 `costUsdEstimate`，确认 `costUsdEstimate × 2 × USD_CNY_RATE` 还在剩余额度内再让它跑下去；顶不住就当场取消。
+2. 跑完从 job 记录（或 `GET /api/jobs/:id` 的 DTO）读 `costUsdActual` 与 `costIncomplete`：没有任何界面显示这两个字段，只能自己读。`costIncomplete` 为真时 `costUsdActual` 只是下界，照它记账等于低估。
+3. `costOverTarget` 一置位就停下来分析，别连着跑下一条。
+4. 失败的尝试上游照样收费（平台侧不计费，见上），同样进 `evals/runs`（`harnessProtocol.denominatorRule`：失败样本不得移出分母）。
 
 ## 运行记录
 
