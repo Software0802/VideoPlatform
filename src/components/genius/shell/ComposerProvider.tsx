@@ -521,25 +521,28 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
 
   const pickMode = useCallback(
     (next: VideoMode) => {
+      /*
+        先问「这个模式此刻能不能用」，再谈自动换产品：芯片的 title 与点下去那句提示
+        必须是同一句话。产品表还没读到 / 读不到时，`modeBlock` 说的是「不知道」，
+        这里就不能替它改口说「这台实例没有支持首尾帧的模型」。
+      */
+      const block = modeBlock(next);
+      if (block) {
+        showToast(t(block));
+        return;
+      }
       if (next === "firstLast") {
         // 切到首尾帧时当前产品不支持，就自动换到第一个支持的产品并说一声（阶段 A §4）
         if (!supportsLastFrame) {
           const alt = productChoices.find((p) => p.supportsLastFrame);
-          if (!alt) {
-            showToast(t("composer.lastFrame.none"));
-            return;
+          if (alt) {
+            setVideoProductId(alt.id);
+            showToast(t("composer.lastFrame.switched", { name: alt.name }));
           }
-          setVideoProductId(alt.id);
-          showToast(t("composer.lastFrame.switched", { name: alt.name }));
         }
         setMode(next);
         setPop(null);
         dropKey();
-        return;
-      }
-      const block = modeBlock(next);
-      if (block) {
-        showToast(t(block));
         return;
       }
       if (next === "voice") {

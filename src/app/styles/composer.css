@@ -151,7 +151,7 @@
   color: var(--fg);
   background: var(--chip-on);
 }
-/* 后端接不住的模式：画出来但置灰，点击提示「即将上线」 */
+/* 此刻用不了的模式：画出来但置灰，title 与点击提示都是 `modeBlock()` 给的具体理由 */
 .composer__mode[data-soon="true"] {
   color: var(--off);
   cursor: not-allowed;

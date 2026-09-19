@@ -54,7 +54,6 @@ export const composer = {
   "composer.ref.add": "添加参考图",
   "composer.ref.max": "最多 {n} 张参考图",
   "composer.ref.maxTaken": "最多 {n} 张参考图，已取前 {room} 张",
-  "composer.lastFrame.none": "当前没有支持首尾帧的模型",
   "composer.lastFrame.switched": "已切换到 {name}（支持首尾帧）",
 
   /* 工具与开关 */

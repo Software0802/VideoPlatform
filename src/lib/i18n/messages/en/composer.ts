@@ -53,7 +53,6 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.ref.add": "Add reference image",
   "composer.ref.max": "Up to {n} reference images",
   "composer.ref.maxTaken": "Up to {n} reference images — kept the first {room}",
-  "composer.lastFrame.none": "No model here supports first & last frame",
   "composer.lastFrame.switched": "Switched to {name} (supports first & last frame)",
 
   "composer.tool.buddy": "Prompt buddy",

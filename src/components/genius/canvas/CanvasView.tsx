@@ -104,6 +104,52 @@ function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, clo
   }, [open, ref, close]);
 }
 
+/*
+  一个 gen_video 节点按哪种 mode 下单，只看它的入边是不是「出图的」——与服务端
+  `canvas/graph.ts` 的 `nodeMode()` 同一条判据。`graph.ts` 自己进不了浏览器包（要读盘、
+  要 node:crypto），所以这条规则在客户端只写这一份，改连线与列产品都用它。
+*/
+function videoModeOf(source: CanvasNode | undefined): NativeMode {
+  return source?.kind === "material" || source?.kind === "gen_image" ? "image_to_video" : "text_to_video";
+}
+
+/*
+  这个产品能不能接下「这个节点这次要下的单」——与服务端 `assertProductFits` 同口径：
+  类型、mode，以及画布固定的那档时长（`CANVAS_VIDEO_DURATION_SEC`；时长档收不下 8 秒的
+  产品报价那一刻就是 400）。芯片列谁、已钉的还算不算数，都问这一条。
+*/
+function productFits(p: Product, mode: NativeMode): boolean {
+  return (
+    p.kind === (mode === "text_to_image" ? "image" : "video") &&
+    supportsMode(p, mode) &&
+    (mode === "text_to_image" ||
+      !p.durations?.length ||
+      Math.max(...p.durations) >= CANVAS_VIDEO_DURATION_SEC)
+  );
+}
+
+/**
+ * 钉在节点上、却接不下这个节点当前路径的产品。
+ *
+ * 产品表是空的（还没读到 / 这次读不到）时一律返回空：一份读不到的清单证明不了任何
+ * 产品「不行」，凭它退掉用户钉的模型是另一种撒谎。表到手之后再扫一遍（见挂载后的
+ * effect），漏判的那些照样会被退回「自动」。
+ */
+function unfitPins(
+  nodes: CanvasNode[],
+  edges: CanvasDocument["edges"],
+  products: Product[],
+): { nodeId: string; name: string }[] {
+  if (!products.length) return [];
+  return nodes.flatMap((n) => {
+    if (n.kind !== "gen_video" || !n.product) return [];
+    const pinned = products.find((p) => p.id === n.product);
+    if (!pinned) return [];
+    const source = nodes.find((s) => s.id === edges.find((e) => e.to === n.id)?.from);
+    return productFits(pinned, videoModeOf(source)) ? [] : [{ nodeId: n.id, name: pinned.name }];
+  });
+}
+
 /**
  * 画布视图（C 包）：持久化到 `data/canvases/<userId>/<id>.json`，乐观并发
  * （PATCH 带 `expectedRevision`，409 即重拉），生成节点「运行」走与服务端
@@ -548,24 +594,25 @@ export default function CanvasView() {
   };
 
   /*
-    一个 gen_video 节点按哪种 mode 下单，只看它的入边是不是「出图的」——与服务端
-    `canvas/graph.ts` 的 `nodeMode()` 同一条判据。`graph.ts` 自己进不了浏览器包（要读盘、
-    要 node:crypto），所以这条规则在客户端只写这一份，改连线与列产品都用它。
+    产品表到手（或换了一份）时补扫一遍：改图那一刻表还没读到的话，`unfitPins` 什么都
+    判不了，钉在节点上、这条路径接不住的产品就会一直留到报价那一刻才以一句不指名节点的
+    400 冒出来。这里按同一条判据退回「自动」并说一声。`setTimeout(…, 0)` 是本仓库
+    挂载后改状态的既有写法（`react-hooks/set-state-in-effect`）。
   */
-  const videoModeOf = (source: CanvasNode | undefined): NativeMode =>
-    source?.kind === "material" || source?.kind === "gen_image" ? "image_to_video" : "text_to_video";
-
-  /*
-    这个产品能不能接下「这个节点这次要下的单」——与服务端 `assertProductFits` 同口径：
-    类型、mode，以及画布固定的那档时长（`CANVAS_VIDEO_DURATION_SEC`；时长档收不下 8 秒的
-    产品报价那一刻就是 400）。芯片列谁、已钉的还算不算数，都问这一条。
-  */
-  const productFits = (p: Product, mode: NativeMode) =>
-    p.kind === (mode === "text_to_image" ? "image" : "video") &&
-    supportsMode(p, mode) &&
-    (mode === "text_to_image" ||
-      !p.durations?.length ||
-      Math.max(...p.durations) >= CANVAS_VIDEO_DURATION_SEC);
+  useEffect(() => {
+    if (!doc || !products.length) return;
+    const unfit = unfitPins(doc.nodes, doc.edges, products);
+    if (!unfit.length) return;
+    const dropped = new Set(unfit.map((u) => u.nodeId));
+    const timer = window.setTimeout(() => {
+      mutate((d) => ({
+        nodes: d.nodes.map((n) => (dropped.has(n.id) ? { ...n, product: undefined } : n)),
+        edges: d.edges,
+      }));
+      for (const u of unfit) showToast(t("canvas.model.unfit", { name: u.name }));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [doc, products, mutate, showToast, t]);
 
   /**
    * 改了图之后落盘：先把「钉的产品接不下新路径」的那些退回「自动」再写。
@@ -575,13 +622,7 @@ export default function CanvasView() {
    * 句报错不指名是哪个节点。所有改图入口都走这里，判据只有这一份。
    */
   const commitGraph = (nodes: CanvasNode[], edges: CanvasDocument["edges"]) => {
-    const unfit = nodes.flatMap((n) => {
-      if (n.kind !== "gen_video" || !n.product) return [];
-      const pinned = products.find((p) => p.id === n.product);
-      if (!pinned) return [];
-      const source = nodes.find((s) => s.id === edges.find((e) => e.to === n.id)?.from);
-      return productFits(pinned, videoModeOf(source)) ? [] : [{ nodeId: n.id, name: pinned.name }];
-    });
+    const unfit = unfitPins(nodes, edges, products);
     const dropped = new Set(unfit.map((u) => u.nodeId));
     mutate(() => ({
       nodes: dropped.size ? nodes.map((n) => (dropped.has(n.id) ? { ...n, product: undefined } : n)) : nodes,

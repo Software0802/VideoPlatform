@@ -299,7 +299,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 
 ## 2k'. 账号偏好与归档留存(2026-09-15,as-built)
 
-- **偏好** `src/lib/prefs/store.ts`:`data/prefs/<userId>.json` `{schemaVersion:1, ownerId, agent:{skillsOff:string[]}, updatedAt}`,每用户 tail-promise 锁 + `writeJsonAtomic`,坏文件记 warn 后按空值重建。**不写 user.json**——它是资金事实源,偏好不得与余额共用一次写。`GET /api/agent/skills` 下发 `off`(按当前 `publicSkills()` 过滤,已下架 id 可残留在文件里);`PATCH /api/agent/skills {skillId, off}`(strict,未知技能 400 `invalid_argument`)。前端乐观切换、失败回滚;旧 localStorage 键 `genius.agent.skillsOff` 只作一次性迁移入口(服务端为空时逐个 PATCH,完成后删键;服务端已有值直接删键)。
+- **偏好** `src/lib/prefs/store.ts`:`data/prefs/<userId>.json` `{schemaVersion:1, ownerId, agent:{skillsOff:string[]}, updatedAt}`,每用户 tail-promise 锁 + `writeJsonAtomic`,坏文件记 warn 后按空值重建。**不写 user.json**——它是资金事实源,偏好不得与余额共用一次写。`GET /api/agent/skills` 下发 `off`(按当前 `listPublicSkills()`——异步,内建 20 条与文件技能合并后的那张表——过滤,已下架 id 可残留在文件里);`PATCH /api/agent/skills {skillId, off}`(strict,未知技能 400 `invalid_argument`)。前端乐观切换、失败回滚;旧 localStorage 键 `genius.agent.skillsOff` 只作一次性迁移入口(服务端为空时逐个 PATCH,完成后删键;服务端已有值直接删键)。
 - **归档** `src/lib/archive/sweep.ts`,`ARCHIVE_INACTIVE_DAYS`(默认 90,≤0 关闭),挂在 runner 每小时 `maintenance()` 的 `sweepRetention` 之后。归档**永不删文件、不改任何资金字段**:
   - 会话:`updatedAt` 早于 N 天且无 `thinking|executing|awaiting_approval` 轮次 → `updateSession` 写 `archivedAt`;`listSessions` 默认只列未归档,`GET /api/agent/sessions?archived=1` 只列已归档;对已归档会话发新一轮,在追加 turn 的同一次 `updateSession` 里清掉 `archivedAt`。历史抽屉「已归档」disclosure 展开时才拉列表。
   - 画布文档:早于 N 天、不是该用户 `updatedAt` 最新的一张、没有 running run 指向它 → 画布锁内写 `archivedAt`(不推进 revision、不刷新 updatedAt);`listCanvases` 排除,`readCanvas`/PATCH 不变。用户永远至少留着最新一张。
