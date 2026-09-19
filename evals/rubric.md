@@ -58,7 +58,7 @@ overall_5 = mean(face, hair, wardrobe, lighting, palette) × 5     // 人物用�
 overall_5 = mean(subjectStability, lighting, palette) × 5          // 场景用例
 ```
 
-`overall_5` 只用于排序和趋势对比，**不参与通过判定**。自动视觉 QC 也按同样的口径：`visualQcPasses` 要求总分和 `identity = min(face, hair, wardrobe)` 同时 ≥ 阈值。
+`overall_5` 只用于排序和趋势对比，**不参与通过判定**。自动视觉 QC 不是同一套判据：`visualQcPasses` 要求总分和 `identity = min(face, hair, wardrobe)` **同时** ≥ 阈值，所以它在总分这一轴上比 §五 的单条可交付判据更严——identity 达标、只是总分差一点的镜会被判失败并付费重生成；这个误拒率由 §五 的校准报告量出来。
 
 ## 五、通过标准（M2.4 收口口径）
 

@@ -43,14 +43,19 @@ pnpm run evals:check
 | 阻塞项 | 卡在哪 | 解除条件 |
 | --- | --- | --- |
 | R3.1 素材 | `character-zh/en.jpg` 缺失，`evals:check` 退出 1 | 拿到有肖像授权的正面照并在上表登记来源/授权/日期；不得用网图或占位图凑绿 |
-| R3.2 校准轮 | ¥20 < scene 子集 ≈¥117–¥145 | 批到 scene 子集那一档的预算 |
+| R3.2 校准轮 | ¥20 不够 scene 子集（报价见上） | 批到 scene 子集那一档的预算 |
 | R3.3 报告轮 | 量级约等于再来一轮校准 | 同上，且校准轮先出阈值 |
-| 全 8 条 | ≈¥350–¥425，且依赖 R3.1 | 素材 + 预算同时到位 |
+| 全 8 条 | 依赖 R3.1，且预算量级见上 | 素材 + 预算同时到位 |
 | 生产 `HARNESS_QC_VISUAL_THRESHOLD` | 没有 `evals/runs` 对照集，无从校准 | R3.2 出阈值后才写进生产 `.env` 并记依据 |
 
-拿到预算真要开跑时，计量只能按任务手工累加——**没有跨任务的人民币总额闸门**：
+拿到预算真要开跑时，两道闸各管一段，别指望其中一道替另一道守：
 
-1. 提交后先从 job 记录读 `costUsdEstimate`，确认 `costUsdEstimate × 2 × USD_CNY_RATE` 还在剩余额度内再让它跑下去；顶不住就当场取消，别指望 `budgetCap` 替你守总额，它只守单条任务。
+- **账号余额准入闸（跨任务、按人民币）**：`createJob` 在 `withAdmissionLock` 临界区内调 `reserveJobFunds(ownerId, priceCny)`（`src/lib/jobs/create.ts`），`availableCny < priceCny` 时 `src/lib/billing/admission.ts` 直接抛 402 `insufficient_balance`，发生在任何上游调用之前，并且对整个账号跨任务生效。**跑评测前先把评测账号的已购池充成额度上限**（比如 ¥20）：30 秒长片售价 `longForm["30"] = 20`（`prices.ts` 默认价表），第一条任务就把额度占满，第二条提交在上游调用之前被 402 顶回。限定要记住：这道闸按**售价** `priceCny` 计，不是上游美元成本（同一条 30 秒任务上游侧约 ¥8.6 再加生图额度），所以它限制的是能创建多少条付费任务，不等于 1:1 对齐上游花费。
+- **`budgetCap`（单任务、按美元）**：只守一条任务内部的重试与付费调用，不守账号总额。
+
+计量步骤：
+
+1. 提交后先从 job 记录读 `costUsdEstimate`，确认 `costUsdEstimate × 2 × USD_CNY_RATE` 还在剩余额度内再让它跑下去；顶不住就当场取消。
 2. 跑完从 job 记录（或 `GET /api/jobs/:id` 的 DTO）读 `costUsdActual` 与 `costIncomplete`：没有任何界面显示这两个字段，只能自己读。`costIncomplete` 为真时 `costUsdActual` 只是下界，照它记账等于低估。
 3. `costOverTarget` 一置位就停下来分析，别连着跑下一条。
 4. 失败的尝试同样计费、同样进 `evals/runs`（`harnessProtocol.denominatorRule`：失败样本不得移出分母）。
