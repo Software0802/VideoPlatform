@@ -113,7 +113,7 @@ Windows 本机的 mock 视频/ffmpeg、通知原子写入与 relay 首次动态�
 - 生产没有可用的管理员登录会话，本轮未核对登录态 `/api/health` 的 `build.sha`、生产 `/api/models` 与 `/api/agent/skills`；版本以 `BUILD_INFO.json`、匿名内外网 health 与服务状态交叉确认。
 - YMan 目录售价按文档积分成本约 ×2 配置；默认「快速」的成本 ¥0.5/¥1，目录模型的 price/credits 尚未经上游真实账单核实，真实付费前仍需对账。
 - 无支付网关，订阅收入仍是内部记账；2026-09-13 用户确认无商户主体 → R6 停止条件成立、不开工，继续礼品码；重开条件：取得可开通微信/支付宝商户号的主体。
-- R3 首轮校准报价已冻结（plan R3 节，2026-09-13）：仅 scene 用例 ≈¥117–¥145，全 8 条（需授权人物照）≈¥350–¥425。已批额度 **¥20 总额**，低于最小的 scene 子集约一个数量级，所以**未开跑、实际花费 ¥0**，`evals/runs/` 仍只有 `.gitkeep`，生产 `HARNESS_QC_VISUAL_THRESHOLD` 仍未设（= 跳过视觉打分）。授权人物素材仍缺，`pnpm evals:check` 退出 1 并挡住 11 条用例；不引素材的长片用例是 `h30-t2v-zh/en-person`、`h45-t2v-zh/en-scene`、`h60-t2v-zh-person` 五条。阈值取值口径、逐任务计量步骤与完整阻塞表在 `evals/README.md`「预算与阻塞」，`.env.example` 的 `HARNESS_QC_VISUAL_THRESHOLD` 注释块给了未校准时的起点 0.6（= rubric 的探索期身份门槛）与它的付费后果。YMan 长片的 r2v 档 B、minimax-h3 真账单价格仍待验证（R2.4 待用户提供账单实付积分）。
+- R3 首轮校准报价已冻结（plan R3 节，2026-09-13）：仅 scene 用例 ≈¥117–¥145，全 8 条（需授权人物照）≈¥350–¥425。已批额度 **¥20 总额**，低于最小的 scene 子集约一个数量级，所以**未开跑、实际花费 ¥0**，`evals/runs/` 仍只有 `.gitkeep`，生产 `HARNESS_QC_VISUAL_THRESHOLD` 仍未设（= 跳过视觉打分）。授权人物素材仍缺，`pnpm evals:check` 退出 1。阈值取值口径、逐任务计量步骤与完整阻塞表在 `evals/README.md`「预算与阻塞」，`.env.example` 的 `HARNESS_QC_VISUAL_THRESHOLD` 注释块给了未校准时的起点 0.6（= rubric 的探索期身份门槛）与它的付费后果。YMan 长片的 r2v 档 B、minimax-h3 真账单价格仍待验证（R2.4 待用户提供账单实付积分）。
 - 常规管理变更（充值/重置密码/停用/铸码）已改走应用内唯一写者（管理令牌 + HTTP）；`--offline` 直写保留但须先探测服务未运行。migrate-billing 与备份仍要求停服窗口；备份不能只停创作准入就声称一致性。
 - SQLite 只在多写者/准入 p95/备份约束实际触发时选型。生产 Node 22.22.2 可支持内置模块，但 Node 22 文档仍标 1.1 Active development，不据此迁资金。
 - 归档只是列表轴与目录位移，不是删除：会话/画布/run 文件与资金字段都保留；同 idempotency key 在 run 归档后重放会新建 run（有意取舍）。生产 `ARCHIVE_INACTIVE_DAYS` 未显式配置，部署新版后按默认 90 天生效。
