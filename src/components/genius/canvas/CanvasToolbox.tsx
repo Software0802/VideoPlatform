@@ -1,36 +1,155 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { TOOLS, TOOL_CATS, TOOL_CAT_ALL, TOOL_CAT_KEY, shot, type ToolCatFilter } from "./data";
-import { IconClose, IconFilter, IconSearch } from "./icons";
-import { useT } from "@/components/genius/i18n/I18nProvider";
+import { useEffect, useMemo, useState } from "react";
+import { TOOL_CATS, TOOL_CAT_ALL, TOOL_CAT_KEY, type ToolCat, type ToolCatFilter } from "./data";
+import { IconClose, IconSearch } from "./icons";
+import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
+import { useComposer } from "@/components/genius/ShellContext";
+import { fetchJobsPage } from "@/lib/client/jobs";
 import type { MessageKey } from "@/lib/i18n/messages";
 
-type Props = {
-  onClose: () => void;
-  onApply: (toolName: string) => void;
+/**
+ * 工具箱抽屉（原型图 30）：左侧工具栏点开，把一段现成的提示词放进画布。
+ *
+ * 两个页签都是真数据，不是原型那份写死的 TOOLS：
+ * - 「模板」= 创作面板域那一份清单（`GET /api/templates` 全站只拉一次，与面板的「模板」
+ *   按钮、主页模板页签同源），抽屉开合不再各拉一趟，也不会与它们说的不一样；
+ * - 「我的」= `GET /api/jobs` 里成功作品的提示词，按提示词去重、新的在前。
+ *
+ * 搜索与分类是**本地过滤**（两份清单都已经在手里，没必要为一次筛选再跑一趟服务端）。
+ * 「应用到画布」不改现有节点：它在画布上新建一个对应类型的生成节点并填好提示词，
+ * 由 `CanvasView` 落盘——工具箱自己不碰文档。
+ */
+
+export type ToolboxPick = { kind: ToolCat; prompt: string; name: string };
+
+type Row = {
+  key: string;
+  name: string;
+  meta: string;
+  prompt: string;
+  kind: ToolCat;
+  cover?: string;
 };
 
-/** 两个页签的 id 是 ASCII，显示名在字典里。 */
 const TABS = [
-  { id: "community", labelKey: "canvas.toolbox.tab.community" },
+  { id: "template", labelKey: "canvas.toolbox.tab.template" },
   { id: "mine", labelKey: "canvas.toolbox.tab.mine" },
 ] as const satisfies readonly { id: string; labelKey: MessageKey }[];
 
-/** 工具箱抽屉（原型图 30）：400 宽，社区 / 我的工具 + 搜索 + 分类芯片 + 工具列表。 */
-export default function CanvasToolbox({ onClose, onApply }: Props) {
+type TabId = (typeof TABS)[number]["id"];
+
+/**
+ * 作品一次拉这么多；工具箱是「最近用过的提示词」，不做分页。
+ * 这个数就是 `GET /api/jobs` 的上限（`MAX_PAGE_LIMIT = 50`，服务端模块不能进客户端包）：
+ * 再大一格整个请求会被 zod 判成 400，页签只剩一行错误。
+ */
+const MINE_LIMIT = 50;
+
+/**
+ * 行标题用的短标签。作品行的「名字」就是任务的提示词（最长 2000 字），原样传出去会被
+ * 「已放进画布」那条轻提示整段铺在画布上——提示没有行数上限。完整提示词仍在行的
+ * `title` 与新建的节点里，这里只管显示与提示。
+ */
+const LABEL_MAX = 40;
+function shortLabel(text: string): string {
+  const one = text.replace(/\s+/g, " ").trim();
+  return one.length > LABEL_MAX ? `${one.slice(0, LABEL_MAX)}…` : one;
+}
+
+/**
+ * `YYYY-MM-DD`，与 `HomeView` 的 `calendarDay` 同一个写法：`toLocale*` 认的是浏览器
+ * 语言，不是 `lumen_locale`，英文界面上会冒出中文日期。
+ */
+function shortDate(iso: string, t: Translate): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return t("canvas.toolbox.meta.mine");
+  const d = new Date(ms);
+  const p = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+export default function CanvasToolbox({
+  onClose,
+  onApply,
+}: {
+  onClose: () => void;
+  onApply: (pick: ToolboxPick) => void;
+}) {
   const t = useT();
-  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("community");
+  const { templates: templateList, templatesLoaded, templatesError } = useComposer();
+  const [tab, setTab] = useState<TabId>("template");
   const [cat, setCat] = useState<ToolCatFilter>(TOOL_CAT_ALL);
   const [query, setQuery] = useState("");
+  const [mine, setMine] = useState<Row[] | null>(null);
+  const [mineFailed, setMineFailed] = useState(false);
 
+  const templates: Row[] | null = useMemo(
+    () =>
+      templatesLoaded
+        ? templateList.map((item) => ({
+            key: `tpl:${item.id}`,
+            name: item.name,
+            meta: item.category,
+            prompt: item.prompt,
+            kind: item.mode === "text_to_image" ? "image" : ("video" as ToolCat),
+            ...(item.cover ? { cover: item.cover } : {}),
+          }))
+        : null,
+    [templateList, templatesLoaded],
+  );
+
+  /*
+    作品那一份拉一次就留在内存里：切页签、改分类、打字都只是本地过滤。读失败只记一个
+    标记、文案在渲染时取，切语言时这行字跟着换，effect 也不必挂 `t` 重跑。
+  */
+  useEffect(() => {
+    if (tab !== "mine" || mine) return;
+    let alive = true;
+    void fetchJobsPage({ limit: MINE_LIMIT }).then(
+      (page) => {
+        if (!alive) return;
+        const seen = new Set<string>();
+        const rows: Row[] = [];
+        for (const job of page.jobs) {
+          const prompt = job.prompt?.trim();
+          if (job.status !== "succeeded" || !prompt || seen.has(prompt)) continue;
+          seen.add(prompt);
+          rows.push({
+            key: `job:${job.id}`,
+            name: shortLabel(prompt),
+            meta: shortDate(job.createdAt, t),
+            prompt,
+            kind: job.mode === "text_to_image" ? "image" : "video",
+            ...(job.output?.kind === "image"
+              ? { cover: job.output.imageUrl }
+              : job.output?.kind === "video" && job.output.posterUrl
+                ? { cover: job.output.posterUrl }
+                : {}),
+          });
+        }
+        setMine(rows);
+      },
+      () => {
+        if (!alive) return;
+        setMine([]);
+        setMineFailed(true);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [tab, mine, t]);
+
+  const source = tab === "template" ? templates : mine;
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const base = tab === "mine" ? TOOLS.slice(0, 3) : TOOLS;
-    return base.filter(
-      (tool) => (cat === TOOL_CAT_ALL || tool.cat === cat) && (q === "" || tool.name.toLowerCase().includes(q)),
+    return (source ?? []).filter(
+      (row) =>
+        (cat === TOOL_CAT_ALL || row.kind === cat) &&
+        (q === "" || row.name.toLowerCase().includes(q) || row.prompt.toLowerCase().includes(q)),
     );
-  }, [tab, cat, query]);
+  }, [source, cat, query]);
 
   return (
     <aside className="canvas-toolbox" aria-label={t("canvas.toolbox.title")}>
@@ -73,9 +192,6 @@ export default function CanvasToolbox({ onClose, onApply }: Props) {
             onChange={(e) => setQuery(e.target.value)}
           />
         </span>
-        <button type="button" className="canvas-toolbox__filter" aria-label={t("canvas.toolbox.filter")}>
-          <IconFilter />
-        </button>
       </div>
 
       <div className="canvas-toolbox__cats">
@@ -95,19 +211,36 @@ export default function CanvasToolbox({ onClose, onApply }: Props) {
       </div>
 
       <div className="canvas-toolbox__list">
-        {rows.map((tool, i) => (
-          <div className="canvas-tool" key={tool.name}>
-            <span className="canvas-tool__shot" style={{ backgroundImage: `url(${shot(i)})` }} />
+        {rows.map((row) => (
+          <div className="canvas-tool" key={row.key} data-kind={row.kind}>
+            <span
+              className="canvas-tool__shot"
+              style={row.cover ? { backgroundImage: `url(${row.cover})` } : undefined}
+            />
             <span className="canvas-tool__body">
-              <span className="canvas-tool__name">{tool.name}</span>
-              <span className="canvas-tool__meta">{t("canvas.toolbox.uses", { n: tool.uses })}</span>
+              <span className="canvas-tool__name" title={row.prompt}>
+                {row.name}
+              </span>
+              <span className="canvas-tool__meta">{row.meta}</span>
             </span>
-            <button type="button" className="canvas-tool__apply" onClick={() => onApply(tool.name)}>
+            <button
+              type="button"
+              className="canvas-tool__apply"
+              onClick={() => onApply({ kind: row.kind, prompt: row.prompt, name: row.name })}
+            >
               {t("canvas.toolbox.apply")}
             </button>
           </div>
         ))}
-        {rows.length === 0 ? <p className="canvas-toolbox__empty">{t("canvas.toolbox.empty")}</p> : null}
+        {source === null ? (
+          <p className="canvas-toolbox__empty">{t("common.loading")}</p>
+        ) : rows.length === 0 ? (
+          <p className="canvas-toolbox__empty">
+            {tab === "mine"
+              ? t(mineFailed ? "canvas.toolbox.mineError" : "canvas.toolbox.emptyMine")
+              : t(templatesError ? "canvas.toolbox.templateError" : "canvas.toolbox.empty")}
+          </p>
+        ) : null}
       </div>
     </aside>
   );

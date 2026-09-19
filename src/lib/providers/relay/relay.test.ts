@@ -530,6 +530,29 @@ describe("动态目录（catalog.source = models-endpoint）", () => {
   });
 });
 
+describe("保留 id", () => {
+  it("内建四家仍被挡住；jimeng 已放开，可按普通 relay 配出来并参与路由", async () => {
+    const { createRelay } = await import("./manage");
+    const { reconcileRelays } = await import("./assemble");
+    const { isRegisteredProviderId, hasProviderKey } = await import("@/lib/providers/registry");
+
+    writeRelaysFile([]);
+    reconcileRelays();
+    for (const id of ["grok", "mock", "kling"]) {
+      await expect(createRelay(fixtureCfg({ id }))).rejects.toThrow();
+    }
+
+    process.env[KEY_ENV] = "fixture-secret";
+    await createRelay(fixtureCfg({ id: "jimeng", name: "即梦" }));
+    reconcileRelays();
+    expect(isRegisteredProviderId("jimeng")).toBe(true);
+    expect(hasProviderKey("jimeng")).toBe(true);
+
+    writeRelaysFile([]);
+    reconcileRelays();
+  });
+});
+
 describe("manage 写锁（withRelayLock）", () => {
   it("并发创建 5 个 relay：全部落盘，后写者不丢先写者", async () => {
     const { createRelay } = await import("./manage");

@@ -21,9 +21,13 @@ export type ComposerTab = (typeof COMPOSER_TABS)[number]["id"];
 
 /**
  * 视频页的模式行。后端接得住的是「图文」（空槽 = 文生视频、有图 = 图生视频）、
- * 「参考」（`reference_to_video`）与「首尾帧」（`image_to_video` + 尾帧），后两者还要
- * 当前产品声明了对应能力；其余按用户 2026-09-06 的决定「画出来但置灰」，点击提示
- * 「即将上线」。
+ * 「参考」（`reference_to_video`）、「首尾帧」（`image_to_video` + 尾帧）与「有声」
+ * （挑一个声明了原生音轨的产品并打开音轨开关）——后三条还要当前产品 / 产品表真的
+ * 声明了对应能力。「编辑」「续写」「动作模仿」仍然置灰，但不再说「即将上线」：
+ * `modeBlock()` 给的是具体理由（见 `ComposerProvider`）。
+ *
+ * 「模板」不在这一行里——它不是一条通道，是「从一份现成参数开始」，所以在模式行
+ * 旁边单独做成一枚开清单的按钮（`aria-haspopup="dialog"`），不占单选语义。
  *
  * id 是 ASCII 内部标识（多语言：显示名在字典里，见 `VIDEO_MODE_KEY`）——它同时是
  * `pickMode` / `nativeMode` 的判据，不能跟着语言变。
@@ -31,7 +35,6 @@ export type ComposerTab = (typeof COMPOSER_TABS)[number]["id"];
 export const VIDEO_MODES = [
   "prompt",
   "reference",
-  "template",
   "firstLast",
   "edit",
   "motion",
@@ -43,7 +46,6 @@ export type VideoMode = (typeof VIDEO_MODES)[number];
 export const VIDEO_MODE_KEY: Record<VideoMode, MessageKey> = {
   prompt: "composer.mode.prompt",
   reference: "composer.mode.reference",
-  template: "composer.mode.template",
   firstLast: "composer.mode.firstLast",
   edit: "composer.mode.edit",
   motion: "composer.mode.motion",
@@ -107,7 +109,7 @@ export type Frame = { preview: string; uploadId: string | null; state: "busy" | 
 /** 图片槽的去向。素材弹窗要知道这次选的图往哪个槽里放。 */
 export type SlotTarget = "start" | "last" | "reference";
 
-export type Pop = null | "specs" | "model" | "count" | "buddy" | "picker";
+export type Pop = null | "specs" | "model" | "count" | "buddy" | "picker" | "template";
 
 /**
  * 一条「任务完成」通知。两个来源（H1）：

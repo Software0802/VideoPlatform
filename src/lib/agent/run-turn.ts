@@ -30,7 +30,7 @@ import {
   type AgentTier,
   type AgentTurn,
 } from "@/lib/agent/schema";
-import { agentSkillById } from "@/lib/agent/skills";
+import { findAgentSkill } from "@/lib/agent/skills";
 import { newMessageId, readSession, updateSession } from "@/lib/agent/store";
 import { refundTurn, settleStaleTurns } from "@/lib/agent/settle";
 import type { Locale } from "@/lib/i18n/locales";
@@ -179,7 +179,7 @@ export async function runTurn(
 
   const tier = input.tier ?? fresh.tier ?? "balanced";
   const skillId = input.skillId ?? fresh.skillId;
-  const skill = agentSkillById(skillId);
+  const skill = await findAgentSkill(skillId);
   const imageProduct = input.imageProduct ?? fresh.imageProduct;
   const videoProduct = input.videoProduct ?? fresh.videoProduct;
   const locale = input.locale ?? "zh-CN";

@@ -23,6 +23,7 @@
 #   notifications/ 通知落盘（2026-09-12 H 包起；每用户一份，含已读游标，不存在就跳过）
 #   prefs/      账号偏好（2026-09-15 起；智能体技能开关，每用户一份，不存在就跳过）
 #   templates/  模板（可由 data-seed 重建，但线上可能被手改过，顺带打）
+#   skills/     文件化智能体技能（运维手写的 <id>/SKILL.md，仓库里没有副本，丢了要重写）
 #   jobs/*/job.json  任务记录本身
 # **不打**产物（outputs / inputs / shots / tmp）：几十上百 MB，且 30 天后本来就会被
 # 留存清理删掉；备份的目的是「账号与账目不丢」，不是留存成片。这一点靠先用 find 列出
@@ -118,7 +119,7 @@ fi
 # 白名单清单，NUL 分隔，路径相对 DATA_DIR。
 (
   cd "$DATA_DIR"
-  for d in users invites gift-codes ledger agent templates canvases canvas-runs notifications prefs assets; do
+  for d in users invites gift-codes ledger agent templates skills canvases canvas-runs notifications prefs assets; do
     if [ -d "$d" ]; then find "$d" -print0; fi
   done
   if [ -f relays.json ]; then printf '%s\0' relays.json; fi
@@ -128,7 +129,7 @@ fi
   fi
 ) > "$LIST" || die "扫描 $DATA_DIR 失败"
 
-[ -s "$LIST" ] || die "$DATA_DIR 里没有可备份的内容（users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ notifications/ prefs/ assets/ relays.json jobs/*/job.json 全为空）"
+[ -s "$LIST" ] || die "$DATA_DIR 里没有可备份的内容（users/ invites/ gift-codes/ ledger/ agent/ templates/ skills/ canvases/ canvas-runs/ notifications/ prefs/ assets/ relays.json jobs/*/job.json 全为空）"
 
 # 服务是活的，job.json 可能正好在写。GNU tar 遇到「读的时候文件变了」退出 1，
 # 这不是致命错误（原子 rename 保证读到的是完整的旧版或新版），退出 ≥2 才是真失败。
@@ -151,7 +152,7 @@ tar --list --gzip --file "$TMP_OUT" > "$LISTING" || die "无法读回刚生成�
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   case "$entry" in
-    users|users/*|invites|invites/*|gift-codes|gift-codes/*|ledger|ledger/*|agent|agent/*|templates|templates/*|canvases|canvases/*|canvas-runs|canvas-runs/*|notifications|notifications/*|prefs|prefs/*|assets|assets/*|relays.json) ;;
+    users|users/*|invites|invites/*|gift-codes|gift-codes/*|ledger|ledger/*|agent|agent/*|templates|templates/*|skills|skills/*|canvases|canvases/*|canvas-runs|canvas-runs/*|notifications|notifications/*|prefs|prefs/*|assets|assets/*|relays.json) ;;
     jobs/*/job.json) ;;
     *) die "包内出现不该有的条目「$entry」，已丢弃 $TMP_OUT" ;;
   esac

@@ -120,37 +120,6 @@
   align-items: center;
   gap: 26px;
 }
-.canvas-empty__lead {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-.canvas-empty__cards {
-  position: relative;
-  width: 96px;
-  height: 62px;
-  flex: none;
-}
-.canvas-empty__card {
-  position: absolute;
-  width: 62px;
-  height: 60px;
-  border-radius: 8px;
-  background-color: #1a1a1f;
-  background-position: center;
-  background-size: cover;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-}
-.canvas-empty__card--a {
-  top: 0;
-  left: 0;
-  transform: rotate(-13deg);
-}
-.canvas-empty__card--b {
-  top: 2px;
-  right: 0;
-  transform: rotate(9deg);
-}
 .canvas-empty__copy {
   display: flex;
   flex-direction: column;
@@ -172,10 +141,6 @@
   font-size: 19px;
   font-weight: 600;
   letter-spacing: -0.015em;
-}
-.canvas-empty__sub {
-  font-size: 12.5px;
-  color: var(--cv-weak);
 }
 .canvas-empty__actions {
   display: flex;
@@ -230,9 +195,6 @@
 .canvas-node {
   position: absolute;
 }
-.canvas-node--pop {
-  animation: canvas-pop-in 0.24s ease both;
-}
 .canvas-node__label {
   display: flex;
   align-items: center;
@@ -258,27 +220,6 @@
 .canvas-node__body--text {
   overflow: hidden;
 }
-.canvas-node__body--video[data-state="idle"] {
-  display: grid;
-  place-items: center;
-}
-.canvas-node__body--video[data-state="done"] {
-  padding: 0;
-}
-.canvas-node__hint {
-  font-size: 11px;
-  color: var(--cv-dim);
-}
-.canvas-node__shot {
-  display: block;
-  width: 100%;
-  border-radius: 8px;
-  background-color: #1a1a1f;
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
-  box-shadow: var(--cv-ring);
-}
 .canvas-node__handle {
   position: absolute;
   top: 50%;
@@ -302,147 +243,6 @@
 }
 .canvas-node__handle--right {
   right: -27px;
-}
-
-/* 富文本条 */
-.canvas-rte {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: max-content;
-  padding: 6px 8px;
-  margin-bottom: 8px;
-  border-radius: 10px;
-  background: rgba(28, 28, 33, 0.97);
-  box-shadow: var(--cv-ring);
-}
-.canvas-rte__item {
-  min-width: 24px;
-  height: 24px;
-  padding: 0 5px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--cv-fg-4);
-}
-.canvas-rte__item[data-on="true"] {
-  color: var(--cv-fg);
-  background: rgba(255, 255, 255, 0.12);
-}
-
-/* 骨架 / 进度 / 结果 */
-.canvas-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 2px 0 18px;
-}
-.canvas-skeleton__row {
-  display: block;
-  height: 5px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.12);
-}
-.canvas-progress {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-.canvas-progress__pct {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--cv-fg-2);
-  font-variant-numeric: tabular-nums;
-}
-.canvas-progress__track {
-  display: block;
-  width: 170px;
-  height: 3px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.14);
-}
-.canvas-progress__fill {
-  display: block;
-  width: 50%;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--cv-grad);
-}
-.canvas-result {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  font-size: 11px;
-  line-height: 1.65;
-  color: var(--cv-fg-3);
-}
-.canvas-result__title {
-  color: var(--cv-fg-2);
-  font-weight: 700;
-}
-.canvas-result__sub {
-  color: var(--cv-fg-4);
-}
-.canvas-result__rule {
-  height: 1px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-/* 结果视频（占位：hover 走进度条模拟播放，接真实产物后换 <video> 的 play/pause） */
-.canvas-clip {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 3 / 4;
-  border-radius: 8px;
-  overflow: hidden;
-  background-color: #1a1a1f;
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
-  box-shadow: var(--cv-ring);
-  cursor: pointer;
-}
-.canvas-clip--full {
-  aspect-ratio: 16 / 9;
-  border-radius: 10px;
-}
-.canvas-clip__bar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 7px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.7));
-}
-.canvas-clip__track {
-  flex: 1;
-  height: 2px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.3);
-}
-.canvas-clip__fill {
-  display: block;
-  width: 0;
-  height: 2px;
-  border-radius: 2px;
-  background: #fff;
-  transition: width 6s linear;
-}
-.canvas-clip:hover .canvas-clip__fill {
-  width: 100%;
-}
-.canvas-clip__time {
-  font-size: 8.5px;
-  color: #fff;
-  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- 节点类型菜单 ---------- */
@@ -473,76 +273,8 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* ---------- 提示词面板 ---------- */
+/* ---------- 生成节点的模型选择（写 `node.product`） ---------- */
 
-.canvas-prompt {
-  position: absolute;
-  border-radius: 14px;
-  background: var(--cv-panel);
-  box-shadow: var(--cv-ring), 0 20px 50px rgba(0, 0, 0, 0.5);
-  padding: 12px;
-  z-index: 2;
-  animation: canvas-pop-in 0.24s ease both;
-}
-.canvas-prompt__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.canvas-prompt__ref {
-  width: 30px;
-  height: 30px;
-  flex: none;
-  border-radius: 8px;
-  background-color: #1a1a1f;
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
-}
-.canvas-prompt__icon {
-  width: 30px;
-  height: 30px;
-  flex: none;
-  border-radius: 9px;
-  display: grid;
-  place-items: center;
-  color: var(--cv-fg-3);
-  background: rgba(255, 255, 255, 0.06);
-  transition: background 0.16s ease, color 0.16s ease;
-}
-.canvas-prompt__icon:hover {
-  color: var(--cv-fg);
-  background: rgba(255, 255, 255, 0.1);
-}
-.canvas-prompt__icon[data-on="true"] {
-  color: var(--cv-fg-2);
-  background: rgba(255, 255, 255, 0.1);
-}
-.canvas-prompt__icon--ring {
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
-}
-.canvas-prompt__expand {
-  margin-left: auto;
-  color: var(--cv-fg-5);
-  display: inline-flex;
-}
-.canvas-prompt__text {
-  display: block;
-  width: 100%;
-  resize: none;
-  padding: 12px 4px 16px;
-  min-height: 48px;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--cv-fg);
-}
-.canvas-prompt__foot {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .canvas-model {
   display: inline-flex;
   align-items: center;
@@ -571,52 +303,14 @@
   border-radius: 4px;
   background: linear-gradient(140deg, #e08fc8, #a855f7);
 }
-.canvas-vidchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 30px;
-  padding: 0 11px;
-  border-radius: 9px;
-  font-size: 12px;
-  white-space: nowrap;
-  color: var(--cv-fg-3);
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
-}
-.canvas-prompt__count {
-  margin-left: auto;
-  font-size: 11.5px;
-  color: var(--cv-weak);
-  font-variant-numeric: tabular-nums;
-}
-.canvas-prompt__cost {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11.5px;
-  color: var(--cv-gold);
-}
-.canvas-prompt__send {
-  width: 30px;
-  height: 30px;
-  flex: none;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: #15161a;
-  background: var(--cv-grad-btn);
-  transition: filter 0.16s ease;
-}
-.canvas-prompt__send:hover {
-  filter: brightness(1.08);
-}
 
 .canvas-modelpop {
   position: absolute;
   left: 0;
-  bottom: calc(100% + 8px);
-  width: 330px;
+  /* 往下开：这一行贴着卡片顶，往上开会越过场景层顶边被 `.canvas-scroll` 裁掉。 */
+  top: calc(100% + 6px);
+  /* 挂在 260px 宽的节点卡里，比卡略窄一点就够，不往场景里溢出。 */
+  width: 244px;
   border-radius: 12px;
   background: var(--cv-pop);
   box-shadow: var(--cv-shadow-pop);
@@ -892,19 +586,6 @@
   font-size: 12.5px;
   color: var(--cv-fg);
 }
-.canvas-toolbox__filter {
-  width: 34px;
-  height: 34px;
-  flex: none;
-  border-radius: 9px;
-  display: grid;
-  place-items: center;
-  color: var(--cv-fg-3);
-  background: rgba(255, 255, 255, 0.06);
-}
-.canvas-toolbox__filter:hover {
-  color: var(--cv-fg);
-}
 .canvas-toolbox__cats {
   display: flex;
   gap: 6px;
@@ -1019,6 +700,17 @@
 }
 .canvas-node:hover .canvas-node__del { opacity: 1; }
 .canvas-node__del:hover { color: #fff; }
+/* 模型芯片这一行是 .canvas-modelpop 的定位祖先。 */
+.canvas-node__modelrow {
+  position: relative;
+  display: flex;
+  margin-bottom: 6px;
+}
+/* 浮层开着的那张卡要盖住后面的兄弟节点（它们是同级 absolute，默认按 DOM 序压上来）。 */
+.canvas-node:has(.canvas-modelpop) {
+  z-index: 4;
+}
+
 /*
   删除二次确认（review 2026-09-15 U-18）。放在标签条下面而不是浮层：节点本身就 180px 宽，
   再叠一层遮罩会把它自己盖住，而确认要能看见删的是哪一张卡。
@@ -1353,7 +1045,6 @@
   cursor: pointer;
 }
 .canvas-quote__confirm:disabled { opacity: .5; cursor: default; }
-
 /* 保存冲突弹层（2026-09-13）：视觉照 .canvas-quote，居中放置、两栏对比。 */
 .canvas-conflict {
   position: absolute;
@@ -1509,4 +1200,17 @@
     transform: none;
   }
   .canvas-conflict__cols { grid-template-columns: 1fr; }
+  /*
+    这一档左侧不留工具栏的位（`FIT_PAD_X_NARROW`），所以工具栏与缩放条都不渲染位置：
+    建节点走长按，缩放本来就固定 1:1 靠平移（review 2026-09-15 U-02）。
+  */
+  .canvas-tools,
+  .canvas-bottom {
+    display: none;
+  }
+  .canvas-toolbox {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
 }

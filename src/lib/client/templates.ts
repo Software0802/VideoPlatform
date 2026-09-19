@@ -16,6 +16,8 @@ export type Template = {
   category: string;
   prompt: string;
   mode: NativeMode;
+  /** 运营把它标成「挑战」：主页挑战页签与活动横幅只列这些。 */
+  challenge?: boolean;
   durationSec?: number;
   aspectRatio?: AspectRatio;
   /** 封面图地址（`/api/media/...` 或静态资源）；没有时卡片显示纯色底。 */
@@ -52,6 +54,7 @@ function readTemplate(raw: unknown): Template | null {
     category: str(t.category) || "全部",
     prompt,
     mode,
+    ...(t.challenge === true ? { challenge: true as const } : {}),
     durationSec,
     aspectRatio: RATIOS.find((r) => r === t.aspectRatio),
     cover: str(t.cover) || undefined,

@@ -145,9 +145,11 @@ sudo -u genius node scripts/alert-test.mjs --note "上线验证"
 | `ledger/` | 余额流水（派生导出物，与 `user.json.billing` 不一致时以 user.json 为准重建） |
 | `agent/` | 智能体会话 |
 | `templates/` | 创作模板 |
+| `skills/` | 文件化智能体技能（运维手写的 `<id>/SKILL.md`，仓库里没有副本，丢了只能重写） |
 | `canvases/` | 画布文档 |
 | `canvas-runs/` | 画布整图运行记录（含冻结的图快照、节点执行位、预算预留台账） |
 | `notifications/` | 通知落盘（含已读游标） |
+| `prefs/` | 账号偏好（智能体技能开关，每用户一份） |
 | `assets/` | 画布素材（输入事实源） |
 | `relays.json` | 中转配置事实源 |
 | `jobs/<id>/job.json` | 任务记录本身 |

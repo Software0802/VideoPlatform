@@ -151,7 +151,7 @@
   color: var(--fg);
   background: var(--chip-on);
 }
-/* 后端接不住的模式：画出来但置灰，点击提示「即将上线」 */
+/* 此刻用不了的模式：画出来但置灰，title 与点击提示都是 `modeBlock()` 给的具体理由 */
 .composer__mode[data-soon="true"] {
   color: var(--off);
   cursor: not-allowed;
@@ -372,8 +372,7 @@
 }
 
 .composer__audio,
-.composer__multi,
-.composer__panelbtn {
+.composer__multi {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -388,13 +387,8 @@
     background 0.16s ease,
     color 0.16s ease;
 }
-.composer__panelbtn {
-  gap: 7px;
-  padding: 0 11px;
-}
 .composer__audio:hover,
-.composer__multi:hover,
-.composer__panelbtn:hover {
+.composer__multi:hover {
   color: var(--fg);
   background: var(--chip-hover);
 }
@@ -421,12 +415,6 @@
   height: 11px;
   border-radius: 50%;
   background: #fff;
-}
-.composer__pink {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--pink);
 }
 
 .composer__cluster {
@@ -527,11 +515,6 @@
 .composer__error[data-tone="info"] {
   color: var(--fg-3);
 }
-/* 音频页整页置灰：能看见结构，但一切都不可提交 */
-.composer[data-soon="true"] .composer__panel {
-  opacity: 0.72;
-}
-
 /* ── 规格弹层 ── */
 
 .specs-pop {
@@ -717,17 +700,6 @@
   align-items: flex-end;
   gap: 10px;
   padding-top: 2px;
-}
-.buddy__slot {
-  width: 46px;
-  height: 46px;
-  flex: none;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  color: var(--weak);
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: var(--ring);
 }
 .buddy__input {
   flex: 1;
@@ -1212,3 +1184,135 @@
   font-variant-numeric: tabular-nums;
 }
 
+
+/* ---------- 模板弹层（模式行旁的「模板」按钮） ---------- */
+
+/* 按钮与浮层同一个定位祖先：浮层往上开，贴着这一枚按钮的左边缘。 */
+.composer__tpl-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.tpl-pop {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: 300px;
+  max-height: 320px;
+  overflow: auto;
+  z-index: 11;
+  border-radius: 12px;
+  background: rgba(24, 24, 28, 0.98);
+  box-shadow: var(--ring), var(--shadow-pop);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: pop-in 0.2s ease both;
+}
+.tpl-pop__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 8px;
+}
+.tpl-pop__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.tpl-pop__close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--fg-3);
+  background: rgba(255, 255, 255, 0.08);
+}
+.tpl-pop__close:hover {
+  color: var(--fg);
+}
+.tpl-pop__note {
+  padding: 6px 2px;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+.tpl-pop__item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 9px;
+  text-align: left;
+  background: transparent;
+  transition: background 0.16s ease;
+}
+.tpl-pop__item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.tpl-pop__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tpl-pop__meta {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-4);
+}
+
+/* ---------- 音频页：平台不单独生成音频，这里指向真正能出声的视频产品 ---------- */
+
+.composer__audio-page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 2px 2px;
+}
+.composer__audio-lead,
+.composer__audio-empty {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--fg-3);
+}
+.composer__audio-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.composer__audio-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  color: var(--fg-2);
+  background: var(--chip);
+  transition: background 0.16s ease;
+}
+.composer__audio-pick:hover {
+  background: var(--chip-hover);
+  color: var(--fg);
+}
+.composer__audio-go {
+  font-size: 11.5px;
+  color: var(--fg-4);
+}
+
+/* 创作搭子把这句话带去智能体，浮层底下说明去向。 */
+.buddy__note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-4);
+}

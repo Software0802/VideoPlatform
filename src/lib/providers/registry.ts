@@ -25,7 +25,6 @@ const SHADOW = new Map<ProviderId, VideoProvider>();
 export const BUILTIN_PROVIDER_IDS = [
   "grok",
   "mock",
-  "jimeng",
   "openai",
   "kling",
   "yman",
@@ -90,9 +89,6 @@ export function hasProviderKey(id: ProviderId): boolean {
       return hasOpenaiKey();
     case "mock":
       return true;
-    // 即梦还是占位实现（submit 直接抛），永远不该被自动路由选中。
-    case "jimeng":
-      return false;
     default:
       return false;
   }

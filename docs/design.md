@@ -50,7 +50,7 @@ flowchart TB
 
 ### 上游选择(as-built,`src/lib/env.ts` + `src/lib/providers/router.ts`)
 
-路由**按能力 + 优先级列表**,不按 key 存在性:`pickVideoProvider`/`pickImageProvider` 按 `VIDEO_PROVIDER_ORDER`(默认 `grok`,兼容旧 `VIDEO_PROVIDER=kling` → `kling,grok`,其余值视为只有 `grok`)/`IMAGE_PROVIDER_ORDER`(默认 `openai,grok`)的次序,取第一个「配了 key、未被 `exhaustion.ts` 判定耗尽、`capabilities().modes` 声明支持该模式、(视频)接得下请求画幅 / 分辨率 / 尾帧」的 provider。生产已显式覆盖为 `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`。ORDER 全没选中时的 fallback:配了 XAI key 且未耗尽才试 grok;否则只要配了任何真 key 就 503 `no_provider_available`,完全没 key 才 mock。provider 身份由 `src/lib/providers/registry.ts` 的运行时注册表管理(`builtin.ts` 在模块加载时注册内建各家),`ProviderId` 是开放字符串;ORDER 只接受已注册的 id,未注册的项被忽略并 warn 一次。
+路由**按能力 + 优先级列表**,不按 key 存在性:`pickVideoProvider`/`pickImageProvider` 按 `VIDEO_PROVIDER_ORDER`(默认 `grok`,兼容旧 `VIDEO_PROVIDER=kling` → `kling,grok`,其余值视为只有 `grok`)/`IMAGE_PROVIDER_ORDER`(默认 `openai,grok`)的次序,取第一个「配了 key、未被 `exhaustion.ts` 判定耗尽、`capabilities().modes` 声明支持该模式、(视频)接得下请求画幅 / 分辨率 / 尾帧」的 provider。生产已显式覆盖为 `VIDEO_PROVIDER_ORDER=kling,yman,grok`、`IMAGE_PROVIDER_ORDER=openai,yman`。ORDER 全没选中时的 fallback:配了 XAI key 且未耗尽才试 grok;否则只要配了任何真 key 就 503 `no_provider_available`,完全没 key 才 mock。provider 身份由 `src/lib/providers/registry.ts` 的运行时注册表管理(`builtin.ts` 在模块加载时注册 grok / mock / kling,openai 与 yman 及全部 relay 由 `relay/assemble.ts` 注册),`ProviderId` 是开放字符串;ORDER 只接受已注册的 id,未注册的项被忽略并 warn 一次。`jimeng` 不是内建项:没有凭据、也没有一份可照着实现的协议,所以它就是一个**普通 relay id**(不在 `RESERVED_PROVIDER_IDS` 里)——要接就在 `/admin/relays` 配一条接入点,不配就跟任何未配置的 relay 一样不参与路由。
 
 | 配置 | 行为 |
 | --- | --- |
@@ -237,7 +237,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 方案 `docs/plan-agent-i18n-subscription-2026-09.md`。用户在智能体首页输入想法,进入会话;每一轮智能体用 LLM 回复并**给出报价提案**,用户批准后才真的创建生成任务(文生图 / 文生视频 / 图生视频,走与 `POST /api/jobs` 相同的服务层)。2026-09-11 起为「默认批准制」。
 
 - LLM 客户端 `src/lib/agent/llm.ts`:OpenAI 兼容 `chat.completions`,提供方顺序 mock(`isMockMode()`)→ `AGENT_API_KEY`+`AGENT_BASE_URL`(默认 `api.openai.com/v1`)→ `XAI_API_KEY`(`grok-4.6`)→ 都没有则 503 `agent_unavailable`,**绝不静默落 mock**。可选模型由 `AGENT_CHAT_MODELS` 白名单定义，接受 JSON `[{id,name?,turnCny?}]` 或逗号分隔 id；未配置时只列当前生效模型，`AGENT_CHAT_MODEL` 只有在表内时才成为默认，否则取首项。坏 JSON 记 warn 后回落，非法 `turnCny` 回落全局轮次价。`GET /api/agent/skills` 下发 `chat:{models,default}`。`runTurn` 接收 `locale`(路由经 `localeFromRequest` 解析 `lumen_locale` Cookie / `Accept-Language`),reply 语言随 locale。**LLM 调用本身失败**(`runTurn` 内 502)与**实例没配对话 provider**(503)是两个不同错误码:前者 `agent_upstream_failed`(本轮费用已随 `ref:"agent:<turnId>:refund"` 退回)、后者仍是 `agent_unavailable`;前端经 `errorText(t, e)` 翻译。
-- 技能 `src/lib/agent/skills.ts`:20 个真实技能定义(id、中英文名与描述、system prompt 片段);可声明 `kinds:["image"]/["video"]` 限定产物类型,越界 action 被丢弃。
+- 技能 `src/lib/agent/skills.ts`:20 个内建技能定义(id、中英文名与描述、system prompt 片段);可声明 `kinds:["image"]/["video"]` 限定产物类型,越界 action 被丢弃。运维还可往 `<DATA_DIR>/skills/` 放文件化技能,两者合并成一张表(§8)。
 - 会话存储 `src/lib/agent/store.ts`:`data/agent/<userId>/<sessionId>.json`,`ownerId` 校验非本人 404,单用户上限 200 条,列表按 `updatedAt` 倒序;`updateSession` 提供锁内读-改-写。
 - Turn 实体(`session.turns[]`,与消息同一文件原子写):状态机 `thinking → awaiting_approval → executing → succeeded/failed/rejected`;字段含 `requestHash`(请求体规范化 sha256，包含 `chatModel`)、`priceCny`、`model`、`tier`、`chargeRef`(`agent:<turnId>`)、`refundRef`、`proposal`、`jobIds`，助手消息也持久化 `model/tier`。create/send 的 turn body 可带 `chatModel`：请求体显式点名白名单外模型在扣款前返回 400 `agent_model_unknown`；会话头残留模型被管理员从白名单删除时静默回落当前默认并写回，不阻断老会话。同 turnId 重放语义:同参交回现状、异参 409 `idempotency_conflict`、`thinking` 续跑补完、超 2 分钟的 thinking 在详情/单轮读取时惰性退款置 `failed`(`ref:"agent:<turnId>:refund"`,经 `refundOf` 按原扣款 `memberCny` 拆回原池——R02)。**结算实现在 `agent/settle.ts`**(2026-09-17 自 `run-turn.ts` 拆出,避免 runner → run-turn → createJob 的 import 环),两条:超 2 分钟的 `thinking` 退款置 failed(同上);超 5 分钟的 `executing`(批准之后、逐条 createJob 之间进程死掉)**不退款、不标失败**,改回 `awaiting_approval` 并给提案续一个新的 30 分钟窗口——对话已经交付(与「驳回不退轮次费」同口径),提案还在,用户重新批准即可,续建由幂等键 `agent:<turnId>:<i>` 兜住,已建成的那几条不会重复计费(review 2026-09-15 B-07)。`sweepAgentTurns()` 挂在 runner 每小时维护的步骤表里(`sweepTmp → sweepIdempotency → sweepRetention → sweepAgentTurns → sweepArchive → refillTodo`):惰性结算只在「有人打开这个会话」时发生,而钱一直挂着的地方恰恰是再也不会被打开的那个会话(B-09)。
 - 一轮定价 `src/lib/agent/run-turn.ts`:先校验模型/提供方 → 按所选模型 `turnCny` 扣轮次费 → LLM 输出 JSON(`{ reply, actions[] }`,每轮最多 2 个)→ 有 action 时落 `proposal`(每条带 `priceCny` 报价快照、`product`/`productName`、`totalCny`、`expiresAt` 30 分钟),助手消息带 `approval:"pending"`,turn 停 `awaiting_approval`,**不建任务**。用户/LLM 都未点名产品时，报价经 `resolveProductChoice` 与 `createJob` 同一入口按 ORDER 和能力解析实际落点产品，价格覆盖也取该产品。批准(`POST .../turns/:turnId/approve`)才逐条经同一个限流桶走 `createJob`(幂等 key `agent:<turnId>:<i>`),turn → `executing` → `succeeded`;批准幂等(succeeded 重放交回现状)、过期 409 `proposal_expired`、`rejected` 终态不可再批。拒绝(`POST .../reject`)落 `rejected` 不建任务、不退轮次费(对话已交付)。action 可带 `imageRef.uploadId`(`up_*` sidecar,owner 校验),video + imageRef 即图生视频。
@@ -299,7 +299,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 
 ## 2k'. 账号偏好与归档留存(2026-09-15,as-built)
 
-- **偏好** `src/lib/prefs/store.ts`:`data/prefs/<userId>.json` `{schemaVersion:1, ownerId, agent:{skillsOff:string[]}, updatedAt}`,每用户 tail-promise 锁 + `writeJsonAtomic`,坏文件记 warn 后按空值重建。**不写 user.json**——它是资金事实源,偏好不得与余额共用一次写。`GET /api/agent/skills` 下发 `off`(按当前 `publicSkills()` 过滤,已下架 id 可残留在文件里);`PATCH /api/agent/skills {skillId, off}`(strict,未知技能 400 `invalid_argument`)。前端乐观切换、失败回滚;旧 localStorage 键 `genius.agent.skillsOff` 只作一次性迁移入口(服务端为空时逐个 PATCH,完成后删键;服务端已有值直接删键)。
+- **偏好** `src/lib/prefs/store.ts`:`data/prefs/<userId>.json` `{schemaVersion:1, ownerId, agent:{skillsOff:string[]}, updatedAt}`,每用户 tail-promise 锁 + `writeJsonAtomic`,坏文件记 warn 后按空值重建。**不写 user.json**——它是资金事实源,偏好不得与余额共用一次写。`GET /api/agent/skills` 下发 `off`(按当前 `listPublicSkills()`——异步,内建 20 条与文件技能合并后的那张表——过滤,已下架 id 可残留在文件里);`PATCH /api/agent/skills {skillId, off}`(strict,未知技能 400 `invalid_argument`)。前端乐观切换、失败回滚;旧 localStorage 键 `genius.agent.skillsOff` 只作一次性迁移入口(服务端为空时逐个 PATCH,完成后删键;服务端已有值直接删键)。
 - **归档** `src/lib/archive/sweep.ts`,`ARCHIVE_INACTIVE_DAYS`(默认 90,≤0 关闭),挂在 runner 每小时 `maintenance()` 的 `sweepRetention` 之后。归档**永不删文件、不改任何资金字段**:
   - 会话:`updatedAt` 早于 N 天且无 `thinking|executing|awaiting_approval` 轮次 → `updateSession` 写 `archivedAt`;`listSessions` 默认只列未归档,`GET /api/agent/sessions?archived=1` 只列已归档;对已归档会话发新一轮,在追加 turn 的同一次 `updateSession` 里清掉 `archivedAt`。历史抽屉「已归档」disclosure 展开时才拉列表。
   - 画布文档:早于 N 天、不是该用户 `updatedAt` 最新的一张、没有 running run 指向它 → 画布锁内写 `archivedAt`(不推进 revision、不刷新 updatedAt);`listCanvases` 排除,`readCanvas`/PATCH 不变。用户永远至少留着最新一张。
@@ -354,7 +354,8 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 | `GET /api/events`(2026-09-06 深夜) | 全局事件流,驱动前端通知 toast / 铃铛的即时插入,只在当次连接内有效;落盘与历史见下两行(§2k) |
 | `GET /api/notifications`(H 包,§2k) | 全量返回 `{epoch, items(≤200,seq 倒序), lastReadSeq, unread(服务端算)}`;不分页 |
 | `POST /api/notifications/read`(H 包) | `{epoch, upToSeq}`;epoch 不符 409 `notifications_stale`(客户端重拉 GET);游标只进不退 |
-| `GET /api/templates`(2026-09-06 深夜) | 读 `data/templates/*.json`(`data-seed/templates` 提供六条示例种子);首页模板回填用 |
+| `GET /api/templates`(2026-09-06 深夜) | 读 `data/templates/*.json`(`data-seed/templates` 提供六条示例种子);首页模板页签、创作面板「模板」按钮与画布工具箱共用。可选 `challenge:true` 把一条模板标成挑战——首页「挑战」页签与活动横幅只列它,内容与回填路径与普通模板一致 |
+| `GET /api/canvases/:id/workflow`(2026-09-19) | 这张画布跑一次的步骤与人审门(§8);`?gates=` 是报价弹层当下勾选的节点 id,认不出的忽略;只读,非本人与不存在同 404 |
 | `GET /api/share/:token` / `GET /api/share/:token/media`(2026-09-06 深夜) | 公开接口,不校验会话;`media` 响应 `public, max-age=3600`;见 §2g |
 | `GET /api/models` | 需登录；产品能力、samplePriceCny 与 `price` override 白名单，包含 providerId/providerName/upstreamModel/costHint（§2f/§2l），不含密钥 |
 | `POST /api/uploads/from-job`(阶段 A) | `{ jobId, role }`;把调用者自己一条 `succeeded` 且未清理的图片任务产物复制成一次新上传(走与手动上传相同的 `preprocessImage`),`role ∈ start|last|reference`;别人的/不存在的/非图片/已清理的任务分别 404/400 |
@@ -425,18 +426,19 @@ data/
   prefs/<userId>.json                   # 2026-09-15:账号偏好(智能体技能开关),独立于 user.json(§2k')
   templates/*.json                      # 2026-09-06 深夜:创作模板,首次部署需 cp -r data-seed/templates data/templates
                                          # (data-seed/templates 提供六条示例种子,不随代码自动生成)
+  skills/<id>/SKILL.md                  # 2026-09-19:文件化智能体技能,与内建 20 条合并(§8);无种子,不存在 = 没有文件技能
 ```
 
 `MediaStore` 接口(`storage/types.ts`)由 `LocalFsMediaStore` 实现,id 白名单 `[A-Za-z0-9_-]+`、rel 路径解析后必须落在 jobDir 内;后期 `S3MediaStore` 同接口替换。
 
-当前 `scripts/backup.sh` 白名单为 `users/ invites/ gift-codes/ ledger/ agent/ templates/ canvases/ canvas-runs/ notifications/ assets/ relays.json + jobs/*/job.json`，不含任务产物、tmp、relay-catalog 与 provider-health 暂态；保留最近 14 份、权限 600。素材 sidecar 与字节同备，目录缓存可重拉；丢冷却状态会提前探路，但不得重发已受理任务。生产 `/opt/genius/backups/` 的每日 03:17 cron 已于 2026-09-13 核实；新白名单需部署后检查包内容。ECS 自动快照尚无控制台证据，异地加密副本/一致性恢复演练未完成；活服务 tar 不等于一致性快照，见 runbook。
+当前 `scripts/backup.sh` 白名单为 `users/ invites/ gift-codes/ ledger/ agent/ templates/ skills/ canvases/ canvas-runs/ notifications/ prefs/ assets/ relays.json + jobs/*/job.json`，不含任务产物、tmp、relay-catalog 与 provider-health 暂态；保留最近 14 份、权限 600。素材 sidecar 与字节同备，目录缓存可重拉；丢冷却状态会提前探路，但不得重发已受理任务。生产 `/opt/genius/backups/` 的每日 03:17 cron 已于 2026-09-13 核实；新白名单需部署后检查包内容。ECS 自动快照尚无控制台证据，异地加密副本/一致性恢复演练未完成；活服务 tar 不等于一致性快照，见 runbook。
 
 ## 6. 前端(2026-09-06 晚起:侧栏 + 五视图 Genius App 壳,as-built)
 
 **2026-09-06 晚起,整站已换成「侧栏 + 五视图 + 悬浮创作面板」的 Genius App 壳**(`docs/plan-ui-genius-app.md`),取代了本节曾经描述的单屏三视图(首页/工作室/作品)+ three.js 场景层设计——那一版的 `app/page.tsx`(旧,单文件)、`components/lumen/LumenHome.tsx`、`components/shell/AccessTokenPrompt.tsx` 已从仓库删除。**完整 UI 规格、DOM 契约、颜色/字体/圆角令牌、与交接包的有意偏离见根目录 `DESIGN.md`**,本节只记后端如何与前端交接:
 
 - 路由 `src/app/(shell)/`:`layout.tsx`(服务端校验会话、下发 provider 能力)+ `page.tsx`(主页)/`create/page.tsx`/`agent/page.tsx`/`canvas/page.tsx`/`subscription/page.tsx`/`account/page.tsx`(H 包,账户页:账号/余额/安全三卡,入口在头像菜单,不进侧栏),六个路由共享同一个 `GeniusShell`(`src/components/genius/GeniusShell.tsx`);唯一客户端状态所有者是 `ShellContext.tsx`(`useShell()`)。
-- 路径收窄:创作面板只暴露 `text_to_video / image_to_video / text_to_image`(内部 `t2v / i2v / t2i`);首帧 `startUploadId`,可灵档另有尾帧槽(`lastUploadId`,§2c);`reference_to_video / edit_video / extend_video` 仍保留在 API 与 provider 层,UI 置灰。
+- 路径收窄:创作面板暴露 `text_to_video / image_to_video / text_to_image`(内部 `t2v / i2v / t2i`)与「参考」模式的 `reference_to_video`——后者只在当前产品声明该 mode 且 `maxReferenceImages > 0` 时可选;首帧 `startUploadId`,可灵档另有尾帧槽(`lastUploadId`,§2c);`edit_video / extend_video` 仍只在 API 与 provider 层,UI 置灰并给出具体理由(没有「拿一条成片继续改」的入口,也没有服务商承接)。
 - **时长 / 画幅 / 音频芯片由服务端按 provider 能力下发**(见 §2e):`router.ts` 的 `videoDurationsFor(providerId)`(读 `capabilities().durations`,不声明则默认 `[4,6,8,10]`,开启 harness 时追加 30/45/60)、`videoAspectRatios()`(`VIDEO_PROVIDER_ORDER` 里所有有 key 的 provider 支持画幅的并集)、`audioAvailableFor(providerId)`(可灵读 `KLING_VIDEO_AUDIO`,YMan 恒 `false`,grok/mock 恒真)经 `/api/health` 与 `(shell)/layout.tsx` 解析一次下发给 `ShellContext`;前端不再写死档位或按 provider 名特判。选中具体产品(§2f)时,规格弹层进一步收窄到该产品自己的能力。
 - API 边界:`src/lib/client/{jobs,auth,agent,subscription,templates,models,notifications,canvas}.ts`(create/cancel/retry/幂等 key)、`useJobLive.ts`(SSE + 轮询)、`useEvents.ts`(全局事件流 + `onOpen` 重连回调)、`labels.ts`(终态判断/计时)。401 由 `client/http.ts` 整页跳转 `/login`。
 - 成片来源:主页瀑布流与详情浮层直接用 `JobPublic.output`(视频取 `posterUrl`,图片取 `imageUrl`),按 `output.kind` 分视频/图片;`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡。
@@ -486,9 +488,12 @@ data/
 | 45s | 10×4 + 5 | ≈ $3.60 |
 | 60s | 10×6 | ≈ $4.80 |
 
-## 8. Skills / Workflows **[Phase 3]**
+## 8. Skills / Workflows
 
-沿用 architecture.md 设计:`skills/<id>/SKILL.md`(frontmatter 对齐 `SkillManifest`)、`WorkflowGraph` + `GateNode` 人审门、`awaiting_approval` 状态与 approve 路由。当前仅类型与空目录。
+architecture.md 那套设计已经落到实处,不再是空目录 + 类型:
+
+- **文件化技能**:`src/lib/skills/{types,loader}.ts`。运维把 `<DATA_DIR>/skills/<id>/SKILL.md` 写好即生效(不必发版),frontmatter 认 `name` / `nameEn` / `description` / `descriptionEn` / `version` / `kinds`,正文就是拼进 system prompt 的那段约束;id 取目录名。读法与 `templates.ts` 同口径(mtime+大小签名缓存、坏文件只跳过自己、目录缺失 = 没有文件技能)。上限:单文件 64KB、正文 4000 字、目录 200 条。`agent/skills.ts` 的 `listAgentSkills()` 把它与内建 20 条合并(**同 id 以内建为准**),`listPublicSkills()` / `findAgentSkill()` 都走这张合表,所以 `GET /api/agent/skills`、技能广场开关与 `run-turn` 的 system prompt 三处自动一致。加载器抛错时退回内建表——技能表空掉会让整个智能体视图置灰。内容是运维资产(与 `data/templates` 同级信任),已进 `backup.sh` 白名单。
+- **工作流图**:`src/lib/workflows/{types,from-canvas}.ts`。`WorkflowGraph` 描述的就是画布跑一次:生成节点是 `SkillNode`(`skillId` = `nodeMode()` 算出的原生模式,`inputs` 是所连文本/素材节点条数),报价弹层里勾了「执行前需我批准」的那些在自己前面多一道 `GateNode`(对应运行时 `awaiting_approval`),上游的边改连到门上。顺序与模式判据复用 `canvas/graph.ts` 的 `topoOrder` / `nodeMode`,不另写一份。出口是 `GET /api/canvases/:id/workflow`(只读,不建 run、不报价、不碰钱;非本人与不存在同 404);界面上没有下载入口——这张图是给接口读的,不是一份对外承诺的文件格式。
 
 ## 9. 安全
 

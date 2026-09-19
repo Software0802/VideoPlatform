@@ -1,8 +1,10 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { expect, test, type Page } from "@playwright/test";
 import { DATA_DIR_HINT } from "./paths";
+import { serverDataDir } from "./invites";
 
 /**
  * 画布保存 409 冲突二选一（2026-09-13）：双标签页各改一笔，后到的一方不再被
@@ -267,4 +269,110 @@ test("节点删除：有内容的节点先出二次确认，空节点直接删�
   await filled.locator(".canvas-node__del").click();
   await filled.locator(".canvas-node__confirm").getByRole("button", { name: "删除" }).click();
   await expect(page.locator(".canvas-node")).toHaveCount(0);
+});
+
+test("左侧工具栏：建节点走同一份菜单，工具箱抽屉把模板放进画布", async ({ page }) => {
+  const dataDir = await serverDataDir();
+  const id = `e2e-tool-${randomBytes(4).toString("hex")}`;
+  const file = path.join(dataDir, "templates", `zzz-${id}.json`);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    JSON.stringify({
+      id,
+      name: "e2e 工具箱模板",
+      category: "广告",
+      prompt: "工具箱放进画布的提示词",
+      mode: "text_to_video",
+    }),
+  );
+
+  try {
+    await page.reload();
+    await expect(page.locator(".canvas-scroll")).toBeVisible({ timeout: 60_000 });
+
+    // 「添加节点」开的就是右键那份菜单——触屏与键盘也有了入口。
+    await page.locator(".canvas-tools__add").click();
+    await expect(page.locator(".canvas-menu")).toBeVisible();
+    await page.locator(".canvas-menu").getByRole("button", { name: "文本" }).click();
+    await expect(page.locator('.canvas-node[data-kind="text"]')).toHaveCount(1);
+
+    // 工具箱抽屉列的是真模板（`GET /api/templates`），不是原型那份写死的工具表。
+    await page.getByRole("button", { name: "工具箱" }).click();
+    const toolbox = page.locator(".canvas-toolbox");
+    await expect(toolbox).toBeVisible();
+    const row = toolbox.locator(".canvas-tool", { hasText: "e2e 工具箱模板" });
+    await expect(row).toBeVisible();
+
+    // 搜索是本地过滤：搜一个不存在的词就只剩空态。
+    await toolbox.getByRole("textbox", { name: "搜索" }).fill("绝不匹配的词");
+    await expect(toolbox.locator(".canvas-tool")).toHaveCount(0);
+    await toolbox.getByRole("textbox", { name: "搜索" }).fill("e2e 工具箱");
+
+    const patched = page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/canvases/") &&
+        r.request().method() === "PATCH" &&
+        r.request().postDataJSON().nodes?.some((n: { prompt?: string }) => n.prompt === "工具箱放进画布的提示词"),
+      { timeout: 20_000 },
+    );
+    await row.getByRole("button", { name: "应用到画布" }).click();
+    const node = page.locator('.canvas-node[data-kind="gen_video"]').last();
+    await expect(node.locator(".canvas-node__textarea")).toHaveValue("工具箱放进画布的提示词");
+    expect((await patched).status()).toBe(200);
+  } finally {
+    await rm(file, { force: true });
+  }
+});
+
+test("生成节点的模型芯片：选中的产品落进 node.product", async ({ page }) => {
+  const node = await addImageNode(page, "要钉产品的提示词");
+  const chip = node.getByRole("button", { name: "选择模型" });
+  await expect(chip).toBeVisible();
+  await expect(chip).toContainText("自动");
+
+  await chip.click();
+  const pop = node.locator(".canvas-modelpop");
+  await expect(pop).toBeVisible();
+  const option = pop.locator(".canvas-modelpop__item[data-product-id]").first();
+  const productId = await option.getAttribute("data-product-id");
+  expect(productId).toBeTruthy();
+
+  const patched = page.waitForResponse(
+    (r) =>
+      r.url().includes("/api/canvases/") &&
+      r.request().method() === "PATCH" &&
+      r.request().postDataJSON().nodes?.some((n: { product?: string }) => n.product === productId),
+    { timeout: 20_000 },
+  );
+  await option.click();
+  await expect(pop).toBeHidden();
+  await expect(chip).toHaveAttribute("data-product-id", productId!);
+  expect((await patched).status()).toBe(200);
+});
+
+test("工具箱「我的作品」页签真的拉得到作品列表", async ({ page }) => {
+  await page.getByRole("button", { name: "工具箱" }).click();
+  const toolbox = page.locator(".canvas-toolbox");
+  await expect(toolbox).toBeVisible();
+
+  // 页签一点就拉 `GET /api/jobs`；请求参数必须在服务端上限之内，否则 400、整页只剩一行错误。
+  const listed = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === "/api/jobs" && r.request().method() === "GET",
+    { timeout: 20_000 },
+  );
+  await toolbox.getByRole("button", { name: "我的作品" }).click();
+  expect((await listed).status()).toBe(200);
+
+  // 拉到就列作品，这个账号还没有成功作品就是这一页自己的空态。
+  const rows = toolbox.locator(".canvas-tool");
+  const empty = toolbox.locator(".canvas-toolbox__empty");
+  await expect
+    .poll(
+      async () => (await rows.count()) > 0 || (await empty.textContent())?.trim() === "还没有成功的作品可以复用。",
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  // 读失败那句话只属于这一页，任何情况下都不该出现在拉成功之后。
+  await expect(toolbox.locator(".canvas-toolbox__empty", { hasText: "暂时读不到作品列表。" })).toHaveCount(0);
 });

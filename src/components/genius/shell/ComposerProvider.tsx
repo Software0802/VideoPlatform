@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import type { JobPublic } from "@/lib/jobs/schema";
 import type { AspectRatio, ImageResolution, NativeMode, Resolution } from "@/lib/providers/types";
 import { DEFAULT_PRICE_TABLE, priceCny, priceTableFor } from "@/lib/billing/prices";
-import { HARNESS_DURATIONS } from "@/lib/harness/durations";
+import { HARNESS_DURATIONS, isHarnessDuration } from "@/lib/harness/durations";
 import { createJob, newIdempotencyKey, uploadFile, uploadFromJob } from "@/lib/client/jobs";
 import { fetchProducts, supportsMode, type Product } from "@/lib/client/models";
-import type { Template } from "@/lib/client/templates";
+import { fetchTemplates, type Template } from "@/lib/client/templates";
 import { useT } from "@/components/genius/i18n/I18nProvider";
+import type { MessageKey } from "@/lib/i18n/messages";
 import { errorText } from "@/lib/i18n/errorText";
 import { MAX_IMAGE_BYTES, MAX_IMAGE_LABEL } from "@/lib/media/upload-limits";
 import {
@@ -36,6 +37,10 @@ import { useJobsBridge } from "./JobsProvider";
 export type ComposerShell = {
   /* 产品（`/api/models`） */
   products: Product[];
+  /** 产品表拉完了没有（成功或失败都算完）：拉到之前不能替这台实例断言「没有这种模型」。 */
+  productsLoaded: boolean;
+  /** 读产品表时的那个错误——「读不到」与「读到了但没有」是两回事。 */
+  productsError: unknown;
   /** 当前标签页下可选的产品（视频页只列 video、图片页只列 image） */
   productChoices: Product[];
   /** 当前生效的产品；`/api/models` 还没回来或这台实例没有该类产品时为 null */
@@ -49,8 +54,13 @@ export type ComposerShell = {
   pickTab: (tab: ComposerTab) => void;
   mode: VideoMode;
   pickMode: (mode: VideoMode) => void;
-  /** 这个模式此刻能不能用（产品能力 + 后端支持）。置灰项照常渲染。 */
-  modeUsable: (mode: VideoMode) => boolean;
+  /**
+   * 这个模式此刻不能用的具体理由（已翻译），能用为 `null`。置灰项照常渲染，
+   * 但不再一律说「即将上线」。
+   */
+  modeReason: (mode: VideoMode) => string | null;
+  /** 「模板」按钮不可用的理由（这台实例没配模板），可用为 `null`。 */
+  templateReason: string | null;
   collapsed: boolean;
   toggleCollapsed: () => void;
   pop: Pop;
@@ -74,7 +84,10 @@ export type ComposerShell = {
   audio: boolean;
   audioAvailable: boolean;
   toggleAudio: () => void;
+  /** 当前时长在不在长片（多镜头）档；开关读它。 */
   multi: boolean;
+  /** 这台实例有没有长片档可切（`HARNESS_ENABLED` + 产品声明 `supportsLongForm`）。 */
+  multiAvailable: boolean;
   toggleMulti: () => void;
   count: number;
   setCount: (value: number) => void;
@@ -112,6 +125,14 @@ export type ComposerShell = {
   reuse: (prompt: string, kind: "video" | "image") => void;
   /** 模板卡片：把预置的提示词与参数回填进面板并展开 */
   applyTemplate: (template: Template) => void;
+  /** `GET /api/templates` 的清单；模式行旁的「模板」按钮列它，空表示这台实例没配模板。 */
+  templates: Template[];
+  /** 清单拉完了没有（成功或失败都算完）：主页模板页签靠它区分「还在读」与「没有」。 */
+  templatesLoaded: boolean;
+  /** 读清单时的那个错误，原样给出——由取用的视图按当前语言译。 */
+  templatesError: unknown;
+  /** 音频页：选一个带原生音轨的视频产品，切到视频页并打开音轨。 */
+  useAudioProduct: (productId: string) => void;
 };
 
 const Ctx = createContext<ComposerShell | null>(null);
@@ -152,6 +173,11 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
   const { working, upsert, setBusy, setCurrentJob } = useJobsBridge();
 
   const [products, setProducts] = useState<Product[]>([]);
+  const [productsLoaded, setProductsLoaded] = useState(false);
+  const [productsError, setProductsError] = useState<unknown>(null);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
+  const [templatesError, setTemplatesError] = useState<unknown>(null);
   const [videoProductId, setVideoProductId] = useState<string | null>(null);
   const [imageProductId, setImageProductId] = useState<string | null>(null);
 
@@ -165,14 +191,6 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
   const [resChoice, setResChoice] = useState<Resolution | null>(null);
   const [imageResChoice, setImageResChoice] = useState<ImageResolution | null>(null);
   const [audio, setAudio] = useState(true);
-  /*
-    「多镜头」是占位开关（review 2026-09-15 C-02）：`createJobBodySchema` 是 strict，
-    压根没有这个字段——全仓找不到一处把它写进请求体。原来它默认**开着**且看起来生效，
-    用户以为自己开了多镜头、拿到单镜头成片还不知道为什么。真·分镜走的是时长档
-    30/45/60 + HARNESS_ENABLED（见 job.shots），与它无关。恒为关，按其它占位控件的口径
-    置灰 + 提示。
-  */
-  const multi = false;
   const [count, setCountState] = useState(1);
   const [image, setImage] = useState<Frame | null>(null);
   const [lastImage, setLastImage] = useState<Frame | null>(null);
@@ -195,10 +213,16 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     let alive = true;
     void fetchProducts().then(
       (list) => {
-        if (alive) setProducts(list);
+        if (!alive) return;
+        setProducts(list);
+        setProductsLoaded(true);
       },
-      () => {
-        // 老服务端没有这个路由、或一次网络抖动：面板回落 caps 下发的枚举，不打断使用
+      (e: unknown) => {
+        // 老服务端没有这个路由、或一次网络抖动：面板回落 caps 下发的枚举，不打断使用。
+        // 但「读不到」要记下来：置灰理由不能拿它当「这台实例没有这种模型」讲。
+        if (!alive) return;
+        setProductsError(e);
+        setProductsLoaded(true);
       },
     );
     return () => {
@@ -207,7 +231,31 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /*
-    `pop` 驱动的悬浮层（规格 / 模型 / 数量 / 搭子 / 素材库）共用一条 Esc 收层
+    模板清单（`GET /api/templates`）：模式行旁的「模板」按钮、主页的模板 / 挑战页签与
+    活动横幅都读这一份，全站只拉一次。拉不到对面板来说就是空表，按钮自己置灰并说
+    「这台实例还没配模板」，不再是一句「即将上线」；主页那边把错误如实说出来。
+  */
+  useEffect(() => {
+    let alive = true;
+    void fetchTemplates().then(
+      (list) => {
+        if (!alive) return;
+        setTemplates(list);
+        setTemplatesLoaded(true);
+      },
+      (e: unknown) => {
+        if (!alive) return;
+        setTemplatesError(e);
+        setTemplatesLoaded(true);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /*
+    `pop` 驱动的悬浮层（规格 / 模型 / 数量 / 搭子 / 素材库 / 模板）共用一条 Esc 收层
     （H4）：在 Provider 挂一次 keydown 就够，各浮层自己不用重复绑。点开关件 /
     点外层的既有收层路径不变。
   */
@@ -333,6 +381,16 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       ? DEFAULT_DUR
       : durs[0];
 
+  /*
+    「多镜头」不是请求体里的一个字段（`createJobBodySchema` 是 strict，压根没有它）。
+    真·分镜走的是 30/45/60 秒长片档（`HARNESS_DURATIONS` + `HARNESS_ENABLED`，进度按
+    `job.shots` 显示）。所以这枚开关读的就是「当前时长在不在长片档」，点它在长片档与
+    常规档之间切时长——原来它恒为关、点了只说「即将上线」（review 2026-09-15 C-02）。
+  */
+  const multiAvailable = longForm;
+  const multi = isHarnessDuration(dur);
+  const preMultiDur = useRef<number | null>(null);
+
   const balance = me?.balance;
   const quota = me?.quota;
   const quotaExhausted = !!quota && quota.remaining <= 0 && tab === "image";
@@ -391,48 +449,122 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     [dropKey, setError],
   );
 
-  /** 这个模式此刻能不能用：后端有这条路径 + 当前产品声明了对应能力。 */
-  const modeUsable = useCallback(
-    (m: VideoMode): boolean => {
-      if (m === "prompt") return true;
-      if (m === "reference") return maxRefs > 0 && !!product && supportsMode(product, "reference_to_video");
-      if (m === "firstLast") return productChoices.some((p) => p.supportsLastFrame);
-      return false;
+  /*
+    产品表还没读到时，凭什么替这台实例说「没有支持首尾帧的模型」？没读到就说没读到：
+    参考 / 首尾帧 / 有声三条判据全看产品表，表不在手里就先报这一句，读到了再按真能力讲。
+  */
+  const productUnknown: MessageKey | null = !productsLoaded
+    ? "composer.mode.block.productsLoading"
+    : productsError
+      ? "composer.mode.block.productsError"
+      : null;
+
+  /**
+   * 这个模式此刻为什么不能用——能用就是 `null`。
+   *
+   * 每条都有具体理由，不再一律「即将上线」：参考 / 首尾帧 / 有声看的是当前产品与产品表
+   * 的真实能力，编辑 / 续写 / 动作模仿是平台这一侧还没有的东西——说清楚是哪一种，用户
+   * 才知道换个产品有没有用。
+   */
+  const modeBlock = useCallback(
+    (m: VideoMode): MessageKey | null => {
+      switch (m) {
+        case "prompt":
+          return null;
+        case "reference":
+          return (
+            productUnknown ??
+            (maxRefs > 0 && !!product && supportsMode(product, "reference_to_video")
+              ? null
+              : "composer.mode.block.reference")
+          );
+        case "firstLast":
+          return (
+            productUnknown ??
+            (productChoices.some((p) => p.supportsLastFrame) ? null : "composer.mode.block.firstLast")
+          );
+        case "voice":
+          // 「人声」= 出带声音的成片。平台唯一能保证有声的路径是原生音轨产品
+          // （`product.audio === "native"`，与音轨开关同一判据）。
+          return (
+            productUnknown ??
+            (productChoices.some((p) => p.audio === "native") ? null : "composer.mode.block.voice")
+          );
+        case "edit":
+        case "extend":
+          // 后端保留了 `edit_video` / `extend_video`，但没有「拿哪条成片来改」的入口，
+          // 当前也没有 provider 承接（AGENTS.md「edit/extend UI 继续置灰」）。
+          return "composer.mode.block.noSource";
+        default:
+          return "composer.mode.block.unsupported";
+      }
     },
-    [maxRefs, product, productChoices],
+    [maxRefs, product, productChoices, productUnknown],
   );
+
+  /** 置灰项的具体理由（已翻译）；能用就是 `null`。 */
+  const modeReason = useCallback(
+    (m: VideoMode): string | null => {
+      const key = modeBlock(m);
+      return key ? t(key) : null;
+    },
+    [modeBlock, t],
+  );
+  /** 「模板」不在模式行里（见 `shared.ts`），理由单独给一份。 */
+  const templateReason = !templatesLoaded
+    ? null
+    : templatesError
+      ? t("composer.mode.block.templateError")
+      : templates.length
+        ? null
+        : t("composer.mode.block.template");
 
   const pickMode = useCallback(
     (next: VideoMode) => {
+      /*
+        先问「这个模式此刻能不能用」，再谈自动换产品：芯片的 title 与点下去那句提示
+        必须是同一句话。产品表还没读到 / 读不到时，`modeBlock` 说的是「不知道」，
+        这里就不能替它改口说「这台实例没有支持首尾帧的模型」。
+      */
+      const block = modeBlock(next);
+      if (block) {
+        showToast(t(block));
+        return;
+      }
       if (next === "firstLast") {
         // 切到首尾帧时当前产品不支持，就自动换到第一个支持的产品并说一声（阶段 A §4）
         if (!supportsLastFrame) {
           const alt = productChoices.find((p) => p.supportsLastFrame);
-          if (!alt) {
-            showToast(t("composer.lastFrame.none"));
-            return;
+          if (alt) {
+            setVideoProductId(alt.id);
+            showToast(t("composer.lastFrame.switched", { name: alt.name }));
           }
-          setVideoProductId(alt.id);
-          showToast(t("composer.lastFrame.switched", { name: alt.name }));
         }
         setMode(next);
         setPop(null);
         dropKey();
         return;
       }
-      if (next === "reference" && !modeUsable("reference")) {
-        showToast(product ? t("composer.ref.noSupport") : t("common.comingSoon"));
-        return;
-      }
-      if (next !== "prompt" && next !== "reference") {
-        showToast(t("common.comingSoon"));
+      if (next === "voice") {
+        // 当前产品出不了声就换到能出声的那个，并把音轨开关打开——这个模式的意义就是有声。
+        if (!audioAvailable) {
+          const alt = productChoices.find((p) => p.audio === "native");
+          if (alt) {
+            setVideoProductId(alt.id);
+            showToast(t("composer.voice.switched", { name: alt.name }));
+          }
+        }
+        setAudio(true);
+        setMode(next);
+        setPop(null);
+        dropKey();
         return;
       }
       setMode(next);
       setPop(null);
       dropKey();
     },
-    [dropKey, modeUsable, product, productChoices, showToast, supportsLastFrame, t],
+    [audioAvailable, dropKey, modeBlock, productChoices, showToast, supportsLastFrame, t],
   );
 
   /**
@@ -449,6 +581,7 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
         if (m === "firstLast" && !next.supportsLastFrame) return "prompt";
         if (m === "reference" && (next.maxReferenceImages === 0 || !supportsMode(next, "reference_to_video")))
           return "prompt";
+        if (m === "voice" && next.audio !== "native") return "prompt";
         return m;
       });
       setPop(null);
@@ -499,11 +632,25 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       showToast(t("composer.audio.unavailable"));
       return;
     }
+    if (audio) setMode((m) => (m === "voice" ? "prompt" : m));
     setAudio((a) => !a);
     dropKey();
-  }, [audioAvailable, dropKey, showToast, t]);
-  /** 占位开关：点了只说一句「即将上线」，不改任何状态（见 `multi` 的说明）。 */
-  const toggleMulti = useCallback(() => showToast(t("common.comingSoon")), [showToast, t]);
+  }, [audio, audioAvailable, dropKey, showToast, t]);
+  /** 在长片档与常规档之间切时长（见 `multi` 的说明）；这台实例没开长片管线就说清楚。 */
+  const toggleMulti = useCallback(() => {
+    if (!multiAvailable) {
+      showToast(t("composer.multi.unavailable"));
+      return;
+    }
+    if (multi) {
+      const prev = preMultiDur.current;
+      setDurChoice(prev !== null && baseDurs.includes(prev) ? prev : null);
+    } else {
+      preMultiDur.current = dur;
+      setDurChoice(HARNESS_DURATIONS[0]);
+    }
+    dropKey();
+  }, [baseDurs, dropKey, dur, multi, multiAvailable, showToast, t]);
   const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => !c);
     setPop(null);
@@ -704,7 +851,9 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
   const submit = useCallback(() => {
     if (working) return;
     if (tab === "audio") {
-      showToast(t("common.comingSoon"));
+      // 音频页没有提交路径（它只指路，见 `AudioPanel`）。这是一道防御：真按到这里，
+      // 也要说清楚声音是随视频出的，而不是「即将上线」。
+      showToast(t("composer.audioPage.lead"));
       return;
     }
     setError(null);
@@ -874,6 +1023,26 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     [clearAll, dropKey, setError],
   );
 
+  /**
+   * 音频页的唯一动作：平台出声的路径就是「原生音轨的视频产品」，所以这里做的事就是
+   * 切到视频页、选中那个产品、把音轨打开——之后是一次普通的视频创作，不是另一条通道。
+   */
+  const useAudioProduct = useCallback(
+    (productId: string) => {
+      const target = products.find((p) => p.id === productId && p.kind === "video" && p.audio === "native");
+      if (!target) return;
+      setVideoProductId(target.id);
+      setTab("video");
+      setMode("prompt");
+      setAudio(true);
+      setPop(null);
+      setError(null);
+      dropKey();
+      showToast(t("composer.audioPage.switched", { name: target.name }));
+    },
+    [dropKey, products, setError, showToast, t],
+  );
+
   const value = useMemo<ComposerShell>(
     () => ({
       products,
@@ -886,7 +1055,8 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       pickTab,
       mode,
       pickMode,
-      modeUsable,
+      modeReason,
+      templateReason,
       collapsed,
       toggleCollapsed,
       pop,
@@ -910,6 +1080,7 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       audioAvailable,
       toggleAudio,
       multi,
+      multiAvailable,
       toggleMulti,
       count,
       setCount,
@@ -937,8 +1108,20 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       submit,
       reuse,
       applyTemplate,
+      templates,
+      templatesLoaded,
+      templatesError,
+      productsLoaded,
+      productsError,
+      useAudioProduct,
     }),
     [
+      templates,
+      templatesLoaded,
+      templatesError,
+      productsLoaded,
+      productsError,
+      useAudioProduct,
       products,
       productChoices,
       product,
@@ -949,7 +1132,8 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       pickTab,
       mode,
       pickMode,
-      modeUsable,
+      modeReason,
+      templateReason,
       collapsed,
       toggleCollapsed,
       pop,
@@ -972,6 +1156,7 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       audioAvailable,
       toggleAudio,
       multi,
+      multiAvailable,
       toggleMulti,
       count,
       setCount,

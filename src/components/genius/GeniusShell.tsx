@@ -82,8 +82,9 @@ function Frame({ children }: { children: React.ReactNode }) {
           </div>
         ) : null}
         {/*
-          任务完成通知（阶段 B）：右上角，成功那条可点跳创作页。与 `.toast`（「即将上线」
-          那类一次性提示）分开——这条带的是要读、可能要点的信息，所以不是 pointer-events:none。
+          任务完成通知（阶段 B）：右上角，成功那条可点跳创作页。与 `.toast`（一次操作的结果
+          或它此刻办不到的理由）分开——这条带的是要读、可能要点的信息，所以不是
+          pointer-events:none。
         */}
         {noticeToast ? (
           <div className="notice-toast" role="status" data-ok={noticeToast.ok} data-job-id={noticeToast.jobId}>

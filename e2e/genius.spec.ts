@@ -1413,3 +1413,132 @@ test("改密：旧密码不对被拒、本机不掉线、其它设备的旧密�
     if (!registered) await rm(inviteFile, { force: true });
   }
 });
+
+/* ── 接上死入口（N-12 / N-13）：模板按钮、音频页、创作搭子、置灰理由、挑战与横幅 ── */
+
+test("模式行的「模板」开的是真模板清单，选一张回填面板", async ({ page }) => {
+  const dataDir = await serverDataDir();
+  const id = `e2e-pop-${randomBytes(4).toString("hex")}`;
+  const file = path.join(dataDir, "templates", `zzz-${id}.json`);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    JSON.stringify({
+      id,
+      name: "e2e 面板模板",
+      category: "广告",
+      prompt: "面板模板回填进来的提示词",
+      mode: "text_to_video",
+      durationSec: 10,
+      aspectRatio: "9:16",
+    }),
+  );
+
+  try {
+    await reloadHome(page);
+    await ensureComposerOpen(page);
+    await page.getByRole("button", { name: "模板", exact: true }).click();
+    const pop = page.locator(".tpl-pop");
+    await expect(pop).toBeVisible();
+    await pop.locator(`[data-template-id="${id}"]`).click();
+
+    await expect(promptBox(page)).toHaveValue("面板模板回填进来的提示词");
+    await expect(page.locator(".composer__specs")).toContainText("10s");
+    await expect(page.locator(".composer__specs")).toContainText("9:16");
+  } finally {
+    await rm(file, { force: true });
+  }
+});
+
+test("置灰的模式给的是具体理由，不再是「即将上线」", async ({ page }) => {
+  await reloadHome(page);
+  await ensureComposerOpen(page);
+  for (const mode of ["edit", "extend", "motion"]) {
+    const chip = page.locator(`.composer__mode[data-video-mode="${mode}"]`);
+    await expect(chip).toHaveAttribute("aria-disabled", "true");
+    const title = await chip.getAttribute("title");
+    expect(title, `${mode} 应给出具体理由`).toBeTruthy();
+    expect(title).not.toBe("即将上线");
+  }
+});
+
+test("音频页说清「声音随视频出」，并能直接切到能出声的产品", async ({ page }) => {
+  const products = await apiProducts(page);
+  const withAudio = products.filter((p) => p.kind === "video" && p.audio === "native");
+
+  await reloadHome(page);
+  await ensureComposerOpen(page);
+  await page.getByRole("tab", { name: "音频" }).click();
+  const panel = page.locator(".composer__audio-page");
+  await expect(panel).toBeVisible();
+  // 旧版这一页是两个恒灰的模式芯片 + 一个点了只说「即将上线」的创作钮。
+  await expect(page.locator(".composer__opts")).toBeHidden();
+
+  if (!withAudio.length) {
+    await expect(panel.locator(".composer__audio-empty")).toBeVisible();
+    return;
+  }
+  const first = withAudio[0];
+  await panel.locator(`.composer__audio-pick[data-product-id="${first.id}"]`).click();
+  await expect(composer(page)).toHaveAttribute("data-tab", "video");
+  await expect(page.locator(".composer__model")).toContainText(first.name);
+  await expect(page.locator('.composer__audio[role="switch"]')).toHaveAttribute("aria-checked", "true");
+});
+
+test("创作搭子把这句话交给真的智能体，而不是弹「即将上线」", async ({ page }) => {
+  await reloadHome(page);
+  await ensureComposerOpen(page);
+  await promptBox(page).fill("海边黄昏，一个人走过");
+  await page.getByRole("button", { name: "创作搭子" }).click();
+  const buddy = page.locator('.buddy[role="dialog"]');
+  await expect(buddy).toBeVisible();
+  // 输入框是真的：带着面板里的提示词过来，还能接着改。
+  await expect(buddy.locator(".buddy__input")).toHaveValue("海边黄昏，一个人走过");
+
+  await buddy.getByRole("button", { name: "发送给创作搭子" }).click();
+  await expect(page).toHaveURL(/\/agent/);
+  await expect(page.getByRole("textbox", { name: "智能体提示词" })).toHaveValue("海边黄昏，一个人走过");
+});
+
+test("挑战页签与活动横幅：有挑战就列它，没有就说没有", async ({ page }) => {
+  await reloadHome(page);
+  // 没有挑战时横幅是「开始创作」，点了展开创作面板——不是一张点了没反应的图。
+  const banner = page.locator(".home__banner");
+  await expect(banner).toHaveText("开始创作");
+  await banner.click();
+  await expect(composer(page)).toHaveAttribute("data-open", "true");
+
+  await page.getByRole("main").getByRole("tab", { name: "挑战" }).click();
+  await expect(page.locator(".home__empty")).toContainText("当前没有进行中的挑战");
+
+  const dataDir = await serverDataDir();
+  const id = `e2e-ch-${randomBytes(4).toString("hex")}`;
+  const file = path.join(dataDir, "templates", `zzz-${id}.json`);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    JSON.stringify({
+      id,
+      name: "e2e 本周挑战",
+      category: "广告",
+      prompt: "挑战的提示词",
+      mode: "text_to_video",
+      challenge: true,
+    }),
+  );
+
+  try {
+    await reloadHome(page);
+    await expect(banner).toHaveAttribute("data-challenge", id);
+    await expect(banner).toHaveText("e2e 本周挑战");
+    await banner.click();
+    await expect(page.getByRole("main").getByRole("tab", { name: "挑战" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(`.tpl-card[data-template-id="${id}"]`)).toBeVisible();
+
+    // 挑战不进「模板」页签之外的瀑布流，但它仍是一条模板：点一下照样回填面板。
+    await page.locator(`.tpl-card[data-template-id="${id}"]`).click();
+    await expect(promptBox(page)).toHaveValue("挑战的提示词");
+  } finally {
+    await rm(file, { force: true });
+  }
+});

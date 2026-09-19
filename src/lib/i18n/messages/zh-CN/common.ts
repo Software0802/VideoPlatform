@@ -15,7 +15,6 @@ export const common = {
   "common.delete": "删除",
   "common.save": "保存",
   "common.back": "返回",
-  "common.comingSoon": "即将上线",
   "common.error.generic": "出错了，请稍后再试",
   "common.error.network": "网络异常，请稍后再试",
   "common.credits": "积分",

@@ -32,28 +32,38 @@ import {
 } from "@/lib/client/canvas";
 import { ApiError } from "@/lib/client/http";
 import { newIdempotencyKey, uploadFile } from "@/lib/client/jobs";
+import { fetchProducts, supportsMode, type Product } from "@/lib/client/models";
 import { errorText } from "@/lib/i18n/errorText";
 import { useDialogFocus } from "@/components/genius/useDialogFocus";
 import type { JobPublic } from "@/lib/jobs/schema";
+import type { NativeMode } from "@/lib/providers/types";
+import { CANVAS_VIDEO_DURATION_SEC } from "@/lib/canvas/defaults";
+import CanvasToolbox, { type ToolboxPick } from "./CanvasToolbox";
 import { ConflictDialog } from "./ConflictDialog";
 import {
   FIT_PAD_X,
   FIT_PAD_X_NARROW,
   FIT_PAD_Y,
   LABEL_H,
+  MAX_ZOOM,
   MIN_SCALE_NARROW,
+  MIN_ZOOM,
   NARROW_W,
   NODE_W,
   SCENE_H,
   SCENE_W,
+  ZOOM_STEP,
 } from "./data";
 import { NodeCard, waitStateOf } from "./NodeCard";
 import { QuoteDialog, RunBar } from "./QuoteDialog";
 import { useCanvasPolling } from "./useCanvasPolling";
 import {
   IconCursor,
+  IconFit,
   IconImage,
+  IconPlus,
   IconText,
+  IconToolbox,
   IconVideo,
 } from "./icons";
 import { clamp } from "./util";
@@ -94,6 +104,52 @@ function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, clo
   }, [open, ref, close]);
 }
 
+/*
+  一个 gen_video 节点按哪种 mode 下单，只看它的入边是不是「出图的」——与服务端
+  `canvas/graph.ts` 的 `nodeMode()` 同一条判据。`graph.ts` 自己进不了浏览器包（要读盘、
+  要 node:crypto），所以这条规则在客户端只写这一份，改连线与列产品都用它。
+*/
+function videoModeOf(source: CanvasNode | undefined): NativeMode {
+  return source?.kind === "material" || source?.kind === "gen_image" ? "image_to_video" : "text_to_video";
+}
+
+/*
+  这个产品能不能接下「这个节点这次要下的单」——与服务端 `assertProductFits` 同口径：
+  类型、mode，以及画布固定的那档时长（`CANVAS_VIDEO_DURATION_SEC`；时长档收不下 8 秒的
+  产品报价那一刻就是 400）。芯片列谁、已钉的还算不算数，都问这一条。
+*/
+function productFits(p: Product, mode: NativeMode): boolean {
+  return (
+    p.kind === (mode === "text_to_image" ? "image" : "video") &&
+    supportsMode(p, mode) &&
+    (mode === "text_to_image" ||
+      !p.durations?.length ||
+      Math.max(...p.durations) >= CANVAS_VIDEO_DURATION_SEC)
+  );
+}
+
+/**
+ * 钉在节点上、却接不下这个节点当前路径的产品。
+ *
+ * 产品表是空的（还没读到 / 这次读不到）时一律返回空：一份读不到的清单证明不了任何
+ * 产品「不行」，凭它退掉用户钉的模型是另一种撒谎。表到手之后再扫一遍（见挂载后的
+ * effect），漏判的那些照样会被退回「自动」。
+ */
+function unfitPins(
+  nodes: CanvasNode[],
+  edges: CanvasDocument["edges"],
+  products: Product[],
+): { nodeId: string; name: string }[] {
+  if (!products.length) return [];
+  return nodes.flatMap((n) => {
+    if (n.kind !== "gen_video" || !n.product) return [];
+    const pinned = products.find((p) => p.id === n.product);
+    if (!pinned) return [];
+    const source = nodes.find((s) => s.id === edges.find((e) => e.to === n.id)?.from);
+    return productFits(pinned, videoModeOf(source)) ? [] : [{ nodeId: n.id, name: pinned.name }];
+  });
+}
+
 /**
  * 画布视图（C 包）：持久化到 `data/canvases/<userId>/<id>.json`，乐观并发
  * （PATCH 带 `expectedRevision`，409 即重拉），生成节点「运行」走与服务端
@@ -115,6 +171,7 @@ export default function CanvasView() {
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const quoteRef = useRef<HTMLDivElement | null>(null);
+  const modelRef = useRef<HTMLDivElement | null>(null);
   const conflictRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -135,9 +192,20 @@ export default function CanvasView() {
   const [jobs, setJobs] = useState<Record<string, JobPublic>>({});
   const [missingMaterials, setMissingMaterials] = useState<Set<string>>(new Set());
   const [fit, setFit] = useState(1);
+  /** 手动缩放：叠在 fit 之上，底部工具条写它（`适应画布` 把它拨回 1）。 */
+  const [zoom, setZoom] = useState(1);
   const [menu, setMenu] = useState<MenuPos | null>(null);
+  /*
+    模型芯片的弹层开在哪个节点上（`null` = 都没开）。开合状态不放在 `NodeCard` 里：
+    各卡片自己记的话，点开第二枚芯片时第一枚还开着，两张 244px 的清单叠在邻近节点上；
+    提到这里就天然只开一个，也能和菜单 / 报价弹层共用同一条收层路径。
+  */
+  const [modelFor, setModelFor] = useState<string | null>(null);
+  const [toolbox, setToolbox] = useState(false);
   const [running, setRunning] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  /** `GET /api/models` 的产品表：节点上的模型芯片按它列，拉不到就不显示芯片。 */
+  const [products, setProducts] = useState<Product[]>([]);
   // D 包：最新一次整图运行（展示 overlay）+ 报价弹层 + 提交中状态。
   const [latestRun, setLatestRun] = useState<CanvasRun | null>(null);
   const [quote, setQuote] = useState<CanvasQuote | null>(null);
@@ -161,6 +229,8 @@ export default function CanvasView() {
   useDismiss(menu !== null, menuRef, closeMenu);
   /* 报价弹层同样吃「点外层 / Esc」收层（H4），头部 ✕ 是可见关闭控件。 */
   useDismiss(quote !== null, quoteRef, () => setQuote(null));
+  const closeModel = useCallback(() => setModelFor(null), []);
+  useDismiss(modelFor !== null, modelRef, closeModel);
 
   /** 冲突二选一：用当前本地 doc（冲突期间仍在编辑）按服务端 revision 覆盖写。 */
   const resolveKeepLocal = async () => {
@@ -229,6 +299,26 @@ export default function CanvasView() {
     return () => {
       alive = false;
       if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, []);
+
+  /*
+    产品表（`GET /api/models`）：生成节点上的模型芯片按它列，选中的写进 `node.product`
+    ——报价与运行都已经认这个字段（`canvas/graph.ts` 的 `requestedId`）。拉不到就退回
+    「自动」：不点名产品时服务端按能力路由，与这条芯片出现之前的行为一致。
+  */
+  useEffect(() => {
+    let alive = true;
+    void fetchProducts().then(
+      (list) => {
+        if (alive) setProducts(list);
+      },
+      () => {
+        if (alive) setProducts([]);
+      },
+    );
+    return () => {
+      alive = false;
     };
   }, []);
 
@@ -366,7 +456,7 @@ export default function CanvasView() {
     [latestRun],
   );
 
-  const scale = fit;
+  const scale = fit * zoom;
 
   /** 由一次右键 / 长按的视口坐标开菜单：作者坐标给建节点，视图像素坐标给浮层定位。 */
   const openMenuAtClient = useCallback(
@@ -426,7 +516,11 @@ export default function CanvasView() {
     if (e.pointerType !== "touch") return;
     const target = e.target as HTMLElement;
     // 节点与各浮层上的长按归它们自己（拖拽、选字、点按钮），只有空白处才建节点。
-    if (target.closest(".canvas-node,.canvas-menu,.canvas-quote,.canvas-conflict,.canvas-topright")) {
+    if (
+      target.closest(
+        ".canvas-node,.canvas-menu,.canvas-quote,.canvas-conflict,.canvas-topright,.canvas-toolbox,.canvas-tools,.canvas-bottom",
+      )
+    ) {
       return;
     }
     cancelLongPress();
@@ -471,11 +565,87 @@ export default function CanvasView() {
     }
   };
 
-  const removeNode = (id: string) => {
-    mutate((d) => ({
-      nodes: d.nodes.filter((n) => n.id !== id),
-      edges: d.edges.filter((e) => e.from !== id && e.to !== id),
+  /**
+   * 左侧工具栏的「添加节点」：开的是右键那一份菜单，位置贴着按钮。
+   * 触屏与键盘都能到（右键 / 长按之外的第三条入口）。
+   */
+  const openMenuFromRail = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    openMenuAtClient(r.right + 8, r.top);
+  };
+
+  /**
+   * 新节点摆哪儿：按已有节点数走一个四列的格子往下排，`clamp` 保证不出场景。
+   * 不做碰撞检测——节点可以被拖到任何地方，摆重了用户自己拖开就是。
+   * 工具箱与空态入口共用。
+   */
+  const freeSpot = (count: number): { x: number; y: number } => ({
+    x: clamp(0, 120 + (count % 4) * 180, SCENE_W - NODE_W),
+    y: clamp(0, 60 + Math.floor(count / 4) * 150, SCENE_H - 160),
+  });
+
+  /** 工具箱「应用到画布」：新建一个对应类型的生成节点并填好提示词。 */
+  const applyTool = (pick: ToolboxPick) => {
+    const kind: CanvasNode["kind"] = pick.kind === "image" ? "gen_image" : "gen_video";
+    mutate((d) => {
+      const pos = freeSpot(d.nodes.length);
+      return { nodes: [...d.nodes, { id: newCanvasNodeId(), kind, ...pos, prompt: pick.prompt }] };
+    });
+    showToast(t("canvas.toolbox.applied", { name: pick.name }));
+  };
+
+  /** 空态两个入口：直接建一个便签 / 视频节点，不必先知道「这里要右键」。 */
+  const addFirstNode = (kind: CanvasNode["kind"]) => {
+    mutate((d) => {
+      const pos = freeSpot(d.nodes.length);
+      return { nodes: [...d.nodes, { id: newCanvasNodeId(), kind, ...pos }] };
+    });
+  };
+
+  /*
+    产品表到手（或换了一份）时补扫一遍：改图那一刻表还没读到的话，`unfitPins` 什么都
+    判不了，钉在节点上、这条路径接不住的产品就会一直留到报价那一刻才以一句不指名节点的
+    400 冒出来。这里按同一条判据退回「自动」并说一声。`setTimeout(…, 0)` 是本仓库
+    挂载后改状态的既有写法（`react-hooks/set-state-in-effect`）。
+  */
+  useEffect(() => {
+    if (!doc || !products.length) return;
+    const unfit = unfitPins(doc.nodes, doc.edges, products);
+    if (!unfit.length) return;
+    const dropped = new Set(unfit.map((u) => u.nodeId));
+    const timer = window.setTimeout(() => {
+      mutate((d) => ({
+        nodes: d.nodes.map((n) => (dropped.has(n.id) ? { ...n, product: undefined } : n)),
+        edges: d.edges,
+      }));
+      for (const u of unfit) showToast(t("canvas.model.unfit", { name: u.name }));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [doc, products, mutate, showToast, t]);
+
+  /**
+   * 改了图之后落盘：先把「钉的产品接不下新路径」的那些退回「自动」再写。
+   *
+   * 连线、换连线、删上游节点都会改下游节点的 mode，钉在上面的产品可能就此接不住；
+   * 留着它等于把报价与运行锁死在一个必然 400（所选模型不支持这种生成方式）上，而那
+   * 句报错不指名是哪个节点。所有改图入口都走这里，判据只有这一份。
+   */
+  const commitGraph = (nodes: CanvasNode[], edges: CanvasDocument["edges"]) => {
+    const unfit = unfitPins(nodes, edges, products);
+    const dropped = new Set(unfit.map((u) => u.nodeId));
+    mutate(() => ({
+      nodes: dropped.size ? nodes.map((n) => (dropped.has(n.id) ? { ...n, product: undefined } : n)) : nodes,
+      edges,
     }));
+    for (const u of unfit) showToast(t("canvas.model.unfit", { name: u.name }));
+  };
+
+  const removeNode = (id: string) => {
+    if (!doc) return;
+    commitGraph(
+      doc.nodes.filter((n) => n.id !== id),
+      doc.edges.filter((e) => e.from !== id && e.to !== id),
+    );
   };
 
   const onUpload = async (file: File | undefined) => {
@@ -496,11 +666,10 @@ export default function CanvasView() {
 
   /** 上游选择：一条 gen 节点最多一条入边；换选即换边，「无」即删掉入边。 */
   const setInput = (nodeId: string, fromId: string | null) => {
-    mutate((d) => {
-      const edges = d.edges.filter((e) => e.to !== nodeId);
-      if (fromId) edges.push({ id: newCanvasEdgeId(), from: fromId, to: nodeId });
-      return { nodes: d.nodes, edges };
-    });
+    if (!doc) return;
+    const edges = doc.edges.filter((e) => e.to !== nodeId);
+    if (fromId) edges.push({ id: newCanvasEdgeId(), from: fromId, to: nodeId });
+    commitGraph(doc.nodes, edges);
   };
 
   const runNode = async (nodeId: string) => {
@@ -710,6 +879,18 @@ export default function CanvasView() {
   };
   const waitOfNode = (node: CanvasNode) => waitStateOf(execOf(node.id), jobOfNode(node), running.has(node.id));
   const inputOf = (nodeId: string) => doc?.edges.find((e) => e.to === nodeId)?.from ?? "";
+  /*
+    模型芯片只列「这个节点真跑得起来」的产品：只按 kind 过滤会把接不下这条路径的产品
+    摆上去，报价那一刻整张画布连同它一起 400，而且报错不指名是哪个节点。
+  */
+  const productsFor = (node: CanvasNode) => {
+    if (node.kind !== "gen_image" && node.kind !== "gen_video") return [];
+    const mode: NativeMode =
+      node.kind === "gen_image"
+        ? "text_to_image"
+        : videoModeOf(doc?.nodes.find((n) => n.id === inputOf(node.id)));
+    return products.filter((p) => productFits(p, mode));
+  };
   const candidatesFor = (node: CanvasNode) =>
     (doc?.nodes ?? []).filter(
       (n) => n.id !== node.id && (n.kind === "text" || n.kind === "material" || n.kind === "gen_image"),
@@ -796,6 +977,19 @@ export default function CanvasView() {
                   }))
                 }
                 onInput={(fromId) => setInput(node.id, fromId)}
+                products={productsFor(node)}
+                modelOpen={modelFor === node.id}
+                modelRef={modelFor === node.id ? modelRef : undefined}
+                onModelOpen={(open) => setModelFor(open ? node.id : null)}
+                onProduct={(productId) =>
+                  mutate((d) => ({
+                    nodes: d.nodes.map((n) =>
+                      n.id === node.id
+                        ? { ...n, ...(productId ? { product: productId } : { product: undefined }) }
+                        : n,
+                    ),
+                  }))
+                }
                 onRun={() => void runNode(node.id)}
                 onApproval={(decision) => void decideApproval(node.id, decision)}
               />
@@ -826,10 +1020,86 @@ export default function CanvasView() {
         </div>
       ) : null}
 
+      {doc ? (
+        <>
+          {/*
+            左侧工具栏：fit 公式本来就给它留着 108px（`FIT_PAD_X`），在它真被渲染
+            出来之前那段留白没有主人。两个按钮都接真行为——建节点开的是右键那份
+            菜单，工具箱抽屉读真模板与真作品。窄屏（≤560）不渲染，那一档的留白也
+            按 `FIT_PAD_X_NARROW` 收掉。
+          */}
+          <div className="canvas-tools">
+            <button
+              type="button"
+              className="canvas-tools__add"
+              aria-label={t("canvas.tools.add")}
+              title={t("canvas.tools.add")}
+              onClick={openMenuFromRail}
+            >
+              <IconPlus size={19} />
+            </button>
+            <div className="canvas-tools__group">
+              <button
+                type="button"
+                className="canvas-tools__btn"
+                aria-label={t("canvas.tools.toolbox")}
+                title={t("canvas.tools.toolbox")}
+                aria-expanded={toolbox}
+                data-on={toolbox ? "true" : undefined}
+                onClick={() => setToolbox((on) => !on)}
+              >
+                <IconToolbox size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="canvas-bottom">
+            <button
+              type="button"
+              className="canvas-bottom__btn"
+              aria-label={t("canvas.bottom.fit")}
+              title={t("canvas.bottom.fit")}
+              onClick={() => setZoom(1)}
+            >
+              <IconFit size={15} />
+            </button>
+            <span className="canvas-bottom__sep" />
+            <input
+              className="canvas-bottom__slider"
+              type="range"
+              min={MIN_ZOOM}
+              max={MAX_ZOOM}
+              step={ZOOM_STEP}
+              value={zoom}
+              aria-label={t("canvas.bottom.zoom")}
+              onChange={(e) => setZoom(clamp(MIN_ZOOM, Number(e.target.value), MAX_ZOOM))}
+            />
+            <span className="canvas-bottom__pct">{Math.round(scale * 100)}%</span>
+          </div>
+        </>
+      ) : null}
+
+      {toolbox ? <CanvasToolbox onClose={() => setToolbox(false)} onApply={applyTool} /> : null}
+
       {doc && doc.nodes.length === 0 && !menu ? (
         <div className="canvas-empty__hint" style={{ position: "absolute", left: 24, top: 24 }}>
           <IconCursor />
           {t("canvas.empty.rightClick")}
+          {/* 「右键新建」不是所有人都会想到，也不是所有设备都有右键：给两个直给的入口。 */}
+          <span className="canvas-empty__actions">
+            <button type="button" className="canvas-entry" onClick={() => addFirstNode("text")}>
+              <span className="canvas-entry__icon">
+                <IconText size={12} />
+              </span>
+              {t("canvas.kind.text")}
+            </button>
+            <button type="button" className="canvas-entry" onClick={() => addFirstNode("gen_video")}>
+              <span className="canvas-entry__icon">
+                <IconVideo size={12} />
+              </span>
+              {t("canvas.kind.gen_video")}
+            </button>
+          </span>
         </div>
       ) : null}
 

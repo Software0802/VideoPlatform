@@ -28,6 +28,7 @@ import { errorText } from "@/lib/i18n/errorText";
 import AgentAsk, { type AskPop } from "./AgentAsk";
 import AgentChat from "./AgentChat";
 import AgentPlaza from "./AgentPlaza";
+import { takeAgentDraft } from "./draft";
 import { shot } from "./data";
 import { IconPanelLeft, IconPencil, IconTrash } from "./icons";
 
@@ -126,7 +127,8 @@ function offRecord(ids: string[]): Record<string, boolean> {
 export default function AgentView() {
   const t = useT();
   const { locale } = useI18n();
-  const requestedSession = useSearchParams().get("session");
+  const params = useSearchParams();
+  const requestedSession = params.get("session");
 
   const [screen, setScreen] = useState<Screen>("home");
   const [skills, setSkills] = useState<AgentSkill[]>([]);
@@ -344,6 +346,19 @@ export default function AgentView() {
     },
     [say, syncSession],
   );
+
+  /*
+    创作搭子交接过来的那句提示词（`draft.ts`，走 sessionStorage 而不是地址栏）：读走就
+    清，用户清空输入框后不会被重新填回去。`setTimeout(…, 0)` 是本仓库挂载后取客户端状态
+    的既有写法（`react-hooks/set-state-in-effect` 不允许在 effect 体里直接 setState）。
+  */
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const draft = takeAgentDraft();
+      if (draft) setPrompt(draft);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // `(shell)` layout 明确 force-dynamic，useSearchParams 不触发静态预渲染的 Suspense 要求。
   useEffect(() => {

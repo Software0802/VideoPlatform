@@ -79,7 +79,7 @@ function assertProductFits(product: Product, input: ChooseProductInput): void {
   const harness = input.harness || isHarnessDuration(input.durationSec);
   if (harness) {
     // 30 / 45 / 60 秒是一致性管线的长片：管线会把任务拆成 t2v + i2v 两类 shot，
-    // 产品背后那家必须两条 mode 都声明（例如可灵、YMan；jimeng 只占位不算），且产品
+    // 产品背后那家必须两条 mode 都声明（例如可灵、YMan），且产品
     // 自己声明 supportsLongForm、时长档收得下单段 10 秒。
     const modes = providerForId(product.provider).capabilities().modes;
     if (

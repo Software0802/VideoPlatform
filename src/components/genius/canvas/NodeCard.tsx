@@ -3,6 +3,7 @@
 import { useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { CANVAS_APPROVAL_TIMEOUT_MS, type CanvasNode, type CanvasNodeExecution } from "@/lib/client/canvas";
+import type { Product } from "@/lib/client/models";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { NODE_W } from "./data";
 import { IconClose, IconImage, IconPlus, IconBolt, IconText, IconVideo } from "./icons";
@@ -70,6 +71,11 @@ export function NodeCard({
   candidates,
   onPrompt,
   onInput,
+  products,
+  onProduct,
+  modelOpen,
+  modelRef,
+  onModelOpen,
   onRun,
   onApproval,
 }: {
@@ -88,6 +94,15 @@ export function NodeCard({
   candidates: CanvasNode[];
   onPrompt: (v: string) => void;
   onInput: (fromId: string | null) => void;
+  /** `GET /api/models` 的产品表；空表示拉不到，节点上就不显示模型芯片。 */
+  products: Product[];
+  /** 点名产品（写 `node.product`）；`null` = 交回服务端按能力路由。 */
+  onProduct: (productId: string | null) => void;
+  /** 这枚芯片的弹层开着没有。开合状态在 `CanvasView`：全画布同时只开一个。 */
+  modelOpen: boolean;
+  /** 开着的那一个把浮层挂给 `CanvasView` 的 `useDismiss`（点外层 / Esc 收层）。 */
+  modelRef?: React.RefObject<HTMLDivElement | null>;
+  onModelOpen: (open: boolean) => void;
   onRun: () => void;
   onApproval: (decision: "approve" | "reject") => void;
 }) {
@@ -101,6 +116,21 @@ export function NodeCard({
   const hasContent = Boolean(
     node.text?.trim() || node.prompt?.trim() || node.uploadId || node.assetId || job,
   );
+  /*
+    节点上的模型选择（`node.product`）。这个字段一直在 schema 里、报价与运行也一直认它
+    （`canvas/graph.ts` 的 `requestedId` / `run.ts` 的 `model`），只是从来没有界面能写它——
+    整张画布只能吃默认路由。`products` 由 `CanvasView` 按这个节点这次会跑的 mode 筛过，
+    这里直接列，「自动」= 不点名，交回服务端按能力选。钉着的产品不在这张表里（产品下线、
+    或这条路径它接不下）就照实说，不能借「自动」把一个必然 400 的钉子盖过去。
+
+    这一行放在正文**外面**：`.canvas-node__body` 是 `overflow:hidden`，浮层开在里面会被裁掉。
+  */
+  const isGen = node.kind === "gen_image" || node.kind === "gen_video";
+  const current = products.find((p) => p.id === node.product);
+  const pickProduct = (productId: string | null) => {
+    onModelOpen(false);
+    onProduct(productId);
+  };
   return (
     <div
       className="canvas-node"
@@ -148,6 +178,54 @@ export function NodeCard({
           >
             {t("canvas.nodeDelete.confirm")}
           </button>
+        </div>
+      ) : null}
+
+      {isGen && products.length ? (
+        <div className="canvas-node__modelrow" ref={modelRef}>
+          <button
+            type="button"
+            className="canvas-model"
+            data-open={modelOpen ? "true" : undefined}
+            data-product-id={node.product ?? ""}
+            aria-expanded={modelOpen}
+            aria-label={t("canvas.model.pick")}
+            onClick={() => onModelOpen(!modelOpen)}
+          >
+            <span className="canvas-model__dot" aria-hidden="true" />
+            {current?.name ?? t(node.product ? "canvas.model.gone" : "canvas.model.auto")}
+          </button>
+          {modelOpen ? (
+            <div className="canvas-modelpop">
+              <span className="canvas-modelpop__title">{t("canvas.model.pick")}</span>
+              <button
+                type="button"
+                className="canvas-modelpop__item"
+                data-current={!node.product}
+                onClick={() => pickProduct(null)}
+              >
+                <span className="canvas-modelpop__body">
+                  <span className="canvas-modelpop__name">{t("canvas.model.auto")}</span>
+                  <span className="canvas-modelpop__desc">{t("canvas.model.autoDesc")}</span>
+                </span>
+              </button>
+              {products.map((product) => (
+                <button
+                  type="button"
+                  key={product.id}
+                  className="canvas-modelpop__item"
+                  data-product-id={product.id}
+                  data-current={product.id === node.product}
+                  onClick={() => pickProduct(product.id)}
+                >
+                  <span className="canvas-modelpop__body">
+                    <span className="canvas-modelpop__name">{product.name}</span>
+                    <span className="canvas-modelpop__desc">{product.description}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

@@ -102,6 +102,16 @@ describe("listTemplates — a single bad file is skipped, not fatal", () => {
     expect(templates.map((t) => t.id)).toEqual(["tpl-good"]);
   });
 
+  it("keeps the optional `challenge` flag（主页「挑战」页签与活动横幅按它筛）", async () => {
+    await seedFile("01.json", JSON.stringify(validTemplate({ id: "tpl-a", challenge: true })));
+    await seedFile("02.json", JSON.stringify(validTemplate({ id: "tpl-b" })));
+    const list = await listTemplates();
+    expect(list.map((tpl) => [tpl.id, tpl.challenge ?? false])).toEqual([
+      ["tpl-a", true],
+      ["tpl-b", false],
+    ]);
+  });
+
   it("skips a file with an unexpected extra field (schema is .strict())", async () => {
     await seedFile("01-good.json", JSON.stringify(validTemplate({ id: "tpl-good" })));
     await seedFile(

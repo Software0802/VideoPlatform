@@ -18,7 +18,7 @@
 - 组件不直接 fetch；浏览器只经 `src/lib/client/*` 访问 API。未登录 shell 页面服务端 307 到 `/login`，401 用 `window.location.assign` 整页跳转；头像菜单为 disclosure（非 role=menu），显示完整邮箱与退出。
 - 文案走 `useT` 和所属视图 namespace；`messages/zh-CN/<ns>.ts` 是键源，English 必须补齐。仅 `DESIGN.md` 明示的原型占位可保留英文；Cookie `lumen_locale` + Accept-Language 兜底，状态值不翻译。
 - 创作请求以 `createJobBodySchema`（strict）为准；model 是产品 id。产品、时长、画幅、分辨率、参考图数按服务端能力，不按 key 猜；`/api/models` 白名单下发供应商/上游展示名/costHint，不下发密钥。
-- t2v/i2v/t2i 为基础路径，参考与首尾帧按产品能力开放；未开放模式置灰并提示，不伪造成功。`reference_to_video/edit_video/extend_video` 后端保留，edit/extend UI 继续置灰。
+- t2v/i2v/t2i 为基础路径，参考/首尾帧/有声按产品能力开放；未开放的置灰并说具体理由，不写「即将上线」，不伪造成功。`edit_video/extend_video` 后端保留、UI 继续置灰。
 - 规格按钮保留 `data-dur/data-ratio/data-res`；Harness 开启才给 t2v/i2v 加 30/45/60 秒，进度按 job.shots 显示分镜。¥1=100 积分只做显示换算，不改后端 priceCny。
 - 一次逻辑创作复用同一 idempotencyKey，成功才清，提示词/选项改变则作废；网络重试不新造 key。智能体每次发送生成 turnId，重试原样带回。
 - 作品分页 `GET /api/jobs?before&limit&kind`；通知（job/run/agent）以持久索引为准，SSE 只提醒并触发对齐（design §2k）。

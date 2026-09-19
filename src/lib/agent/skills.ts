@@ -1,4 +1,6 @@
 import type { Locale } from "@/lib/i18n/locales";
+import { fileSkillLoader } from "@/lib/skills/loader";
+import type { SkillLoader, SkillManifest } from "@/lib/skills/types";
 
 /**
  * 智能体技能（方案 §1）。
@@ -6,6 +8,9 @@ import type { Locale } from "@/lib/i18n/locales";
  * 一个技能 = 一段拼进 system prompt 的**创作约束**，不是一个开关，也不是一段人设。
  * 20 条逐条对应原型 `AgentView` 里那 20 张卡（12 张首页 + 8 张电商），但名字和描述
  * 从此以这份表为准——原型那份是纯占位。
+ *
+ * 这 20 条是**内建**的那部分。运维还可以往 `<DATA_DIR>/skills/<id>/SKILL.md` 里放
+ * 技能（`src/lib/skills/`），两者合并成一张表；同 id 以内建为准。
  *
  * `systemPrompt` 的写法遵循 `.claude/skills/video-prompt/SKILL.md`：
  * 一句场景 + 一个明确的镜头运动 + 光线与色温 + 显式的「保持 X 不变」锁定项；
@@ -200,9 +205,53 @@ export const AGENT_SKILLS: readonly AgentSkill[] = [
 
 const BY_ID = new Map(AGENT_SKILLS.map((s) => [s.id, s]));
 
-export function agentSkillById(id: string | undefined | null): AgentSkill | undefined {
+/**
+ * 盘上的一条清单折成技能表里的一条。清单只有一种语言（谁写谁定），英文缺省沿用
+ * 它——宁可两种语言看到同一句话，也不要英文界面上出现一张没有名字的卡片。
+ */
+function fromManifest(manifest: SkillManifest): AgentSkill {
+  return {
+    id: manifest.id,
+    name: { "zh-CN": manifest.name, en: manifest.nameEn ?? manifest.name },
+    desc: {
+      "zh-CN": manifest.description,
+      en: manifest.descriptionEn ?? manifest.description,
+    },
+    group: "core",
+    ...(manifest.kinds?.length ? { kinds: manifest.kinds } : {}),
+    systemPrompt: manifest.systemPrompt,
+  };
+}
+
+/**
+ * 当前这台实例认得的全部技能 = 内建 20 条 + 盘上的文件技能（同 id 以内建为准：
+ * 内建那条的提示词是我们自己调过的，不该被一个同名目录悄悄换掉）。
+ *
+ * 读盘失败不抛：技能表空掉会让整个智能体视图置灰，而文件技能只是加料。
+ */
+export async function listAgentSkills(loader: SkillLoader = fileSkillLoader): Promise<AgentSkill[]> {
+  let extra: SkillManifest[] = [];
+  try {
+    extra = await loader.load();
+  } catch {
+    extra = [];
+  }
+  const seen = new Set(AGENT_SKILLS.map((s) => s.id));
+  const merged = [...AGENT_SKILLS];
+  for (const manifest of extra) {
+    if (seen.has(manifest.id)) continue;
+    seen.add(manifest.id);
+    merged.push(fromManifest(manifest));
+  }
+  return merged;
+}
+
+export async function findAgentSkill(id: string | undefined | null): Promise<AgentSkill | undefined> {
   if (!id) return undefined;
-  return BY_ID.get(String(id).trim());
+  const key = String(id).trim();
+  const builtin = BY_ID.get(key);
+  if (builtin) return builtin;
+  return (await listAgentSkills()).find((s) => s.id === key);
 }
 
 /** `GET /api/agent/skills` 的对外形状：不下发 `systemPrompt`（那是我们的提示词资产）。 */
@@ -212,8 +261,8 @@ export type AgentSkillPublic = Omit<AgentSkill, "systemPrompt">;
  * 按白名单挑字段，不是「删掉 systemPrompt 剩下的全给」——与 `GET /api/models` 同一个
  * 口径：以后往表里加一个内部字段，不会因为忘了改这里就被顺手发到浏览器。
  */
-export function publicSkills(): AgentSkillPublic[] {
-  return AGENT_SKILLS.map((s) => ({
+export async function listPublicSkills(): Promise<AgentSkillPublic[]> {
+  return (await listAgentSkills()).map((s) => ({
     id: s.id,
     name: s.name,
     desc: s.desc,

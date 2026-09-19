@@ -69,7 +69,13 @@ describe("provider registry", () => {
 
   it("keeps builtin key semantics for providers without hasKey", () => {
     expect(hasProviderKey("mock")).toBe(true);
-    // 即梦是占位实现，永远不该被自动路由选中。
+  });
+
+  it("即梦不再是内建 id：没人注册它就当作未知 provider", () => {
+    // 它曾经是一个 submit 就抛的占位实现，`hasProviderKey` 还为它硬编码了一条恒假
+    // 分支。现在它跟任何未注册 id 一样——要接就按普通 relay 配一条接入点。
+    expect(BUILTIN_PROVIDER_IDS as readonly string[]).not.toContain("jimeng");
+    expect(isRegisteredProviderId("jimeng")).toBe(false);
     expect(hasProviderKey("jimeng")).toBe(false);
   });
 });

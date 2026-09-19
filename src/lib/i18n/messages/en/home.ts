@@ -2,7 +2,7 @@ import type { home as zh } from "../zh-CN/home";
 
 /** English strings for `home`; the type forces every zh-CN key to exist here. */
 export const home: Record<keyof typeof zh, string> = {
-  "home.banner": "Featured banner",
+  "home.banner.cta": "Start creating",
   "home.tabs.aria": "Creation categories",
   "home.tab.video": "Video",
   "home.tab.image": "Image",
@@ -24,7 +24,6 @@ export const home: Record<keyof typeof zh, string> = {
   "home.empty.noImage": "No image creations yet.",
   "home.empty.noneInCat": "Nothing in this category yet — try another one.",
   "home.more": "Load more",
-  "home.loadFailed": "Could not load. Please try again later.",
 
   "home.sampleMeta": "Sample",
   "home.noPrompt": "(No prompt — the first frame sets the scene)",
@@ -62,6 +61,7 @@ export const home: Record<keyof typeof zh, string> = {
 
   "home.tpl.loading": "Loading templates…",
   "home.tpl.empty": "No templates available yet.",
+  "home.challenge.empty": "No challenge is running right now.",
 
   "home.sample.2e9cde0e2fb0803e": "Deep in a cornfield, a figure in a silver hazmat suit walks toward us",
   "home.sample.a72d8b509c55bcd0": "Pixel-art canyon sunrise, a river winding through the valley",
