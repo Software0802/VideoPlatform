@@ -226,7 +226,7 @@ grok 侧定价(`src/lib/cost.ts`,平坦价):1.5 = $0.08/s,1.0 = $0.05/s,图 $0.0
 
 **迁移**:存量账号 `user.json` 没有 `billing` 字段——读旧流水正常,但一切余额变动报 409 `billing_migration_required`(失败关闭,不会自动迁移)。迁移须停服后跑 `scripts/migrate-billing.mjs --offline --baseline <基线.json>`:基线由人工核对生成,含 `userId`、迁移前 `user.json` 与 `ledger/<id>.jsonl` 的 sha256、`reviewedBy`/`evidence`(谁在什么证据下核对过)、`opening` 期初余额与每条历史入账行属于哪个池(`grantPools`);校验通过才把旧流水原文封存进 `billing.legacyLedger` 并记账进入新格式。新格式不自动回滚到不兼容旧版本。
 
-**充值** `scripts/grant-balance.mjs <邮箱> <金额> --offline [--ref "固定幂等键"] [--note "..."]`:管理员 CLI,走与服务端同一个 `commitChange`(校验快照 → 追加 op → 原子写 user.json → 重建导出),金额可为负(纠正)。`--offline` 是显式声明「服务已停、CLI 串行执行」——仍是纪律而非跨进程锁;`--ref` 给这笔操作一个固定幂等键,结果不明时可安全重跑,缺省时打印警告并每次新增一笔。`reset-password.mjs`/`disable-user.mjs` 同样要求 `--offline`。
+**充值** `scripts/grant-balance.mjs <邮箱> <金额> [--ref "固定幂等键"] [--note "..."]`:管理员 CLI,R4.1 起默认走 HTTP 管理接口(`POST /api/admin/users/[id]/balance`,令牌与运行身份见 `docs/runbook.md`),由服务端在 `withUserLock` 里走 `applyBalanceChange`(与创作扣款同一个资金入口:校验快照 → 追加 op → 原子写 user.json → 重建导出),金额可为负(纠正)。`--offline` 只是退路:直写文件前先探测 `GET /api/health`,**只有 ECONNREFUSED**(服务确实没在跑)才放行,服务在跑就拒绝——这是 D-4 的真互斥,不再是口头纪律。`--ref` 给这笔操作一个固定幂等键,结果不明时可安全重跑,缺省时打印警告并每次新增一笔。`reset-password.mjs`/`disable-user.mjs` 同一套路径。
 
 **API 面**:`GET /api/me` 新增 `balance:{balanceCny,reservedCny,availableCny}` 与 `prices`(整张售价表,供前端本地算「本次约 ¥x」而不必二次请求)。`POST /api/jobs`/`retry` 余额不足返回 `402 insufficient_balance`。
 

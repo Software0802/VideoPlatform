@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { expect, test, type Page } from "@playwright/test";
-import { serverDataDir } from "./invites";
+import { E2E_ADMIN_TOKEN, e2eBaseUrl } from "./paths";
 
 /**
  * 订阅页（方案 `docs/plan-agent-i18n-subscription-2026-09.md` §3.3）。
@@ -38,7 +38,15 @@ async function balanceCny(page: Page): Promise<number> {
   return me.balance?.balanceCny ?? 0;
 }
 
-/** 充值走真正的管理员 CLI（和 `auth.setup.ts` 同一条路径，顺带验证它还能跑）。 */
+/**
+ * 充值走真正的管理员 CLI（和 `auth.setup.ts` 同一条路径，顺带验证它还能跑）。
+ *
+ * 必须是 HTTP 管理接口：R4.1 起 `--offline` 直写文件会先探测服务，只有
+ * ECONNREFUSED 才放行（`scripts/lib/admin-client.mjs` 的 `assertServiceStopped`），
+ * 而 Playwright 全程有服务在 `e2eBaseUrl()` 上——服务在跑时直写还会把它那次
+ * `withUserLock` 的写盘整份覆盖掉。探测打的是同一个地址，所以这里也用同一个
+ * `e2eBaseUrl()`：端口一旦和 `baseURL` 分家，成绿成红就只取决于 3000 上有没有人应答。
+ */
 async function fund(page: Page, amountCny: number): Promise<void> {
   const me = (await (await page.request.get("/api/me")).json()) as { email: string };
   const script = path.resolve(__dirname, "../scripts/grant-balance.mjs");
@@ -48,13 +56,18 @@ async function fund(page: Page, amountCny: number): Promise<void> {
       script,
       me.email,
       String(amountCny),
-      "--offline",
       "--ref",
       `e2e-fund:${me.email}:${Date.now()}`,
       "--note",
       "playwright subscription",
     ],
-    { env: { ...process.env, DATA_DIR: await serverDataDir() } },
+    {
+      env: {
+        ...process.env,
+        LUMEN_ADMIN_TOKEN: E2E_ADMIN_TOKEN,
+        LUMEN_ADMIN_BASE_URL: e2eBaseUrl(),
+      },
+    },
   );
 }
 

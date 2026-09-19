@@ -67,7 +67,7 @@
 ## 验证、评审与运维
 
 - 代码门禁依次为 `pnpm typecheck`（自带清 `.next/dev/types`）、`pnpm exec eslint src e2e scripts`、`pnpm test`；全绿才完成，不能依赖 dev 遗留类型。CI Ubuntu 同样执行并安装原生依赖。
-- UI 必跑 `pnpm e2e`（mock）；隔离用 E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1、独立 E2E_PORT。中文断言保留 zh-CN locale/accept-language，不把真实 key 导致的 skip 当通过。
+- UI 必跑 `pnpm e2e`（mock）；隔离用 E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1、E2E_PORT 仅本机。中文断言保留 zh-CN locale/accept-language，不把真实 key 导致的 skip 当通过。
 - 端到端清单以 `e2e/*.spec.ts` 为准；画布冲突用独立文档与真实 PATCH 409 断言。移动端核对 375/390/768，软键盘需真机验证。
 - 探索用 Playwright MCP，回归用 pnpm e2e；面板截图空白时用真实浏览器复核，不凭空断定 UI 消失。
 - PR 意见逐条判定；成立的修复推送后在原线程用 gh api 回复提交号与验证再标已解决，不成立的说明理由；只回复已推送事实，不预告「将要修」。

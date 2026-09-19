@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { expect, test as setup, type APIRequestContext } from "@playwright/test";
 import { dataDirCandidates, newInviteCode, writeInvite } from "./invites";
-import { DATA_DIR_HINT, E2E_ADMIN_TOKEN, STORAGE_STATE } from "./paths";
+import { DATA_DIR_HINT, E2E_ADMIN_TOKEN, STORAGE_STATE, e2eBaseUrl } from "./paths";
 
 /**
  * Every `/api/*` route now needs a session (plan §4), so the smoke suite has to
@@ -43,7 +43,6 @@ async function mintInvite(dataDir: string): Promise<{ code: string; file: string
  */
 async function fundAccount(): Promise<void> {
   const script = path.resolve(__dirname, "../scripts/grant-balance.mjs");
-  const base = process.env.E2E_BASE_URL ?? `http://localhost:${process.env.E2E_PORT ?? 3000}`;
   // --ref 让 setup 重跑同一账号时不重复入账（同 ref 重放返回原记录）。
   await promisify(execFile)(
     process.execPath,
@@ -52,7 +51,7 @@ async function fundAccount(): Promise<void> {
       env: {
         ...process.env,
         LUMEN_ADMIN_TOKEN: E2E_ADMIN_TOKEN,
-        LUMEN_ADMIN_BASE_URL: base,
+        LUMEN_ADMIN_BASE_URL: e2eBaseUrl(),
       },
     },
   );

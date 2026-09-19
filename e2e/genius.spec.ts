@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { newInviteCode, serverDataDir, writeInvite } from "./invites";
-import { E2E_ADMIN_TOKEN } from "./paths";
+import { E2E_ADMIN_TOKEN, e2eBaseUrl } from "./paths";
 
 /**
  * Smoke suite for the Genius App shell (docs/plan-ui-genius-app.md §7 DOM contract:
@@ -934,14 +934,13 @@ test("礼品码：兑换到账、重复兑换被拒、账单记录能看到这�
   //（服务在跑，HTTP 路径；`--offline` 要求服务停止，这里不可用），顺带在每次
   // e2e 里验证这个脚本还能跑。stdout 每行一个码，统计信息走 stderr。
   const dataDir = await serverDataDir();
-  const base = process.env.E2E_BASE_URL ?? `http://localhost:${process.env.E2E_PORT ?? 3000}`;
   const script = path.resolve(__dirname, "../scripts/mint-gift-codes.mjs");
   const { stdout } = await promisify(execFile)(process.execPath, [script, "1", "20", "--note", "playwright e2e"], {
     env: {
       ...process.env,
       DATA_DIR: dataDir,
       LUMEN_ADMIN_TOKEN: E2E_ADMIN_TOKEN,
-      LUMEN_ADMIN_BASE_URL: base,
+      LUMEN_ADMIN_BASE_URL: e2eBaseUrl(),
     },
   });
   const code = stdout.trim().split(/\r?\n/).filter(Boolean).pop() ?? "";

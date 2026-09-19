@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { serverDataDir } from "./invites";
-import { E2E_ADMIN_USER_ID, E2E_SESSION_SECRET } from "./paths";
+import { E2E_ADMIN_USER_ID, E2E_SESSION_SECRET, e2eBaseUrl } from "./paths";
 
 /**
  * `/admin/relays` 中转管理页（N3.5，方案 plan-relay-provider §4b）。
@@ -21,7 +21,7 @@ import { E2E_ADMIN_USER_ID, E2E_SESSION_SECRET } from "./paths";
 const ADMIN_ID = E2E_ADMIN_USER_ID;
 const ADMIN_EMAIL = "e2e-admin@lumen.test";
 
-const BASE = process.env.E2E_BASE_URL ?? `http://localhost:${process.env.E2E_PORT ?? 3000}`;
+const BASE = e2eBaseUrl();
 
 type Health = { ok: boolean; mockMode: boolean };
 
