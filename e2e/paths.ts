@@ -13,11 +13,13 @@ export const STORAGE_STATE = path.join(__dirname, ".auth/session.json");
 /**
  * 服务跑在哪个端口，以及浏览器与管理 CLI 都该打的地址。
  *
- * 一份推导，四个调用点（`playwright.config.ts` 的 `baseURL`/`webServer`，以及
+ * 一份推导，五个调用点（`playwright.config.ts` 的 `baseURL`/`webServer`；
  * `auth.setup.ts` / `genius.spec.ts` / `subscription.spec.ts` 里调管理 CLI 的
- * `LUMEN_ADMIN_BASE_URL`）。之前这段是各处手抄的，`subscription.spec.ts` 那份
- * 干脆没抄、改传 `--offline` 直写文件——`--offline` 要求服务确实没在跑，于是
- * 本机（挪开 `E2E_PORT`，3000 空着）绿、CI（不设 `E2E_PORT`，服务正在 3000）红，
+ * `LUMEN_ADMIN_BASE_URL`；`admin.spec.ts` 里种伪造会话 Cookie 的 url——它必须和
+ * 浏览器实际访问的地址同域，否则 Cookie 直接不发）。之前这段是各处手抄的，
+ * `subscription.spec.ts` 那份干脆没抄、改传 `--offline` 直写文件——`--offline`
+ * 要求服务确实没在跑，于是本机（挪开 `E2E_PORT`，3000 空着）绿、
+ * CI（不设 `E2E_PORT`，服务正在 3000）红，
  * 定时 e2e 连红六次。共用一个函数就没有「某一处没跟上」的余地。
  */
 export const E2E_PORT = Number(process.env.E2E_PORT ?? 3000);
