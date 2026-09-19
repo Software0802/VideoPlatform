@@ -151,7 +151,7 @@ R5.2 已落地（`b1c71d0`）：`ShellContext` 拆为 `shell/{Session,Notices,Jo
 1. **登录态核对**：生产 `/api/health` 的 `build.sha` 应为 `83065c7…`；`/api/models`、`/api/agent/skills`（7 个模型 + `off`）、铃铛与历史抽屉「已归档」在真实账号下过一眼。归档 sweep 首次将在部署后 1 小时的维护 tick 执行，默认 90 天阈值，生产目前不会有对象。
 2. **告警渠道**：`LUMEN_ADMIN_TOKEN` 已配置并实测生效（loopback→200 `{sent:false}`、公网→401，见 runbook「管理 CLI」节）；`.env` 仍待填 `ALERT_WEBHOOK_URL` + `ALERT_WEBHOOK_FORMAT`（feishu/dingtalk/wecom/generic）+ `ALERT_WEBHOOK_SECRET`（飞书/钉钉签名密钥），配后跑 `sudo -u genius node scripts/alert-test.mjs` 做真实触发验证（钉钉自定义机器人关键词填 `Lumen`）。
 3. **备份异地副本**：`.env` 配 `BACKUP_OSS_BUCKET`/`BACKUP_OSS_PREFIX`/`BACKUP_ENC_PASSPHRASE`/`OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET`/`OSS_REGION`（或 `OSS_ENDPOINT`），安装 ossutil 2.x（见 runbook 备份节）；首次 `--compare` 核对已做，完整恢复演练（解包→切换→验证）待执行。
-4. **R3 预算加档**：已批 ¥20 总额，不够任何一档——scene-only ≈¥117–145 / 全 8 条 ≈¥350–425（报价见 plan R3 节），本轮 ¥0 支出、未开跑。要出阈值得批到 scene-only 那一档；全量评测还另需**两张授权人物照**（`evals/README.md` 登记要求）。真开跑时按 `evals/README.md`「预算与阻塞」逐任务手工累加，`budgetCap` 只守单条任务不守总额。
+4. **R3 预算加档**：已批 ¥20 总额，不够任何一档——scene-only ≈¥117–145 / 全 8 条 ≈¥350–425（报价见 plan R3 节），本轮 ¥0 支出、未开跑。要出阈值得批到 scene-only 那一档；全量评测还另需**两张授权人物照**（`evals/README.md` 登记要求）。真开跑时按 `evals/README.md`「预算与阻塞」逐任务手工累加。
 5. **R2.4**：提供 YMan 账单实付积分以核对 `minimax-h3` 真实成本（`costUsdActual` 现为兜底估价）。
 6. R4 后续（非生产窗口）：索引增量写；SQLite 仅在 §3.2 触发条件（多写者 / `admission_ms` p95 超阈 / 备份约束）成立时选型——health 已有 `admission.wait/hold` 分位数可观测。
 
