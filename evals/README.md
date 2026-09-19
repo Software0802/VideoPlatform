@@ -51,7 +51,7 @@ pnpm run evals:check
 拿到预算真要开跑时，计量只能按任务手工累加——**没有跨任务的人民币总额闸门**：
 
 1. 提交后先从 job 记录读 `costUsdEstimate`，确认 `costUsdEstimate × 2 × USD_CNY_RATE` 还在剩余额度内再让它跑下去；顶不住就当场取消，别指望 `budgetCap` 替你守总额，它只守单条任务。
-2. 跑完记 `costUsdActual`；`costIncomplete` 为真时这个数是下界（UI 显示「≥」），按下界记账等于低估。
+2. 跑完从 job 记录（或 `GET /api/jobs/:id` 的 DTO）读 `costUsdActual` 与 `costIncomplete`：没有任何界面显示这两个字段，只能自己读。`costIncomplete` 为真时 `costUsdActual` 只是下界，照它记账等于低估。
 3. `costOverTarget` 一置位就停下来分析，别连着跑下一条。
 4. 失败的尝试同样计费、同样进 `evals/runs`（`harnessProtocol.denominatorRule`：失败样本不得移出分母）。
 
