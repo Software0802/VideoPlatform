@@ -36,6 +36,8 @@ describe("backup facts whitelist", () => {
       "assets/usr_0000000000000001/asset_fixture": "canvas image",
       "assets/usr_0000000000000001/asset_fixture.json": "{}",
       "notifications/usr_0000000000000001.json": "{}",
+      // 文件化技能是运维手写的，仓库里没有副本：丢了只能重写，所以进白名单。
+      "skills/unbox/SKILL.md": "---\nname: 竖屏开箱\n---\n手持跟拍。",
       "jobs/job_fixture/job.json": "{}",
       "jobs/job_fixture/outputs/video.mp4": "generated media",
       "tmp/up_fixture": "temporary image",
@@ -62,6 +64,7 @@ describe("backup facts whitelist", () => {
     expect(entries).toContain("relays.json");
     expect(entries).toContain("assets/usr_0000000000000001/asset_fixture");
     expect(entries).toContain("notifications/usr_0000000000000001.json");
+    expect(entries).toContain("skills/unbox/SKILL.md");
     expect(entries).toContain("jobs/job_fixture/job.json");
     expect(entries).not.toContain("jobs/job_fixture/outputs/video.mp4");
     expect(entries).not.toContain("tmp/up_fixture");

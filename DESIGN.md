@@ -66,10 +66,10 @@ wait:
 
 ## 五个视图
 
-1. **主页 `/`**：活动横幅占位槽 → 标签页 视频 / 图片 / 模板 / 挑战（本轮为给文生图作品加入口新增「图片」，模板/挑战 `aria-disabled`）→ 分类芯片（仅样式）→ 瀑布流 `columns:220px 5` 展示用户真实作品（`jobs` 中 `status==="succeeded"`，按 `output.kind` 分视频/图片），卡片标题胶囊 + hover 上浮，点击开详情浮层（播放器/图片 + 元信息 +「用这条提示词再生成」+「下载」）；`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡；未清理但 `artifactsExpireAt` 剩 ≤7 天的卡片加 `.masonry__expiring` 角标（积分金），详情浮层常驻一行 `.work__expire` 写明保留到哪天、还剩几天、到期前请下载（倒计时只在挂载后算，首屏 SSR 不渲染）；无作品用样片占位并提示「还没有作品」。底部收起态输入条点击展开创作面板。
+1. **主页 `/`**：活动横幅（`button.home__banner`：运营标了 `challenge` 的模板存在时显示它的封面与名字、点进「挑战」页签；一条都没有时是「开始创作」，点了展开创作面板——它一直是个会做事的按钮，不是装饰图）→ 标签页 视频 / 图片 / 模板 / 挑战（模板与挑战同读 `GET /api/templates`，挑战只列 `challenge:true` 的那几条，没有时显示「当前没有进行中的挑战」）→ 分类芯片（仅样式）→ 瀑布流 `columns:220px 5` 展示用户真实作品（`jobs` 中 `status==="succeeded"`，按 `output.kind` 分视频/图片），卡片标题胶囊 + hover 上浮，点击开详情浮层（播放器/图片 + 元信息 +「用这条提示词再生成」+「下载」）；`artifactsPurgedAt` 非空显示「作品已过期清理」占位卡；未清理但 `artifactsExpireAt` 剩 ≤7 天的卡片加 `.masonry__expiring` 角标（积分金），详情浮层常驻一行 `.work__expire` 写明保留到哪天、还剩几天、到期前请下载（倒计时只在挂载后算，首屏 SSR 不渲染）；无作品用样片占位并提示「还没有作品」。底部收起态输入条点击展开创作面板。
 2. **创作页 `/create`**：上部「当前任务」区（阶段行 / 百分比 / 分镜 n/m / 成片 / 失败原因 / 取消 / 重新生成；`retryBlocked` 非空时显示阻断说明并隐藏「重新生成」；`artifactsPurgedAt` 非空同样禁止重试）+ 下方「最近任务」列表；创作面板默认展开。内容块底部留白 236px（`main` 本身不留，避免主页等其它视图也被顶开）。
 3. **智能体 `/agent`**（见 `docs/design.md` §2h）：首屏渐变标题 + 输入卡 + 技能卡片网格（20 个技能来自 `GET /api/agent/skills`），首页与会话输入行共用 `AgentPickers` 四枚芯片：对话模型（弹层内分「对话模型」与只调发散度/篇幅的「创意档」）、图片产品、视频产品、技能；切换只影响下一轮。技能广场开关是账号级偏好（`PATCH /api/agent/skills`，多设备一致），历史抽屉读真实会话并可展开「已归档」。会话页每条待批 action 用 `.agent-chat__proposal-product` 标明实际产品与报价，助手用 `.agent-chat__meta[data-model]` 落款实际模型和创意档；右侧资产栏跟进任务并可预览。服务端没配对话 provider/白名单时整个视图置灰显示「智能体暂未开放」。
-4. **画布 `/canvas`**（2026-09-11/12 起接真数据，见 `docs/design.md` §2j）：空态 → 900×620 作者坐标场景层（`fit×zoom` 缩放）→ 右键建四类节点（文本/素材/文生图/生成视频）、拖拽定位、文本与提示词防抖 600ms 落盘（`PATCH` 带 `expectedRevision`，409 保留本地并弹二选一，不静默覆盖）；素材节点保存独立 `assetId`，明示 30 天期限、刷新可预览，过期/缺失显示重新上传；富文本条/提示词面板/模型列表/工具箱抽屉沿用原型本地交互。窄屏（≤560px）不按 fit 缩小场景层（375 下会缩到 0.23、节点小到不可点），固定 1:1 靠 `.canvas-scroll` 滚动平移，左侧不给未渲染的工具箱留位，`.canvas-topright__btn` 铺成整行 40px；建节点除右键外支持长按 500ms（开菜单后 400ms 内不接受点击），节点拖拽走 `pointerdown` + `pointercancel`、手柄 `touch-action:none`，`@media (hover:none)` 下删除钮常显并加大热区。顶栏「运行整图」→ `.canvas-quote` 报价弹层（逐节点价 + 复用行「重跑」勾选 + 可执行行「执行前需我批准」勾选——生成视频节点默认勾 + 合计）→ 确认建 run；节点徽标 `.canvas-node__exec[data-exec]` 显示执行态（待批准/已复用/已跳过等），`awaiting_approval` 节点带「批准/驳回」按钮，产物以真实 `<img>` / `<video controls>` 展示；3s 轮询 run，运行中可「取消运行」。
+4. **画布 `/canvas`**（2026-09-11/12 起接真数据，见 `docs/design.md` §2j）：空态 → 900×620 作者坐标场景层（`fit×zoom` 缩放）→ 右键建四类节点（文本/素材/文生图/生成视频）、拖拽定位、文本与提示词防抖 600ms 落盘（`PATCH` 带 `expectedRevision`，409 保留本地并弹二选一，不静默覆盖）；素材节点保存独立 `assetId`，明示 30 天期限、刷新可预览，过期/缺失显示重新上传。左侧 `.canvas-tools` 工具栏（`FIT_PAD_X=108` 本来就给它留着位）两枚按钮都接真行为：「添加节点」开右键那份菜单，「工具箱」开 `.canvas-toolbox` 抽屉——抽屉两个页签是真数据（模板读 `GET /api/templates`、我的作品读 `GET /api/jobs` 里成功作品的提示词去重），搜索与图像/视频分类是本地过滤，「应用到画布」新建一个对应类型的生成节点并填好提示词。生成节点标签条下多一枚 `.canvas-model` 芯片（`GET /api/models` 按节点类型收窄，弹层 `.canvas-modelpop` 往下开、不被正文的 `overflow:hidden` 裁掉），选中写进 `node.product`——报价与运行早就认这个字段，只是此前没有界面能写它；「自动」= 不点名，交回服务端按能力路由。左下 `.canvas-bottom` 是缩放条（滑杆 0.5–2 叠在 fit 之上，「适应画布」拨回 1，右侧读数是最终倍率）。窄屏（≤560px）这两条都不渲染。空画布的提示里另给两枚 `.canvas-entry` 直接建「文本 / 生成视频」节点——右键不是所有设备都有。窄屏（≤560px）不按 fit 缩小场景层（375 下会缩到 0.23、节点小到不可点），固定 1:1 靠 `.canvas-scroll` 滚动平移，左侧不给未渲染的工具箱留位，`.canvas-topright__btn` 铺成整行 40px；建节点除右键外支持长按 500ms（开菜单后 400ms 内不接受点击），节点拖拽走 `pointerdown` + `pointercancel`、手柄 `touch-action:none`，`@media (hover:none)` 下删除钮常显并加大热区。顶栏「运行整图」→ `.canvas-quote` 报价弹层（逐节点价 + 复用行「重跑」勾选 + 可执行行「执行前需我批准」勾选——生成视频节点默认勾 + 合计 + 次要动作「导出工作流」，把这次要跑的步骤与人审门存成 `<canvasId>.workflow.json`，只读不建 run）→ 确认建 run；节点徽标 `.canvas-node__exec[data-exec]` 显示执行态（待批准/已复用/已跳过等），`awaiting_approval` 节点带「批准/驳回」按钮，产物以真实 `<img>` / `<video controls>` 展示；3s 轮询 run，运行中可「取消运行」。
 5. **订阅 `/subscription`**（2026-09-07 凌晨起接真数据，见 `docs/design.md` §2i）：我的方案卡显示当前档位/到期日/会员积分/今日已发日积分/已购余额，兑换礼品码与流水抽屉；四档卡片是真实人民币价格（`costRatio` 成本 ÷ (1−15%毛利率) 推得，非占位值），年/月切换，「订阅」按钮真的调用 `POST /api/subscription` 从已购余额扣款，成功后刷新顶栏并 toast，余额不足提示「余额不足，请先兑换礼品码」。
 
 ### 管理页 `/admin/relays`（N3.5，2026-09-13 落地）
@@ -102,7 +102,7 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 
 - 能力与账号：`caps`（`mock/harness/videoDurations/videoAspectRatios/imageAspectRatios/videoModel/imageModel/audioAvailable/initialEmail/isAdmin/initialJobs`，由 `(shell)/layout.tsx` 服务端下发；`isAdmin` 只决定「中转管理」入口露不露，权限判定仍在服务端）、`me`（`GET /api/me`）、`credits`（`Math.round(availableCny*100)`，¥1=100 积分仅显示，余额模型与后端计费不变）。
 - 任务：`jobs`、`currentJob`（派生值 = 显式选中的那条 ?? 最新一条，`setCurrentJob(null)` 才真正清空，方案 §7.1 #8）、`busy`/`working`、`cancel`/`retry`。
-- 面板：`open/tab(video|image|audio)/mode(VIDEO_MODES 之一，只有"图文"接后端)/collapsed/pop(null|specs|model|buddy|picker)/prompt/res/imageRes/ratio/ratios/dur/durs/audio/multi/image(Frame:首帧上传)/nativeMode(text_to_video|image_to_video|text_to_image)/price/sendCredits/balanceShort/quotaExhausted/error/notice`。
+- 面板：`open/tab(video|image|audio)/mode(VIDEO_MODES 之一)/collapsed/pop(null|specs|model|count|buddy|picker|template)/prompt/res/imageRes/ratio/ratios/dur/durs/audio/multi/image(Frame:首帧上传)/nativeMode(text_to_video|image_to_video|text_to_image)/price/sendCredits/balanceShort/quotaExhausted/error/notice`。`multi` 是**派生值**（当前时长在不在 30/45/60 长片档），开关点一下就在长片档与常规档之间切时长——它不是请求体字段，`createJobBodySchema` 里也没有它。「创作搭子」（`.buddy`）不再是占位浮层：输入框带着面板里的提示词过来，发送就是 `/agent?q=…`，由真的智能体接着聊。
 - 提交：`submit()` 走 `createJobBodySchema`（strict）；2026-09-06 夜阶段 A 起可带可选 `model`（选中产品的 id，见下「模型下拉」），未选则不传字段、沿用能力路由。幂等 key 一次逻辑创作一个（`idempotencyKey.current ??= newIdempotencyKey()`，提交成功清空，任何面板改动作废）；数量 1–4 时循环创建 N 次、各自一个幂等 key（串行提交，非批量并发）。
 
 ## 阶段 A 新增规格（2026-09-06 夜，方案 `docs/plan-frontend-backend-adaptation.md`）
@@ -120,13 +120,14 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 - 规格弹层无「预览模式」开关与「剩余试用」文案（后端没有配额档位这个概念）；分辨率/宽高比/时长只列当前产品（或无产品时服务端）下发的枚举，不画交接包里的 21:9、360P/540P 等占位档。
 - `.composer__specs` 用 `font-size:0` 的分隔 `span` 保证 `textContent` 精确等于 `720P | 16:9 | 5s`（e2e 依赖精确字符串）。
 - 创作页内容块底部留白 236px，`main` 本身不留（避免其它视图也被顶开）。
-- 图片页图片槽置灰显示「即将上线」（后端图片路径不支持首帧）。
+- 图片页图片槽置灰（后端图片路径不支持首帧）。
 - 创作面板关闭态仍留在 DOM（`hidden` + `data-open="false"`），不是条件渲染，便于状态保留与 e2e 断言。
 - 窄屏（≤900px）侧栏收成 56px 图标栏，导航文字用 `clip-path` 隐藏而非 `display:none`；移动端回归（`e2e/mobile.spec.ts`，375/390/768 三档）另修过：≤560px 规格弹层与画布报价层改为左右贴边全宽、智能体两列改单列横滑、≤400px 隐藏顶栏装饰性小头像；对话框类弹层统一支持 Esc 收层；画布在这一档改为 1:1 + 平移（见上）。
 - 头像菜单是 disclosure 语义（按钮+条件渲染的菜单容器），不是 `role="menu"`/`role="menuitem"`。
 - 进入技能广场 / 会话页（智能体视图的子状态）时顶栏标题仍固定显示「智能体」；画布视图顶栏标题固定「画布」——顶栏标题只跟五视图路由走，不感知视图内部 state（未做「视图内子页上报标题」的接口）。
-- 右键菜单的节点类型名与节点标签走 `t("canvas.kind.*")`，中文态显示中文（非原型的英文占位）；原型的 `CanvasToolbox.tsx`（左侧工具箱抽屉）未被任何组件引用，未接入实际画布。
-- 画布视图沿用原型的本地交互细节：工具箱搜索是本地过滤；右键（触屏长按）弹出节点类型菜单。
+- 右键菜单的节点类型名与节点标签走 `t("canvas.kind.*")`，中文态显示中文（非原型的英文占位）。
+- 画布视图沿用原型的本地交互细节：工具箱搜索与分类是本地过滤；右键（触屏长按）弹出节点类型菜单。原型里的富文本条、骨架屏、结果卡、播放进度条与写死的模型列表没有对应实现，对应的 TSX/CSS/字典条目已删——画布产物一直是真实 `<img>` / `<video controls>`。
+- 图片槽置灰、`edit` / `extend` / `motion` 三个模式置灰都保留，但**不再说「即将上线」**：`modeReason()` 给的是具体理由（当前产品不支持 / 平台没开这条路），`title` 与 toast 用同一句。
 - 中转管理页的排序用「上移/下移」按钮交换相邻 `priority`（两次 PATCH），不用计划书 §4b 的拖动排序——移动端与可访问性优先（键盘可达、无 pointer 捕获复杂性）。
 - 模型下拉按供应商分组并显示 `providerName` / `upstreamModel` / `costHint`（R2.3 起），不再沿用「只显示产品名」——DTO 白名单本就下发这三个字段，敏感面在接口不在弹层。
 
@@ -145,8 +146,8 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 | 顶栏积分 | `.top__credits`，`aria-label="积分 n"` |
 | 收起态输入条（主页） | `button.bar`，名 `描述你想创作的内容` |
 | 创作面板 | `.composer[data-open][data-tab][data-mode]`（`data-mode` 报后端模式名，放首帧后 `text_to_video`→`image_to_video`） |
-| 面板标签页 | `role="tab"` 名 `视频/图片/音频` + `aria-selected` |
-| 模式行 | `role="radio"` 名 `图文/参考/...` + `aria-checked`，不可用项 `aria-disabled="true"` |
+| 面板标签页 | `role="tab"` 名 `视频/图片/音频` + `aria-selected`；音频页渲染 `.composer__audio-page`（能出声的产品列表 + 说明），`.composer__opts` 整行 `hidden`——这一页没有提交路径 |
+| 模式行 | `role="radio"` 名 `图文/参考/...` + `aria-checked`，不可用项 `aria-disabled="true"` 且 `title` 是具体理由；`模板` 不在单选组里，是 `.composer__mode--tpl` 按钮（`aria-haspopup="dialog"`）开 `.tpl-pop` |
 | 提示词 | `textarea` `aria-label="提示词"`，计数器 `#composer-prompt-count`（`.composer__count[data-warn]`，由 `aria-describedby` 指向） |
 | 规格芯片/弹层 | `.composer__specs` 文本如 `720P \| 16:9 \| 5s`；`.specs-pop` 内 `button[data-res]/[data-ratio]/[data-dur]`，选中 `aria-pressed="true"` |
 | 音频开关 | `.composer__audio[role="switch"]`，`aria-checked` |
@@ -169,6 +170,11 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 | 画布报价弹层 | `.canvas-quote[role="dialog"]`，行内勾选 `重跑`/`执行前需我批准`，按钮 `确认运行`/`取消` |
 | 画布节点执行态 | `.canvas-node__exec[data-exec]`；`awaiting_approval` 时 `.canvas-node__approve` 按钮名 `批准`/`驳回` |
 | 画布节点删除 | `.canvas-node__del`（名 `删除节点`）；节点有提示词 / 素材 / 产物时先出 `.canvas-node__confirm[role="alertdialog"]`，空节点直接删 |
+| 画布左侧工具栏 | `.canvas-tools__add`（名 `添加节点`）开右键菜单；`.canvas-tools__btn`（名 `工具箱`，`aria-expanded`）开 `.canvas-toolbox` |
+| 画布工具箱 | `.canvas-toolbox` 内 `.canvas-tool` 行 + 按钮 `应用到画布`；页签 `.canvas-toolbox__tab[data-tab="template|mine"]`；分类 `.canvas-toolbox__cat[data-cat]` |
+| 画布节点模型 | `.canvas-model`（名 `选择模型`，`data-product-id` 为空即「自动」）开 `.canvas-modelpop`，项 `[data-product-id]` |
+| 画布导出工作流 | 报价弹层内按钮 `导出工作流`，下载 `<canvasId>.workflow.json` |
+| 主页活动横幅 | `button.home__banner`；有挑战时 `data-challenge=<templateId>` 且文本是挑战名，否则文本 `开始创作` |
 | 画布等待态 | `.canvas-node[data-wait="model"\|"approval"]`（`NodeCard.tsx` 导出 `waitStateOf()`）；连线 `.canvas-wires path[data-wait="model"]`；运行中 `.canvas-view[data-running="true"]` |
 | 头像菜单 | 按钮 `.top__avatar`，菜单内按钮 `账户`/`修改密码`/`退出` |
 | 账户页 | `/account` 三卡 `.account__card`（账号/余额/安全）；「退出全部设备」为 `role="alertdialog"` 页内二次确认 |

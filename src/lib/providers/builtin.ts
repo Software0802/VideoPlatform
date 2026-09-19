@@ -1,5 +1,4 @@
 import { grokNativeProvider } from "@/lib/providers/grok/native";
-import { jimengProvider } from "@/lib/providers/jimeng";
 import { klingProvider } from "@/lib/providers/kling/native";
 import { mockProvider } from "@/lib/providers/mock";
 import { assembleRelays } from "@/lib/providers/relay/assemble";
@@ -12,13 +11,14 @@ import { registerProvider } from "@/lib/providers/registry";
  * 反向 import 各 native 会绕成循环依赖。凡是会碰到注册表的代码路径都经
  * `router.ts`（它 import 本模块）。
  *
- * grok / mock / jimeng / kling 是代码内建；openai 与 yman 以及全部 relay 由
+ * grok / mock / kling 是代码内建；openai 与 yman 以及全部 relay 由
  * `relay/assemble.ts` 按 `data/relays.json` / `LUMEN_RELAYS` / 老 env 折算注册
- * （含 mtime 热重载），不在这里写死。
+ * （含 mtime 热重载），不在这里写死。即梦（`jimeng`）不是内建项：它没有可用凭据，
+ * 也没有一份可照着实现的协议，所以留成一个**普通 relay id**——配好接入点就能跑，
+ * 不配就跟任何未配置的 relay 一样不参与路由。
  */
 registerProvider(grokNativeProvider);
 registerProvider(mockProvider);
-registerProvider(jimengProvider);
 registerProvider(klingProvider);
 
 assembleRelays();

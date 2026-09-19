@@ -1,6 +1,6 @@
 /** 命名空间 `home`：主页瀑布流、模板页签、作品详情浮层，键统一以 `home.` 开头。 */
 export const home = {
-  "home.banner": "活动横幅",
+  "home.banner.cta": "开始创作",
   "home.tabs.aria": "作品分类",
   "home.tab.video": "视频",
   "home.tab.image": "图片",
@@ -22,7 +22,6 @@ export const home = {
   "home.empty.noImage": "还没有图片作品。",
   "home.empty.noneInCat": "这一类还没有作品，换个分类看看。",
   "home.more": "加载更多",
-  "home.loadFailed": "读取失败，请稍后再试",
 
   "home.sampleMeta": "样片",
   "home.noPrompt": "（无提示词，以首帧为准）",
@@ -57,6 +56,7 @@ export const home = {
 
   "home.tpl.loading": "读取模板中…",
   "home.tpl.empty": "还没有可用的模板。",
+  "home.challenge.empty": "当前没有进行中的挑战。",
 
   /* 空态样片的提示词（`/public/lumina/<id>.webp`，本身不是用户作品） */
   "home.sample.2e9cde0e2fb0803e": "玉米田深处，一个穿银色防护服的人走来",

@@ -17,6 +17,7 @@ import {
   decideCanvasRunApprovalApi,
   fetchCanvas,
   fetchCanvasRuns,
+  fetchCanvasWorkflow,
   fetchCanvases,
   newCanvasEdgeId,
   newCanvasNodeId,
@@ -32,28 +33,36 @@ import {
 } from "@/lib/client/canvas";
 import { ApiError } from "@/lib/client/http";
 import { newIdempotencyKey, uploadFile } from "@/lib/client/jobs";
+import { fetchProducts, type Product } from "@/lib/client/models";
 import { errorText } from "@/lib/i18n/errorText";
 import { useDialogFocus } from "@/components/genius/useDialogFocus";
 import type { JobPublic } from "@/lib/jobs/schema";
+import CanvasToolbox, { type ToolboxPick } from "./CanvasToolbox";
 import { ConflictDialog } from "./ConflictDialog";
 import {
   FIT_PAD_X,
   FIT_PAD_X_NARROW,
   FIT_PAD_Y,
   LABEL_H,
+  MAX_ZOOM,
   MIN_SCALE_NARROW,
+  MIN_ZOOM,
   NARROW_W,
   NODE_W,
   SCENE_H,
   SCENE_W,
+  ZOOM_STEP,
 } from "./data";
 import { NodeCard, waitStateOf } from "./NodeCard";
 import { QuoteDialog, RunBar } from "./QuoteDialog";
 import { useCanvasPolling } from "./useCanvasPolling";
 import {
   IconCursor,
+  IconFit,
   IconImage,
+  IconPlus,
   IconText,
+  IconToolbox,
   IconVideo,
 } from "./icons";
 import { clamp } from "./util";
@@ -135,9 +144,14 @@ export default function CanvasView() {
   const [jobs, setJobs] = useState<Record<string, JobPublic>>({});
   const [missingMaterials, setMissingMaterials] = useState<Set<string>>(new Set());
   const [fit, setFit] = useState(1);
+  /** 手动缩放：叠在 fit 之上，底部工具条写它（`适应画布` 把它拨回 1）。 */
+  const [zoom, setZoom] = useState(1);
   const [menu, setMenu] = useState<MenuPos | null>(null);
+  const [toolbox, setToolbox] = useState(false);
   const [running, setRunning] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  /** `GET /api/models` 的产品表：节点上的模型芯片按它列，拉不到就不显示芯片。 */
+  const [products, setProducts] = useState<Product[]>([]);
   // D 包：最新一次整图运行（展示 overlay）+ 报价弹层 + 提交中状态。
   const [latestRun, setLatestRun] = useState<CanvasRun | null>(null);
   const [quote, setQuote] = useState<CanvasQuote | null>(null);
@@ -229,6 +243,26 @@ export default function CanvasView() {
     return () => {
       alive = false;
       if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, []);
+
+  /*
+    产品表（`GET /api/models`）：生成节点上的模型芯片按它列，选中的写进 `node.product`
+    ——报价与运行都已经认这个字段（`canvas/graph.ts` 的 `requestedId`）。拉不到就退回
+    「自动」：不点名产品时服务端按能力路由，与这条芯片出现之前的行为一致。
+  */
+  useEffect(() => {
+    let alive = true;
+    void fetchProducts().then(
+      (list) => {
+        if (alive) setProducts(list);
+      },
+      () => {
+        if (alive) setProducts([]);
+      },
+    );
+    return () => {
+      alive = false;
     };
   }, []);
 
@@ -366,7 +400,7 @@ export default function CanvasView() {
     [latestRun],
   );
 
-  const scale = fit;
+  const scale = fit * zoom;
 
   /** 由一次右键 / 长按的视口坐标开菜单：作者坐标给建节点，视图像素坐标给浮层定位。 */
   const openMenuAtClient = useCallback(
@@ -468,6 +502,64 @@ export default function CanvasView() {
     if (kind === "material") {
       materialFor.current = node.id;
       fileRef.current?.click();
+    }
+  };
+
+  /**
+   * 左侧工具栏的「添加节点」：开的是右键那一份菜单，位置贴着按钮。
+   * 触屏与键盘都能到（右键 / 长按之外的第三条入口）。
+   */
+  const openMenuFromRail = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    openMenuAtClient(r.right + 8, r.top);
+  };
+
+  /**
+   * 新节点摆哪儿：按已有节点数走一个四列的格子往下排，`clamp` 保证不出场景。
+   * 不做碰撞检测——节点可以被拖到任何地方，摆重了用户自己拖开就是。
+   * 工具箱与空态入口共用。
+   */
+  const freeSpot = (count: number): { x: number; y: number } => ({
+    x: clamp(0, 120 + (count % 4) * 180, SCENE_W - NODE_W),
+    y: clamp(0, 60 + Math.floor(count / 4) * 150, SCENE_H - 160),
+  });
+
+  /** 工具箱「应用到画布」：新建一个对应类型的生成节点并填好提示词。 */
+  const applyTool = (pick: ToolboxPick) => {
+    const kind: CanvasNode["kind"] = pick.kind === "image" ? "gen_image" : "gen_video";
+    mutate((d) => {
+      const pos = freeSpot(d.nodes.length);
+      return { nodes: [...d.nodes, { id: newCanvasNodeId(), kind, ...pos, prompt: pick.prompt }] };
+    });
+    showToast(t("canvas.toolbox.applied", { name: pick.name }));
+  };
+
+  /** 空态两个入口：直接建一个便签 / 视频节点，不必先知道「这里要右键」。 */
+  const addFirstNode = (kind: CanvasNode["kind"]) => {
+    mutate((d) => {
+      const pos = freeSpot(d.nodes.length);
+      return { nodes: [...d.nodes, { id: newCanvasNodeId(), kind, ...pos }] };
+    });
+  };
+
+  /**
+   * 导出这次要跑的步骤与人审门（`GET /api/canvases/:id/workflow`）。只读，不建 run、
+   * 不报价；带上报价弹层里当下勾的那几道门，导出的就是「确认运行会执行的那张图」。
+   */
+  const exportWorkflow = async () => {
+    if (!doc) return;
+    try {
+      const graph = await fetchCanvasWorkflow(doc.id, [...gates]);
+      const url = URL.createObjectURL(
+        new Blob([`${JSON.stringify(graph, null, 2)}\n`], { type: "application/json" }),
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${doc.id}.workflow.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      showToast(errorText(t, e));
     }
   };
 
@@ -796,6 +888,16 @@ export default function CanvasView() {
                   }))
                 }
                 onInput={(fromId) => setInput(node.id, fromId)}
+                products={products}
+                onProduct={(productId) =>
+                  mutate((d) => ({
+                    nodes: d.nodes.map((n) =>
+                      n.id === node.id
+                        ? { ...n, ...(productId ? { product: productId } : { product: undefined }) }
+                        : n,
+                    ),
+                  }))
+                }
                 onRun={() => void runNode(node.id)}
                 onApproval={(decision) => void decideApproval(node.id, decision)}
               />
@@ -826,10 +928,86 @@ export default function CanvasView() {
         </div>
       ) : null}
 
+      {doc ? (
+        <>
+          {/*
+            左侧工具栏：fit 公式本来就给它留着 108px（`FIT_PAD_X`），在它真被渲染
+            出来之前那段留白没有主人。两个按钮都接真行为——建节点开的是右键那份
+            菜单，工具箱抽屉读真模板与真作品。窄屏（≤560）不渲染，那一档的留白也
+            按 `FIT_PAD_X_NARROW` 收掉。
+          */}
+          <div className="canvas-tools">
+            <button
+              type="button"
+              className="canvas-tools__add"
+              aria-label={t("canvas.tools.add")}
+              title={t("canvas.tools.add")}
+              onClick={openMenuFromRail}
+            >
+              <IconPlus size={19} />
+            </button>
+            <div className="canvas-tools__group">
+              <button
+                type="button"
+                className="canvas-tools__btn"
+                aria-label={t("canvas.tools.toolbox")}
+                title={t("canvas.tools.toolbox")}
+                aria-expanded={toolbox}
+                data-on={toolbox ? "true" : undefined}
+                onClick={() => setToolbox((on) => !on)}
+              >
+                <IconToolbox size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="canvas-bottom">
+            <button
+              type="button"
+              className="canvas-bottom__btn"
+              aria-label={t("canvas.bottom.fit")}
+              title={t("canvas.bottom.fit")}
+              onClick={() => setZoom(1)}
+            >
+              <IconFit size={15} />
+            </button>
+            <span className="canvas-bottom__sep" />
+            <input
+              className="canvas-bottom__slider"
+              type="range"
+              min={MIN_ZOOM}
+              max={MAX_ZOOM}
+              step={ZOOM_STEP}
+              value={zoom}
+              aria-label={t("canvas.bottom.zoom")}
+              onChange={(e) => setZoom(clamp(MIN_ZOOM, Number(e.target.value), MAX_ZOOM))}
+            />
+            <span className="canvas-bottom__pct">{Math.round(scale * 100)}%</span>
+          </div>
+        </>
+      ) : null}
+
+      {toolbox ? <CanvasToolbox onClose={() => setToolbox(false)} onApply={applyTool} /> : null}
+
       {doc && doc.nodes.length === 0 && !menu ? (
         <div className="canvas-empty__hint" style={{ position: "absolute", left: 24, top: 24 }}>
           <IconCursor />
           {t("canvas.empty.rightClick")}
+          {/* 「右键新建」不是所有人都会想到，也不是所有设备都有右键：给两个直给的入口。 */}
+          <span className="canvas-empty__actions">
+            <button type="button" className="canvas-entry" onClick={() => addFirstNode("text")}>
+              <span className="canvas-entry__icon">
+                <IconText size={12} />
+              </span>
+              {t("canvas.kind.text")}
+            </button>
+            <button type="button" className="canvas-entry" onClick={() => addFirstNode("gen_video")}>
+              <span className="canvas-entry__icon">
+                <IconVideo size={12} />
+              </span>
+              {t("canvas.kind.gen_video")}
+            </button>
+          </span>
         </div>
       ) : null}
 
@@ -849,6 +1027,7 @@ export default function CanvasView() {
           regen={regen}
           runBusy={runBusy}
           dialogRef={quoteRef}
+          onExport={() => void exportWorkflow()}
           onToggleGate={toggleGate}
           onToggleRegen={(nodeId, on) => void toggleRegen(nodeId, on)}
           onConfirm={() => void confirmRun()}

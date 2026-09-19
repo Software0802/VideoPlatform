@@ -87,7 +87,7 @@ export interface VideoProvider {
   /**
    * 「这家现在有没有可用的上游 key」。路由第一关（`providers/registry.ts` 的
    * `hasProviderKey`）优先用它；不声明时回落到内置各家的既有判据（`*_API_KEY`
-   * 环境变量 / mock 恒真 / jimeng 占位恒假）。relay 必须声明它（读自己的 `keyEnv`）。
+   * 环境变量 / mock 恒真）。relay 必须声明它（读自己的 `keyEnv`）。
    */
   hasKey?(): boolean;
   capabilities(): {

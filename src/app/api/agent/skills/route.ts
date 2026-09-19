@@ -5,7 +5,7 @@ import { readPrefs, setAgentSkillOff } from "@/lib/prefs/store";
 import { ProviderHttpError } from "@/lib/providers/types";
 import { requireUser } from "@/lib/users/session";
 import { agentAvailable, agentChatModels } from "@/lib/agent/llm";
-import { publicSkills } from "@/lib/agent/skills";
+import { listPublicSkills, type AgentSkillPublic } from "@/lib/agent/skills";
 
 export const runtime = "nodejs";
 
@@ -26,7 +26,7 @@ const patchBodySchema = z
   })
   .strict();
 
-function currentOff(stored: string[], skills: ReturnType<typeof publicSkills>): string[] {
+function currentOff(stored: string[], skills: AgentSkillPublic[]): string[] {
   const current = new Set(skills.map((skill) => skill.id));
   return stored.filter((id) => current.has(id));
 }
@@ -34,7 +34,7 @@ function currentOff(stored: string[], skills: ReturnType<typeof publicSkills>): 
 async function list(request: Request): Promise<Response> {
   try {
     const user = await requireUser(request);
-    const skills = publicSkills();
+    const skills = await listPublicSkills();
     const prefs = await readPrefs(user.id);
     return Response.json({
       skills,
@@ -51,7 +51,7 @@ async function patch(request: Request): Promise<Response> {
   try {
     const user = await requireUser(request);
     const body = patchBodySchema.parse(await request.json());
-    const skills = publicSkills();
+    const skills = await listPublicSkills();
     if (!skills.some((skill) => skill.id === body.skillId)) {
       throw new ProviderHttpError(400, "invalid_argument", "技能不存在");
     }

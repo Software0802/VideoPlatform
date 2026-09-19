@@ -16,7 +16,6 @@ export const common: Record<keyof typeof zh, string> = {
   "common.delete": "Delete",
   "common.save": "Save",
   "common.back": "Back",
-  "common.comingSoon": "Coming soon",
   "common.error.generic": "Something went wrong. Please try again later.",
   "common.error.network": "Network error. Please try again later.",
   "common.credits": "Credits",

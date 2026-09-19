@@ -29,6 +29,11 @@ export const templateSchema = z
     category: z.string().min(1).max(16),
     prompt: z.string().min(1).max(2000),
     mode: nativeModeSchema,
+    /**
+     * 挑战：主页「挑战」页签与活动横幅只列它。是一面**运营开关**，不是另一种模板——
+     * 内容、回填路径与普通模板完全一样，所以不另起一个目录 / 一条路由。
+     */
+    challenge: z.boolean().optional(),
     durationSec: z.number().int().min(1).max(60).optional(),
     aspectRatio: aspectRatioSchema.optional(),
     cover: z

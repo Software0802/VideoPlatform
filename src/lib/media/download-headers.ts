@@ -17,7 +17,7 @@ type BoundUpstream = { key: () => string | undefined; base: () => string };
  * 哪个 provider 的成片下载需要带哪把 key，以及那把 key 只允许发往哪个 origin。
  *
  * relay（含 yman env 预设）从 `live.ts` 的注册视图取——origin 与 keyEnv 都是配置
- * 来的，这里只动态配对；不在这张表里的 provider（可灵、openai 生图、mock、jimeng）
+ * 来的，这里只动态配对；不在这张表里的 provider（可灵、openai 生图、mock）
  * 下载走匿名直链，一个头都不带。
  */
 function boundUpstreams(): Map<ProviderId, BoundUpstream> {

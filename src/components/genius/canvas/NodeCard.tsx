@@ -3,6 +3,7 @@
 import { useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { CANVAS_APPROVAL_TIMEOUT_MS, type CanvasNode, type CanvasNodeExecution } from "@/lib/client/canvas";
+import type { Product } from "@/lib/client/models";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { NODE_W } from "./data";
 import { IconClose, IconImage, IconPlus, IconBolt, IconText, IconVideo } from "./icons";
@@ -70,6 +71,8 @@ export function NodeCard({
   candidates,
   onPrompt,
   onInput,
+  products,
+  onProduct,
   onRun,
   onApproval,
 }: {
@@ -88,6 +91,10 @@ export function NodeCard({
   candidates: CanvasNode[];
   onPrompt: (v: string) => void;
   onInput: (fromId: string | null) => void;
+  /** `GET /api/models` 的产品表；空表示拉不到，节点上就不显示模型芯片。 */
+  products: Product[];
+  /** 点名产品（写 `node.product`）；`null` = 交回服务端按能力路由。 */
+  onProduct: (productId: string | null) => void;
   onRun: () => void;
   onApproval: (decision: "approve" | "reject") => void;
 }) {
@@ -101,6 +108,22 @@ export function NodeCard({
   const hasContent = Boolean(
     node.text?.trim() || node.prompt?.trim() || node.uploadId || node.assetId || job,
   );
+  /*
+    节点上的模型选择（`node.product`）。这个字段一直在 schema 里、报价与运行也一直认它
+    （`canvas/graph.ts` 的 `requestedId` / `run.ts` 的 `model`），只是从来没有界面能写它——
+    整张画布只能吃默认路由。芯片列的是当前节点类型对得上的产品，「自动」= 不点名，
+    交回服务端按能力选。
+
+    这一行放在正文**外面**：`.canvas-node__body` 是 `overflow:hidden`，浮层开在里面会被裁掉。
+  */
+  const isGen = node.kind === "gen_image" || node.kind === "gen_video";
+  const [modelOpen, setModelOpen] = useState(false);
+  const choices = products.filter((p) => p.kind === (node.kind === "gen_image" ? "image" : "video"));
+  const current = choices.find((p) => p.id === node.product);
+  const pickProduct = (productId: string | null) => {
+    setModelOpen(false);
+    onProduct(productId);
+  };
   return (
     <div
       className="canvas-node"
@@ -148,6 +171,54 @@ export function NodeCard({
           >
             {t("canvas.nodeDelete.confirm")}
           </button>
+        </div>
+      ) : null}
+
+      {isGen && choices.length ? (
+        <div className="canvas-node__modelrow">
+          <button
+            type="button"
+            className="canvas-model"
+            data-open={modelOpen ? "true" : undefined}
+            data-product-id={node.product ?? ""}
+            aria-expanded={modelOpen}
+            aria-label={t("canvas.model.pick")}
+            onClick={() => setModelOpen((open) => !open)}
+          >
+            <span className="canvas-model__dot" aria-hidden="true" />
+            {current?.name ?? t("canvas.model.auto")}
+          </button>
+          {modelOpen ? (
+            <div className="canvas-modelpop">
+              <span className="canvas-modelpop__title">{t("canvas.model.pick")}</span>
+              <button
+                type="button"
+                className="canvas-modelpop__item"
+                data-current={!node.product}
+                onClick={() => pickProduct(null)}
+              >
+                <span className="canvas-modelpop__body">
+                  <span className="canvas-modelpop__name">{t("canvas.model.auto")}</span>
+                  <span className="canvas-modelpop__desc">{t("canvas.model.autoDesc")}</span>
+                </span>
+              </button>
+              {choices.map((product) => (
+                <button
+                  type="button"
+                  key={product.id}
+                  className="canvas-modelpop__item"
+                  data-product-id={product.id}
+                  data-current={product.id === node.product}
+                  onClick={() => pickProduct(product.id)}
+                >
+                  <span className="canvas-modelpop__body">
+                    <span className="canvas-modelpop__name">{product.name}</span>
+                    <span className="canvas-modelpop__desc">{product.description}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

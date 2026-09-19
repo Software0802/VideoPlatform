@@ -31,7 +31,6 @@ const BUILTIN_PROVIDER_NAMES: Record<string, string> = {
   grok: "Grok",
   kling: "Kling",
   mock: "Mock",
-  jimeng: "Jimeng",
   openai: "OpenAI",
   yman: "YMan",
 };

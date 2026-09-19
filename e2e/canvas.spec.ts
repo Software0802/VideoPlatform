@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { expect, test, type Page } from "@playwright/test";
@@ -14,6 +15,11 @@ import { DATA_DIR_HINT } from "./paths";
 
 type Health = { ok: boolean; mockMode: boolean };
 const REQUIRE_MOCK = Boolean(process.env.CI || process.env.E2E_REQUIRE_MOCK);
+
+/** 服务端实际在读的 DATA_DIR（`auth.setup.ts` 落的提示文件）——模板要播进那里才看得见。 */
+async function serverDataDir(): Promise<string> {
+  return (await readFile(DATA_DIR_HINT, "utf8")).trim();
+}
 
 async function freshCanvas(page: Page) {
   const created = await page.request.post("/api/canvases", { data: { title: "e2e 独立画布" } });
@@ -267,4 +273,103 @@ test("节点删除：有内容的节点先出二次确认，空节点直接删�
   await filled.locator(".canvas-node__del").click();
   await filled.locator(".canvas-node__confirm").getByRole("button", { name: "删除" }).click();
   await expect(page.locator(".canvas-node")).toHaveCount(0);
+});
+
+test("左侧工具栏：建节点走同一份菜单，工具箱抽屉把模板放进画布", async ({ page }) => {
+  const dataDir = await serverDataDir();
+  const id = `e2e-tool-${randomBytes(4).toString("hex")}`;
+  const file = path.join(dataDir, "templates", `zzz-${id}.json`);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    JSON.stringify({
+      id,
+      name: "e2e 工具箱模板",
+      category: "广告",
+      prompt: "工具箱放进画布的提示词",
+      mode: "text_to_video",
+    }),
+  );
+
+  try {
+    await page.reload();
+    await expect(page.locator(".canvas-scroll")).toBeVisible({ timeout: 60_000 });
+
+    // 「添加节点」开的就是右键那份菜单——触屏与键盘也有了入口。
+    await page.locator(".canvas-tools__add").click();
+    await expect(page.locator(".canvas-menu")).toBeVisible();
+    await page.locator(".canvas-menu").getByRole("button", { name: "文本" }).click();
+    await expect(page.locator('.canvas-node[data-kind="text"]')).toHaveCount(1);
+
+    // 工具箱抽屉列的是真模板（`GET /api/templates`），不是原型那份写死的工具表。
+    await page.getByRole("button", { name: "工具箱" }).click();
+    const toolbox = page.locator(".canvas-toolbox");
+    await expect(toolbox).toBeVisible();
+    const row = toolbox.locator(".canvas-tool", { hasText: "e2e 工具箱模板" });
+    await expect(row).toBeVisible();
+
+    // 搜索是本地过滤：搜一个不存在的词就只剩空态。
+    await toolbox.getByRole("textbox", { name: "搜索" }).fill("绝不匹配的词");
+    await expect(toolbox.locator(".canvas-tool")).toHaveCount(0);
+    await toolbox.getByRole("textbox", { name: "搜索" }).fill("e2e 工具箱");
+
+    const patched = page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/canvases/") &&
+        r.request().method() === "PATCH" &&
+        r.request().postDataJSON().nodes?.some((n: { prompt?: string }) => n.prompt === "工具箱放进画布的提示词"),
+      { timeout: 20_000 },
+    );
+    await row.getByRole("button", { name: "应用到画布" }).click();
+    const node = page.locator('.canvas-node[data-kind="gen_video"]').last();
+    await expect(node.locator(".canvas-node__textarea")).toHaveValue("工具箱放进画布的提示词");
+    expect((await patched).status()).toBe(200);
+  } finally {
+    await rm(file, { force: true });
+  }
+});
+
+test("生成节点的模型芯片：选中的产品落进 node.product", async ({ page }) => {
+  const node = await addImageNode(page, "要钉产品的提示词");
+  const chip = node.getByRole("button", { name: "选择模型" });
+  await expect(chip).toBeVisible();
+  await expect(chip).toContainText("自动");
+
+  await chip.click();
+  const pop = node.locator(".canvas-modelpop");
+  await expect(pop).toBeVisible();
+  const option = pop.locator(".canvas-modelpop__item[data-product-id]").first();
+  const productId = await option.getAttribute("data-product-id");
+  expect(productId).toBeTruthy();
+
+  const patched = page.waitForResponse(
+    (r) =>
+      r.url().includes("/api/canvases/") &&
+      r.request().method() === "PATCH" &&
+      r.request().postDataJSON().nodes?.some((n: { product?: string }) => n.product === productId),
+    { timeout: 20_000 },
+  );
+  await option.click();
+  await expect(pop).toBeHidden();
+  await expect(chip).toHaveAttribute("data-product-id", productId!);
+  expect((await patched).status()).toBe(200);
+});
+
+test("报价弹层可以导出这次要跑的步骤与人审门", async ({ page }) => {
+  await addImageNode(page, "导出工作流用的提示词");
+  await waitPatch(page, "导出工作流用的提示词");
+
+  await page.getByRole("button", { name: "运行整图" }).click();
+  const quote = page.locator('.canvas-quote[role="dialog"]');
+  await expect(quote).toBeVisible({ timeout: 30_000 });
+
+  const download = page.waitForEvent("download");
+  await quote.getByRole("button", { name: "导出工作流" }).click();
+  const file = await download;
+  const saved = await file.path();
+  const graph = JSON.parse(await readFile(saved, "utf8")) as {
+    nodes: { kind: string; skillId?: string; label?: string }[];
+  };
+  expect(graph.nodes).toHaveLength(1);
+  expect(graph.nodes[0]).toMatchObject({ kind: "skill", skillId: "text_to_image", label: "导出工作流用的提示词" });
 });

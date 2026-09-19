@@ -20,8 +20,11 @@ import { writeJsonAtomic } from "@/lib/storage/atomic-json";
 const RELAY_ID_RE = /^[a-z][a-z0-9-]{1,31}$/;
 const KEY_ENV_RE = /^[A-Z][A-Z0-9_]*$/;
 
-/** 仍是代码内建、不可被 relay 抢占的 id（yman / openai 已是 relay 预设 id，不在其中）。 */
-export const RESERVED_PROVIDER_IDS = ["grok", "mock", "jimeng", "kling"] as const;
+/**
+ * 仍是代码内建、不可被 relay 抢占的 id（yman / openai 已是 relay 预设 id，不在其中）。
+ * `jimeng` 不在表里：它没有内建实现，要接就按普通 relay 配一条接入点。
+ */
+export const RESERVED_PROVIDER_IDS = ["grok", "mock", "kling"] as const;
 
 const priceOverrideSchema = z.object({
   video: z

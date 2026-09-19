@@ -126,7 +126,10 @@ function offRecord(ids: string[]): Record<string, boolean> {
 export default function AgentView() {
   const t = useT();
   const { locale } = useI18n();
-  const requestedSession = useSearchParams().get("session");
+  const params = useSearchParams();
+  const requestedSession = params.get("session");
+  /** 创作面板的「创作搭子」把当前提示词带过来（`/agent?q=…`），只回填一次。 */
+  const requestedPrompt = params.get("q");
 
   const [screen, setScreen] = useState<Screen>("home");
   const [skills, setSkills] = useState<AgentSkill[]>([]);
@@ -344,6 +347,17 @@ export default function AgentView() {
     },
     [say, syncSession],
   );
+
+  /*
+    带过来的提示词只回填一次：下面那条「把会话钉进地址栏」的 effect 会把 URL 换成
+    `/agent`，`q` 随即消失——没有这道 ref，用户清空输入框后它还会被重新填回去。
+  */
+  const seededPrompt = useRef(false);
+  useEffect(() => {
+    if (seededPrompt.current || !requestedPrompt) return;
+    seededPrompt.current = true;
+    setPrompt(requestedPrompt.slice(0, 2000));
+  }, [requestedPrompt]);
 
   // `(shell)` layout 明确 force-dynamic，useSearchParams 不触发静态预渲染的 Suspense 要求。
   useEffect(() => {

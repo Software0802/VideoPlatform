@@ -11,7 +11,6 @@ import {
   IconImage,
   IconPicture,
   IconPlay,
-  IconSliders,
   IconVideo,
   IconWand,
 } from "@/components/genius/icons";
@@ -26,7 +25,6 @@ import {
   useJobs,
   useNotices,
   useSession,
-  type ComposerTab,
   type Frame,
   type SlotTarget,
 } from "@/components/genius/ShellContext";
@@ -36,6 +34,7 @@ import type { MessageKey } from "@/lib/i18n/messages";
 import { ModelPop } from "@/components/genius/composer/ModelPop";
 import { SpecsPop } from "@/components/genius/composer/SpecsPop";
 import { BuddyPop } from "@/components/genius/composer/BuddyPop";
+import { TemplatePop } from "@/components/genius/composer/TemplatePop";
 
 /*
   创作面板（交接包 §4）。悬浮层，`main` 的兄弟节点，贴内容区底部；主页与创作页共用
@@ -64,14 +63,11 @@ const FILE_LABEL: Record<SlotTarget, MessageKey> = {
 
 export type FileRefs = Record<SlotTarget, React.RefObject<HTMLInputElement | null>>;
 
-const PLACEHOLDER: Record<ComposerTab, MessageKey> = {
+/** 音频页没有提示词框（它不提交任何东西，见 `AudioPanel`），所以只有两条。 */
+const PLACEHOLDER: Record<"video" | "image", MessageKey> = {
   video: "composer.placeholder.video",
   image: "composer.placeholder.image",
-  audio: "composer.placeholder.audio",
 };
-
-/** 音频页的两个占位模式（整页置灰，点了只提示「即将上线」）。 */
-const AUDIO_MODES: MessageKey[] = ["composer.mode.voice", "composer.mode.music"];
 
 /** 规格芯片里的分隔：视觉是 1px 竖线，文本仍是 ` | `，读屏与断言拿到的是完整一行。 */
 const Sep = () => <span className="composer__sep"> | </span>;
@@ -95,7 +91,8 @@ function Slot({
   const last = target === "last";
   const clear = last ? s.clearLastImage : s.clearImage;
   const pick = last ? s.pickLastImage : s.pickImage;
-  const soon = t("common.comingSoon");
+  /* 图片页没有首帧这条路径（`DESIGN.md`「有意偏离」）——说清楚，不写「即将上线」。 */
+  const noFrame = t("composer.slot.imageNoFrame");
   return (
     <div className="composer__slot" data-slot={target} data-state={disabled ? "soon" : (frame?.state ?? "empty")}>
       {/* 「上传图片」这个名字留给下面真正的 file input：两个元素同名时 getByLabel
@@ -115,10 +112,10 @@ function Slot({
         aria-disabled={disabled ? true : undefined}
         title={
           disabled
-            ? soon
+            ? noFrame
             : (frame?.message ?? (last ? t("composer.slot.titleLast") : t("composer.slot.titleStart")))
         }
-        onClick={() => (disabled ? showToast(soon) : s.openPicker(target))}
+        onClick={() => (disabled ? showToast(noFrame) : s.openPicker(target))}
       >
         {frame ? (
           // 本地 ObjectURL 或「已创建」作品的地址，尺寸由 CSS 固定，不引 next/image
@@ -227,8 +224,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
   const isVideo = s.tab === "video";
   const isImage = s.tab === "image";
   const isAudio = s.tab === "audio";
-  const soon = isAudio;
-  const soonText = t("common.comingSoon");
+  const templateWhy = s.templateReason;
   const firstLast = isVideo && s.mode === "firstLast";
   const reference = isVideo && s.mode === "reference";
 
@@ -255,7 +251,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
     ? t("composer.placeholder.firstLast")
     : reference
       ? t("composer.placeholder.reference")
-      : t(PLACEHOLDER[s.tab]);
+      : t(PLACEHOLDER[isImage ? "image" : "video"]);
 
   /*
     从输入条展开面板后，焦点落进提示词框（review 2026-09-15 U-07）：展开本身就是一次
@@ -271,10 +267,6 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
   }, [visible]);
 
   function send() {
-    if (soon) {
-      showToast(soonText);
-      return;
-    }
     s.submit();
   }
 
@@ -284,7 +276,6 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
       data-open={visible}
       data-tab={s.tab}
       data-mode={modeAttr}
-      data-soon={soon}
       hidden={!visible}
       onSubmit={(e) => {
         e.preventDefault();
@@ -320,7 +311,8 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
           {isVideo ? (
             <div className="composer__radios" role="radiogroup" aria-label={t("composer.modes.aria")}>
               {VIDEO_MODES.map((m) => {
-                const usable = s.modeUsable(m);
+                /* 置灰项给的是**具体理由**（当前产品不支持 / 平台没有这条路），不再是「即将上线」。 */
+                const why = s.modeReason(m);
                 return (
                   <button
                     key={m}
@@ -329,16 +321,42 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
                     className="composer__mode"
                     data-video-mode={m}
                     aria-checked={s.mode === m}
-                    aria-disabled={usable ? undefined : true}
+                    aria-disabled={why ? true : undefined}
                     data-on={s.mode === m}
-                    data-soon={!usable}
-                    title={usable ? undefined : soonText}
+                    data-soon={why ? true : undefined}
+                    title={why ?? undefined}
                     onClick={() => s.pickMode(m)}
                   >
                     {t(VIDEO_MODE_KEY[m])}
                   </button>
                 );
               })}
+            </div>
+          ) : null}
+          {isVideo ? (
+            /*
+              「模板」不是一条通道，是「从一份现成参数开始」：它开的是 `GET /api/templates`
+              的清单，选中哪一张才决定通道与规格。所以它在单选组外面，语义是开浮层的按钮。
+            */
+            <div className="composer__tpl-wrap">
+              <button
+                type="button"
+                className="composer__mode composer__mode--tpl"
+                aria-haspopup="dialog"
+                aria-expanded={s.pop === "template"}
+                aria-disabled={templateWhy ? true : undefined}
+                data-on={s.pop === "template"}
+                data-soon={templateWhy ? true : undefined}
+                title={templateWhy ?? undefined}
+                onClick={() =>
+                  templateWhy
+                    ? showToast(templateWhy)
+                    : s.setPop(s.pop === "template" ? null : "template")
+                }
+              >
+                {t("composer.mode.template")}
+              </button>
+              {s.pop === "template" ? <TemplatePop /> : null}
             </div>
           ) : null}
           {isImage ? (
@@ -351,34 +369,14 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
               </button>
             </div>
           ) : null}
-          {isAudio ? (
-            <div className="composer__radios" role="radiogroup" aria-label={t("composer.modes.aria")}>
-              {AUDIO_MODES.map((key, i) => (
-                <button
-                  key={key}
-                  type="button"
-                  role="radio"
-                  className="composer__mode"
-                  aria-checked={i === 0}
-                  aria-disabled="true"
-                  data-soon="true"
-                  title={soonText}
-                  onClick={() => showToast(soonText)}
-                >
-                  {t(key)}
-                </button>
-              ))}
-            </div>
-          ) : null}
 
           <div className="composer__tools">
             {isVideo ? (
               <button
                 type="button"
                 className="composer__tool"
-                /* 浮层里是占位内容（打不了字），名字就别装成能用（review 2026-09-15 C-15）。 */
-                aria-label={t("composer.tool.buddySoon")}
-                title={t("composer.tool.buddySoon")}
+                aria-label={t("composer.tool.buddy")}
+                title={t("composer.tool.buddy")}
                 data-on={s.pop === "buddy"}
                 onClick={() => s.setPop(s.pop === "buddy" ? null : "buddy")}
               >
@@ -408,7 +406,9 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
         </div>
 
         {/* ── 输入区 ── */}
-        {s.collapsed ? (
+        {isAudio ? (
+          <AudioPanel />
+        ) : s.collapsed ? (
           <div className="composer__line">
             <input
               className="composer__input"
@@ -421,7 +421,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
           </div>
         ) : (
           <div className="composer__body">
-            {isAudio ? null : reference ? (
+            {reference ? (
               <RefStrip inputRef={fileRefs.reference} />
             ) : (
               <>
@@ -474,35 +474,33 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
           </div>
         )}
 
-        {/* ── 选项行 ── */}
-        <div className="composer__opts">
-          {isAudio ? null : (
-            <div className="composer__specs-wrap">
-              <button
-                type="button"
-                className="composer__specs"
-                data-on={s.pop === "specs"}
-                aria-expanded={s.pop === "specs"}
-                onClick={() => s.setPop(s.pop === "specs" ? null : "specs")}
-              >
-                <span>{resLabel}</span>
-                {/* 首尾帧不给选画幅：成片比例跟着两张帧走（交接包 §4.1 图 11） */}
-                {s.ratioUsable ? (
-                  <>
-                    <Sep />
-                    <span>{s.ratio}</span>
-                  </>
-                ) : null}
-                {isVideo ? (
-                  <>
-                    <Sep />
-                    <span>{s.dur}s</span>
-                  </>
-                ) : null}
-              </button>
-              {s.pop === "specs" ? <SpecsPop /> : null}
-            </div>
-          )}
+        {/* ── 选项行（音频页自己有一套，见 AudioPanel） ── */}
+        <div className="composer__opts" hidden={isAudio}>
+          <div className="composer__specs-wrap">
+            <button
+              type="button"
+              className="composer__specs"
+              data-on={s.pop === "specs"}
+              aria-expanded={s.pop === "specs"}
+              onClick={() => s.setPop(s.pop === "specs" ? null : "specs")}
+            >
+              <span>{resLabel}</span>
+              {/* 首尾帧不给选画幅：成片比例跟着两张帧走（交接包 §4.1 图 11） */}
+              {s.ratioUsable ? (
+                <>
+                  <Sep />
+                  <span>{s.ratio}</span>
+                </>
+              ) : null}
+              {isVideo ? (
+                <>
+                  <Sep />
+                  <span>{s.dur}s</span>
+                </>
+              ) : null}
+            </button>
+            {s.pop === "specs" ? <SpecsPop /> : null}
+          </div>
 
           {isVideo ? (
             <button
@@ -526,9 +524,9 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
               className="composer__multi"
               role="switch"
               aria-checked={s.multi}
-              /* 占位控件的统一口径（同「配置面板」「创作搭子」）：置灰 + data-soon + toast。 */
-              aria-disabled="true"
-              data-soon="true"
+              /* 真开关：读的是「当前时长在不在长片档」，点它切时长（见 ComposerProvider）。 */
+              aria-disabled={s.multiAvailable ? undefined : true}
+              title={s.multiAvailable ? undefined : t("composer.multi.unavailable")}
               onClick={s.toggleMulti}
             >
               {t("composer.multi")}
@@ -536,32 +534,6 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
                 <span className="composer__knob" />
               </span>
             </button>
-          ) : null}
-
-          {isImage ? null : (
-            <button
-              type="button"
-              className="composer__panelbtn"
-              /* 与其它占位控件同口径：置灰 + data-soon + toast（review 2026-09-15 C-15）。 */
-              aria-disabled="true"
-              data-soon="true"
-              onClick={() => showToast(soonText)}
-            >
-              <IconSliders size={13} />
-              {t("composer.panelBtn")}
-              <span className="composer__pink" aria-hidden="true" />
-            </button>
-          )}
-
-          {isAudio ? (
-            <>
-              <button type="button" className="composer__panelbtn" onClick={() => showToast(soonText)}>
-                {t("composer.audioVoice")}
-              </button>
-              <button type="button" className="composer__panelbtn" onClick={() => showToast(soonText)}>
-                {t("composer.audioLang")}
-              </button>
-            </>
           ) : null}
 
           <div className="composer__cluster">
@@ -656,6 +628,43 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
         ) : null}
       </div>
     </form>
+  );
+}
+
+/**
+ * 音频页。平台**不生成独立音频**——能出声的只有「原生音轨」那几个视频产品
+ * （`product.audio === "native"`，与音轨开关同一判据）。所以这一页不再画一套提交
+ * 不了的空壳（两个恒灰的模式 + 点了只说「即将上线」的按钮），而是把真能力摆出来：
+ * 列出当前能出声的产品，点一个就切到视频页、选中它并打开音轨，接着正常创作。
+ *
+ * 一个都没有时说清楚是「这台实例没有能出声的产品」，不写「即将上线」——那是两回事。
+ */
+function AudioPanel() {
+  const s = useComposer();
+  const t = useT();
+  const withAudio = s.products.filter((p) => p.kind === "video" && p.audio === "native");
+  return (
+    <div className="composer__audio-page">
+      <p className="composer__audio-lead">{t("composer.audioPage.lead")}</p>
+      {withAudio.length ? (
+        <div className="composer__audio-list">
+          {withAudio.map((product) => (
+            <button
+              key={product.id}
+              type="button"
+              className="composer__audio-pick"
+              data-product-id={product.id}
+              onClick={() => s.useAudioProduct(product.id)}
+            >
+              <span className="composer__audio-name">{product.name}</span>
+              <span className="composer__audio-go">{t("composer.audioPage.use")}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="composer__audio-empty">{t("composer.audioPage.none")}</p>
+      )}
+    </div>
   );
 }
 

@@ -56,6 +56,7 @@ const WHITELIST_DIRS = [
   "ledger",
   "agent",
   "templates",
+  "skills",
   "canvases",
   "canvas-runs",
   "notifications",

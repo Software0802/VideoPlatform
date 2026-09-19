@@ -49,6 +49,7 @@ export function QuoteDialog({
   regen,
   runBusy,
   dialogRef,
+  onExport,
   onToggleGate,
   onToggleRegen,
   onConfirm,
@@ -59,6 +60,8 @@ export function QuoteDialog({
   regen: Set<string>;
   runBusy: boolean;
   dialogRef: RefObject<HTMLDivElement | null>;
+  /** 导出这次要跑的步骤与人审门（只读，不建 run）。 */
+  onExport: () => void;
   onToggleGate: (nodeId: string, on: boolean) => void;
   onToggleRegen: (nodeId: string, on: boolean) => void;
   onConfirm: () => void;
@@ -122,6 +125,9 @@ export function QuoteDialog({
         <span className="canvas-quote__total">
           {t("canvas.quote.total")} ¥{quote.totalCny.toFixed(2)}
         </span>
+        <button type="button" className="canvas-quote__export" onClick={onExport}>
+          {t("canvas.quote.export")}
+        </button>
         <button
           type="button"
           className="canvas-quote__confirm"

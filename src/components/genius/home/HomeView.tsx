@@ -62,12 +62,13 @@ function tagLabel(tag: string, t: Translate): string {
   return key ? t(key) : tag;
 }
 
+/** 四个页签都接真数据：视频 / 图片是瀑布流，模板 / 挑战同读 `GET /api/templates`。 */
 const TABS = [
-  { id: "video", labelKey: "home.tab.video", live: true },
-  { id: "image", labelKey: "home.tab.image", live: true },
-  { id: "template", labelKey: "home.tab.template", live: true },
-  { id: "challenge", labelKey: "home.tab.challenge", live: false },
-] as const satisfies readonly { id: string; labelKey: MessageKey; live: boolean }[];
+  { id: "video", labelKey: "home.tab.video" },
+  { id: "image", labelKey: "home.tab.image" },
+  { id: "template", labelKey: "home.tab.template" },
+  { id: "challenge", labelKey: "home.tab.challenge" },
+] as const satisfies readonly { id: string; labelKey: MessageKey }[];
 type TabId = (typeof TABS)[number]["id"];
 
 type Kind = "video" | "image";
@@ -213,7 +214,7 @@ function validFor(expiresAt: string, t: Translate): string {
 
 export function HomeView() {
   const { jobs, hasMoreJobs, loadMoreJobs, jobsLoading, jobsError, saveTags, removeJob } = useJobs();
-  const { reuse, applyTemplate } = useComposer();
+  const { reuse, applyTemplate, openComposer, templates } = useComposer();
   const { showToast } = useNotices();
   const t = useT();
   const [tab, setTab] = useState<TabId>("video");
@@ -242,6 +243,13 @@ export function HomeView() {
     : works;
 
   const gallery = tab !== "template" && tab !== "challenge";
+  /*
+    活动横幅原来是一张写死的交接包样片 + `role="img"`：点它什么都不发生。
+    现在它有两种真去向——运营标了「挑战」的模板存在时，横幅就是那条挑战（封面 + 名字，
+    点进挑战页签）；一条都没有时它是「开始创作」的入口（展开创作面板）。两种都做事，
+    所以它是按钮而不是装饰图。
+  */
+  const banner = templates.find((item) => item.challenge) ?? null;
   const kind: Kind = tab === "image" ? "image" : "video";
   const ofKind = pool.filter((w) => w.kind === kind);
   // 「全部」不筛；选了分类就按 `job.tags` 过滤（样片没有标签，自然落选）
@@ -283,13 +291,15 @@ export function HomeView() {
   return (
     <>
       <div className="home">
-        {/* 活动横幅：交接时是占位槽，这里放交接包样片，接活动图时换掉即可 */}
-        <div
+        <button
+          type="button"
           className="home__banner"
-          style={{ backgroundImage: `url(${BANNER})` }}
-          role="img"
-          aria-label={t("home.banner")}
-        />
+          data-challenge={banner ? banner.id : undefined}
+          style={{ backgroundImage: `url(${banner?.cover ?? BANNER})` }}
+          onClick={() => (banner ? setTab("challenge") : openComposer())}
+        >
+          <span className="home__banner-label">{banner ? banner.name : t("home.banner.cta")}</span>
+        </button>
 
         <div className="home__tabs" role="tablist" aria-label={t("home.tabs.aria")}>
           {TABS.map((item) => (
@@ -299,9 +309,8 @@ export function HomeView() {
               role="tab"
               className="home__tab"
               aria-selected={tab === item.id}
-              aria-disabled={item.live ? undefined : true}
               data-on={tab === item.id}
-              onClick={() => (item.live ? setTab(item.id) : showToast(t("common.comingSoon")))}
+              onClick={() => setTab(item.id)}
             >
               {t(item.labelKey)}
             </button>
@@ -326,8 +335,8 @@ export function HomeView() {
           </div>
         ) : null}
 
-        {tab === "template" ? (
-          <TemplateGrid onPick={applyTemplate} />
+        {tab === "template" || tab === "challenge" ? (
+          <TemplateGrid onPick={applyTemplate} challengesOnly={tab === "challenge"} />
         ) : (
           <>
             {empty ? (
@@ -437,7 +446,17 @@ function ExpiryBadge({ expireAt, now }: { expireAt: string | null; now: number |
   );
 }
 
-function TemplateGrid({ onPick }: { onPick: (t: Template) => void }) {
+/**
+ * 模板 / 挑战网格。两个页签是同一份 `GET /api/templates`，只差一个 `challenge` 标记：
+ * 挑战不是另一套内容，是运营从模板里挑出来的那几条（`src/lib/templates.ts`）。
+ */
+function TemplateGrid({
+  onPick,
+  challengesOnly,
+}: {
+  onPick: (t: Template) => void;
+  challengesOnly?: boolean;
+}) {
   const t = useT();
   const [list, setList] = useState<Template[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -461,11 +480,14 @@ function TemplateGrid({ onPick }: { onPick: (t: Template) => void }) {
     );
   }
   if (!list) return <p className="home__empty">{t("home.tpl.loading")}</p>;
-  if (!list.length) return <p className="home__empty">{t("home.tpl.empty")}</p>;
+  const rows = challengesOnly ? list.filter((item) => item.challenge) : list;
+  if (!rows.length) {
+    return <p className="home__empty">{challengesOnly ? t("home.challenge.empty") : t("home.tpl.empty")}</p>;
+  }
 
   return (
     <div className="tpl-grid">
-      {list.map((item) => (
+      {rows.map((item) => (
         <button
           key={item.id}
           type="button"
