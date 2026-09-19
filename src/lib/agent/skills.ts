@@ -246,15 +246,12 @@ export async function listAgentSkills(loader: SkillLoader = fileSkillLoader): Pr
   return merged;
 }
 
-export async function findAgentSkill(
-  id: string | undefined | null,
-  loader?: SkillLoader,
-): Promise<AgentSkill | undefined> {
+export async function findAgentSkill(id: string | undefined | null): Promise<AgentSkill | undefined> {
   if (!id) return undefined;
   const key = String(id).trim();
   const builtin = BY_ID.get(key);
   if (builtin) return builtin;
-  return (await listAgentSkills(loader)).find((s) => s.id === key);
+  return (await listAgentSkills()).find((s) => s.id === key);
 }
 
 /** `GET /api/agent/skills` 的对外形状：不下发 `systemPrompt`（那是我们的提示词资产）。 */
@@ -264,8 +261,8 @@ export type AgentSkillPublic = Omit<AgentSkill, "systemPrompt">;
  * 按白名单挑字段，不是「删掉 systemPrompt 剩下的全给」——与 `GET /api/models` 同一个
  * 口径：以后往表里加一个内部字段，不会因为忘了改这里就被顺手发到浏览器。
  */
-export async function listPublicSkills(loader?: SkillLoader): Promise<AgentSkillPublic[]> {
-  return (await listAgentSkills(loader)).map((s) => ({
+export async function listPublicSkills(): Promise<AgentSkillPublic[]> {
+  return (await listAgentSkills()).map((s) => ({
     id: s.id,
     name: s.name,
     desc: s.desc,

@@ -372,9 +372,26 @@
 }
 
 .composer__audio,
-.composer__multi,
+.composer__multi {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 9px 0 11px;
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--fg-2);
+  background: var(--chip);
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
 .composer__audio:hover,
-.composer__multi:hover,
+.composer__multi:hover {
+  color: var(--fg);
+  background: var(--chip-hover);
+}
 .composer__audio[aria-disabled="true"] {
   color: var(--off);
 }

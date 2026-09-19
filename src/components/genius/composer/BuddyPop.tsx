@@ -5,14 +5,15 @@ import { useRouter } from "next/navigation";
 import { IconArrowUp, IconBroom, IconClose } from "@/components/genius/icons";
 import { useComposer } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
+import { AGENT_DRAFT_MAX, stashAgentDraft } from "@/components/genius/agent/draft";
 import type { MessageKey } from "@/lib/i18n/messages";
 
 /*
   创作搭子（交接包 §4.1 图 8）：面板正上方的浮层，作用是「把一句话写成一条好用的
   提示词」。这件事平台真的会做——智能体（`/agent`）就是干这个的，每一轮走真的 LLM。
   所以这里不再自己假装对话（原来输入框只读、发送只弹「即将上线」），而是把当前提示词
-  带过去打开智能体：`/agent?q=…`。写完的提示词再复制回创作面板，或者直接在智能体里
-  让它建任务。
+  交给智能体（`draft.ts`，不进地址栏）再打开 `/agent`。写完的提示词再复制回创作面板，
+  或者直接在智能体里让它建任务。
 */
 
 const LINES: MessageKey[] = [
@@ -22,9 +23,6 @@ const LINES: MessageKey[] = [
   "composer.buddy.line4",
 ];
 
-/** 与智能体输入框同一个上限（服务端 schema 也是 2000）。 */
-const MAX_LEN = 2000;
-
 export function BuddyPop() {
   const { setPop, prompt } = useComposer();
   const router = useRouter();
@@ -32,9 +30,9 @@ export function BuddyPop() {
   const [text, setText] = useState(prompt);
 
   const send = () => {
-    const one = text.trim();
+    stashAgentDraft(text);
     setPop(null);
-    router.push(one ? `/agent?q=${encodeURIComponent(one.slice(0, MAX_LEN))}` : "/agent");
+    router.push("/agent");
   };
 
   return (
@@ -64,7 +62,7 @@ export function BuddyPop() {
         <input
           className="buddy__input"
           value={text}
-          maxLength={MAX_LEN}
+          maxLength={AGENT_DRAFT_MAX}
           placeholder={t("composer.buddy.placeholder")}
           aria-label={t("composer.buddy.inputAria")}
           onChange={(e) => setText(e.target.value)}

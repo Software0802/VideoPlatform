@@ -30,7 +30,10 @@ export interface SkillLoader {
   load(): Promise<SkillManifest[]>;
 }
 
-/** 没有技能目录时用它：调用方不必到处判空，也不会把「读不到」当成错误。 */
+/**
+ * 什么都不加载的加载器。生产路径走的是 `fileSkillLoader`（`listAgentSkills` 的缺省），
+ * 这条只用来把「只有内建那张表」钉成一个可断言的输入。
+ */
 export const emptySkillLoader: SkillLoader = {
   async load() {
     return [];

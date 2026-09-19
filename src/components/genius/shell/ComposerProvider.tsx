@@ -364,8 +364,9 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
     `job.shots` 显示）。所以这枚开关读的就是「当前时长在不在长片档」，点它在长片档与
     常规档之间切时长——原来它恒为关、点了只说「即将上线」（review 2026-09-15 C-02）。
   */
-  const multiAvailable = longForm && durs.some((d) => isHarnessDuration(d));
+  const multiAvailable = longForm;
   const multi = isHarnessDuration(dur);
+  const preMultiDur = useRef<number | null>(null);
 
   const balance = me?.balance;
   const quota = me?.quota;
@@ -529,6 +530,7 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
         if (m === "firstLast" && !next.supportsLastFrame) return "prompt";
         if (m === "reference" && (next.maxReferenceImages === 0 || !supportsMode(next, "reference_to_video")))
           return "prompt";
+        if (m === "voice" && next.audio !== "native") return "prompt";
         return m;
       });
       setPop(null);
@@ -579,20 +581,25 @@ export function ComposerProvider({ children }: { children: ReactNode }) {
       showToast(t("composer.audio.unavailable"));
       return;
     }
+    if (audio) setMode((m) => (m === "voice" ? "prompt" : m));
     setAudio((a) => !a);
     dropKey();
-  }, [audioAvailable, dropKey, showToast, t]);
+  }, [audio, audioAvailable, dropKey, showToast, t]);
   /** 在长片档与常规档之间切时长（见 `multi` 的说明）；这台实例没开长片管线就说清楚。 */
   const toggleMulti = useCallback(() => {
     if (!multiAvailable) {
       showToast(t("composer.multi.unavailable"));
       return;
     }
-    const next = multi ? baseDurs[0] : durs.find((d) => isHarnessDuration(d));
-    if (next === undefined) return;
-    setDurChoice(next);
+    if (multi) {
+      const prev = preMultiDur.current;
+      setDurChoice(prev !== null && baseDurs.includes(prev) ? prev : null);
+    } else {
+      preMultiDur.current = dur;
+      setDurChoice(HARNESS_DURATIONS[0]);
+    }
     dropKey();
-  }, [baseDurs, dropKey, durs, multi, multiAvailable, showToast, t]);
+  }, [baseDurs, dropKey, dur, multi, multiAvailable, showToast, t]);
   const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => !c);
     setPop(null);

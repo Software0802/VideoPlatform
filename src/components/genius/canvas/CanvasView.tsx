@@ -556,8 +556,10 @@ export default function CanvasView() {
       const link = document.createElement("a");
       link.href = url;
       link.download = `${doc.id}.workflow.json`;
+      document.body.appendChild(link);
       link.click();
-      URL.revokeObjectURL(url);
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (e) {
       showToast(errorText(t, e));
     }

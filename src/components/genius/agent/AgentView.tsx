@@ -28,6 +28,7 @@ import { errorText } from "@/lib/i18n/errorText";
 import AgentAsk, { type AskPop } from "./AgentAsk";
 import AgentChat from "./AgentChat";
 import AgentPlaza from "./AgentPlaza";
+import { takeAgentDraft } from "./draft";
 import { shot } from "./data";
 import { IconPanelLeft, IconPencil, IconTrash } from "./icons";
 
@@ -128,8 +129,6 @@ export default function AgentView() {
   const { locale } = useI18n();
   const params = useSearchParams();
   const requestedSession = params.get("session");
-  /** 创作面板的「创作搭子」把当前提示词带过来（`/agent?q=…`），只回填一次。 */
-  const requestedPrompt = params.get("q");
 
   const [screen, setScreen] = useState<Screen>("home");
   const [skills, setSkills] = useState<AgentSkill[]>([]);
@@ -349,15 +348,17 @@ export default function AgentView() {
   );
 
   /*
-    带过来的提示词只回填一次：下面那条「把会话钉进地址栏」的 effect 会把 URL 换成
-    `/agent`，`q` 随即消失——没有这道 ref，用户清空输入框后它还会被重新填回去。
+    创作搭子交接过来的那句提示词（`draft.ts`，走 sessionStorage 而不是地址栏）：读走就
+    清，用户清空输入框后不会被重新填回去。`setTimeout(…, 0)` 是本仓库挂载后取客户端状态
+    的既有写法（`react-hooks/set-state-in-effect` 不允许在 effect 体里直接 setState）。
   */
-  const seededPrompt = useRef(false);
   useEffect(() => {
-    if (seededPrompt.current || !requestedPrompt) return;
-    seededPrompt.current = true;
-    setPrompt(requestedPrompt.slice(0, 2000));
-  }, [requestedPrompt]);
+    const timer = window.setTimeout(() => {
+      const draft = takeAgentDraft();
+      if (draft) setPrompt(draft);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // `(shell)` layout 明确 force-dynamic，useSearchParams 不触发静态预渲染的 Suspense 要求。
   useEffect(() => {
