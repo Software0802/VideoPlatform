@@ -31,6 +31,75 @@ import AgentPlaza from "./AgentPlaza";
 import { shot } from "./data";
 import { IconPanelLeft, IconPencil, IconTrash } from "./icons";
 
+/**
+ * 历史抽屉里的一行：点标题打开，垃圾桶要二次确认（review 2026-09-15 U-18）。
+ *
+ * 删会话是不可撤销的——整条对话连同它的轮次记录一起没，而这个图标就贴在「打开」旁边
+ * 十几个像素处。活动与归档两处共用同一行，所以抽出来。
+ */
+function SessionRow({
+  session,
+  archived,
+  onOpen,
+  onRemove,
+}: {
+  session: AgentSessionSummary;
+  archived?: boolean;
+  onOpen: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const t = useT();
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div
+      className="agent-drawer__row"
+      data-session-id={session.id}
+      data-archived={archived ? "true" : undefined}
+    >
+      {confirming ? (
+        <div
+          className="agent-drawer__confirm"
+          role="alertdialog"
+          aria-label={t("agent.deleteSession", { title: session.title })}
+        >
+          <span className="agent-drawer__confirm-text">{t("agent.deleteSession.confirmText")}</span>
+          <button
+            type="button"
+            className="agent-drawer__confirm-btn"
+            onClick={() => setConfirming(false)}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="agent-drawer__confirm-btn agent-drawer__confirm-btn--danger"
+            onClick={() => {
+              setConfirming(false);
+              onRemove(session.id);
+            }}
+          >
+            {t("agent.deleteSession.confirm")}
+          </button>
+        </div>
+      ) : (
+        <>
+          <button type="button" className="agent-drawer__item" onClick={() => onOpen(session.id)}>
+            <span className="agent-drawer__item-name">{session.title}</span>
+          </button>
+          <button
+            type="button"
+            className="agent-drawer__item-del"
+            aria-label={t("agent.deleteSession", { title: session.title })}
+            onClick={() => setConfirming(true)}
+          >
+            <IconTrash size={12} />
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 type Screen = "home" | "plaza" | "chat";
 
 /**
@@ -516,23 +585,7 @@ export default function AgentView() {
                 <p className="agent-drawer__empty">{t("agent.noSessions")}</p>
               ) : (
                 sessions.map((s) => (
-                  <div className="agent-drawer__row" key={s.id} data-session-id={s.id}>
-                    <button
-                      type="button"
-                      className="agent-drawer__item"
-                      onClick={() => void open(s.id)}
-                    >
-                      <span className="agent-drawer__item-name">{s.title}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="agent-drawer__item-del"
-                      aria-label={t("agent.deleteSession", { title: s.title })}
-                      onClick={() => void remove(s.id)}
-                    >
-                      <IconTrash size={12} />
-                    </button>
-                  </div>
+                  <SessionRow key={s.id} session={s} onOpen={(id) => void open(id)} onRemove={(id) => void remove(id)} />
                 ))
               )}
               <button
@@ -548,28 +601,13 @@ export default function AgentView() {
                   <p className="agent-drawer__empty">{t("agent.history.archivedEmpty")}</p>
                 ) : (
                   archivedSessions.map((s) => (
-                    <div
-                      className="agent-drawer__row"
+                    <SessionRow
                       key={s.id}
-                      data-session-id={s.id}
-                      data-archived="true"
-                    >
-                      <button
-                        type="button"
-                        className="agent-drawer__item"
-                        onClick={() => void open(s.id)}
-                      >
-                        <span className="agent-drawer__item-name">{s.title}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="agent-drawer__item-del"
-                        aria-label={t("agent.deleteSession", { title: s.title })}
-                        onClick={() => void remove(s.id)}
-                      >
-                        <IconTrash size={12} />
-                      </button>
-                    </div>
+                      session={s}
+                      archived
+                      onOpen={(id) => void open(id)}
+                      onRemove={(id) => void remove(id)}
+                    />
                   ))
                 )
               ) : null}

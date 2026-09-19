@@ -2,6 +2,8 @@ import type { common as zh } from "../zh-CN/common";
 
 /** English strings for `common`; the type forces every zh-CN key to exist here. */
 export const common: Record<keyof typeof zh, string> = {
+  "common.metaTitle": "Genius",
+  "common.metaDescription": "Create your world. Text to video, image to video, text to image.",
   "common.ok": "OK",
   "common.cancel": "Cancel",
   "common.close": "Close",

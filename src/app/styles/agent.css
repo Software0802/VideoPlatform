@@ -1102,6 +1102,44 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
+/* 删除二次确认（review 2026-09-15 U-18）：抽屉一行与对话顶栏同一套外观。 */
+.agent-drawer__confirm,
+.agent-chat__confirm {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(248, 113, 113, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.28);
+}
+.agent-chat__confirm {
+  margin: -8px 0 16px;
+}
+.agent-drawer__confirm-text,
+.agent-chat__confirm-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--ag-fg);
+}
+.agent-drawer__confirm-btn,
+.agent-chat__confirm-btn {
+  flex: none;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  color: var(--ag-fg);
+  background: rgba(255, 255, 255, 0.08);
+}
+.agent-drawer__confirm-btn--danger,
+.agent-chat__confirm-btn--danger {
+  background: #f87171;
+  color: #15161a;
+}
+
 /* 助手消息里的任务卡：一条 action 一张，点开在右侧资产栏放大。 */
 .agent-chat__jobs {
   display: flex;

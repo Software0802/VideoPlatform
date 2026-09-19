@@ -42,7 +42,7 @@ const STAGE_LABEL: Record<JobPublic["status"], MessageKey> = {
 function jobMeta(j: JobPublic, t: Translate): string {
   const image = j.mode === "text_to_image";
   // 产品名（`/api/models` 的对外命名）排在最前；老任务没有这个字段，就还是原来那行
-  const product = productNameOf(j);
+  const product = productNameOf(j, t);
   const parts = [
     ...(product ? [product] : []),
     MODE_LABEL[j.mode] ? t(MODE_LABEL[j.mode]) : j.mode,
@@ -54,9 +54,16 @@ function jobMeta(j: JobPublic, t: Translate): string {
 }
 
 /*
-  月-日 时:分。刻意**不**走 `toLocaleDateString`：这一段在服务端也渲染（首屏 40 条任务
-  由 `(shell)/layout.tsx` 下发），Node 与浏览器的 ICU 输出不保证一模一样，差一个空格就是
-  一次水合失配。纯数字格式两种语言下读法相同，也就不需要进字典。
+  月-日 时:分，读的是**浏览器本地时区**，所以只在挂载之后渲染（`useMounted`）。
+
+  首屏 40 条任务由 `(shell)/layout.tsx` 在服务端下发并渲染，而服务器时区与用户时区不是
+  一回事（生产机若为 UTC、用户在 UTC+8，同一条任务两边差 8 小时）——服务端先写一个时间、
+  客户端再改写，就是一次水合文本失配（review 2026-09-15 C-11）。给服务器钉 `TZ` 只能让
+  「恰好在那个时区的用户」看不出问题，换个时区的用户照样失配，所以改成首屏不渲染时间、
+  挂载后补上。
+
+  不走 `toLocaleDateString` 是另一个原因：Node 与浏览器的 ICU 输出不保证一模一样，而纯
+  数字格式两种语言下读法相同，也就不需要进字典。
 */
 function clockTime(iso: string): string {
   const d = new Date(iso);
@@ -64,10 +71,24 @@ function clockTime(iso: string): string {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/**
+ * 挂载完成了没有。写法与本文件的进度计时器、`HomeView` 的 `useClientNow` 一致：
+ * `setTimeout(…, 0)` 而不是在 effect 体里直接 setState（`react-hooks/set-state-in-effect`）。
+ */
+function useMounted(): boolean {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setMounted(true), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return mounted;
+}
+
 export function CreateView() {
   const { jobs, currentJob, setCurrentJob, busy, cancel, retry, retryPriceCny, reconcile } = useJobs();
   const t = useT();
   const [now, setNow] = useState<number | null>(null);
+  const mounted = useMounted();
 
   const job = currentJob;
   const active = !!job && isActive(job.status);
@@ -266,8 +287,11 @@ export function CreateView() {
                     />
                     <span className="recent__body">
                       <span className="recent__prompt">{j.prompt || t("create.firstFrame")}</span>
+                      {/* 时间那一段在首屏是空的（见 clockTime 的注释），拼接时跳过空串 */}
                       <span className="recent__meta">
-                        {t(STAGE_LABEL[j.status])} · {clockTime(j.createdAt)} · {jobMeta(j, t)}
+                        {[t(STAGE_LABEL[j.status]), mounted ? clockTime(j.createdAt) : "", jobMeta(j, t)]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </span>
                     </span>
                     {j.priceCny > 0 ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import type { PointerEvent as ReactPointerEvent } from "react";
+import { useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { CANVAS_APPROVAL_TIMEOUT_MS, type CanvasNode, type CanvasNodeExecution } from "@/lib/client/canvas";
 import type { JobPublic } from "@/lib/jobs/schema";
@@ -92,6 +92,15 @@ export function NodeCard({
   onApproval: (decision: "approve" | "reject") => void;
 }) {
   const t = useT();
+  /*
+    删除二次确认（review 2026-09-15 U-18）：✕ 原来是即删，写了半天的提示词、传上去的
+    素材一点就没，没有撤销也没有确认。空节点仍然直接删——给一个什么都没有的卡片加一步
+    确认只是添堵。
+  */
+  const [confirming, setConfirming] = useState(false);
+  const hasContent = Boolean(
+    node.text?.trim() || node.prompt?.trim() || node.uploadId || node.assetId || job,
+  );
   return (
     <div
       className="canvas-node"
@@ -116,11 +125,31 @@ export function NodeCard({
           type="button"
           className="canvas-node__del"
           aria-label={t("canvas.nodeDelete")}
-          onClick={onDelete}
+          onClick={() => (hasContent ? setConfirming(true) : onDelete())}
         >
           <IconClose size={11} />
         </button>
       </span>
+
+      {confirming ? (
+        <div className="canvas-node__confirm" role="alertdialog" aria-label={t("canvas.nodeDelete")}>
+          <span className="canvas-node__confirm-text">{t("canvas.nodeDelete.confirmText")}</span>
+          <button
+            type="button"
+            className="canvas-node__confirm-btn"
+            onClick={() => setConfirming(false)}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="canvas-node__confirm-btn canvas-node__confirm-btn--danger"
+            onClick={onDelete}
+          >
+            {t("canvas.nodeDelete.confirm")}
+          </button>
+        </div>
+      ) : null}
 
       {node.kind === "text" ? (
         <textarea

@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/genius/Sidebar";
 import { TopBar } from "@/components/genius/TopBar";
 import {
   ShellProvider,
+  isLongToast,
   useComposer,
   useJobs,
   useNotices,
@@ -32,7 +33,7 @@ export function GeniusShell({ caps, children }: { caps: ShellCaps; children: Rea
 function Frame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const view = viewOfPath(pathname ?? "/");
-  const { toast, noticeToast, dismissNoticeToast } = useNotices();
+  const { toasts, dismissToast, noticeToast, dismissNoticeToast } = useNotices();
   const { openNotice } = useJobs();
   const { open } = useComposer();
   const t = useT();
@@ -57,10 +58,28 @@ function Frame({ children }: { children: React.ReactNode }) {
         <TopBar view={view} />
         <main className="main">{children}</main>
         <Dock view={view} />
-        {toast ? (
-          <p className="toast" role="status">
-            {toast}
-          </p>
+        {/*
+          轻提示按先后叠着放（review 2026-09-15 C-13）：单槽位时后来的会直接顶掉前一条，
+          连点两个置灰控件就只看得到第二条。最多 3 条由 NoticesProvider 收口。
+        */}
+        {toasts.length ? (
+          <div className="toasts" role="status" aria-live="polite">
+            {toasts.map((item) => (
+              <p className="toast" key={item.id}>
+                <span className="toast__text">{item.text}</span>
+                {isLongToast(item.text) ? (
+                  <button
+                    type="button"
+                    className="toast__x"
+                    aria-label={t("shell.toast.dismiss")}
+                    onClick={() => dismissToast(item.id)}
+                  >
+                    ✕
+                  </button>
+                ) : null}
+              </p>
+            ))}
+          </div>
         ) : null}
         {/*
           任务完成通知（阶段 B）：右上角，成功那条可点跳创作页。与 `.toast`（「即将上线」

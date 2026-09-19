@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { logoutAll, type SubscriptionSummary } from "@/lib/client/auth";
 import { LanguageSwitch } from "@/components/genius/LanguageSwitch";
 import { PasswordDialog } from "@/components/genius/PasswordDialog";
@@ -9,6 +9,7 @@ import { IconKey, IconLogout } from "@/components/genius/icons";
 import { creditsOf, useNotices, useSession } from "@/components/genius/ShellContext";
 import { useI18n, useT } from "@/components/genius/i18n/I18nProvider";
 import { errorText } from "@/lib/i18n/errorText";
+import { useDialogFocus } from "@/components/genius/useDialogFocus";
 import { LOCALE_LABELS } from "@/lib/i18n/locales";
 import type { MessageKey } from "@/lib/i18n/messages";
 
@@ -63,6 +64,9 @@ export default function AccountView() {
 
   /* 「退出全部设备」的页内二次确认（disclosure）：确认前不发出任何请求。 */
   const [confirming, setConfirming] = useState(false);
+  /* 「退出全部设备」的二次确认打开时焦点还在触发钮上（review 2026-09-15 U-07）。 */
+  const confirmRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(confirmRef, confirming);
   const [leaving, setLeaving] = useState(false);
   const [leaveErr, setLeaveErr] = useState<string | null>(null);
 
@@ -194,6 +198,7 @@ export default function AccountView() {
           {confirming ? (
             <div
               className="account-confirm"
+              ref={confirmRef}
               role="alertdialog"
               aria-label={t("account.security.logoutAll")}
             >

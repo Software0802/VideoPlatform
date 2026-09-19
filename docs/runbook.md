@@ -18,6 +18,11 @@
 
 站点块与全局配置都没有 `trusted_proxies`/`client_ip_headers`。按 Caddy v2.11.4 源码 `reverseproxy.go` 的 `addForwardedHeaders`：客户端不受信时 `X-Forwarded-For` **被覆盖为对端 IP**（不是追加），`X-Forwarded-Host` 覆盖为请求 Host——所以 `rate-limit.ts` 的 `clientIp()` 取首跳、`proxy.ts` 的 `expectedHost()` 认 x-forwarded-host 在当前拓扑下都成立（F-19 confirmed-safe，无需改配置）。以后接 CDN / 改 trusted_proxies 必须重新核对。
 
+服务进程的时区（`TZ`）不参与任何判定，所以 unit 里**不需要**钉它：日配额的日界走
+`jobs/quota.ts` 的 `QUOTA_TIME_ZONE`（用 `Intl` 现算偏移，不读进程时区），日志时间戳是
+`toISOString()` 的 UTC，界面上的「月-日 时:分」只在浏览器挂载后渲染（`CreateView`，
+review 2026-09-15 C-11）。换句话说，把生产机时区改成什么都不会改变计费、清理或界面时间。
+
 Node 22.x 的 node:sqlite 官方标注仍为 Stability 1.1（Active development），不是已稳定资金数据库选型；SQLite 迁移等待 R4 的实际触发条件，不因内置模块可用就迁账。
 
 ## 管理 CLI 的运行身份与令牌（R4.1）

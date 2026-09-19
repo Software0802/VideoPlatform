@@ -10,6 +10,7 @@ import { fetchTemplates, type Template } from "@/lib/client/templates";
 import { IconCheck, IconClose, IconShare, IconStar, IconTrash } from "@/components/genius/icons";
 import { creditsOf, useComposer, useJobs, useNotices } from "@/components/genius/ShellContext";
 import { useT, type Translate } from "@/components/genius/i18n/I18nProvider";
+import { useDialogFocus } from "@/components/genius/useDialogFocus";
 import { errorText } from "@/lib/i18n/errorText";
 import type { MessageKey } from "@/lib/i18n/messages";
 
@@ -26,9 +27,11 @@ import type { MessageKey } from "@/lib/i18n/messages";
     `.work__delete`（二次确认 `.work__confirm`）、`.work__share`（复制 `/s/<token>`）。
   - 模板页签：`.tpl-card[data-template-id]`，点一张把提示词 / 模式 / 时长 / 画幅回填面板。
 
-  多语言：标签（`PRESET_TAGS` 与用户自建的那些）是**落盘的数据**，两种语言下都原样显示；
-  模板名 / 分类同理来自服务端。分类芯片的「全部」是一个哨兵值而不是标签，`data-cat` 保持
-  原值（e2e 与后续筛选逻辑按它取），只有可见文案跟着语言走。
+  多语言：标签的**落盘值**是中文常量（服务端 `lib/jobs/tags` 是事实源），两种语言下写进
+  `job.tags` 的都是同一串字节；只有**显示名**查字典（`home.cat.<slug>`，review 2026-09-15
+  U-08）——英文界面下九个分类芯片原来整排是中文。用户自建的标签没有字典项，原样显示。
+  分类芯片的「全部」是一个哨兵值而不是标签，`data-cat` 与 `data-tag` 都保持落盘原值
+  （e2e 与筛选逻辑按它取），只有可见文案跟着语言走。
 */
 
 const BANNER = "/lumina/0450bc8d80da9173.webp";
@@ -36,6 +39,28 @@ const BANNER = "/lumina/0450bc8d80da9173.webp";
 /** 「全部」不是标签，是「不筛」。这是 `data-cat` 上的哨兵值，不翻译（见文件头注释）。 */
 const ALL = "全部";
 const CATS = [ALL, ...PRESET_TAGS];
+
+/**
+ * 预置标签的落盘值 → 字典键。顺序与 `PRESET_TAGS` 一一对应；漏一项会在 `tagLabel`
+ * 里原样显示落盘值，不会崩，但英文界面下就会露出中文，所以两边要一起改。
+ */
+const TAG_KEY: Record<string, MessageKey> = {
+  广告: "home.cat.ad",
+  电影叙事: "home.cat.film",
+  风格艺术: "home.cat.art",
+  动物剧场: "home.cat.animal",
+  特效: "home.cat.vfx",
+  数字人: "home.cat.avatar",
+  动漫游戏: "home.cat.anime",
+  情绪特写: "home.cat.emotion",
+  音乐: "home.cat.music",
+};
+
+/** 标签显示名：预置的查字典，用户自建的原样显示（它本来就是用户自己打的字）。 */
+function tagLabel(tag: string, t: Translate): string {
+  const key = TAG_KEY[tag];
+  return key ? t(key) : tag;
+}
 
 const TABS = [
   { id: "video", labelKey: "home.tab.video", live: true },
@@ -89,7 +114,7 @@ function workOf(j: JobPublic, t: Translate): Work | null {
   const out = j.output;
   const image = out.kind === "image";
   // 产品名排在最前（`/api/models` 的对外命名）；老任务没有这个字段就还是原来那行
-  const product = productNameOf(j);
+  const product = productNameOf(j, t);
   const parts = [
     ...(product ? [product] : []),
     ...(image
@@ -225,6 +250,9 @@ export function HomeView() {
 
   /* 触底自动加载：哨兵进视口就续一页，同时保留「加载更多」按钮（两条路径同一个动作）。 */
   const more = gallery && hasMoreJobs(kind);
+  /* 在途 / 失败都只看当前这一类：另一类的分页在飞不该把这一页的按钮锁住（C-19）。 */
+  const pageLoading = jobsLoading(kind);
+  const pageError = jobsError(kind);
   const sentinel = useRef<HTMLDivElement>(null);
   // `loadMoreJobs` 每次 render 都是新函数（它闭包了游标）。把它转发进 ref，观察器就不必
   // 跟着重建——重建一个仍在视口里的哨兵会立刻再触发一次回调。ref 在 effect 里同步。
@@ -250,7 +278,7 @@ export function HomeView() {
     );
     io.observe(node);
     return () => io.disconnect();
-  }, [more, kind, jobsLoading, cat]);
+  }, [more, kind, pageLoading, cat]);
 
   return (
     <>
@@ -292,7 +320,7 @@ export function HomeView() {
                 aria-pressed={cat === c}
                 onClick={() => setCat(c)}
               >
-                {c === ALL ? t("home.cat.all") : c}
+                {c === ALL ? t("home.cat.all") : tagLabel(c, t)}
               </button>
             ))}
           </div>
@@ -345,9 +373,9 @@ export function HomeView() {
               ))}
             </div>
 
-            {jobsError ? (
+            {pageError ? (
               <p className="home__more-err" role="alert">
-                {jobsError}
+                {pageError}
               </p>
             ) : null}
             {more ? (
@@ -356,10 +384,10 @@ export function HomeView() {
                 <button
                   type="button"
                   className="home__more"
-                  disabled={jobsLoading}
+                  disabled={pageLoading}
                   onClick={() => loadMoreJobs(kind)}
                 >
-                  {jobsLoading ? t("common.loading") : t("home.more")}
+                  {pageLoading ? t("common.loading") : t("home.more")}
                 </button>
               </div>
             ) : null}
@@ -480,6 +508,13 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
   const [confirming, setConfirming] = useState(false);
   const [shared, setShared] = useState<{ url: string; copied: boolean } | null>(null);
   const expiresIn = daysLeft(work.expireAt, useClientNow());
+  /*
+    详情层的焦点（review 2026-09-15 U-07）：原来打开后焦点还留在瀑布流卡片上，Tab 25 次
+    才走到侧栏——中间全是被遮住却仍可聚焦的背景。层本身随 `openKey` 挂载/卸载，所以 open
+    恒为 true，卸载时 hook 把焦点还给那张卡片。
+  */
+  const boxRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(boxRef, true);
 
   /* Esc：删除二次确认开着时先收它，否则关整个详情层（H4）。 */
   useEffect(() => {
@@ -585,7 +620,14 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
   const shareable = !!job && job.status === "succeeded" && !work.purged;
 
   return (
-    <div className="work" role="dialog" aria-modal="true" aria-label={t("home.dialog.aria")} onClick={onClose}>
+    <div
+      className="work"
+      ref={boxRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("home.dialog.aria")}
+      onClick={onClose}
+    >
       <div className="work__panel" onClick={(e) => e.stopPropagation()}>
         <div className="work__media">
           {work.purged ? (
@@ -628,7 +670,7 @@ function WorkDialog({ work, onClose, onReuse, onSaveTags, onDelete, onToast }: D
                   onClick={() => toggle(tag)}
                 >
                   {on ? <IconCheck size={11} /> : null}
-                  {tag}
+                  {tagLabel(tag, t)}
                 </button>
               );
             })}

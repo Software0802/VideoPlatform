@@ -58,6 +58,7 @@ export const composer: Record<keyof typeof zh, string> = {
   "composer.multi": "Multi-shot",
   "composer.panelBtn": "Settings panel",
   "composer.audioLang": "Chinese (Mandarin)",
+  "composer.audioVoice": "Expressive Narrator",
 
   "composer.specs.resolution": "Resolution",
   "composer.specs.ratio": "Aspect ratio",

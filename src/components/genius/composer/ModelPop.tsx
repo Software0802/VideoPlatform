@@ -10,7 +10,7 @@ import {
 } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { HARNESS_DURATIONS } from "@/lib/harness/durations";
-import type { Product } from "@/lib/client/models";
+import { productDescription, productLabel, type Product } from "@/lib/client/models";
 import type { MessageKey } from "@/lib/i18n/messages";
 
 /*
@@ -110,7 +110,7 @@ export function ModelPop() {
                   <span className="model-pop__icon" aria-hidden="true" />
                   <span className="model-pop__body">
                     <span className="model-pop__name">
-                      {p.name}
+                      {productLabel(p, t)}
                       {/* 基准价：一次典型出片的积分（¥1 = 100 积分），不是这次提交的实际报价 */}
                       <span className="model-pop__price">
                         <IconBolt size={10} />
@@ -124,7 +124,7 @@ export function ModelPop() {
                       {caps.mock ? <span className="model-pop__mock">{t("composer.model.mock")}</span> : null}
                     </span>
                     {/* 上游展示名只在「与产品名不同」时才露，免得同一串字印两遍。 */}
-                    {p.upstreamModel && p.upstreamModel !== p.name ? (
+                    {p.upstreamModel && p.upstreamModel !== productLabel(p, t) ? (
                       <span className="model-pop__upstream">{p.upstreamModel}</span>
                     ) : null}
                     {durs || resolutions || p.maxReferenceImages > 0 ? (
@@ -140,7 +140,7 @@ export function ModelPop() {
                           .join(" · ")}
                       </span>
                     ) : null}
-                    <span className="model-pop__desc">{p.description}</span>
+                    <span className="model-pop__desc">{productDescription(p, t)}</span>
                   </span>
                 </button>
               );

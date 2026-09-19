@@ -60,6 +60,7 @@ export const composer = {
   "composer.multi": "多镜头",
   "composer.panelBtn": "配置面板",
   "composer.audioLang": "中文（普通话）",
+  "composer.audioVoice": "富有表现力的旁白",
 
   /* 规格 / 模型 / 数量 */
   "composer.specs.resolution": "分辨率",

@@ -66,7 +66,7 @@ function useDismiss(open: boolean, close: () => void) {
 
 export function TopBar({ view }: { view: ShellView }) {
   const { caps, me, email, credits, signOut, signingOut } = useSession();
-  const { showToast, notices, unread, markNoticesRead } = useNotices();
+  const { showToast, notices, unread, markNoticesRead, setNoticePanelOpen } = useNotices();
   const { openNotice } = useJobs();
   const t = useT();
   const router = useRouter();
@@ -78,6 +78,14 @@ export function TopBar({ view }: { view: ShellView }) {
   const [pwd, setPwd] = useState(false);
   const menuBox = useDismiss(menu, () => setMenu(false));
   const bellBox = useDismiss(bell, () => setBell(false));
+  /*
+    面板开着的时候右上角别再弹同一条的 toast（review 2026-09-15 C-13）：它 z-index 45、
+    面板 30，几何上正好压在列表头两条上。上报开合而不是只在 onClick 里关一次——面板还能
+    被点外面 / Esc 关掉，关掉之后就该恢复弹。
+  */
+  useEffect(() => {
+    setNoticePanelOpen(bell);
+  }, [bell, setNoticePanelOpen]);
 
   return (
     <header className="top">

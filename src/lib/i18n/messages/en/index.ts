@@ -2,6 +2,7 @@ export { common } from "./common";
 export { shell } from "./shell";
 export { home } from "./home";
 export { composer } from "./composer";
+export { product } from "./product";
 export { create } from "./create";
 export { agent } from "./agent";
 export { canvas } from "./canvas";

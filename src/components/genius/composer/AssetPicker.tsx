@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { IconClose, IconUpload } from "@/components/genius/icons";
 import { useComposer, useJobs, type SlotTarget } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
+import { useDialogFocus } from "@/components/genius/useDialogFocus";
 import type { MessageKey } from "@/lib/i18n/messages";
 
 /*
@@ -27,12 +28,16 @@ export function AssetPicker({ onUpload }: { onUpload: () => void }) {
   const { setPop, slotTarget, pickCreated } = useComposer();
   const t = useT();
   const [tab, setTab] = useState<"made" | "uploaded">("uploaded");
+  /* 焦点进层、Tab 在层内循环、关掉还给槽位按钮（review 2026-09-15 U-07）。 */
+  const boxRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(boxRef, true);
 
   const made = jobs.filter((j) => j.status === "succeeded" && j.output?.kind === "image" && !j.artifactsPurgedAt);
 
   return (
     <div
       className="picker"
+      ref={boxRef}
       role="dialog"
       aria-modal="true"
       aria-label={t("composer.picker.aria")}

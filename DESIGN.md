@@ -132,6 +132,11 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 
 ## 可访问性契约（DOM，e2e 依赖）
 
+所有 `role="dialog"` / `role="alertdialog"` 的层都挂 `useDialogFocus(ref, open, initial?)`
+（`src/components/genius/useDialogFocus.ts`）：打开聚焦层内第一个可聚焦元素（或 `initial`
+指定的那个）、Tab / Shift+Tab 在层内循环、关掉把焦点还给打开它的元素。收层（Esc、点外层）
+是另一回事，由各处的 `useDismiss` 管；画布冲突层刻意两者都不要，只能显式二选一。
+
 | 元素 | 选择器 / 可访问名 |
 | --- | --- |
 | 壳水合完成 | `.shell[data-ready="true"]`（登录页根节点也是 `.shell`） |
@@ -142,27 +147,32 @@ Manrope + Noto Sans SC 回退（400/500/600/700），`-webkit-font-smoothing:ant
 | 创作面板 | `.composer[data-open][data-tab][data-mode]`（`data-mode` 报后端模式名，放首帧后 `text_to_video`→`image_to_video`） |
 | 面板标签页 | `role="tab"` 名 `视频/图片/音频` + `aria-selected` |
 | 模式行 | `role="radio"` 名 `图文/参考/...` + `aria-checked`，不可用项 `aria-disabled="true"` |
-| 提示词 | `textarea` `aria-label="提示词"` |
+| 提示词 | `textarea` `aria-label="提示词"`，计数器 `#composer-prompt-count`（`.composer__count[data-warn]`，由 `aria-describedby` 指向） |
 | 规格芯片/弹层 | `.composer__specs` 文本如 `720P \| 16:9 \| 5s`；`.specs-pop` 内 `button[data-res]/[data-ratio]/[data-dur]`，选中 `aria-pressed="true"` |
 | 音频开关 | `.composer__audio[role="switch"]`，`aria-checked` |
 | 模型芯片 | `.composer__model` |
 | 智能体选择器 | `.agent-pickers` 四个 `.agent-chip`；模型项 `.agent-pop__item[data-chat-model]`，创意档 `.agent-pop__plain[data-tier]` |
 | 智能体提案与落款 | `.agent-chat__proposal-product` 显示实际产品；`.agent-chat__meta[data-model]` 显示模型与创意档 |
 | 顶栏铃铛 | 按钮名 `通知`（有未读时 `.top__dot[data-count]`）；面板 `.notify` 内 `.notify__item[data-kind="job\|run\|agent"][data-status][data-ok]`，job 项另带 `data-job-id`；点击 job → `/create`、run → `/canvas`、agent → `/agent?session=<id>` |
-| 智能体历史抽屉 | `.agent-drawer__row[data-session-id]`；`.agent-history__archived-toggle`（`aria-expanded`）展开已归档会话，条目 `data-archived="true"`，空态 `.agent-drawer__empty` |
+| 智能体历史抽屉 | `.agent-drawer__row[data-session-id]`；`.agent-history__archived-toggle`（`aria-expanded`）展开已归档会话，条目 `data-archived="true"`，空态 `.agent-drawer__empty`；删除先出 `.agent-drawer__confirm[role="alertdialog"]`（对话顶栏同理 `.agent-chat__confirm`） |
 | 中转模型表 | `.relay-models[data-relay-id]`、`.relay-models__row[data-model-id][data-listed]` |
 | 创作按钮 | `button.composer__send` 名 `创作`，`data-busy`，含 `.composer__credits` |
 | 错误行 | `.composer__error[role="alert"]` |
+| 轻提示 | `.toasts[role="status"]` 里叠 `.toast`（最多 3 条），文本在 `.toast__text`；超一行的那条另有 `.toast__x`（名 `关闭提示`） |
 | 图片槽 | `.composer__slot` + `input[type=file]`（`aria-label="上传图片"`），有图 `data-state="ready"` |
 | 创作页当前任务 | `.task[data-job-id][data-state][data-status]`，`.task__pct/.task__stage/.task__err`，按钮 `取消/重新生成`，`link` `下载`；`data-state="busy"` 时内部另渲染等待层 `.task__wait[aria-hidden="true"][data-pct]`（不带文本，终态不渲染） |
 | 重试阻断 | `.task__blocked[role="alert"]`，出现时无「重新生成」按钮 |
-| 主页瀑布流卡片 | `.masonry__item[data-kind="video|image"][data-purged]`；临期角标 `.masonry__expiring[data-days]`；标签页 `role="tab"` 名 `视频/图片/模板/挑战` |
+| 重试涨价确认 | 服务端 409 `retry_price_changed` 后，重试按钮名变为 `确认重试（¥x）`；再点一次才带上确认价提交 |
+| 主页瀑布流卡片 | `.masonry__item[data-kind="video|image"][data-purged]`；封面 `img.masonry__cover[loading="lazy"]`；临期角标 `.masonry__expiring[data-days]`；标签页 `role="tab"` 名 `视频/图片/模板/挑战`；分类芯片 `.home__cat[data-cat]` 的 `data-cat` 是**落盘值**（中文），可见文本随语言 |
 | 作品详情浮层 | `.work[role="dialog"]`，按钮 `用这条提示词再生成`、`关闭`；到期说明 `.work__expire[data-days][data-soon]` |
 | 画布整图运行 | 顶栏按钮名 `运行整图`，运行中为 `取消运行` |
 | 画布报价弹层 | `.canvas-quote[role="dialog"]`，行内勾选 `重跑`/`执行前需我批准`，按钮 `确认运行`/`取消` |
 | 画布节点执行态 | `.canvas-node__exec[data-exec]`；`awaiting_approval` 时 `.canvas-node__approve` 按钮名 `批准`/`驳回` |
+| 画布节点删除 | `.canvas-node__del`（名 `删除节点`）；节点有提示词 / 素材 / 产物时先出 `.canvas-node__confirm[role="alertdialog"]`，空节点直接删 |
 | 画布等待态 | `.canvas-node[data-wait="model"\|"approval"]`（`NodeCard.tsx` 导出 `waitStateOf()`）；连线 `.canvas-wires path[data-wait="model"]`；运行中 `.canvas-view[data-running="true"]` |
 | 头像菜单 | 按钮 `.top__avatar`，菜单内按钮 `账户`/`修改密码`/`退出` |
 | 账户页 | `/account` 三卡 `.account__card`（账号/余额/安全）；「退出全部设备」为 `role="alertdialog"` 页内二次确认 |
+| 订阅档位 | 已有生效订阅时其它档的 `.sub-card__cta[data-state="locked"]` 不可点（服务端不给中途换档） |
+| 404 | 根 `not-found.tsx`，根节点 `.nf.shell`，双语标题与「回到主页」链接 |
 
 完整契约与 §7.1 细化假设见 `docs/plan-ui-genius-app.md`。

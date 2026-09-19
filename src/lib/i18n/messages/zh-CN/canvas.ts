@@ -72,6 +72,8 @@ export const canvas = {
   "canvas.conflict.keptLocal": "已用本地版本覆盖服务端",
   "canvas.conflict.usedServer": "已切换到服务端版本，本地修改已丢弃",
   "canvas.nodeDelete": "删除节点",
+  "canvas.nodeDelete.confirmText": "删除这个节点？",
+  "canvas.nodeDelete.confirm": "删除",
   "canvas.textPlaceholder": "写点什么…（连线到生成节点时会并进提示词）",
   "canvas.upload": "上传图片",
   "canvas.material.retention": "素材保留 30 天，到期后需重新上传",

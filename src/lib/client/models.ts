@@ -1,6 +1,7 @@
 import type { ProductPriceOverride } from "@/lib/billing/prices";
 import type { AspectRatio, ImageResolution, NativeMode, Resolution } from "@/lib/providers/types";
 import { parseAuthed } from "@/lib/client/http";
+import type { MessageKey } from "@/lib/i18n/messages";
 
 /**
  * `GET /api/models` 的浏览器侧读取口（阶段 A 契约）。
@@ -161,6 +162,45 @@ export async function fetchProducts(): Promise<Product[]> {
   return raw.map(readProduct).filter((p): p is Product => p !== null);
 }
 
+/**
+ * 内置目录产品的展示名与一句话说明走字典（review 2026-09-15 U-08）。
+ *
+ * 服务端把 `name` / `description` 当**数据**下发，对 relay 接进来的模型来说它们来自上游，
+ * 没有也不可能有译文；但内置目录那七档是我们自己起的名字（「快速」「高清有声」…），英文
+ * 界面下原样显示就成了「快速 · Image to video · 8s · 720p」这种中英混排。这里按**产品 id**
+ * 认领内置那几档，查不到的（relay 模型）原样用服务端下发的字符串。
+ *
+ * id 是稳定契约（`src/lib/products/catalog.ts`），加一档要在这里和两份字典里各补一项；
+ * 漏了只会退回中文原名，不会崩。
+ */
+const BUILTIN_PRODUCT: Record<string, { name: MessageKey; desc: MessageKey }> = {
+  "video-fast": { name: "product.video-fast.name", desc: "product.video-fast.desc" },
+  "video-standard": { name: "product.video-standard.name", desc: "product.video-standard.desc" },
+  "video-hd-audio": { name: "product.video-hd-audio.name", desc: "product.video-hd-audio.desc" },
+  "video-grok": { name: "product.video-grok.name", desc: "product.video-grok.desc" },
+  "image-fast": { name: "product.image-fast.name", desc: "product.image-fast.desc" },
+  "image-standard": { name: "product.image-standard.name", desc: "product.image-standard.desc" },
+  "image-grok": { name: "product.image-grok.name", desc: "product.image-grok.desc" },
+};
+
+/** 结构签名，避免客户端工具模块去 import 只在组件里存在的 `Translate`。 */
+type Translate = (key: MessageKey) => string;
+
+/** 产品展示名：内置档查字典，relay 模型用服务端下发的名字。 */
+export function productLabel(product: { id: string; name: string }, t: Translate): string {
+  const key = BUILTIN_PRODUCT[product.id]?.name;
+  return key ? t(key) : product.name;
+}
+
+/** 产品一句话说明，规则同 `productLabel`。 */
+export function productDescription(
+  product: { id: string; description: string },
+  t: Translate,
+): string {
+  const key = BUILTIN_PRODUCT[product.id]?.desc;
+  return key ? t(key) : product.description;
+}
+
 /** 这个产品接不接得下这条路径。 */
 export function supportsMode(product: Product, mode: NativeMode): boolean {
   return product.modes.includes(mode);
@@ -173,8 +213,13 @@ export function supportsMode(product: Product, mode: NativeMode): boolean {
  * 而不是直接取字段，好让前端在后端落地前后都能编译，也不会因为老任务没有这两个字段
  * 而渲染出 `undefined`——那种记录回落调用方给的旧文案。
  */
-export function productNameOf(job: unknown): string | null {
+export function productNameOf(job: unknown, t?: Translate): string | null {
   if (!job || typeof job !== "object") return null;
   const name = (job as { productName?: unknown }).productName;
-  return typeof name === "string" && name.trim() ? name : null;
+  if (typeof name !== "string" || !name.trim()) return null;
+  // 任务记录里存的是下单那一刻的产品名快照（中文）。`product` 是 id，认得出内置档就换成
+  // 当前语言的名字；relay 模型和查不到 id 的老记录照旧显示快照（review 2026-09-15 U-08）。
+  const id = (job as { product?: unknown }).product;
+  const key = typeof id === "string" ? BUILTIN_PRODUCT[id]?.name : undefined;
+  return key && t ? t(key) : name;
 }

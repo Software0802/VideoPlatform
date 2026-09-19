@@ -22,7 +22,6 @@ export const subscription = {
   "subscription.plans.yearly": "按年支付",
   "subscription.plans.monthly": "按月支付",
   "subscription.plans.loading": "读取订阅方案…",
-  "subscription.plans.error": "读取订阅方案失败，请稍后再试",
 
   /* 档位名（服务端只给 id，显示名在这里） */
   "subscription.plan.standard": "标准版",
@@ -80,5 +79,4 @@ export const subscription = {
   "subscription.ledger.loading": "读取中…",
   "subscription.ledger.more": "加载更多",
   "subscription.ledger.after": "余 {credits}",
-  "subscription.ledger.error": "读取失败，请稍后再试",
 } as const;

@@ -4,18 +4,18 @@
 
 ## 0. 当前状态
 
-核对日期：2026-09-17（代码与本机门禁）；生产仍是 2026-09-15 那次部署，本轮**未部署**。代码、部署记录与实测分开记，不从本地状态推断生产版本。
+核对日期：2026-09-19（代码与本机门禁）；生产仍是 2026-09-15 那次部署，本轮**未部署**。代码、部署记录与实测分开记，不从本地状态推断生产版本。
 
 | 项 | 状态 |
 | --- | --- |
-| 代码基线 | 精确 SHA 一律用 `git rev-parse HEAD origin/main` 核对，本文件不记自身所在的提交号。截至 `83065c7` 的内容 = 当前生产：`315818c` 会话/画布/终态 run 归档（`ARCHIVE_INACTIVE_DAYS`）、`8b5282f`+`0359830` 发布目录化 deploy 脚本（R1.4）、`6cc1611` 全仓审查报告（`docs/review-2026-09-15.md`）、`d8d326c`+`5087706` 整站背景呼吸灯与等待特效、`83065c7` 令牌文档对齐。此后新增 **`review-2026-09-15` 的五条 P1 修复**（U-01 上传失败可见 / U-02 画布移动端 / B-01 门禁假红 / B-03 relay 快照缓存 / B-05 产物到期预告，见 §3'）与 **响应体静默看门狗**（用户报的「画布节点成片后一直转圈」，根因与修法见 §2「上游传输」），这部分**尚未部署**，生产不含它 |
+| 代码基线 | 精确 SHA 一律用 `git rev-parse HEAD origin/main` 核对，本文件不记自身所在的提交号。截至 `83065c7` 的内容 = 当前生产：`315818c` 会话/画布/终态 run 归档（`ARCHIVE_INACTIVE_DAYS`）、`8b5282f`+`0359830` 发布目录化 deploy 脚本（R1.4）、`6cc1611` 全仓审查报告（`docs/review-2026-09-15.md`）、`d8d326c`+`5087706` 整站背景呼吸灯与等待特效、`83065c7` 令牌文档对齐。此后新增 **响应体静默看门狗**（用户报的「画布节点成片后一直转圈」，根因与修法见 §2「上游传输」）与 **`review-2026-09-15` 的 39 条修复**（P1 五条 + P2/P3 三十四条，分类见 §3'，逐条依据在原报告 §0.0），这部分**尚未部署**，生产不含它 |
 | 生产版本依据 | 生产 = `83065c7` 构建，`current -> releases/83065c7-20260915-134029`，`PREVIOUS=0359830-20260914-234013`；`releases/` 保留三份（另有 `legacy-13fb9ee`）。2026-09-15 `deploy.sh` 单次全流程通过：本地门禁、build（包 22M）、上传、服务器 `pnpm install --prod --frozen-lockfile`（84 包，2.6s）、Turbopack 原生包别名（sharp / ffmpeg-static）、`mv -T` 原子切链、重启与 health 轮询均成功，服务 active、本机 health 200 `ok=true`，公网 `/login` 200。浏览器实测公网登录页呼吸灯生效（`glow-breathe` 6s / `glow-drift` 10s，`--glow-peak=.4`、`--glow-rest=.14`）。登录态 `GET /api/health` 的 `build.sha` 本轮无生产会话，未核对；`/opt/genius/BUILD_INFO.json` 的内容未在服务器上回读，本地生成值为 `shortSha:83065c7`、`dirty:false` |
 | 生产配置 | `/opt/genius/.env` 已配置 7 条 `AGENT_CHAT_MODELS`，默认 `gpt-5.6-luna`；`YMAN_T2V_MODEL=minimax_h3`。更新前状态备份为 `.env.bak.20260914-220732`，当前与备份均为 genius:genius 640 |
 | 生产 relay | `data/relays.json` 于 2026-09-14 首次创建，仅含 `yman` 文件条目：`catalog.source=models-endpoint`，24 个模型配置（15 视频：13 定价 + 2 hidden；9 图片已定价），默认 t2v=`minimax_h3`、i2v/r2v=`minimax-h3-933-图文`、image=`gpt-image-2`。`data/relay-catalog/yman.json` 已自动生成 24 模型快照 |
 | 本机 | 主开发机为 Windows / PowerShell（Node v24.16.0）；2026-09-17 这轮在 Linux 远程容器（Node v22.22.2）上完成，pnpm 10.33.0，Next 16.3.3，React 19.2.8 |
 | 生产只读核查 | 阿里云 8.209.212.178，`/opt/genius`；Node v22.22.2，pnpm 10.33.0，Caddy v2.11.4；genius.service active，`User=genius`，MemoryMax 700 MiB；部署后 available 内存 831 MiB、根盘可用 14G；`.env` 640、`data/relays.json` 600，均 genius:genius |
 | 入口 | `https://genius.homeaistack.online`；本地 `pnpm dev` 后访问 `http://localhost:3000`，不用 127.0.0.1（Next dev 可能 403） |
-| 整合门禁 | 2026-09-17 本机（Linux 容器，Node v22.22.2，pnpm 10.33.0）：`pnpm typecheck` 0 错、`eslint src e2e scripts` 0、`pnpm test` 120 文件 / 1356 通过 / 1 跳过、隔离 mock+harness E2E **49/49**（`E2E_PORT=3100`，独立 DATA_DIR，5.1 分钟；含本轮新增的「临期作品」「上传坏文件」与画布两条等待态用例）。本轮未跑 `pnpm build`、未部署。B-01 与 B-03 两个偶发假红已修（见 §3'），`run-graph.test.ts` 的 `beforeAll` 在机器忙时 10s 超时仍是已知的第三个偶发源，单跑 35/35 绿。E2E 曾有一次 `i18n.spec.ts`「登录页也能切换语言」因 `goto` 与 401 跳转竞争 ERR_ABORTED（用例注释已登记这个竞争），同配置重跑即绿——它不在本轮修复范围内。仅四个慢用例有局部等待上限调整，未放宽全局或业务超时 |
+| 整合门禁 | 2026-09-19 本机（Linux 容器，Node v22.22.2，pnpm 10.33.0）：`pnpm typecheck` 0 错、`eslint src e2e scripts` 0、`pnpm test` 120 文件 / 1362 通过 / 1 跳过、隔离 mock+harness E2E **51/51**（`E2E_PORT=3100`，独立 DATA_DIR；含本轮新增的「临期作品」「上传坏文件」「画布等待态」「弹层焦点」「节点删除确认」）。本轮未跑 `pnpm build`、未部署。B-01 与 B-03 两个偶发假红已修（见 §3'），`run-graph.test.ts` 的 `beforeAll` 在机器忙时 10s 超时仍是已知的第三个偶发源，单跑 35/35 绿。E2E 曾有一次 `i18n.spec.ts`「登录页也能切换语言」因 `goto` 与 401 跳转竞争 ERR_ABORTED（用例注释已登记这个竞争），同配置重跑即绿——它不在本轮修复范围内。仅四个慢用例有局部等待上限调整，未放宽全局或业务超时 |
 | 测试环境 | E2E 使用独立 DATA_DIR、E2E_ISOLATED=1、E2E_REQUIRE_MOCK=1 与独立端口，不读生产密钥、不调用真实上游 |
 | 备份 | root cron 每日 03:17 跑 backup.sh（白名单含 `relays.json`+`assets/`）；2026-09-13 包 `backups/genius-data-20260913-211416.tgz` 已做首次真实恢复核对并一致，未做完整切换恢复；生产 OSS 变量与完整恢复演练仍待执行 |
 
@@ -91,17 +91,21 @@ Windows 本机的 mock 视频/ffmpeg、通知原子写入与 relay 首次动态�
 
 ## 3'. 2026-09-15 全仓审查（UI / 易用性 / 健壮性）
 
-原报告 `docs/review-2026-09-15.md` 保留 `046f59f` 时的证据，顶部有同样的状态表。**五条 P1 已全部实施**（2026-09-17）：
+原报告 `docs/review-2026-09-15.md` 保留 `046f59f` 时的证据，顶部的状态表是逐条判定。**五条 P1
+（2026-09-17）与 P2/P3 共 34 条（2026-09-17 ~ 09-19，四批）已实施**，逐条依据见原报告 §0.0。
+本文只记分类与还剩什么：
 
-| Finding | 当前状态 |
+| 批次 | 内容 |
 | --- | --- |
-| U-01 上传失败不可见 | 已修：前端预检 + 错误行显示原因；`preprocess.ts` 把「解不开的输入」包成 400 `invalid_argument` 中文；错误帧不再改 `nativeMode`。回归在 `preprocess.test.ts` 与 `genius.spec.ts`「上传坏文件」 |
-| U-02 画布 375 宽不可操作 | 已修：窄屏 1:1 + 平移、菜单按视图坐标定位、长按建节点、pointer 拖拽 + `pointercancel`、`touch-action`、粗指针下的热区与常显删除钮。回归走 `mobile.spec.ts` 三档视口 |
-| B-03 relay 快照偶发失败 | 已修：缓存键 `mtimeNs:size:ino` + 「读晚于写」判据，写侧原子写；新增用例把「同一 mtime、不同内容」钉死，换回旧键即红 |
-| B-01 `tsc` 假红 | 已修：`pnpm typecheck` 先删 `.next/dev/types` 再 typegen 再 tsc，本机 / CI / deploy.sh 三处同源，`project-contracts.test.ts` 钉住 |
-| B-05 产物无声清空 | 已修：`artifactsExpireAt` 派生下发 + 临期角标 + 详情浮层到期说明（不改留存逻辑） |
+| P1 五条 | U-01 上传失败可见且不透传 sharp 原文、U-02 画布移动端可操作、B-03 relay 快照缓存键、B-01 `pnpm typecheck` 单一门禁、B-05 产物到期预告 |
+| P2/P3 第一批（界面把话说清） | U-06 阻断栏不再讲运维口径、U-14 忙碌原因常驻、C-24 批量部分失败说清已建几条、U-09 档位徽标、U-10 会话钉进地址栏、U-19/C-23 两处错误反馈 |
+| P2/P3 第二批（智能体收尸） | B-07 / B-09：`agent/settle.ts` 挂进 runner 每小时维护，卡住的 `thinking` 退款、`executing` 改回待批准 |
+| P2/P3 第三批（钱与启动 + 小 UI） | B-10 重试涨价先确认、B-06 止损阀文案、B-11 启动不再全表扫，外加 15 条界面细节（计数器、规格弹层窄屏、轻提示层级、多镜头假开关、死入口标记、焦点环、旧技能开关、头像菜单、画布防抖补发、封面懒加载、订阅档位锁定、素材选择器假 tab、品牌化 404 等） |
+| P2/P3 第四批（结构性） | C-13 轻提示队列、C-19 流水序号守卫与按类分页、U-18 节点/会话删除确认、C-11 时区（时间改挂载后渲染）、U-07 `useDialogFocus` 弹层焦点管理、U-08 英文态（标签 / 产品名 / metadata）、U-32 创作页成片区按视口收缩 |
 
-P2（13 条）与 P3（18 条）尚未处理，按原报告正文排队；下一批的挑选权在用户。
+仍未处理的 P2/P3 按原报告正文排队，主要是触控热区（U-15）、对比度令牌（U-22）、方向键
+（C-17）、`aria-live` 粒度（C-05）这几条基础可访问性，以及 U-05/C-01 那族「浏览器请求没有
+超时」（只修了轮询链上的 `fetchJob`/`fetchCanvasRun`）。
 
 ## 4. 未完成与边界
 
@@ -136,13 +140,13 @@ R5.2 已落地（`b1c71d0`）：`ShellContext` 拆为 `shell/{Session,Notices,Jo
 
 ## 6. 下一步与权限
 
-代码侧 R0–R2、R4.0/R4.1（管理令牌 + `admission_ms` 埋点）、R5、R7（告警适配）均已落地；`review-2026-09-15` 的五条 P1 已于 2026-09-17 实施（§3'），**尚未部署**。
+代码侧 R0–R2、R4.0/R4.1（管理令牌 + `admission_ms` 埋点）、R5、R7（告警适配）均已落地；`review-2026-09-15` 的 39 条（P1 五条 + P2/P3 三十四条）已于 2026-09-17 ~ 09-19 实施（§3'），**尚未部署**。
 
-本地可继续推进的代码工作（不需要生产窗口，按原报告优先级）：`review-2026-09-15` 的 13 条 P2（连接中断提示与请求超时 U-05、弹层焦点管理 U-07、限流 `retryAfterSec` 落到文案 B-04、`executing` 轮次无人回收 B-07/B-09、重试价上涨无预检 B-10、启动全扫 B-11、多镜头假开关 C-02、分类芯片与产品名的英文态 U-08 等）与 18 条 P3；挑哪一批由用户定。
+本地可继续推进的代码工作（不需要生产窗口）：原报告剩下的基础可访问性四条（触控热区 U-15、对比度令牌 U-22、方向键 C-17、`aria-live` 粒度 C-05）与 U-05/C-01 那族「浏览器请求没有超时」的剩余部分；限流 `retryAfterSec` 落到文案（B-04）已有 `publicFields` 这条通道可用，界面侧尚未接。挑哪一批由用户定。
 
 待用户/生产窗口动作：
 
-0. **部署本轮 P1 修复**（未做，须用户确认窗口）：`deploy.sh` 的门禁步骤已改成 `pnpm typecheck`，部署前值得留意这一处脚本变更。
+0. **部署本轮修复**（未做，须用户确认窗口）：`deploy.sh` 的门禁步骤已改成 `pnpm typecheck`，部署前值得留意这一处脚本变更。新增可选环境变量 `UPSTREAM_BODY_IDLE_MS`（默认 60000，响应体静默看门狗）不配也能跑。
 1. **登录态核对**：生产 `/api/health` 的 `build.sha` 应为 `83065c7…`；`/api/models`、`/api/agent/skills`（7 个模型 + `off`）、铃铛与历史抽屉「已归档」在真实账号下过一眼。归档 sweep 首次将在部署后 1 小时的维护 tick 执行，默认 90 天阈值，生产目前不会有对象。
 2. **告警渠道**：`LUMEN_ADMIN_TOKEN` 已配置并实测生效（loopback→200 `{sent:false}`、公网→401，见 runbook「管理 CLI」节）；`.env` 仍待填 `ALERT_WEBHOOK_URL` + `ALERT_WEBHOOK_FORMAT`（feishu/dingtalk/wecom/generic）+ `ALERT_WEBHOOK_SECRET`（飞书/钉钉签名密钥），配后跑 `sudo -u genius node scripts/alert-test.mjs` 做真实触发验证（钉钉自定义机器人关键词填 `Lumen`）。
 3. **备份异地副本**：`.env` 配 `BACKUP_OSS_BUCKET`/`BACKUP_OSS_PREFIX`/`BACKUP_ENC_PASSPHRASE`/`OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET`/`OSS_REGION`（或 `OSS_ENDPOINT`），安装 ossutil 2.x（见 runbook 备份节）；首次 `--compare` 核对已做，完整恢复演练（解包→切换→验证）待执行。

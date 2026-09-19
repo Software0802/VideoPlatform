@@ -54,9 +54,10 @@ export type JobsShell = {
   /** 这一类还有更老的没拉过来 */
   hasMoreJobs: (kind: JobKind) => boolean;
   loadMoreJobs: (kind: JobKind) => void;
-  jobsLoading: boolean;
-  /** 分页失败时的那句话；再点一次「加载更多」会清掉 */
-  jobsError: string | null;
+  /** 这一类的下一页在不在飞。按类分开：视频页在途时图片页照样能点（C-19） */
+  jobsLoading: (kind: JobKind) => boolean;
+  /** 这一类分页失败时的那句话；再点一次「加载更多」会清掉 */
+  jobsError: (kind: JobKind) => string | null;
 
   /* 作品操作（详情浮层） */
   /** `PATCH /api/jobs/:id { tags }`，整组替换 */
@@ -138,8 +139,13 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
 
   /* 分页：两类各一个游标与「还有没有」。首屏 40 条是混着的，所以初值都取服务端那个标记。 */
-  const [jobsLoading, setJobsLoading] = useState(false);
-  const [jobsError, setJobsError] = useState<string | null>(null);
+  /*
+    在途与错误也按类分开（review 2026-09-15 C-19）：共用一个布尔时，视频那页还在飞，
+    切到图片页点「加载更多」会被 `if (jobsLoading) return` 静默吞掉——按钮变灰又没有
+    任何反馈，看上去就是点了没用。错误同理：视频页的失败不该写在图片页的列表下面。
+  */
+  const [loadingKind, setLoadingKind] = useState<Record<JobKind, boolean>>({ video: false, image: false });
+  const [errorKind, setErrorKind] = useState<Partial<Record<JobKind, string>>>({});
   const [more, setMore] = useState<Record<JobKind, boolean>>({ video: caps.moreJobs, image: caps.moreJobs });
   const [cursor, setCursor] = useState<Partial<Record<JobKind, string>>>({});
 
@@ -188,26 +194,29 @@ export function JobsProvider({ children }: { children: ReactNode }) {
 
   const hasMoreJobs = useCallback((kind: JobKind) => more[kind], [more]);
 
+  const jobsLoading = useCallback((kind: JobKind) => loadingKind[kind], [loadingKind]);
+  const jobsError = useCallback((kind: JobKind) => errorKind[kind] ?? null, [errorKind]);
+
   const loadMoreJobs = useCallback(
     (kind: JobKind) => {
-      if (jobsLoading || !more[kind]) return;
+      if (loadingKind[kind] || !more[kind]) return;
       const before = cursor[kind] ?? jobsRef.current.filter((j) => kindOfJob(j) === kind).at(-1)?.createdAt;
-      setJobsLoading(true);
-      setJobsError(null);
+      setLoadingKind((l) => ({ ...l, [kind]: true }));
+      setErrorKind((e) => ({ ...e, [kind]: undefined }));
       void fetchJobsPage({ before, limit: JOBS_PAGE, kind }).then(
         (page) => {
-          setJobsLoading(false);
+          setLoadingKind((l) => ({ ...l, [kind]: false }));
           setJobs((prev) => appendJobs(prev, page.jobs));
           setCursor((c) => ({ ...c, [kind]: page.nextBefore }));
           setMore((m) => ({ ...m, [kind]: Boolean(page.nextBefore) }));
         },
         (e: unknown) => {
-          setJobsLoading(false);
-          setJobsError(errorText(t, e));
+          setLoadingKind((l) => ({ ...l, [kind]: false }));
+          setErrorKind((prev) => ({ ...prev, [kind]: errorText(t, e) }));
         },
       );
     },
-    [cursor, jobsLoading, more, t],
+    [cursor, loadingKind, more, t],
   );
 
   /* ── 作品操作：标签 / 删除 ── */

@@ -23,6 +23,7 @@ export const shell: Record<keyof typeof zh, string> = {
 
   "shell.notify.empty": "No notifications yet. Finished jobs will show up here.",
   "shell.notify.dismiss": "Dismiss notification",
+  "shell.toast.dismiss": "Dismiss message",
   "shell.notice.done": "Your creation is ready",
   "shell.notice.canceled": "Job canceled",
   "shell.notice.failed": "Generation failed",

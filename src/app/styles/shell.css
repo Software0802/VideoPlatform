@@ -632,24 +632,33 @@
 
 /* ── 「即将上线」提示 ── */
 
-.toast {
+.toasts {
   position: absolute;
   left: 50%;
   top: 70px;
   transform: translateX(-50%);
-  margin: 0;
   /*
     轻提示必须画在**所有**弹层遮罩之上：作品详情浮层曾把「链接已复制」压暗
     （review 2026-09-15 U-17）。取 70 = 当前最高遮罩（`.pwd` 60）之上；遮罩散在
-    shell/home/subscription 三处，别在这里抄它们的数值，会烂。前提是它
-    `pointer-events: none`（下一行），将来要加可点内容就把热区收进子元素。
+    shell/home/subscription 三处，别在这里抄它们的数值，会烂。
   */
   z-index: 70;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  /* 容器本身不吃点击，只有长文案那条的 ✕ 把热区收回来（review 2026-09-15 C-13）。 */
+  pointer-events: none;
+  max-width: 100%;
+}
+.toast {
+  margin: 0;
   min-height: 32px;
   /* 长文案（拼了产品名 / 带请求号的错误）在 375 宽原来被两头裁掉（review 2026-09-15 C-12）。 */
-  max-width: min(420px, calc(100% - 32px));
+  max-width: min(420px, calc(100vw - 32px));
   display: inline-flex;
   align-items: center;
+  gap: 8px;
   padding: 6px 14px;
   border-radius: 9px;
   font-size: 12.5px;
@@ -659,8 +668,27 @@
   background: rgba(28, 28, 33, 0.98);
   box-shadow: var(--ring), var(--shadow-pop);
   animation: pop-in 0.2s ease both;
-  pointer-events: none;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+.toast__text {
+  min-width: 0;
+}
+.toast__x {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 10px;
+  color: var(--weak);
+  /* 容器是 pointer-events:none，热区在这里收回来 */
+  pointer-events: auto;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+.toast__x:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg);
 }
 

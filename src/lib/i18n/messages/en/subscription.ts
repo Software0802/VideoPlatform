@@ -22,7 +22,6 @@ export const subscription: Record<keyof typeof zh, string> = {
   "subscription.plans.yearly": "Pay yearly",
   "subscription.plans.monthly": "Pay monthly",
   "subscription.plans.loading": "Loading plans…",
-  "subscription.plans.error": "Could not load the plans. Please try again later.",
 
   "subscription.plan.standard": "Standard",
   "subscription.plan.pro": "Pro",
@@ -73,5 +72,4 @@ export const subscription: Record<keyof typeof zh, string> = {
   "subscription.ledger.loading": "Loading…",
   "subscription.ledger.more": "Load more",
   "subscription.ledger.after": "Balance {credits}",
-  "subscription.ledger.error": "Could not load. Please try again later.",
 };

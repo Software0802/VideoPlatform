@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope, Noto_Sans_SC } from "next/font/google";
 import "./globals.css";
 import { I18nProvider } from "@/components/genius/i18n/I18nProvider";
+import { MESSAGES } from "@/lib/i18n/messages";
 import { resolveLocale } from "@/lib/i18n/server";
 
 /*
@@ -11,10 +12,20 @@ import { resolveLocale } from "@/lib/i18n/server";
 const manrope = Manrope({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-manrope" });
 const noto = Noto_Sans_SC({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-noto", preload: false });
 
-export const metadata: Metadata = {
-  title: "Genius",
-  description: "创建你的世界。文生视频 · 图生视频 · 文生图",
-};
+/**
+ * 站点标题与描述跟着 Cookie / `Accept-Language` 走（review 2026-09-15 U-08）。
+ *
+ * 原来是一个写死中文的 `metadata` 常量：英文界面下分享到社交平台、加到书签栏拿到的
+ * 仍是中文描述。写法与 `s/[token]/page.tsx` 的 `generateMetadata()` 一致——这一段在
+ * `I18nProvider` 之外，取不到 `useT()`，直接按 `resolveLocale()` 读字典。
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await resolveLocale();
+  return {
+    title: MESSAGES[locale]["common.metaTitle"],
+    description: MESSAGES[locale]["common.metaDescription"],
+  };
+}
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   // 语言由 Cookie / Accept-Language 决定（`src/lib/i18n`），`<html lang>` 与首屏字典同源。

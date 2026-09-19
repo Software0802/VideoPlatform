@@ -121,6 +121,7 @@ export default function AgentChat(props: Props) {
   const [budgetEdit, setBudgetEdit] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState("");
   const [pop, setPop] = useState<PickerPop>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const logRef = useRef<HTMLDivElement | null>(null);
 
   const messages = session?.messages ?? [];
@@ -163,12 +164,43 @@ export default function AgentChat(props: Props) {
               type="button"
               className="agent-chat__back"
               aria-label={t("agent.deleteSession", { title: session.title })}
-              onClick={onDelete}
+              onClick={() => setConfirmDelete(true)}
             >
               <IconTrash />
             </button>
           ) : null}
         </div>
+
+        {/*
+          删的是正在看的这条对话，原来点一下就没（review 2026-09-15 U-18）。二次确认与
+          历史抽屉那一行同口径，不引 `confirm()`。
+        */}
+        {confirmDelete && session ? (
+          <div
+            className="agent-chat__confirm"
+            role="alertdialog"
+            aria-label={t("agent.deleteSession", { title: session.title })}
+          >
+            <span className="agent-chat__confirm-text">{t("agent.deleteSession.confirmText")}</span>
+            <button
+              type="button"
+              className="agent-chat__confirm-btn"
+              onClick={() => setConfirmDelete(false)}
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="agent-chat__confirm-btn agent-chat__confirm-btn--danger"
+              onClick={() => {
+                setConfirmDelete(false);
+                onDelete();
+              }}
+            >
+              {t("agent.deleteSession.confirm")}
+            </button>
+          </div>
+        ) : null}
 
         <div className="agent-chat__log" ref={logRef}>
           {messages.map((m) =>

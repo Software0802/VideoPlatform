@@ -15,6 +15,7 @@ import {
 import { creditsOf, useSession } from "@/components/genius/ShellContext";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { errorText } from "@/lib/i18n/errorText";
+import { useDialogFocus } from "@/components/genius/useDialogFocus";
 import type { MessageKey } from "@/lib/i18n/messages";
 
 /**
@@ -129,7 +130,8 @@ export default function SubscriptionView({ credits }: { credits: number }) {
 
   /* 订阅档位与我的订阅 */
   const [state, setState] = useState<SubscriptionState | null>(null);
-  const [stateErr, setStateErr] = useState<string | null>(null);
+  /* 存原始错误而不是一句「读取失败」：渲染时经 errorText 翻成具体的码（review 2026-09-15 C-19）。 */
+  const [stateErr, setStateErr] = useState<unknown>(null);
   const [pending, setPending] = useState<SubscriptionPlan | null>(null);
   const [buying, setBuying] = useState(false);
   /**
@@ -150,7 +152,23 @@ export default function SubscriptionView({ credits }: { credits: number }) {
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [nextBefore, setNextBefore] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
-  const [ledgerErr, setLedgerErr] = useState<string | null>(null);
+  const [ledgerErr, setLedgerErr] = useState<unknown>(null);
+  /**
+   * 流水请求的序号。切「积分使用详情 / 账单记录」时两次请求同时在飞，先发的后到就会把
+   * 另一个口径的结果渲染到当前标题下（review 2026-09-15 C-19）。只认最后发出的那次。
+   */
+  const ledgerReq = useRef(0);
+
+  /*
+    三个弹层的焦点（review 2026-09-15 U-07）：确认订阅、兑换礼品码、流水抽屉原来打开后
+    焦点都还在背后的按钮上。Esc / 点外层收层是各自的 onClick 与 useEffect，这里只管焦点。
+  */
+  const confirmRef = useRef<HTMLDivElement>(null);
+  const redeemRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(confirmRef, pending !== null);
+  useDialogFocus(redeemRef, redeemOpen);
+  useDialogFocus(drawerRef, drawer !== null);
 
   useEffect(
     () => () => {
@@ -166,8 +184,8 @@ export default function SubscriptionView({ credits }: { credits: number }) {
       (next) => {
         if (alive) setState(next);
       },
-      () => {
-        if (alive) setStateErr("failed");
+      (e: unknown) => {
+        if (alive) setStateErr(e);
       },
     );
     return () => {
@@ -184,17 +202,20 @@ export default function SubscriptionView({ credits }: { credits: number }) {
   /** 拉一页流水。`before` 为空是第一页（换口径时要把上一次的结果丢掉）。 */
   const loadLedger = useCallback((next: Drawer, before?: string) => {
     if (!next) return;
+    const req = (ledgerReq.current += 1);
     setLoading(true);
     setLedgerErr(null);
     void fetchLedger({ before, limit: 20, kind: next.kind }).then(
       (page) => {
+        if (ledgerReq.current !== req) return;
         setLoading(false);
         setEntries((prev) => (before ? [...prev, ...page.entries] : page.entries));
         setNextBefore(page.nextBefore);
       },
-      () => {
+      (e: unknown) => {
+        if (ledgerReq.current !== req) return;
         setLoading(false);
-        setLedgerErr("failed");
+        setLedgerErr(e);
       },
     );
   }, []);
@@ -497,7 +518,7 @@ export default function SubscriptionView({ credits }: { credits: number }) {
           </div>
         ) : (
           <p className="sub-plans__hint" role="status">
-            {stateErr ? t("subscription.plans.error") : t("subscription.plans.loading")}
+            {stateErr ? errorText(t, stateErr) : t("subscription.plans.loading")}
           </p>
         )}
 
@@ -510,6 +531,7 @@ export default function SubscriptionView({ credits }: { credits: number }) {
       {pending ? (
         <div
           className="redeem sub-confirm"
+          ref={confirmRef}
           role="dialog"
           aria-modal="true"
           aria-label={t("subscription.confirm.title")}
@@ -555,6 +577,7 @@ export default function SubscriptionView({ credits }: { credits: number }) {
       {redeemOpen ? (
         <div
           className="redeem"
+          ref={redeemRef}
           role="dialog"
           aria-modal="true"
           aria-label={t("subscription.redeem.title")}
@@ -608,6 +631,7 @@ export default function SubscriptionView({ credits }: { credits: number }) {
       {drawer ? (
         <div
           className="ledger"
+          ref={drawerRef}
           role="dialog"
           aria-modal="true"
           aria-label={t(drawer.titleKey)}
@@ -651,7 +675,7 @@ export default function SubscriptionView({ credits }: { credits: number }) {
               )}
               {ledgerErr ? (
                 <p className="ledger__err" role="alert">
-                  {t("subscription.ledger.error")}
+                  {errorText(t, ledgerErr)}
                 </p>
               ) : null}
               {loading ? <p className="ledger__empty">{t("subscription.ledger.loading")}</p> : null}

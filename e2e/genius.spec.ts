@@ -1168,6 +1168,34 @@ test("标签：详情浮层改标签写回 PATCH，分类芯片按标签筛选",
   }
 });
 
+test("弹层焦点：详情浮层把焦点收进层内并困住 Tab，关掉还给卡片（review 2026-09-15 U-07）", async ({ page }) => {
+  const userId = await currentUserId(page);
+  const dataDir = await serverDataDir();
+  const seeded = await seedJob(userId, dataDir, { prompt: "看焦点跑哪去", ageMs: 0 });
+
+  try {
+    await reloadHome(page);
+    const tile = card(page, seeded.id);
+    await tile.click();
+    const dialog = workDialog(page);
+    await expect(dialog).toBeVisible();
+
+    // 打开时焦点就在层内（原来仍停在瀑布流卡片上，读屏用户听不到层里的任何内容）
+    await expect(dialog.locator(":focus")).toHaveCount(1);
+
+    // Tab 在层内循环：走够一圈也出不去，不会掉到被遮住却仍可聚焦的背景上
+    for (let i = 0; i < 40; i += 1) await page.keyboard.press("Tab");
+    await expect(dialog.locator(":focus")).toHaveCount(1);
+
+    // 关掉之后焦点还给打开它的那张卡片
+    await dialog.getByRole("button", { name: "关闭" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(tile).toBeFocused();
+  } finally {
+    await rm(seeded.dir, { recursive: true, force: true });
+  }
+});
+
 test("删除：详情浮层二次确认后 DELETE，卡片从瀑布流消失", async ({ page }) => {
   const userId = await currentUserId(page);
   const dataDir = await serverDataDir();
@@ -1243,7 +1271,7 @@ test("分享：详情浮层出链接，匿名浏览器能打开 /s/<token>", asy
   // 提示语（契约：「链接已复制，24 小时有效」）。小时数是从 expiresAt 推的，所以钉成
   // 正则——实例把 SHARE_TTL_HOURS 调短时这条用例不该假失败。一次断言拿下：`.toast`
   // 只挂 2.2 秒，拆成两条会在慢机器上擦边。
-  await expect(page.locator(".toast")).toHaveText(/^链接已复制，\d+ 小时有效$/);
+  await expect(page.locator(".toast__text")).toHaveText(/^链接已复制，\d+ 小时有效$/);
   // 剪贴板里就是这条链接（「复制」这个动作本身是契约的一半）
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(url);
 
@@ -1369,7 +1397,7 @@ test("改密：旧密码不对被拒、本机不掉线、其它设备的旧密�
     await dialog.getByRole("button", { name: "确认修改" }).click();
     expect((await changed).status()).toBe(200);
     await expect(dialog).toBeHidden();
-    await expect(page.locator(".toast")).toHaveText("密码已修改，其它设备已下线");
+    await expect(page.locator(".toast__text")).toHaveText("密码已修改，其它设备已下线");
 
     // 本机不掉线：服务端改完密码顺手重签了 Cookie（`/api/auth/password` 的注释）
     const me = await page.request.get("/api/me");

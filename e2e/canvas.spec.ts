@@ -85,7 +85,7 @@ test("双标签页保存冲突：弹层二选一，保留本地覆盖 / 采用�
 
   await dialog.getByRole("button", { name: "保留本地并覆盖服务端" }).click();
   await expect(dialog).toBeHidden();
-  await expect(pageB.locator(".toast")).toHaveText("已用本地版本覆盖服务端");
+  await expect(pageB.locator(".toast__text")).toHaveText("已用本地版本覆盖服务端");
 
   // B 的版本已是服务端事实：reload 后只有 B 的节点。
   await pageB.reload();
@@ -112,7 +112,7 @@ test("双标签页保存冲突：弹层二选一，保留本地覆盖 / 采用�
   await expect(dialog2).toBeVisible();
   await dialog2.getByRole("button", { name: "采用服务端，丢弃本地" }).click();
   await expect(dialog2).toBeHidden();
-  await expect(pageB.locator(".toast")).toHaveText("已切换到服务端版本，本地修改已丢弃");
+  await expect(pageB.locator(".toast__text")).toHaveText("已切换到服务端版本，本地修改已丢弃");
 
   await pageB.reload();
   await expect(pageB.locator(".canvas-scroll")).toBeVisible({ timeout: 60_000 });
@@ -242,4 +242,29 @@ test("在途保存序列化：紧贴上一个 PATCH 的第二次改动不撞 409
   const rev2 = (await r2.json()).canvas.revision;
   expect(rev2).toBe(rev1 + 1);
   await expect(page.locator(".canvas-conflict")).toHaveCount(0);
+});
+
+test("节点删除：有内容的节点先出二次确认，空节点直接删（review 2026-09-15 U-18）", async ({ page }) => {
+  // 有提示词的节点：✕ 只是打开确认条，节点还在；「取消」收回去。
+  const filled = await addImageNode(page, "写了半天的提示词");
+  await filled.locator(".canvas-node__del").click();
+  const confirm = filled.locator('.canvas-node__confirm[role="alertdialog"]');
+  await expect(confirm).toBeVisible();
+  await expect(page.locator(".canvas-node")).toHaveCount(1);
+  await confirm.getByRole("button", { name: "取消" }).click();
+  await expect(confirm).toBeHidden();
+  await expect(page.locator(".canvas-node")).toHaveCount(1);
+
+  // 空节点没有可丢的东西，✕ 当场删掉，不多问一步。
+  await page.locator(".canvas-view").click({ button: "right", position: { x: 420, y: 200 } });
+  await page.locator(".canvas-menu").getByRole("button", { name: "文生图" }).click();
+  await expect(page.locator(".canvas-node")).toHaveCount(2);
+  const empty = page.locator('.canvas-node[data-kind="gen_image"]').last();
+  await empty.locator(".canvas-node__del").click();
+  await expect(page.locator(".canvas-node")).toHaveCount(1);
+
+  // 回到第一个节点，确认这次真删。
+  await filled.locator(".canvas-node__del").click();
+  await filled.locator(".canvas-node__confirm").getByRole("button", { name: "删除" }).click();
+  await expect(page.locator(".canvas-node")).toHaveCount(0);
 });

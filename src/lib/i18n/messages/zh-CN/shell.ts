@@ -24,6 +24,7 @@ export const shell = {
   /* 通知 */
   "shell.notify.empty": "还没有新通知。任务完成时会出现在这里。",
   "shell.notify.dismiss": "关闭通知",
+  "shell.toast.dismiss": "关闭提示",
   "shell.notice.done": "作品已生成",
   "shell.notice.canceled": "任务已取消",
   "shell.notice.failed": "生成失败",

@@ -1,5 +1,7 @@
 /** 命名空间 `common`：跨视图复用的通用文案，键统一以 `common.` 开头。 */
 export const common = {
+  "common.metaTitle": "Genius",
+  "common.metaDescription": "创建你的世界。文生视频 · 图生视频 · 文生图",
   "common.ok": "确定",
   "common.cancel": "取消",
   "common.close": "关闭",

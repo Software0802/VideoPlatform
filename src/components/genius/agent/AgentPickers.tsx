@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useI18n, useT } from "@/components/genius/i18n/I18nProvider";
 import { creditsOf } from "@/components/genius/ShellContext";
 import { AGENT_TIERS, type AgentChatModel, type AgentSkill, type AgentTier } from "@/lib/client/agent";
-import type { Product } from "@/lib/client/models";
+import { productDescription, productLabel, type Product } from "@/lib/client/models";
 import { TIER_KEY, iconGrad, shot } from "./data";
 import { IconChevronDown, IconChevronRight, IconList, IconSkill } from "./icons";
 
@@ -132,8 +132,8 @@ export default function AgentPickers(props: Props) {
         >
           <span className="agent-pop__icon" style={{ background: iconGrad(i + 1) }} />
           <span className="agent-pop__body">
-            <span className="agent-pop__name">{p.name}</span>
-            <span className="agent-pop__desc">{p.description}</span>
+            <span className="agent-pop__name">{productLabel(p, t)}</span>
+            <span className="agent-pop__desc">{productDescription(p, t)}</span>
           </span>
           <span className="agent-pop__auto">
             {t("agent.creditsEach", { n: creditsOf(p.samplePriceCny) })}

@@ -65,6 +65,8 @@ export const canvas: Record<keyof typeof zh, string> = {
   "canvas.conflict.keptLocal": "Server overwritten with your local version",
   "canvas.conflict.usedServer": "Switched to the server version; local edits discarded",
   "canvas.nodeDelete": "Delete node",
+  "canvas.nodeDelete.confirmText": "Delete this node?",
+  "canvas.nodeDelete.confirm": "Delete",
   "canvas.textPlaceholder": "Write something… (wired into a generation node it joins the prompt)",
   "canvas.upload": "Upload image",
   "canvas.material.retention": "Assets are kept for 30 days; re-upload after expiry",

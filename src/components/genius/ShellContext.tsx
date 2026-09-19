@@ -43,9 +43,10 @@ export type {
   ShellCaps,
 } from "./shell/shared";
 export { useSession } from "./shell/SessionProvider";
-export { useNotices } from "./shell/NoticesProvider";
+export { useNotices, isLongToast } from "./shell/NoticesProvider";
 export { useJobs } from "./shell/JobsProvider";
 export { useComposer } from "./shell/ComposerProvider";
+export type { ToastItem } from "./shell/NoticesProvider";
 export type { SessionShell, NoticesShell, JobsShell, ComposerShell };
 
 type Shell = SessionShell & NoticesShell & JobsShell & ComposerShell;

@@ -73,6 +73,7 @@ describe("字典完整性", () => {
       "shell",
       "home",
       "composer",
+      "product",
       "create",
       "agent",
       "canvas",

@@ -39,6 +39,8 @@ export const agent: Record<keyof typeof zh, string> = {
   "agent.tasksLabel": "Chats",
   "agent.noSessions": "No chats yet",
   "agent.deleteSession": "Delete chat {title}",
+  "agent.deleteSession.confirmText": "Delete this chat? This cannot be undone.",
+  "agent.deleteSession.confirm": "Delete",
 
   "agent.plazaTitle": "Skill library",
   "agent.back": "Back to agent",

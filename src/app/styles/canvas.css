@@ -1019,6 +1019,40 @@
 }
 .canvas-node:hover .canvas-node__del { opacity: 1; }
 .canvas-node__del:hover { color: #fff; }
+/*
+  删除二次确认（review 2026-09-15 U-18）。放在标签条下面而不是浮层：节点本身就 180px 宽，
+  再叠一层遮罩会把它自己盖住，而确认要能看见删的是哪一张卡。
+*/
+.canvas-node__confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(248, 113, 113, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.28);
+}
+.canvas-node__confirm-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: #e4e4e8;
+}
+.canvas-node__confirm-btn {
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 7px;
+  font-size: 11px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e4e4e8;
+}
+.canvas-node__confirm-btn--danger {
+  background: #f87171;
+  color: #15161a;
+}
 .canvas-node__textarea {
   width: 100%;
   border: 0;

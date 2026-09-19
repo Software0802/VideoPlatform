@@ -33,6 +33,7 @@ import {
 import { ApiError } from "@/lib/client/http";
 import { newIdempotencyKey, uploadFile } from "@/lib/client/jobs";
 import { errorText } from "@/lib/i18n/errorText";
+import { useDialogFocus } from "@/components/genius/useDialogFocus";
 import type { JobPublic } from "@/lib/jobs/schema";
 import { ConflictDialog } from "./ConflictDialog";
 import {
@@ -194,16 +195,14 @@ export default function CanvasView() {
     saveTail.current = Promise.resolve(null);
     showToast(t("canvas.conflict.usedServer"));
   };
-  /* 严格模态：只能显式选一份，Esc / 点外层不关——误触不得替用户覆盖任何一方。 */
-  /* 弹层出现时聚焦「保留本地」按钮；关掉后焦点还给画布容器。 */
-  useEffect(() => {
-    if (!conflict) return;
-    conflictRef.current
-      ?.querySelector<HTMLElement>(".canvas-conflict__keep")
-      ?.focus();
-    const root = rootRef.current;
-    return () => root?.focus();
-  }, [conflict]);
+  /*
+    严格模态：只能显式选一份，Esc / 点外层不关——误触不得替用户覆盖任何一方。
+    焦点管理换成共用的 `useDialogFocus`（review 2026-09-15 U-07）：默认落在「保留本地」，
+    Tab 在两个按钮之间循环（原来手写的那版不困焦，Tab 会走到背后的画布上去）。
+  */
+  useDialogFocus(conflictRef, conflict !== null, ".canvas-conflict__keep");
+  /* 报价弹层同样把焦点收进来：它是一次要花钱的确认。 */
+  useDialogFocus(quoteRef, quote !== null);
 
   /* 载入：最新一张画布，没有就建一张；再拉它的最新一次 run 做产物 overlay。 */
   // `t` 随语言切换换引用；载入 effect 若依赖它，切语言会整份重拉画布并清掉防抖中的

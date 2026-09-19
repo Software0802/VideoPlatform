@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { changePassword } from "@/lib/client/auth";
 import { ApiError } from "@/lib/client/http";
 import { useT } from "@/components/genius/i18n/I18nProvider";
 import { errorText } from "@/lib/i18n/errorText";
+import { useDialogFocus } from "@/components/genius/useDialogFocus";
 
 /*
   修改密码弹窗（阶段 B）：旧密码 / 新密码 / 确认新密码 → `POST /api/auth/password`。
@@ -28,6 +29,13 @@ export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDon
   const [again, setAgain] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /*
+    `autoFocus` 只管把焦点送进来，Tab 照样能走到背后的壳上；关掉后焦点也没还给头像菜单
+    里那一项（review 2026-09-15 U-07）。这里接管全部三件事，输入框的 autoFocus 保留着
+    也无妨——hook 聚焦的同样是第一个可聚焦元素。
+  */
+  const boxRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(boxRef, true);
 
   /* Esc 与点遮罩走同一条关闭路径（H4）。 */
   useEffect(() => {
@@ -78,7 +86,14 @@ export function PasswordDialog({ onClose, onDone }: { onClose: () => void; onDon
   }, [again, busy, current, next, onDone, t]);
 
   return (
-    <div className="pwd" role="dialog" aria-modal="true" aria-label={t("shell.pwd.title")} onClick={onClose}>
+    <div
+      className="pwd"
+      ref={boxRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("shell.pwd.title")}
+      onClick={onClose}
+    >
       <form
         className="pwd__panel"
         onClick={(e) => e.stopPropagation()}

@@ -27,6 +27,26 @@ import { useSessionBridge } from "./SessionProvider";
   「非终态 → 终态」那一跳之后。
 */
 
+/**
+ * 轻提示的时长与条数（review 2026-09-15 C-13）。
+ *
+ * 2.2 秒是「即将上线」那种四个字的提示的读完时间；拼了产品名、带请求号的错误一行放不下，
+ * 2.2 秒不够看完，所以超过一行（约 30 个字符）的给 6 秒并额外给一个关闭按钮——手动撤下
+ * 是唯一能让人「读完再走」的办法。同屏最多 3 条，再多就挤掉最老的一条。
+ */
+const MAX_TOASTS = 3;
+const TOAST_MS = 2200;
+const TOAST_LONG_MS = 6000;
+const TOAST_LONG_CHARS = 30;
+
+/** 一行放不下的提示 = 需要读 = 给更久、给关闭按钮。判据与 `.toast` 的 max-width 对应。 */
+export function isLongToast(text: string): boolean {
+  return text.length > TOAST_LONG_CHARS;
+}
+
+/** 轻提示的一条。`id` 只用来定位要撤下的那条，不落盘、不跨会话。 */
+export type ToastItem = { id: number; text: string };
+
 export type NoticesShell = {
   notices: Notice[];
   unread: number;
@@ -34,9 +54,18 @@ export type NoticesShell = {
   /** 右上角那一条（自动消失）；同时也在通知列表里 */
   noticeToast: Notice | null;
   dismissNoticeToast: () => void;
-  /* 置灰项的提示 */
-  toast: string | null;
+  /**
+   * 置灰项与一次性结果的轻提示，最多同时 3 条、后来的排在下面（review 2026-09-15 C-13）。
+   * 原来是单槽位：连点两个置灰控件、或「已复制」紧跟着一条错误，先来的那条会被直接顶掉。
+   */
+  toasts: ToastItem[];
   showToast: (message: string) => void;
+  dismissToast: (id: number) => void;
+  /**
+   * 铃铛面板开着时别再弹 `noticeToast`：它画在面板上面（z-index 45 vs 30，几何也压着），
+   * 而面板里本来就列着同一条。由 TopBar 上报开合。
+   */
+  setNoticePanelOpen: (open: boolean) => void;
 };
 
 /**
@@ -74,19 +103,42 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
   const t = useT();
   const pathname = usePathname();
 
-  const [toast, setToast] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [unread, setUnread] = useState(0);
   const [noticeToast, setNoticeToast] = useState<Notice | null>(null);
 
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showToast = useCallback((message: string) => {
-    setToast(message);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 2200);
+  const toastSeq = useRef(0);
+  const toastTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const dismissToast = useCallback((id: number) => {
+    const timer = toastTimers.current.get(id);
+    if (timer) clearTimeout(timer);
+    toastTimers.current.delete(id);
+    setToasts((list) => list.filter((item) => item.id !== id));
   }, []);
-  useEffect(() => () => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
+  const showToast = useCallback((message: string) => {
+    const id = (toastSeq.current += 1);
+    // 挤掉最老的一条时不动它的定时器：定时器只做一次按 id 的过滤，对已撤下的条目是空操作。
+    setToasts((list) => [...list, { id, text: message }].slice(-MAX_TOASTS));
+    const timer = setTimeout(() => {
+      toastTimers.current.delete(id);
+      setToasts((list) => list.filter((item) => item.id !== id));
+    }, isLongToast(message) ? TOAST_LONG_MS : TOAST_MS);
+    toastTimers.current.set(id, timer);
+  }, []);
+  useEffect(() => {
+    const timers = toastTimers.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  /** 铃铛面板开合：开着就不弹 noticeToast，并把当前这条收掉。 */
+  const noticePanelOpen = useRef(false);
+  const setNoticePanelOpen = useCallback((open: boolean) => {
+    noticePanelOpen.current = open;
+    if (open) setNoticeToast(null);
   }, []);
 
   const seenStatus = useRef<Map<string, JobPublic["status"]>>(
@@ -225,7 +277,7 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
         const onTargetPage =
           (latest.kind === "run" && pathname === "/canvas") ||
           (latest.kind === "agent" && pathname === "/agent");
-        if (!onTargetPage) setNoticeToast(noticeOfItem(latest));
+        if (!onTargetPage && !noticePanelOpen.current) setNoticeToast(noticeOfItem(latest));
       }
     },
     [noticeOfItem, pathname],
@@ -295,7 +347,7 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
       };
       setNotices((list) => (list.some((n) => n.id === notice.id) ? list : [notice, ...list]));
       setUnread((n) => n + 1);
-      if (!quiet) setNoticeToast(notice);
+      if (!quiet && !noticePanelOpen.current) setNoticeToast(notice);
       // toast 等不了同步，所以上面先即时插入；紧接着拉一次落盘真相把它对齐
       // （以及补回这条 SSE 之前断线时漏掉的其它终态）。
       void syncNotifications();
@@ -338,8 +390,10 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
       markNoticesRead,
       noticeToast,
       dismissNoticeToast,
-      toast,
+      toasts,
       showToast,
+      dismissToast,
+      setNoticePanelOpen,
       noteJob,
       observeJobStatus,
       emitJobTerminal,
@@ -351,8 +405,10 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
       markNoticesRead,
       noticeToast,
       dismissNoticeToast,
-      toast,
+      toasts,
       showToast,
+      dismissToast,
+      setNoticePanelOpen,
       noteJob,
       observeJobStatus,
       emitJobTerminal,

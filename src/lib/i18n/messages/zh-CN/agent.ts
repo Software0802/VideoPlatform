@@ -40,6 +40,8 @@ export const agent = {
   "agent.tasksLabel": "任务",
   "agent.noSessions": "还没有会话",
   "agent.deleteSession": "删除会话 {title}",
+  "agent.deleteSession.confirmText": "删除这条对话？不可恢复",
+  "agent.deleteSession.confirm": "删除",
 
   /* 技能广场 */
   "agent.plazaTitle": "技能广场",

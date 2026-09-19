@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import {
   IconArrowUp,
   IconAudio,
@@ -256,6 +257,19 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
       ? t("composer.placeholder.reference")
       : t(PLACEHOLDER[s.tab]);
 
+  /*
+    从输入条展开面板后，焦点落进提示词框（review 2026-09-15 U-07）：展开本身就是一次
+    「我要开始写」，原来还得再点一次输入框。只认 false→true 那一跳——`/create` 上面板恒
+    展开，挂载即聚焦会在首屏抢走焦点并把页面滚到面板上。
+  */
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const wasVisible = useRef(visible);
+  useEffect(() => {
+    const justOpened = visible && !wasVisible.current;
+    wasVisible.current = visible;
+    if (justOpened) textRef.current?.focus();
+  }, [visible]);
+
   function send() {
     if (soon) {
       showToast(soonText);
@@ -428,6 +442,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
             <div className="composer__field">
               <textarea
                 className="composer__text"
+                ref={textRef}
                 rows={3}
                 value={s.prompt}
                 maxLength={PROMPT_MAX_LEN}
@@ -541,7 +556,7 @@ export function Composer({ visible, fileRefs }: { visible: boolean; fileRefs: Fi
           {isAudio ? (
             <>
               <button type="button" className="composer__panelbtn" onClick={() => showToast(soonText)}>
-                Expressive Narrator
+                {t("composer.audioVoice")}
               </button>
               <button type="button" className="composer__panelbtn" onClick={() => showToast(soonText)}>
                 {t("composer.audioLang")}
