@@ -50,7 +50,7 @@ pnpm run evals:check
 
 拿到预算真要开跑时，两道闸各管一段，别指望其中一道替另一道守：
 
-- **账号余额准入闸（跨任务、按人民币）**：`createJob` 在 `withAdmissionLock` 临界区内调 `reserveJobFunds(ownerId, priceCny)`（`src/lib/jobs/create.ts`），`availableCny < priceCny` 时 `src/lib/billing/admission.ts` 直接抛 402 `insufficient_balance`，发生在任何上游调用之前，并且对整个账号跨任务生效。**跑评测前先把评测账号的已购池充成额度上限**（比如 ¥20）：30 秒长片售价 `longForm["30"] = 20`（`prices.ts` 默认价表），第一条任务就把额度占满，第二条提交在上游调用之前被 402 顶回。
+- **账号余额准入闸（跨任务、按人民币）**：`createJob` 在 `withAdmissionLock` 临界区内调 `reserveJobFunds(ownerId, priceCny)`（`src/lib/jobs/create.ts`），`availableCny < priceCny` 时 `src/lib/billing/admission.ts` 直接抛 402 `insufficient_balance`，发生在任何上游调用之前，并且对整个账号跨任务生效。**跑评测前先把评测账号的已购池充成这一条任务的实际售价**：`longForm["30"] = 20`（`prices.ts` 默认价表）只是基价，1080p 乘 `video.hd`（1.5）、出声再加 `video.audio`（¥1）。长片的分辨率与音轨按归一结果计（`harnessSettingsFor`）：可灵取 `KLING_VIDEO_RESOLUTION` / `KLING_VIDEO_AUDIO` 或点名产品的档（`video-hd-audio` 钉 1080p + 有声 → ¥31），中转一律记无声，grok 与 mock 直接吃请求里的 `generateAudio`，而 `create.ts` 在请求没给时缺省 `true`。`evals/prompts.json` 只钉了 720p、没钉音频也没点名产品，所以照它默认提交的 30 秒长片是 ¥21，充成 ¥20 的账号第一条就被 402 顶回。要正好落在 ¥20，提交时显式带 `generateAudio: false` 且保持 720p；否则按创建响应里的 `priceCny` 把额度充够。额度占满之后，第二条提交在上游调用之前被 402 顶回。
   - 它按**售价** `priceCny` 计，不是上游美元成本（同一条 30 秒任务上游侧约 ¥8.6 再加生图额度）。
   - **更要紧的限定：它不封上游总花费。** 只有 `succeeded` 才扣钱（`store.ts` 的 `pendingCharge`），失败 / 取消 / 过期一律不扣，预留随终态释放——`availableCny = balanceCny + effectiveMemberCny − reservedCny`，而 `reservedCny` 只算非终态任务。一条跑失败的长片在上游已经花掉了片段费、每镜最多 2 次付费重生成与每镜最多 3 次视觉 QC 调用（每次尝试各一次），平台侧却记 ¥0 并把额度全额放回，下一条照样能提交。所以这道闸限制的是**同时在跑的、以及成功计费的付费任务数**。
   - 因此每次失败之后（当场取消同理），必须先从那条任务的 `costUsdActual` 手工核算剩余预算，再决定要不要重新提交。

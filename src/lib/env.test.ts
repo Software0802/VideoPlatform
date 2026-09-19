@@ -4,6 +4,7 @@ import {
   DEFAULT_SUB2API_BASE,
   grokApiKey,
   grokUpstreamKind,
+  harnessQcVisualThreshold,
   hasOpenaiKey,
   hasXaiKey,
   isMockMode,
@@ -34,6 +35,7 @@ const KEYS = [
   "LUMEN_FORCE_MOCK",
   "UPSTREAM_TIMEOUT_MS",
   "UPSTREAM_RETRY_BASE_MS",
+  "HARNESS_QC_VISUAL_THRESHOLD",
 ] as const;
 
 afterEach(() => {
@@ -160,5 +162,22 @@ describe("upstream request limits", () => {
     process.env.UPSTREAM_RETRY_BASE_MS = "-1";
     expect(upstreamTimeoutMs()).toBe(300_000);
     expect(upstreamRetryBaseMs()).toBe(250);
+  });
+});
+
+// `.env.example` 的 HARNESS_QC_VISUAL_THRESHOLD 注释块把「写不成数字、或落在 0–1 之外
+// 一律按未设置处理（= 静默跳过视觉打分，而不是报错）」当成对运维的承诺。视觉 QC 是付费
+// 开关，「填错了就当没填」和「填错了就报错」对账单的后果完全不同，所以钉住它。
+describe("视觉 QC 阈值", () => {
+  it("只接受 0–1 的数字，其余一律按未设置处理", () => {
+    expect(harnessQcVisualThreshold()).toBeNull();
+
+    process.env.HARNESS_QC_VISUAL_THRESHOLD = "0.6";
+    expect(harnessQcVisualThreshold()).toBe(0.6);
+
+    for (const bad of ["0.6abc", "abc", "1.5", "-0.1", "", "   "]) {
+      process.env.HARNESS_QC_VISUAL_THRESHOLD = bad;
+      expect(harnessQcVisualThreshold(), `${JSON.stringify(bad)} 应按未设置处理`).toBeNull();
+    }
   });
 });
