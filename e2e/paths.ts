@@ -11,6 +11,22 @@ import path from "node:path";
 export const STORAGE_STATE = path.join(__dirname, ".auth/session.json");
 
 /**
+ * 服务跑在哪个端口，以及浏览器与管理 CLI 都该打的地址。
+ *
+ * 一份推导，四个调用点（`playwright.config.ts` 的 `baseURL`/`webServer`，以及
+ * `auth.setup.ts` / `genius.spec.ts` / `subscription.spec.ts` 里调管理 CLI 的
+ * `LUMEN_ADMIN_BASE_URL`）。之前这段是各处手抄的，`subscription.spec.ts` 那份
+ * 干脆没抄、改传 `--offline` 直写文件——`--offline` 要求服务确实没在跑，于是
+ * 本机（挪开 `E2E_PORT`，3000 空着）绿、CI（不设 `E2E_PORT`，服务正在 3000）红，
+ * 定时 e2e 连红六次。共用一个函数就没有「某一处没跟上」的余地。
+ */
+export const E2E_PORT = Number(process.env.E2E_PORT ?? 3000);
+
+export function e2eBaseUrl(): string {
+  return process.env.E2E_BASE_URL ?? `http://localhost:${E2E_PORT}`;
+}
+
+/**
  * Which `DATA_DIR` the running server turned out to read, written by
  * `auth.setup.ts` once registration succeeded. Other specs need it to mint an
  * invite the server will actually see.

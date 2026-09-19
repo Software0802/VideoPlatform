@@ -1,6 +1,13 @@
 import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
-import { E2E_ADMIN_TOKEN, E2E_ADMIN_USER_ID, E2E_SESSION_SECRET, STORAGE_STATE } from "./e2e/paths";
+import {
+  E2E_ADMIN_TOKEN,
+  E2E_ADMIN_USER_ID,
+  E2E_PORT,
+  E2E_SESSION_SECRET,
+  STORAGE_STATE,
+  e2eBaseUrl,
+} from "./e2e/paths";
 
 /**
  * Mock-mode smoke suite (docs/handoff.md §3). Runs against `pnpm dev` with the
@@ -13,8 +20,10 @@ import { E2E_ADMIN_TOKEN, E2E_ADMIN_USER_ID, E2E_SESSION_SECRET, STORAGE_STATE }
  * is not in mock mode. Set `E2E_REQUIRE_MOCK=1` (CI does) to turn those skips into failures,
  * and `E2E_ISOLATED=1` to refuse reuse and start a fresh server on `E2E_DATA_DIR`.
  */
-const PORT = Number(process.env.E2E_PORT ?? 3000);
-const BASE_URL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`;
+// 端口与地址的唯一推导在 `e2e/paths.ts`：调管理 CLI 的用例要拿同一个地址当
+// `LUMEN_ADMIN_BASE_URL`，两边分家过一次就红了六个定时轮次（见该文件注释）。
+const PORT = E2E_PORT;
+const BASE_URL = e2eBaseUrl();
 const ISOLATED = Boolean(process.env.CI || process.env.E2E_ISOLATED);
 const DATA_DIR = process.env.E2E_DATA_DIR ?? path.resolve(__dirname, "test-results/e2e-data");
 
