@@ -171,6 +171,7 @@ export default function CanvasView() {
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const quoteRef = useRef<HTMLDivElement | null>(null);
+  const modelRef = useRef<HTMLDivElement | null>(null);
   const conflictRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -194,6 +195,12 @@ export default function CanvasView() {
   /** 手动缩放：叠在 fit 之上，底部工具条写它（`适应画布` 把它拨回 1）。 */
   const [zoom, setZoom] = useState(1);
   const [menu, setMenu] = useState<MenuPos | null>(null);
+  /*
+    模型芯片的弹层开在哪个节点上（`null` = 都没开）。开合状态不放在 `NodeCard` 里：
+    各卡片自己记的话，点开第二枚芯片时第一枚还开着，两张 244px 的清单叠在邻近节点上；
+    提到这里就天然只开一个，也能和菜单 / 报价弹层共用同一条收层路径。
+  */
+  const [modelFor, setModelFor] = useState<string | null>(null);
   const [toolbox, setToolbox] = useState(false);
   const [running, setRunning] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -222,6 +229,8 @@ export default function CanvasView() {
   useDismiss(menu !== null, menuRef, closeMenu);
   /* 报价弹层同样吃「点外层 / Esc」收层（H4），头部 ✕ 是可见关闭控件。 */
   useDismiss(quote !== null, quoteRef, () => setQuote(null));
+  const closeModel = useCallback(() => setModelFor(null), []);
+  useDismiss(modelFor !== null, modelRef, closeModel);
 
   /** 冲突二选一：用当前本地 doc（冲突期间仍在编辑）按服务端 revision 覆盖写。 */
   const resolveKeepLocal = async () => {
@@ -969,6 +978,9 @@ export default function CanvasView() {
                 }
                 onInput={(fromId) => setInput(node.id, fromId)}
                 products={productsFor(node)}
+                modelOpen={modelFor === node.id}
+                modelRef={modelFor === node.id ? modelRef : undefined}
+                onModelOpen={(open) => setModelFor(open ? node.id : null)}
                 onProduct={(productId) =>
                   mutate((d) => ({
                     nodes: d.nodes.map((n) =>

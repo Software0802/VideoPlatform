@@ -17,8 +17,8 @@ import { creditsOf, kindOfJob, type Notice } from "./shared";
 import { useSessionBridge } from "./SessionProvider";
 
 /*
-  通知域：铃铛列表 / 未读数 / 右上角 noticeToast，外加通用 `toast`（「即将上线」
-  那类一次性提示——同属瞬态通知，且 `markNoticesRead` 的失败提示也要走它，所以
+  通知域：铃铛列表 / 未读数 / 右上角 noticeToast，外加通用 `toast`（一次操作的回执或
+  它此刻办不到的理由——同属瞬态通知，且 `markNoticesRead` 的失败提示也要走它，所以
   归在本域供三个下层域调用）。
 
   真相是 `data/notifications/<userId>.json`（刷新 / 换设备后仍在）；SSE 只是提醒。
@@ -30,9 +30,10 @@ import { useSessionBridge } from "./SessionProvider";
 /**
  * 轻提示的时长与条数（review 2026-09-15 C-13）。
  *
- * 2.2 秒是「即将上线」那种四个字的提示的读完时间；拼了产品名、带请求号的错误一行放不下，
- * 2.2 秒不够看完，所以超过一行（约 30 个字符）的给 6 秒并额外给一个关闭按钮——手动撤下
- * 是唯一能让人「读完再走」的办法。同屏最多 3 条，再多就挤掉最老的一条。
+ * 2.2 秒够看完一行的那种（「已把…放进画布」「已切到视频页」这类做完一件事的回执）；拼了
+ * 产品名、带请求号的错误，或 `modeBlock()` / `templateReason` 那种整句的置灰理由，一行放
+ * 不下，2.2 秒不够看完，所以超过一行（约 30 个字符）的给 6 秒并额外给一个关闭按钮——手动
+ * 撤下是唯一能让人「读完再走」的办法。同屏最多 3 条，再多就挤掉最老的一条。
  */
 const MAX_TOASTS = 3;
 const TOAST_MS = 2200;
@@ -355,7 +356,7 @@ export function NoticesProvider({ children }: { children: ReactNode }) {
     [t, syncNotifications],
   );
 
-  /* toast 自动消失（6s）：比「即将上线」那条长，它带的是要读的信息 */
+  /* toast 自动消失（6s）：比一行回执那种长，它带的是要读的信息 */
   useEffect(() => {
     if (!noticeToast) return;
     const t = setTimeout(() => setNoticeToast(null), 6000);
