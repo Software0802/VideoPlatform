@@ -52,7 +52,7 @@ pnpm run evals:check
 
 - **账号余额准入闸（跨任务、按人民币）**：`createJob` 在 `withAdmissionLock` 临界区内调 `reserveJobFunds(ownerId, priceCny)`（`src/lib/jobs/create.ts`），`availableCny < priceCny` 时 `src/lib/billing/admission.ts` 直接抛 402 `insufficient_balance`，发生在任何上游调用之前，并且对整个账号跨任务生效。**跑评测前先把评测账号的已购池充成额度上限**（比如 ¥20）：30 秒长片售价 `longForm["30"] = 20`（`prices.ts` 默认价表），第一条任务就把额度占满，第二条提交在上游调用之前被 402 顶回。
   - 它按**售价** `priceCny` 计，不是上游美元成本（同一条 30 秒任务上游侧约 ¥8.6 再加生图额度）。
-  - **更要紧的限定：它不封上游总花费。** 只有 `succeeded` 才扣钱（`store.ts` 的 `pendingCharge`），失败 / 取消 / 过期一律不扣，预留随终态释放——`availableCny = balanceCny + effectiveMemberCny − reservedCny`，而 `reservedCny` 只算非终态任务。一条跑失败的长片在上游已经花掉了片段费、每镜最多 2 次付费重生成与每镜一次视觉 QC 调用，平台侧却记 ¥0 并把额度全额放回，下一条照样能提交。所以这道闸限制的是**同时在跑的、以及成功计费的付费任务数**。
+  - **更要紧的限定：它不封上游总花费。** 只有 `succeeded` 才扣钱（`store.ts` 的 `pendingCharge`），失败 / 取消 / 过期一律不扣，预留随终态释放——`availableCny = balanceCny + effectiveMemberCny − reservedCny`，而 `reservedCny` 只算非终态任务。一条跑失败的长片在上游已经花掉了片段费、每镜最多 2 次付费重生成与每镜最多 3 次视觉 QC 调用（每次尝试各一次），平台侧却记 ¥0 并把额度全额放回，下一条照样能提交。所以这道闸限制的是**同时在跑的、以及成功计费的付费任务数**。
   - 因此每次失败之后（当场取消同理），必须先从那条任务的 `costUsdActual` 手工核算剩余预算，再决定要不要重新提交。
   - `availableCny` 还含会员积分，所以「把已购池充成 ¥20」只有在评测账号没有生效会员积分时才真的封在 ¥20。
 - **`budgetCap`（单任务、按美元）**：只守一条任务内部的重试与付费调用，不守账号总额。
